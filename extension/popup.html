@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; width: 264px; padding: 14px; margin: 0; color: #14181f; }
+      h1 { font-size: 13px; font-weight: 700; margin: 0 0 10px; }
+      .row { display: flex; gap: 6px; }
+      input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid #d4d9e6; border-radius: 8px; font-size: 13px; }
+      input:focus { outline: none; border-color: #3b5bdb; }
+      button { height: 34px; padding: 0 12px; border: 0; border-radius: 8px; background: #3b5bdb; color: #fff; font-weight: 600; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .status { font-size: 12px; color: #15803d; margin-top: 9px; min-height: 15px; }
+      .hint { font-size: 11px; color: #9aa2b4; margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Weave Tabs — test</h1>
+    <div class="row">
+      <input id="url" placeholder="example.com" />
+      <button id="go">Open ↗</button>
+    </div>
+    <div class="status" id="status"></div>
+    <div class="hint">Opens the URL in the shared “Weave” tab group.</div>
+    <script src="popup.js"></script>
+  </body>
+</html>
