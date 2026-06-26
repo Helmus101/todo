@@ -1,6 +1,7 @@
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile } from "../shared/types.ts";
 
-export interface IntegrationItem { key: string; name: string; blurb: string; category: string; connected: boolean; }
+export interface IntegrationItem { key: string; name: string; blurb: string; category: string; logo: string; connected: boolean; }
 export interface IntegrationsResp { ready: boolean; items: IntegrationItem[]; }
 export interface ChatSource { title: string; url: string; }
 export interface ChatMsg { role: "user" | "assistant"; content: string; }
@@ -55,14 +56,19 @@ export const api = {
   generate: (): Promise<WebTask[]> => post("/api/tasks/generate"),
   add: (title: string): Promise<WebTask[]> => post("/api/tasks", { title }),
   run: (id: string): Promise<WebTask> => post(`/api/tasks/${id}/run`),
+  revise: (id: string, note: string): Promise<WebTask> => post(`/api/tasks/${id}/revise`, { note }),
   confirm: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/confirm`),
   reject: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reject`),
   dismiss: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/dismiss`),
   runStep: (id: string, index: number): Promise<WebTask> => post(`/api/tasks/${id}/step/${index}/run`),
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
+  sendDraft: (id: string, index: number): Promise<WebTask> => post(`/api/tasks/${id}/send/${index}`),
   chat: (messages: ChatMsg[]): Promise<ChatReply> => post("/api/chat", { messages }),
-  profile: (): Promise<Profile> => req("/api/profile").then(j),
-  setProfile: (category: string, value: string): Promise<Profile> => post("/api/profile", { category, value }),
-  delProfile: (category: string, index: number): Promise<Profile> => req(`/api/profile/${category}/${index}`, { method: "DELETE" }).then(j),
+  // Profile responses are normalized to a valid shape (and fall back to empty on a 401/odd body) so the
+  // editor never receives a non-Profile object and crashes.
+  profile: (): Promise<Profile> => req("/api/profile").then(j).then(normalizeProfile).catch(() => emptyProfile()),
+  setProfile: (category: string, value: string): Promise<Profile> => post("/api/profile", { category, value }).then(normalizeProfile),
+  delProfile: (category: string, index: number): Promise<Profile> => req(`/api/profile/${category}/${index}`, { method: "DELETE" }).then(j).then(normalizeProfile),
+  clearProfile: (): Promise<Profile> => req("/api/profile", { method: "DELETE" }).then(j).then(normalizeProfile),
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout"),
 };

@@ -33,6 +33,8 @@ if (PROD && !process.env.SESSION_SECRET) {
 
 const app = express();
 app.set("trust proxy", 1);
+// Liveness probe for the host platform — no auth, no session, no DB; just "the process is up".
+app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
 app.use(express.json());
 app.use(session({
   store: await makeSessionStore(), // Supabase-backed when cloud is configured → sessions survive restarts/deploys
@@ -69,6 +71,24 @@ const commit = async (req: express.Request) => {
 
 const requireAuth: RequestHandler = (req, res, next) => {
   if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
+  next();
+};
+
+// Per-account rate limiter (in-memory sliding window) for the expensive Opus/Composio endpoints, so a runaway
+// client loop or a leaked session can't run up the Anthropic bill. Keyed by account email (falls back to IP).
+const rlHits = new Map<string, number[]>();
+const rateLimit = (max: number, windowMs: number): RequestHandler => (req, res, next) => {
+  const key = `${req.session.user || req.ip}:${req.path}`;
+  const now = Date.now();
+  const hits = (rlHits.get(key) || []).filter((t) => now - t < windowMs);
+  if (hits.length >= max) {
+    const retry = Math.ceil((windowMs - (now - hits[0])) / 1000);
+    res.set("Retry-After", String(retry)).status(429).json({ error: `Too many requests — give it ${retry}s.` });
+    return;
+  }
+  hits.push(now);
+  rlHits.set(key, hits);
+  if (rlHits.size > 5000) for (const [k, v] of rlHits) if (!v.some((t) => now - t < windowMs)) rlHits.delete(k); // bound memory
   next();
 };
 // The agent's toolset for this account's connected apps (Composio). Empty if Composio's unset/nothing linked.
@@ -118,7 +138,7 @@ app.get("/api/integrations", requireAuth, async (req, res) => {
   const statuses = ready ? await integrations.getAllConnectionStatuses(req.session.user!, apps, req.session.integrations || {}) : {};
   res.json({
     ready,
-    items: integrations.CATALOG.map((c) => ({ key: c.key, name: c.name, blurb: c.blurb, category: c.category, connected: !!(statuses as any)[c.key] })),
+    items: integrations.CATALOG.map((c) => ({ key: c.key, name: c.name, blurb: c.blurb, category: c.category, logo: integrations.logoFor(c.toolkit), connected: !!(statuses as any)[c.key] })),
   });
 });
 
@@ -159,6 +179,7 @@ app.get("/api/status", async (req, res) => {
   const s: ConnectionStatus = {
     loggedIn: !!req.session.user,
     user: req.session.user,
+    name: req.session.profile?.name,
     googleConnected,
     aiReady: aiReady(),
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
@@ -170,10 +191,10 @@ app.get("/api/status", async (req, res) => {
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 app.get("/api/tasks", requireAuth, (req, res) => { res.json(req.session.tasks || []); });
 
-app.post("/api/tasks/generate", requireAuth, async (req, res) => {
+app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try {
     const extras = await toolsFor(req);
-    if (!extras?.tools?.length) { res.status(400).json({ error: "Connect Gmail (and Calendar) in Settings so Weave has something to read." }); return; }
+    if (!extras?.tools?.length) { res.status(400).json({ error: "Connect Gmail (and Calendar) in Settings so Otto has something to read." }); return; }
     req.session.tasks = await tasks.generate(req.session.tasks || [], (req.session.profile ||= emptyProfile()), extras);
     await commit(req);
     res.json(req.session.tasks);
@@ -191,7 +212,7 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
 });
 
 // The client drives runs (calls this for each ready task) — synchronous, returns the executed task.
-app.post("/api/tasks/:id/run", requireAuth, async (req, res) => {
+app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   try {
     const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req));
     await commit(req);
@@ -199,11 +220,25 @@ app.post("/api/tasks/:id/run", requireAuth, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e?.message || "run failed" }); }
 });
 
-app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => { tasks.setStatus(req.session.tasks || [], String(req.params.id), "done"); await commit(req); res.json((req.session.tasks || []).filter((t) => t.status !== "done" && t.status !== "dismissed")); });
+// Revise: the user declined to send and said what to change → re-run the task with that instruction so Otto
+// updates the draft (and re-offers it as a sendable) before they send.
+app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req, res) => {
+  const note = String(req.body?.note || "").trim();
+  if (!note) { res.status(400).json({ error: "note required" }); return; }
+  try {
+    const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req), note);
+    await commit(req);
+    res.json(t || { error: "not found" });
+  } catch (e: any) { res.status(500).json({ error: e?.message || "revise failed" }); }
+});
+
+// These return the FULL task list (client filters out done/dismissed for display) — so the dashboard's
+// "handled" count + the deep-link "already handled" fallback keep working after a confirm/dismiss.
+app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => { tasks.setStatus(req.session.tasks || [], String(req.params.id), "done"); await commit(req); res.json(req.session.tasks || []); });
 app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => { tasks.reject(req.session.tasks || [], String(req.params.id)); await commit(req); res.json(req.session.tasks || []); });
-app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => { tasks.setStatus(req.session.tasks || [], String(req.params.id), "dismissed"); await commit(req); res.json((req.session.tasks || []).filter((t) => t.status !== "dismissed")); });
+app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => { tasks.setStatus(req.session.tasks || [], String(req.params.id), "dismissed"); await commit(req); res.json(req.session.tasks || []); });
 // Auto-do ONE automatable step (focused agent run over the connected apps).
-app.post("/api/tasks/:id/step/:index/run", requireAuth, async (req, res) => {
+app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   try {
     const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), await toolsFor(req));
     await commit(req);
@@ -217,9 +252,22 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
   await commit(req);
   res.json(req.session.tasks || []);
 });
+// One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
+app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
+  const s = t?.sendables?.[Number(req.params.index)];
+  if (!t || !s) { res.status(404).json({ error: "not found" }); return; }
+  if (!s.sent) {
+    const r = await integrations.sendSendable(req.session.user!, s);
+    if (!r.ok) { res.status(500).json({ error: r.error || "send failed" }); return; }
+    s.sent = true;
+    await commit(req);
+  }
+  res.json(t);
+});
 
 // ── Chat (Claude + web search, grounded in the user's profile + to-dos) ─────────
-app.post("/api/chat", requireAuth, async (req, res) => {
+app.post("/api/chat", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   try {
     const messages: ChatTurn[] = Array.isArray(req.body?.messages)
       ? req.body.messages.filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string").slice(-20)
@@ -240,10 +288,17 @@ app.post("/api/profile", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   const category = String(req.body?.category || "");
   const value = String(req.body?.value || "").trim();
-  if (category === "about") { p.about = value.slice(0, 400); }
+  if (category === "name") { p.name = value.slice(0, 60) || undefined; }
+  else if (category === "about") { p.about = value.slice(0, 400); }
   else { const k = listKey(category); if (k && value && !(p as any)[k].some((x: string) => x.toLowerCase() === value.toLowerCase())) (p as any)[k].push(value.slice(0, 160)); }
   await commit(req);
   res.json(p);
+});
+// Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
+app.delete("/api/profile", requireAuth, async (req, res) => {
+  req.session.profile = emptyProfile();
+  await commit(req);
+  res.json(req.session.profile);
 });
 app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
@@ -257,7 +312,13 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
 if (PROD) {
   const dist = path.resolve(__dirname, "../dist");
   app.use(express.static(dist));
-  app.get("*", (_req, res) => res.sendFile(path.join(dist, "index.html")));
+  // SPA fallback for NAVIGATION routes only. A request that looks like an asset (has a file extension) but
+  // didn't match a real file 404s instead of returning index.html — otherwise /favicon.ico (and any missing
+  // asset) resolves to the HTML page, which browsers can't use as an icon (a cause of a stale/blank favicon).
+  app.get("*", (req, res) => {
+    if (path.extname(req.path)) { res.status(404).end(); return; }
+    res.sendFile(path.join(dist, "index.html"));
+  });
 }
 
 // A single failing run must NEVER take down the server. An unhandled rejection/exception from a

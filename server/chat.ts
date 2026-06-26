@@ -33,7 +33,7 @@ function contextBlock(profile?: Profile, tasksSummary?: string): string {
 }
 
 const SYSTEM = (profile?: Profile, tasksSummary?: string) =>
-  `You are Weave's assistant — a sharp, concise, friendly chat assistant. You can SEARCH THE WEB for current ` +
+  `You are Otto's assistant — a sharp, concise, friendly chat assistant. You can SEARCH THE WEB for current ` +
   `or factual information; do so whenever the answer depends on recent events, current facts, prices, or anything ` +
   `you're not sure of, and CITE your sources. You know who the user is and what's on their plate (below) — use it ` +
   `to personalize answers and connect things to their world. Be direct and genuinely useful; no filler.\n` +
@@ -108,6 +108,62 @@ export async function chat(messages: ChatTurn[], profile?: Profile, tasksSummary
     console.warn("[chat] hosted web_search failed, falling back to DuckDuckGo:", e?.message || e);
     return await claudeDuckDuckGo(messages, profile, tasksSummary);
   }
+}
+
+/** Web search for the task agents (generate/run) to pull in external context — PRIMARY is Claude's hosted
+ *  web_search (Anthropic runs the search), FALLBACK is DuckDuckGo. Always returns sources as {title,url,snippet};
+ *  returns [] only on total failure so a flaky search never breaks task planning/execution. */
+export async function webSearch(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
+  if (!query.trim()) return [];
+  try {
+    const hosted = await webSearchClaude(query);
+    if (hosted.length) return hosted;
+  } catch (e: any) {
+    console.warn("[web] hosted web_search failed, falling back to DuckDuckGo:", e?.message || e);
+  }
+  return duckDuckGo(query).catch(() => []);
+}
+
+/** Run Claude's hosted web_search and have it hand back the top results as JSON {title,url,snippet}. */
+async function webSearchClaude(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
+  const client = clientOrThrow();
+  const found = new Map<string, { title: string; url: string; snippet: string }>(); // raw search sources (url→title), a backstop
+  const convo: Anthropic.MessageParam[] = [{
+    role: "user",
+    content: `Search the web for: ${query}\n\nThen reply with ONLY a JSON array (no prose, no code fence) of the up-to-6 most relevant results, each {"title","url","snippet"} where "snippet" is a one-sentence summary of that page. If nothing relevant, reply [].`,
+  }];
+  // The hosted tool can pause_turn at its internal cap — re-send to continue.
+  for (let i = 0; i < 4; i++) {
+    const res: any = await client.messages.create({
+      model: MODEL, max_tokens: 1500,
+      tools: [{ type: "web_search_20250305", name: "web_search" } as any],
+      messages: convo,
+    } as any);
+    for (const b of res.content || []) {
+      if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
+        for (const r of b.content) if (r?.url && !found.has(String(r.url))) found.set(String(r.url), { title: String(r.title || r.url).slice(0, 160), url: String(r.url), snippet: "" });
+      }
+    }
+    if (res.stop_reason === "pause_turn") { convo.push({ role: "assistant", content: res.content }); continue; }
+    const text = (res.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+    const parsed = parseResultArray(text);
+    if (parsed.length) return parsed.slice(0, 6);
+    if (found.size) return [...found.values()].slice(0, 6); // model gave no JSON but we have the raw sources
+    return [];
+  }
+  return [...found.values()].slice(0, 6);
+}
+
+function parseResultArray(text: string): { title: string; url: string; snippet: string }[] {
+  const m = text.match(/\[[\s\S]*\]/);
+  if (!m) return [];
+  try {
+    const arr = JSON.parse(m[0]);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((x: any) => ({ title: String(x?.title || x?.url || "").slice(0, 160), url: String(x?.url || "").trim(), snippet: String(x?.snippet || "").slice(0, 300) }))
+      .filter((x) => /^https?:\/\//i.test(x.url));
+  } catch { return []; }
 }
 
 function dedupe(s: ChatSource[]): ChatSource[] {

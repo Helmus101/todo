@@ -1,0 +1,13 @@
+# Keep the build context lean + safe. Critically: never copy the host's node_modules over the container's
+# fresh install (host binaries — esbuild/vite — are built for the host OS and break in Linux), and never
+# bake .env secrets into the image.
+node_modules
+dist
+.env
+.env.local
+.git
+.gitignore
+*.log
+npm-debug.log*
+.DS_Store
+scripts

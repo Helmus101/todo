@@ -1,4 +1,4 @@
-// Runs on the Weave web app. Tells the page the extension is present (a DOM flag the page reads — content
+// Runs on the Otto web app. Tells the page the extension is present (a DOM flag the page reads — content
 // scripts can't touch the page's window), and relays the page's open-tab requests to the background.
 document.documentElement.setAttribute("data-weave-ext", "1");
 

@@ -14,15 +14,15 @@ function subtitle(t: WebTask): string {
   if (t.status === "running") return "Working on it…";
   if (t.status === "executed") {
     const n = (t.steps || []).filter((s) => !s.done && !s.automatable).length;
-    return n ? `Prepared — ${n} thing${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} you · tap to review` : "Done for you · tap to review & confirm";
+    return n ? `${n} thing${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} you` : "Done for you";
   }
   return t.why;
 }
 
-// Open a URL in a new tab. Prefers the Weave Chrome extension (web/extension/) — it sets a DOM flag and
+// Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
 // relays postMessage to chrome.tabs.create, so tabs can open UNATTENDED during auto-do. Without it, falls
 // back to window.open (works on a user click).
-const TAB_GROUP = "Weave"; // all tabs Weave opens go into this one named group
+const TAB_GROUP = "Otto"; // all tabs Otto opens go into this one named group
 const extPresent = () => document.documentElement.getAttribute("data-weave-ext") === "1";
 // Open one or many tabs. With the extension, they go into a NAMED tab group (per task); without it,
 // window.open (no grouping possible from a plain page).
@@ -36,12 +36,44 @@ function openTabs(urls: string[], group?: string) {
   else urls.forEach((u) => window.open(u, "_blank", "noopener"));
 }
 
+// Auto-open created documents (Doc/Sheet/Slides) when a task finishes — handy, but capped so you're never
+// flooded with tabs, only via the extension (a plain window.open would be popup-blocked without a click),
+// and EACH doc opens at most ONCE EVER. The opened-URL set is PERSISTED (localStorage) so reopening the app
+// never re-opens the same tabs again. Toggle in Settings (default ON).
+const DOC_RE = /docs\.google\.com\/(document|spreadsheets|presentation)/i;
+const OPENED_KEY = "otto-opened-docs";
+const openedDocs: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(OPENED_KEY) || "[]")); } catch { return new Set(); } })();
+const markDocsOpened = (urls: string[]) => {
+  urls.forEach((u) => openedDocs.add(u));
+  try { localStorage.setItem(OPENED_KEY, JSON.stringify([...openedDocs].slice(-300))); } catch { /* ignore */ }
+};
+let sessionDocsOpened = 0;               // burst control: cap how many open within one session load
+const SESSION_DOC_CAP = 4;               // ceiling on auto-opened docs per session load
+const PER_TASK_DOC_CAP = 2;              // and per task
+const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") !== "0"; } catch { return true; } };
+
 /** Render context/synthesis as a clean bullet list (one bullet per line; leading -/•/* stripped). Full
  *  text always shown — never truncated. Falls back to a single line if there's just one. */
 function Bullets({ text }: { text: string }) {
   const items = (text || "").split("\n").map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
   if (items.length <= 1) return <p>{items[0] || text}</p>;
   return <ul className="bullets">{items.map((b, i) => <li key={i}>{b}</li>)}</ul>;
+}
+
+/** The Otto mark — a to-do list (three dots + lines) with a check sweeping through the last item.
+ *  Uses currentColor so it inherits the brand text colour (and inverts in dark mode). */
+function Logo({ size = 22 }: { size?: number }) {
+  return (
+    <svg className="logo" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="3.7" cy="6" r="1.85" fill="currentColor" />
+      <circle cx="3.7" cy="12" r="1.85" fill="currentColor" />
+      <circle cx="3.7" cy="18" r="1.85" fill="currentColor" />
+      <rect x="7.6" y="4.75" width="10.4" height="2.5" rx="1.25" fill="currentColor" />
+      <rect x="7.6" y="10.75" width="11.6" height="2.5" rx="1.25" fill="currentColor" />
+      <rect x="7.6" y="16.75" width="3.3" height="2.5" rx="1.25" fill="currentColor" />
+      <path d="M10 16 L13.7 19.7 L21.6 10.2" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 /** Strip leading/trailing slashes → the bare route ("" = dashboard, "settings", "login", "task/<id>"). */
@@ -80,6 +112,11 @@ const CACHED_STATUS: ConnectionStatus | null = (() => {
 })();
 
 const GREETING = () => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
+/** A friendly first name from the account email's local part ("tjong.willem@…" → "Tjong"). Personalizes the UI. */
+const firstName = (user?: string) => {
+  const local = (user || "").split("@")[0].split(/[._+-]+/)[0];
+  return local ? local.charAt(0).toUpperCase() + local.slice(1) : "";
+};
 
 /** Navigate the path router. "" → "/" (dashboard); otherwise "/<route>" (e.g. "task/<id>", "settings").
  *  pushState doesn't fire popstate, so we dispatch one to notify the router hook. */
@@ -94,10 +131,18 @@ export function App() {
   const [tasks, setTasks] = useState<WebTask[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  const [extOn, setExtOn] = useState(extPresent()); // is the Otto Tabs extension present? (it sets data-weave-ext)
+  const [introSeen, setIntroSeen] = useState(() => { try { return localStorage.getItem("otto-intro") === "1"; } catch { return false; } });
+  const [onboard, setOnboard] = useState(() => { try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
+  const [loadError, setLoadError] = useState(false); // backend unreachable after retries → show a retry screen
+  const [reloadKey, setReloadKey] = useState(0);      // bump to re-attempt the status fetch
+  const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
+  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.setItem("otto-intro", "1"); } catch { /* ignore */ } setOnboard(false); setIntroSeen(true); };
+  const dismissIntro = () => { try { localStorage.setItem("otto-intro", "1"); } catch { /* ignore */ } setIntroSeen(true); };
   const generatedOnce = useRef(false);
   const inflight = useRef<Set<string>>(new Set()); // ids currently auto-running (bounded concurrency)
   const attempts = useRef<Map<string, number>>(new Map()); // per-task auto-run attempts (capped retry)
-  const RUN_LIMIT = 2;            // run a couple at once — enough to keep moving, gentle on the dev server
+  const RUN_LIMIT = 3;            // run a few at once so the list clears faster (cheap now that tools are cached)
   const RUN_TIMEOUT_MS = 120_000; // a stuck run can never wedge the whole queue
 
   const loadStatus = useCallback(async () => { try { setStatus(await api.status()); } catch { /* keep last */ } }, []);
@@ -107,17 +152,21 @@ export function App() {
     try { status ? localStorage.setItem("weave-status", JSON.stringify(status)) : localStorage.removeItem("weave-status"); } catch { /* ignore */ }
   }, [status]);
 
+  // The content script sets data-weave-ext at document_start; re-check shortly after mount in case of timing.
+  useEffect(() => { const id = setTimeout(() => setExtOn(extPresent()), 600); return () => clearTimeout(id); }, []);
+
   // Retry status until the backend is reachable (tsx dev-server boot race) — don't get stuck on the spinner.
+  // After the retries are exhausted, surface a real "can't reach the server" screen instead of a forever-spinner.
   useEffect(() => {
     let stop = false, tries = 0;
     const tick = async () => {
       if (stop) return;
-      try { const s = await api.status(); if (!stop) setStatus(s); }
-      catch { if (!stop && tries++ < 30) setTimeout(tick, 1000); }
+      try { const s = await api.status(); if (!stop) { setStatus(s); setLoadError(false); } }
+      catch { if (!stop) { if (tries++ < 30) setTimeout(tick, 1000); else setLoadError(true); } }
     };
     void tick();
     return () => { stop = true; };
-  }, []);
+  }, [reloadKey]);
 
   const connected = !!status?.googleConnected;
 
@@ -125,14 +174,23 @@ export function App() {
   useEffect(() => {
     if (!connected) return;
     void (async () => {
-      const t = await api.tasks().catch(() => [] as WebTask[]);
+      // Re-attempt anything that never finished (ready, ran once, but produced no result) — failed/interrupted
+      // runs get another go on open. Manual + freshly-generated tasks already auto-run (autoRan not set).
+      const retry = (list: WebTask[]) => list.map((x) => (x.status === "ready" && x.autoRan && !x.synthesis ? { ...x, autoRan: false } : x));
+      const t = retry(await api.tasks().catch(() => [] as WebTask[]));
       setTasks(t);
-      if (!generatedOnce.current && t.length === 0 && status?.aiReady) {
+      // On open, pull fresh tasks so it catches up on new mail/events — not just when the list is empty.
+      // Throttled (≥4 min since the last generate) so rapid reloads don't re-scan; the 10-min interval covers the rest.
+      if (!generatedOnce.current && status?.aiReady) {
         generatedOnce.current = true;
-        setBusy(true); setNote("");
-        try { setTasks(await api.generate()); }
-        catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
-        finally { setBusy(false); }
+        let lastGen = 0;
+        try { lastGen = Number(localStorage.getItem("otto-lastgen") || 0); } catch { /* ignore */ }
+        if (t.length === 0 || Date.now() - lastGen > 4 * 60 * 1000) {
+          setBusy(true); setNote("");
+          try { setTasks(retry(await api.generate())); try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } }
+          catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
+          finally { setBusy(false); }
+        }
       }
     })();
   }, [connected, status?.aiReady]);
@@ -149,7 +207,8 @@ export function App() {
     for (const task of next) {
       inflight.current.add(task.id);
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "running" } : t)));
-      const timeout = new Promise<WebTask>((_, rej) => setTimeout(() => rej(new Error("timeout")), RUN_TIMEOUT_MS));
+      let timer: ReturnType<typeof setTimeout>;
+      const timeout = new Promise<WebTask>((_, rej) => { timer = setTimeout(() => rej(new Error("timeout")), RUN_TIMEOUT_MS); });
       Promise.race([api.run(task.id), timeout])
         .then((u) => { if (u && u.id) { attempts.current.delete(u.id); setTasks((prev) => prev.map((t) => (t.id === u.id ? u : t))); } })
         .catch(() => {
@@ -161,14 +220,15 @@ export function App() {
           setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "ready", autoRan: true } : t)));
           if (n < 3) setTimeout(() => setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, autoRan: false } : t))), 5000);
         })
-        .finally(() => { inflight.current.delete(task.id); });
+        .finally(() => { clearTimeout(timer); inflight.current.delete(task.id); });
     }
   }, [tasks, connected]);
 
   // Auto-generate fresh to-dos every 10 minutes while the app is open.
   useEffect(() => {
     if (!connected || !status?.aiReady) return;
-    const id = setInterval(() => { void api.generate().then(setTasks).catch(() => {}); }, 10 * 60 * 1000);
+    // Only re-scan while the tab is visible — no point burning a full generate pass on a backgrounded tab.
+    const id = setInterval(() => { if (!document.hidden) void api.generate().then(setTasks).catch(() => {}); }, 10 * 60 * 1000);
     return () => clearInterval(id);
   }, [connected, status?.aiReady]);
 
@@ -183,10 +243,21 @@ export function App() {
   // Signed in, the dashboard lives at /tasks. Redirect the bare "/" there (landing only shows signed-OUT).
   useEffect(() => { if (status?.loggedIn && route === "") navigate("tasks"); }, [status?.loggedIn, route]);
 
-  if (!status) return <div className="screen"><div className="spinner" /></div>;
+  if (!status) {
+    if (loadError) return (
+      <div className="screen crash">
+        <div className="crash-card">
+          <h1>Can't reach Otto</h1>
+          <p>The server isn't responding. Check your connection and try again.</p>
+          <button className="btn primary big" onClick={() => { setLoadError(false); setReloadKey((k) => k + 1); }}>Try again</button>
+        </div>
+      </div>
+    );
+    return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
+  }
   if (!status.loggedIn) {
     return route === "login" || route === "signup"
-      ? <LoginPage status={status} onDone={async () => { await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : "login"} />
+      ? <LoginPage status={status} onDone={async (isNew) => { if (isNew) startOnboard(); await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : "login"} />
       : <Landing />;
   }
 
@@ -198,15 +269,17 @@ export function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">Weave</div>
+        <div className="brand"><Logo size={20} /> Otto</div>
         <nav className="tabs">
           <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} href="/tasks">Tasks</a>
-          <a className={`tab ${route === "chat" ? "active" : ""}`} href="/chat">Chat</a>
           <a className={`tab ${route === "settings" ? "active" : ""}`} href="/settings">Settings</a>
         </nav>
         <div className="spacer" />
+        {extOn && <span className="ext-chip" title="Otto Tabs extension is connected — pages open automatically">⚡ Tabs connected</span>}
         {(route === "" || route === "tasks" || route.startsWith("task/")) && status.googleConnected && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? "Finding…" : "↻ Refresh"}</button>}
       </header>
+
+      {onboard && <Onboarding onStatus={loadStatus} onDone={finishOnboard} />}
 
       {route === "settings" ? (
         <SettingsPage status={status} onSignOut={signOut} onChanged={loadStatus} />
@@ -215,23 +288,33 @@ export function App() {
       ) : !status.googleConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
-        <main className="list-wrap">
+        <main className="list-wrap" key="dash">
           <div className="dash-head">
-            <h1 className="dash-greeting">{GREETING()}.</h1>
+            <h1 className="dash-greeting">{GREETING()}{(status.name || firstName(status.user)) ? <>, <span className="dash-name">{status.name || firstName(status.user)}</span></> : null}.</h1>
             <div className="dash-stats">
               <span><b>{live.length}</b> on your plate</span>
               {working ? <span className="dash-run"><b>{working}</b> running<span className="mini" /></span> : null}
               {handled ? <span><b>{handled}</b> handled</span> : null}
             </div>
           </div>
+          {!introSeen && (
+            <div className="intro">
+              <div className="intro-body">
+                <div className="intro-title">How Otto works</div>
+                <p>It reads your inbox, calendar &amp; Drive and quietly does what it safely can — drafting replies, prepping docs. You just review &amp; confirm. In a task: <b>⚡</b> Otto did it · <b>○</b> needs you · <b>✓</b> done.</p>
+              </div>
+              <button className="btn xs ghost" onClick={dismissIntro}>Got it</button>
+            </div>
+          )}
           <AddTask onAdded={setTasks} />
           {/* If a deep link points at a task that's already handled (not in the live list), surface it so the URL still resolves. */}
           {(() => {
             const shown = openId && !live.some((t) => t.id === openId)
               ? [...live, ...tasks.filter((t) => t.id === openId)]
               : live;
+            if (shown.length === 0 && busy) return <TaskSkeleton />;
             return shown.length === 0
-              ? <div className="empty">{busy ? "Looking through your inbox, calendar & Drive…" : (note || "You're all clear. New mail or meetings show up here.")}</div>
+              ? <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}. New mail or meetings show up here.`}</div>
               : <div className="list">{shown.map((t) => (
                   <Card
                     key={t.id}
@@ -250,12 +333,33 @@ export function App() {
   );
 }
 
+/** Loading placeholder while Otto scans the inbox/calendar — shimmer cards so the screen never sits empty. */
+function TaskSkeleton() {
+  const widths = ["68%", "54%", "61%"];
+  return (
+    <div className="list" aria-hidden="true">
+      {widths.map((w, i) => (
+        <div key={i} className="card skel">
+          <div className="card-main">
+            <span className="skel-box skel-pill" />
+            <div className="card-text">
+              <div className="skel-box skel-line" style={{ width: w }} />
+              <div className="skel-box skel-line sm" style={{ width: "36%" }} />
+            </div>
+          </div>
+        </div>
+      ))}
+      <div className="skel-note">Looking through your inbox, calendar &amp; Drive…</div>
+    </div>
+  );
+}
+
 /** A connect-Gmail call to action — shown on the dashboard until Gmail is linked (via Composio, in Settings). */
 function ConnectCard({ status }: { status: ConnectionStatus }) {
   return (
     <div className="connect-card">
-      <h2>Connect Gmail to begin</h2>
-      <p>Weave reads your inbox, calendar and Drive so it can do your to-dos. It only ever creates <b>drafts</b> and <b>docs</b> — never sends without you.</p>
+      <h2>{(status.name || firstName(status.user)) ? `Welcome, ${status.name || firstName(status.user)}` : "Welcome to Otto"}</h2>
+      <p>Connect Gmail to begin. Otto reads your inbox, calendar and Drive so it can do your to-dos — it only ever creates <b>drafts</b> and <b>docs</b>, and never sends without you.</p>
       {!status.googleConfigured && <div className="warn">Integrations aren't configured on the server (COMPOSIO_API_KEY).</div>}
       {!status.aiReady && <div className="warn">Server is missing ANTHROPIC_API_KEY — task generation is disabled.</div>}
       <a className="btn primary big" href="/settings">Connect in Settings</a>
@@ -264,7 +368,7 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
 }
 
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
- *  person-profile editor, and exactly what Weave will/won't do. */
+ *  person-profile editor, and exactly what Otto will/won't do. */
 function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void }) {
   return (
     <main className="settings-page">
@@ -278,18 +382,26 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
 
       <section className="settings-sec">
         <h3>Integrations</h3>
-        <p className="settings-hint">Connect the apps you live in — start with <b>Gmail</b> and <b>Google Calendar</b> (that's what your to-dos are built from). Weave can read them and do the reversible work (draft a reply, create a doc, add a task). It can <b>never send, post, publish, or delete</b> on its own — those stay your call.</p>
+        <p className="settings-hint">Connect the apps you live in — start with <b>Gmail</b> and <b>Google Calendar</b> (that's what your to-dos are built from). Otto can read them and do the reversible work (draft a reply, create a doc, add a task). It can <b>never send, post, publish, or delete</b> on its own — those stay your call.</p>
         <Integrations onChanged={onChanged} />
       </section>
 
       <section className="settings-sec">
-        <h3>Who Weave thinks you are</h3>
-        <p className="settings-hint">Weave fills this in as it works — and it shapes how it chooses and does your to-dos. Edit anything.</p>
+        <h3>Preferences</h3>
+        <label className="pref-row">
+          <input type="checkbox" defaultChecked={autoOpenDocsOn()} onChange={(e) => { try { localStorage.setItem("otto-autoopen-docs", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
+          <span className="pref-text"><b>Open created documents automatically</b><span className="settings-hint">When Otto makes a Doc, Sheet or Slides, open it in a tab so you can review it — needs the Otto Tabs extension, and it's capped so you're never flooded.</span></span>
+        </label>
+      </section>
+
+      <section className="settings-sec">
+        <h3>What Otto knows about you</h3>
+        <p className="settings-hint">Otto fills this in as it works — and it shapes how it chooses and does your to-dos. Edit anything.</p>
         <ProfileEditor />
       </section>
 
       <section className="settings-sec">
-        <h3>What Weave can do</h3>
+        <h3>What Otto can do</h3>
         <p className="settings-hint">Through your connected apps it can read your world and do the <b>reversible</b> work — draft replies, create docs/decks/sheets, add tasks, update issues. It can <b>never</b> do something irreversible on its own: no sending or forwarding email, no posting messages, no publishing, no deleting. Those always stay with you.</p>
       </section>
     </main>
@@ -309,6 +421,13 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
   useEffect(() => { void load(); }, [load]);
   // Returning from an OAuth redirect → refresh once shortly after mount so a just-connected app flips to ✓.
   useEffect(() => { const id = setTimeout(() => void load(), 1200); return () => clearTimeout(id); }, [load]);
+  // Connect opens OAuth in a NEW TAB — so when the user comes back to this tab, re-check what's now connected.
+  useEffect(() => {
+    const on = () => { if (!document.hidden) void load(); };
+    document.addEventListener("visibilitychange", on);
+    window.addEventListener("focus", on);
+    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); };
+  }, [load]);
 
   const disconnect = async (key: string) => {
     if (busy) return;
@@ -317,7 +436,7 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
   };
 
   if (items === null) return <div className="muted small">Loading integrations…</div>;
-  if (!ready) return <div className="warn">Integrations need <b>COMPOSIO_API_KEY</b> set on the server (it's in Weave's root <code>.env</code>). Restart the server after adding it.</div>;
+  if (!ready) return <div className="warn">Integrations need <b>COMPOSIO_API_KEY</b> set on the server (it's in Otto's root <code>.env</code>). Restart the server after adding it.</div>;
 
   const cats = [...new Set(items.map((i) => i.category))];
   const count = items.filter((i) => i.connected).length;
@@ -330,18 +449,104 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
           <div className="int-grid">
             {items.filter((i) => i.category === cat).map((i) => (
               <div key={i.key} className={`int-tile ${i.connected ? "on" : ""}`}>
+                <img className="int-logo" src={i.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                 <div className="int-info">
                   <div className="int-name">{i.name}{i.connected && <span className="int-dot" title="Connected" />}</div>
                   <div className="int-blurb">{i.blurb}</div>
                 </div>
                 {i.connected
                   ? <button className="btn xs ghost" disabled={busy === i.key} onClick={() => void disconnect(i.key)}>{busy === i.key ? "…" : "Disconnect"}</button>
-                  : <a className="btn xs" href={`/integrations/${i.key}/connect`}>Connect</a>}
+                  : <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>}
               </div>
             ))}
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** First-run ONBOARDING for a brand-new account — a 3-step welcome overlay that explains Otto and walks the
+ *  user through connecting their first apps (each connect opens in a new tab; we re-check on focus so a tile
+ *  flips to ✓ when they come back). Shown once after sign-up; "Skip"/finish clears the otto-onboard flag. */
+function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => void }) {
+  const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
+  const [items, setItems] = useState<IntegrationItem[] | null>(null);
+  const saveName = async () => {
+    const n = name.trim();
+    if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { /* non-blocking */ } }
+    setStep(1);
+  };
+  const load = useCallback(async () => { try { const r = await api.integrations(); setItems(r.items); onStatus(); } catch { setItems([]); } }, [onStatus]);
+  useEffect(() => { void load(); }, [load]);
+  // Connect opens OAuth in a new tab → refresh connection state when the user returns to this tab.
+  useEffect(() => {
+    const on = () => { if (!document.hidden) void load(); };
+    document.addEventListener("visibilitychange", on);
+    window.addEventListener("focus", on);
+    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); };
+  }, [load]);
+
+  const ESSENTIALS = ["gmail", "googlecalendar", "googledrive"];
+  const essentials = (items || [])
+    .filter((i) => ESSENTIALS.includes(i.key))
+    .sort((a, b) => ESSENTIALS.indexOf(a.key) - ESSENTIALS.indexOf(b.key));
+  const connectedCount = essentials.filter((i) => i.connected).length;
+
+  return (
+    <div className="onboard-overlay" role="dialog" aria-modal="true">
+      <div className="onboard-card">
+        <button className="onboard-skip" onClick={onDone} aria-label="Skip onboarding">Skip</button>
+        <div className="onboard-brand"><Logo size={22} /> <span>Otto</span></div>
+        {step === 0 && (
+          <div className="onboard-step">
+            <h2>Welcome to Otto</h2>
+            <p className="onboard-lead">Otto is a to-do list that does itself. It reads your inbox, calendar &amp; files, quietly does the reversible work — drafting replies, prepping docs, organizing tasks — and surfaces only what needs you.</p>
+            <ul className="onboard-points">
+              <li><b>⚡ Otto did it</b> — done for you, ready to review</li>
+              <li><b>○ Needs you</b> — a decision, a send, a payment</li>
+              <li><b>✓ Done</b> — checked off</li>
+            </ul>
+            <label className="field onboard-name"><span>What should Otto call you?</span>
+              <input className="addinput" placeholder="Your name" value={name} maxLength={60} autoFocus
+                onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
+            </label>
+            <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>Get started</button></div>
+          </div>
+        )}
+        {step === 1 && (
+          <div className="onboard-step">
+            <h2>Connect your apps</h2>
+            <p className="onboard-lead">Connect at least Gmail and Calendar so Otto has something to work with. Each opens in a new tab — finish the sign-in there, then come back.</p>
+            {items === null ? <div className="muted small">Loading…</div> : (
+              <div className="onboard-apps">
+                {essentials.map((i) => (
+                  <div key={i.key} className={`onboard-app ${i.connected ? "on" : ""}`}>
+                    <img className="int-logo" src={i.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                    <div className="onboard-app-name">{i.name}</div>
+                    {i.connected
+                      ? <span className="onboard-app-ok">✓ Connected</span>
+                      : <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="muted small">More apps (Slack, Notion, GitHub…) live in Settings whenever you want them.</p>
+            <div className="onboard-actions">
+              <button className="btn primary big" onClick={() => setStep(2)}>{connectedCount ? `Continue — ${connectedCount} connected` : "Skip for now"}</button>
+            </div>
+          </div>
+        )}
+        {step === 2 && (
+          <div className="onboard-step">
+            <h2>You're all set</h2>
+            <p className="onboard-lead">{connectedCount ? "Otto will start finding things it can do for you. Anything needing your call shows up as a task — review, then one click to send." : "Connect an app any time from Settings and Otto will get to work."}</p>
+            <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>Go to my tasks</button></div>
+          </div>
+        )}
+        <div className="onboard-dots">{[0, 1, 2].map((d) => <span key={d} className={d === step ? "on" : ""} />)}</div>
+      </div>
     </div>
   );
 }
@@ -373,7 +578,7 @@ function ChatPage() {
       <div className="chat-scroll">
         {msgs.length === 0 && (
           <div className="chat-empty">
-            <h2>Ask Weave anything.</h2>
+            <h2>Ask Otto anything.</h2>
             <p>It can search the web for current facts, and it knows your profile and what's on your plate. Try "what's new with my projects?" or "summarize the latest on X".</p>
           </div>
         )}
@@ -395,7 +600,7 @@ function ChatPage() {
       <div className="chat-input">
         <input
           className="addinput"
-          placeholder="Message Weave…"
+          placeholder="Message Otto…"
           value={text}
           disabled={busy}
           onChange={(e) => setText(e.target.value)}
@@ -409,7 +614,7 @@ function ChatPage() {
 }
 
 /** Dedicated login / sign-up PAGE (routes /login and /signup). Its own clean, centered card. */
-function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; onDone: () => void; initialMode: "login" | "signup" }) {
+function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; onDone: (isNew?: boolean) => void; initialMode: "login" | "signup" }) {
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
@@ -418,17 +623,22 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
   const submit = async () => {
     if (busy || !email.trim() || !pw) return;
     setBusy(true); setErr("");
-    const r = mode === "signup" ? await api.signup(email.trim(), pw) : await api.login(email.trim(), pw);
-    setBusy(false);
-    if (r.ok) onDone(); else setErr(r.error || "Something went wrong.");
+    try {
+      const r = mode === "signup" ? await api.signup(email.trim(), pw) : await api.login(email.trim(), pw);
+      if (r.ok) onDone(mode === "signup"); else setErr(r.error || "Something went wrong.");
+    } catch {
+      setErr("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div className="login-page">
-      <header className="landing-nav"><a className="brand" href="/">Weave</a></header>
+      <header className="landing-nav"><a className="brand" href="/"><Logo size={20} /> Otto</a></header>
       <main className="login-main">
         <div className="login-card">
           <h1 className="login-title">{mode === "signup" ? "Create your account" : "Welcome back"}</h1>
-          <p className="login-sub">{mode === "signup" ? "Two fields and you're in — connect Google next." : "Log in to pick up where Weave left off."}</p>
+          <p className="login-sub">{mode === "signup" ? "Two fields and you're in — connect Google next." : "Log in to pick up where Otto left off."}</p>
           {!status.cloud && <div className="warn">Accounts need Supabase configured on the server.</div>}
           <label className="field"><span>Email</span>
             <input className="addinput" type="email" autoComplete="email" placeholder="you@email.com" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
@@ -452,46 +662,91 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
 function Landing() {
   return (
     <div className="landing">
-      <header className="landing-nav"><span className="brand">Weave</span><a className="btn ghost" href="/login">Log in</a></header>
+      <header className="landing-nav">
+        <span className="brand"><Logo size={22} /> Otto</span>
+        <nav className="landing-navlinks">
+          <a className="btn ghost" href="/login">Log in</a>
+          <a className="btn primary" href="/signup">Get started</a>
+        </nav>
+      </header>
+
       <main className="hero">
+        <span className="hero-eyebrow">✦ Your day, quietly handled</span>
         <h1 className="hero-title">The to-do list that <em>does itself</em>.</h1>
-        <p className="hero-sub">Weave reads your inbox, calendar and Drive — then quietly does the work. It drafts the replies, preps the docs, and clears your list before you have to ask.</p>
+        <p className="hero-sub">Otto reads your inbox, calendar and Drive — then gets ahead of the work. It drafts the replies, preps the docs, and clears your list before you have to ask.</p>
         <div className="hero-cta">
           <a className="btn primary big" href="/signup">Get started — it's free</a>
           <a className="btn big" href="/login">Log in</a>
         </div>
-        <div className="fineprint">Only ever drafts &amp; docs — Weave never sends anything without you.</div>
+        <div className="fineprint">Only ever drafts &amp; docs — Otto never sends anything without you.</div>
+
+        {/* A faux dashboard, purely decorative — shows the product doing the work at a glance. */}
+        <div className="hero-demo" aria-hidden="true">
+          <div className="demo-win">
+            <div className="demo-bar"><span className="demo-dot" /><span className="demo-dot" /><span className="demo-dot" /><span className="demo-barlabel">Today · 2 cleared, 1 in progress</span></div>
+            <div className="demo-card p0 done">
+              <span className="demo-edge" />
+              <div className="demo-body"><div className="demo-title">Reply to Sarah about the Q3 budget</div><div className="demo-sub">Drafted a reply in your voice — review &amp; send</div></div>
+              <span className="demo-state ok">✓ Drafted</span>
+            </div>
+            <div className="demo-card p1 run">
+              <span className="demo-edge" />
+              <div className="demo-body"><div className="demo-title">Prep for the 2pm design review</div><div className="demo-sub">Pulling the thread + last week's doc…</div></div>
+              <span className="demo-state run">Working…</span>
+            </div>
+            <div className="demo-card p2">
+              <span className="demo-edge" />
+              <div className="demo-body"><div className="demo-title">Book the team offsite venue</div><div className="demo-sub">Found 3 options near the office ↗</div></div>
+              <span className="demo-state">Do now</span>
+            </div>
+          </div>
+        </div>
       </main>
 
       <section className="landing-sec">
         <h2>How it works</h2>
-        <p className="lead">Connect once. From then on Weave watches the things that actually need you and quietly gets ahead of them.</p>
+        <p className="lead">Connect once. From then on Otto watches the things that actually need you — and quietly gets ahead of them.</p>
         <div className="how">
           <div className="how-step"><div className="n">01</div><h3>It reads your world</h3><p>Inbox, calendar and Drive — pulling out the few things that genuinely need a reply, a decision, or prep.</p></div>
           <div className="how-step"><div className="n">02</div><h3>It does the work</h3><p>Drafts the reply in your voice, builds the doc, gathers the context — then shows you exactly what it did.</p></div>
-          <div className="how-step"><div className="n">03</div><h3>You just confirm</h3><p>Review the draft in the app and send with one tap. Anything only you can do is laid out as a short checklist.</p></div>
+          <div className="how-step"><div className="n">03</div><h3>You just confirm</h3><p>Open a draft, tweak it, send. Anything only you can do is laid out as a short, tickable checklist.</p></div>
         </div>
       </section>
 
       <section className="landing-sec">
         <h2>Built to be trusted</h2>
         <div className="features">
-          <div className="feature"><div><h3>Drafts, never sends</h3><p>Every email is a draft you read in the app. Nothing leaves without your explicit confirmation.</p></div></div>
-          <div className="feature"><div><h3>Learns who you are</h3><p>It remembers your people, projects and preferences, so its work sounds like you — and gets sharper over time.</p></div></div>
-          <div className="feature"><div><h3>Your account, your data</h3><p>Saved privately to your account. Read-only access to mail and Drive; it can create drafts and docs, nothing more.</p></div></div>
-          <div className="feature"><div><h3>Clears itself</h3><p>Reversible work happens automatically in the background. You open the app to a list that's already half-done.</p></div></div>
+          <div className="feature"><div><h3>Drafts, never sends</h3><p>Every email is a draft you review. Nothing leaves your account without your explicit OK.</p></div></div>
+          <div className="feature"><div><h3>Learns who you are</h3><p>It remembers your people, projects and preferences, so its work sounds like you — and sharpens over time.</p></div></div>
+          <div className="feature"><div><h3>Your account, your data</h3><p>Saved privately to your account. It reads your apps and creates drafts &amp; docs — nothing destructive.</p></div></div>
+          <div className="feature"><div><h3>Clears itself</h3><p>Reversible work happens in the background. You open the app to a list that's already half-done.</p></div></div>
         </div>
       </section>
 
-      <div className="landing-foot">Weave — the to-do list that does itself.</div>
+      <section className="cta-band">
+        <h2>Stop managing your to-do list.</h2>
+        <p>Let Otto read your world and clear what it can — you just confirm the rest.</p>
+        <a className="btn big cta-band-btn" href="/signup">Get started — it's free</a>
+      </section>
+
+      <div className="landing-foot">Otto — the to-do list that does itself.</div>
     </div>
   );
 }
 
-const SOURCE: Record<string, string> = { gmail: "✉ Gmail", calendar: "📅 Calendar", manual: "✎ You" };
+const SOURCE: Record<string, string> = {
+  gmail: "✉ Gmail", calendar: "📅 Calendar", googlecalendar: "📅 Calendar", manual: "✎ You",
+  slack: "💬 Slack", discord: "💬 Discord", twitter: "𝕏", linkedin: "LinkedIn",
+  github: "GitHub", linear: "Linear", jira: "Jira", notion: "Notion",
+  todoist: "Todoist", asana: "Asana", trello: "Trello", clickup: "ClickUp",
+  perplexity: "Perplexity", calendly: "Calendly", hubspot: "HubSpot", airtable: "Airtable",
+  googledocs: "Docs", googledrive: "Drive", googlesheets: "Sheets", googleslides: "Slides",
+};
+/** A friendly label for a task's source app — known apps get an emoji/name, anything else is Title-cased. */
+const sourceLabel = (s: string) => SOURCE[s] || (s ? s[0].toUpperCase() + s.slice(1) : "Task");
 
 /** The person-profile editor (lives in the Settings page): about + preferences + people + projects.
- *  Weave fills it in as it works; it's injected into how tasks are chosen + done. Always expanded here. */
+ *  Otto fills it in as it works; it's injected into how tasks are chosen + done. Always expanded here. */
 function ProfileEditor() {
   const [p, setP] = useState<Profile | null>(null);
   useEffect(() => { void api.profile().then(setP).catch(() => setP(null)); }, []);
@@ -516,7 +771,15 @@ function ProfileEditor() {
           <AddRow placeholder={`Add a ${l.label.toLowerCase().replace(/s$/, "")}…`} onAdd={async (v) => setP(await api.setProfile(l.key, v))} />
         </div>
       ))}
-      {count === 0 && <div className="muted small">Empty for now — Weave fills this in as it works, or add things here.</div>}
+      {count === 0
+        ? <div className="muted small">Empty for now — Otto fills this in as it works, or add things here.</div>
+        : <div className="forget-row">
+            <button
+              className="btn xs forget"
+              onClick={async () => { if (window.confirm("Forget everything Otto has learned about you? This clears your About, preferences, people and projects, and can't be undone.")) setP(await api.clearProfile()); }}
+            >Forget everything</button>
+            <span className="muted small">Wipes Otto's memory — it starts from zero and learns you again as it works.</span>
+          </div>}
     </div>
   );
 }
@@ -559,7 +822,7 @@ function AddTask({ onAdded }: { onAdded: (t: WebTask[]) => void }) {
     <div className="addrow">
       <input
         className="addinput"
-        placeholder="Add a to-do… Weave will do what it can"
+        placeholder="Add a to-do… Otto will do what it can"
         value={text}
         disabled={busy}
         onChange={(e) => setText(e.target.value)}
@@ -575,11 +838,33 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const [stepBusy, setStepBusy] = useState<number | null>(null);
   const [failed, setFailed] = useState<number[]>([]); // steps whose auto-do errored — don't auto-retry
   const [decided, setDecided] = useState<Record<number, string>>({}); // what the user typed for a manual step
+  const [showContext, setShowContext] = useState(false); // Context is hidden by default — shown only on demand
+  const [sending, setSending] = useState<number | null>(null); // which sendable is being sent
+  const [viewDraft, setViewDraft] = useState<number | null>(null); // which sendable's draft is expanded for review
+  const [confirmIdx, setConfirmIdx] = useState<number | null>(null); // which sendable is awaiting send confirmation
+  const [changeIdx, setChangeIdx] = useState<number | null>(null);   // which sendable's "what to change" box is open
+  const [changeText, setChangeText] = useState("");
+  const [revising, setRevising] = useState(false);
   const p = prio(task);
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
   // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
   const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
   const run = async () => { setRunning(true); try { onTask(await api.run(task.id)); } finally { setRunning(false); } };
+  // Confirmed send (user clicked through the inline confirm) — the ONLY thing that actually sends.
+  const doSend = async (i: number) => {
+    if (sending != null) return; // guard against a double-send race
+    setConfirmIdx(null); setSending(i);
+    try { onTask(await api.sendDraft(task.id, i)); } catch { /* retried by api */ } finally { setSending(null); }
+  };
+  // The user declined and said what to change → re-run the task with that note so Otto revises the draft.
+  const doRevise = async () => {
+    const note = changeText.trim();
+    if (!note || revising) return;
+    setRevising(true);
+    // The re-draft replaces the sendables list, so clear any open draft preview (its index may now be stale).
+    try { onTask(await api.revise(task.id, note)); setChangeIdx(null); setChangeText(""); setViewDraft(null); }
+    catch { /* surfaced via task state */ } finally { setRevising(false); }
+  };
 
   const steps = task.steps || [];
   const blocked = (s: TaskStep) => s.dependsOn != null && !steps[s.dependsOn]?.done;
@@ -617,6 +902,21 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
     if (i >= 0) void doStep(i);
   }, [task, stepBusy, failed]);
 
+  // Auto-open documents Otto created (Doc/Sheet/Slides) once the task is done — capped per task + per
+  // session, once per URL, and only with the extension (so it isn't popup-blocked). Off if the user toggled it.
+  useEffect(() => {
+    if (task.status !== "executed" || !autoOpenDocsOn() || !extPresent()) return;
+    const room = SESSION_DOC_CAP - sessionDocsOpened;
+    if (room <= 0) return;
+    // Only docs we've NEVER auto-opened (persisted across reloads) — so the same tabs never reopen.
+    const docs = (task.links || []).map((l) => l.url).filter((u) => DOC_RE.test(u) && !openedDocs.has(u));
+    const toOpen = docs.slice(0, Math.min(room, PER_TASK_DOC_CAP));
+    if (!toOpen.length) return;
+    markDocsOpened(toOpen);
+    sessionDocsOpened += toOpen.length;
+    openTabs(toOpen, TAB_GROUP);
+  }, [task.status, task.links]);
+
   // Bring a deep-linked card into view when it opens (e.g. landing on #/task/<id> directly).
   const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (open) cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [open]);
@@ -629,47 +929,125 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
           <div className="card-title">{task.title}{task.status === "executed" && <span className="tick">✓</span>}</div>
           <div className="card-sub">{task.when && <span className="when">{task.when}</span>}{subtitle(task)}</div>
         </div>
+        {task.status === "running" ? <span className="card-spin" title="Working…" />
+          : task.status === "executed" && (task.steps?.length ?? 0) > 0
+            ? <span className="card-prog" title="Steps done">{(task.steps || []).filter((s) => s.done).length}/{task.steps!.length}</span>
+            : null}
         <span className="caret">{open ? "▾" : "▸"}</span>
       </div>
 
       {open && (
         <div className="detail">
           <section>
-            <h4>Context <span className="src">{SOURCE[task.source] || task.source}</span></h4>
-            <Bullets text={task.context || task.why} />
-            {task.evidence?.length ? (
-              <ul className="links src-links">{task.evidence.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
-            ) : null}
-          </section>
-          <section>
-            <h4>What I've done</h4>
-            {task.synthesis ? <Bullets text={task.synthesis} /> : <p className="muted">{task.status === "running" ? "Working on it now…" : "Runs automatically — nothing yet."}</p>}
+            <h4>What Otto did</h4>
+            {task.synthesis
+              ? <Bullets text={task.synthesis} />
+              : <p className="muted">{task.status === "running" ? "Working on it now…" : task.status === "executed" ? "Nothing to report." : "Hasn't run yet."}</p>}
             {task.links?.length ? (
-              <ul className="links">{task.links.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
+              <ul className="links artifacts">{task.links.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
+            ) : null}
+            {/* The agent drafted it — review it right here, then fire it (with a confirm). The only time anything sends. */}
+            {task.sendables?.length ? (
+              <div className="sendables">
+                {task.sendables.map((s, i) => {
+                  // Who this goes to — ALWAYS shown before the user sends (a calendar invite lists every attendee).
+                  const recipients = s.app === "gcal" ? (s.attendees || []).join(", ") : (s.to || s.channel || "");
+                  const noun = s.app === "gcal" ? "calendar invite" : s.app === "slack" ? "Slack message" : "email";
+                  const sendIcon = s.app === "gcal" ? "📅" : "✉";
+                  return (
+                  <div key={i} className="sendable">
+                    {/* The recipient is on the face of the card, not hidden behind a click — you see who before you send. */}
+                    {recipients ? (
+                      <div className="sendable-to">
+                        <span className="sendable-to-label">{s.app === "gcal" ? "Invites" : "To"}</span>
+                        <span className="sendable-to-who">{recipients}</span>
+                      </div>
+                    ) : null}
+                    <div className="sendable-row">
+                      <button className="btn xs ghost" onClick={() => setViewDraft((v) => (v === i ? null : i))}>{viewDraft === i ? "Hide details" : s.app === "gcal" ? "View event" : "View draft"}</button>
+                      {s.sent
+                        ? <button className="btn primary send-btn sent" disabled>✓ Sent</button>
+                        : sending === i
+                          ? <button className="btn primary send-btn" disabled>Sending…</button>
+                          : <button className="btn primary send-btn" onClick={() => { setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{`${sendIcon} ${s.label}`}</button>}
+                    </div>
+                    {/* Confirm step — the recipient is spelled out in full before anything sends. */}
+                    {confirmIdx === i && !s.sent && sending !== i ? (
+                      <div className="confirm">
+                        <div className="confirm-q">Send this {noun} to <b>{recipients || "the recipient"}</b>?</div>
+                        <div className="confirm-acts">
+                          <button className="btn primary xs" onClick={() => void doSend(i)}>Yes, send</button>
+                          <button className="btn xs" onClick={() => { setConfirmIdx(null); setChangeText(""); setChangeIdx(i); }}>No — change something</button>
+                          <button className="btn xs ghost" onClick={() => setConfirmIdx(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {/* Declined → say what to change; Otto re-drafts (updates the existing draft) and re-offers it. */}
+                    {changeIdx === i && !s.sent ? (
+                      <div className="confirm">
+                        <div className="confirm-q">What should change before sending?</div>
+                        <div className="change-row">
+                          <input className="addinput sm" autoFocus disabled={revising}
+                            placeholder="e.g. add my flight times, make it shorter, fix the date"
+                            value={changeText} onChange={(e) => setChangeText(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") void doRevise(); }} />
+                          <button className="btn primary xs" disabled={revising || !changeText.trim()} onClick={() => void doRevise()}>{revising ? "Revising…" : "Revise"}</button>
+                          <button className="btn xs ghost" disabled={revising} onClick={() => { setChangeIdx(null); setChangeText(""); }}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {viewDraft === i ? (
+                      <div className="draft">
+                        {s.app === "gcal" ? (
+                          <>
+                            {s.summary ? <div className="draft-row"><span className="draft-label">Event</span><span>{s.summary}</span></div> : null}
+                            {s.when ? <div className="draft-row"><span className="draft-label">When</span><span>{s.when}</span></div> : null}
+                            {recipients ? <div className="draft-row"><span className="draft-label">Invites</span><span>{recipients}</span></div> : null}
+                          </>
+                        ) : (
+                          <>
+                            {(s.to || s.channel) ? <div className="draft-row"><span className="draft-label">To</span><span>{s.to || s.channel}</span></div> : null}
+                            {s.subject ? <div className="draft-row"><span className="draft-label">Subject</span><span>{s.subject}</span></div> : null}
+                            <pre className="draft-body">{s.body || s.text || "Draft is ready in Gmail — open it there to read the full text."}</pre>
+                          </>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                  );
+                })}
+              </div>
             ) : null}
           </section>
+          {steps.length > 0 && (
           <section>
-            <h4>Steps {openableCount >= 2 && <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>Open all {openableCount} pages ↗</button>}</h4>
-            {steps.length ? (
+            <h4>What's left{openableCount >= 2 && <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>Open all {openableCount} ↗</button>}</h4>
               <ul className="steps">
                 {steps.map((s, i) => {
                   const blk = blocked(s);
                   const busyHere = stepBusy === i;
+                  const gatesAnother = steps.some((o, j) => j !== i && o.dependsOn === i); // does a later step wait on this one?
                   return (
                     <li key={i} className={`step ${s.done ? "done" : ""} ${blk ? "blocked" : ""}`}>
-                      <span className={`step-mark ${busyHere ? "busy" : ""}`} title={s.done ? "Done" : busyHere ? "Weave is doing this…" : s.automatable ? "Weave can do this" : "Needs you"}>
+                      {/* The mark IS the control for a needs-you step: click ○ to tick it done (no separate button). */}
+                      <button
+                        type="button"
+                        className={`step-mark ${busyHere ? "busy" : ""} ${!s.done && !s.automatable && !blk ? "tickable" : ""}`}
+                        title={s.done ? "Done — click to undo" : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? "Otto does this automatically" : "Click to mark done"}
+                        disabled={busyHere || s.automatable || blk}
+                        onClick={() => { if (s.automatable || blk) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
+                      >
                         {s.done ? "✓" : s.automatable ? "⚡" : "○"}
-                      </span>
+                      </button>
                       <div className="step-body">
                         <span className="step-text">{s.text}</span>
-                        {s.done && s.result ? <span className="step-result">{s.result}</span> : null}
+                        {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                         {!s.done && blk ? <span className="step-dep">waits for step {(s.dependsOn ?? 0) + 1}</span> : null}
-                        {/* Needs-you step: type what you decided (optional). Saved as the step's result,
-                            and fed to any dependent step Weave auto-runs next. */}
-                        {!s.done && !blk && !s.automatable ? (
+                        {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. */}
+                        {gatesAnother && !s.done && !blk && !s.automatable ? (
                           <input
                             className="step-input"
-                            placeholder="What did you decide? (optional)"
+                            placeholder="What did you decide? (feeds the next step)"
                             value={decided[i] || ""}
                             onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
                             onKeyDown={(e) => { if (e.key === "Enter") void markStepDone(i); }}
@@ -677,37 +1055,43 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         ) : null}
                       </div>
                       <div className="step-act">
-                        {s.done ? null
-                          : busyHere ? <span className="muted small">Working…</span>
-                          : blk ? null
-                          : s.automatable
-                            ? <button className="btn xs" onClick={() => void doStep(i)}>{s.url ? "Open ↗" : "Auto-do"}</button>
-                            : <>
-                                {s.url ? <button className="btn xs ghost" onClick={() => void doStep(i)}>Open ↗</button> : null}
-                                <button className="btn xs" onClick={() => void markStepDone(i)}>Done</button>
-                              </>}
+                        {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
+                            stays reachable from the task. Done/blocked: just reopen the tab; otherwise open + mark done. */}
+                        {busyHere ? <span className="muted small">Working…</span>
+                          : s.url ? <button className="btn xs ghost" onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open ↗</button>
+                          : s.done || blk ? null
+                          : s.automatable ? <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>
+                          : null}
                       </div>
                     </li>
                   );
                 })}
               </ul>
-            ) : <p className="muted">{task.status === "executed" ? "Nothing left — just confirm." : "Steps appear once it runs."}</p>}
           </section>
+          )}
+          <button className="ctx-toggle" onClick={() => setShowContext((v) => !v)}>{showContext ? "Hide context ▾" : "Show context ▸"}</button>
+          {showContext && (
+            <section className="ctx">
+              <div className="ctx-src">{sourceLabel(task.source)}</div>
+              <Bullets text={task.context || task.why} />
+              {task.evidence?.length ? (
+                <ul className="links src-links">{task.evidence.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
+              ) : null}
+            </section>
+          )}
           <div className="actions">
             {task.status === "executed" ? (
               <>
-                <div className="actions-hint">
-                  ⚡ steps run themselves; ○ steps need you. Anything irreversible (sending, posting) is yours to do — Weave never does it on its own. Confirm when it's all handled.
+                <button className="btn primary" title="Looks good — mark this handled" onClick={() => void act(() => api.confirm(task.id))}>Looks good</button>
+                <div className="actions-rest">
+                  <button className="btn xs ghost" disabled={running} title="Have Otto do it over" onClick={() => void run()}>{running ? "Working…" : "↻ Redo"}</button>
+                  <button className="btn xs ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button>
                 </div>
-                <button className="btn primary" title="Looks good — mark this handled" onClick={() => void act(() => api.confirm(task.id))}>Confirm</button>
-                <button className="btn" disabled={running} title="Have Weave do it over" onClick={() => void run()}>{running ? "Working…" : "↻ Run again"}</button>
-                <button className="btn ghost" title="Not right — clear it and re-surface" onClick={() => void act(() => api.reject(task.id))}>Reject</button>
-                <button className="btn ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button>
               </>
             ) : (
               <>
                 <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Do it now"}</button>
-                <button className="btn ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button>
+                <div className="actions-rest"><button className="btn xs ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button></div>
               </>
             )}
           </div>

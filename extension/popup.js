@@ -1,17 +1,7 @@
-const input = document.getElementById("url");
-const status = document.getElementById("status");
-const go = document.getElementById("go");
+const statusEl = document.getElementById("status");
 
-function open() {
-  let u = input.value.trim();
-  if (!u) return;
-  if (!/^https?:\/\//i.test(u)) u = "https://" + u;
-  chrome.runtime.sendMessage({ type: "open-tab", url: u, group: "Weave" });
-  status.textContent = "Opened in the Weave group ↗";
-  input.value = "";
-  input.focus();
-}
-
-go.addEventListener("click", open);
-input.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
-input.focus();
+// "Connected" = the extension is installed and active (you're seeing this popup). If an Otto tab is open, say so.
+chrome.tabs.query({ url: ["http://localhost:5273/*", "http://127.0.0.1:5273/*"] }, (tabs) => {
+  if (chrome.runtime.lastError) return;
+  if (tabs && tabs.length) statusEl.textContent = "Connected to Otto";
+});

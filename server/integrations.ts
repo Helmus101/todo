@@ -26,7 +26,6 @@ export const CATALOG: Integration[] = [
   // Communication
   { key: "slack",      name: "Slack",       toolkit: "SLACK",        category: "Communication",   blurb: "Read channels & DMs; draft messages." },
   { key: "discord",    name: "Discord",     toolkit: "DISCORD",      category: "Communication",   blurb: "Read servers & channels." },
-  { key: "twitter",    name: "X / Twitter", toolkit: "TWITTER",      category: "Communication",   blurb: "Read mentions; draft posts." },
   { key: "linkedin",   name: "LinkedIn",    toolkit: "LINKEDIN",     category: "Communication",   blurb: "Read your feed; draft posts." },
   // Code & projects
   { key: "github",     name: "GitHub",      toolkit: "GITHUB",       category: "Code & projects", blurb: "Issues, PRs, notifications." },
@@ -39,7 +38,6 @@ export const CATALOG: Integration[] = [
   { key: "clickup",    name: "ClickUp",     toolkit: "CLICKUP",      category: "Tasks",           blurb: "Tasks, docs & goals." },
   // Knowledge & notes
   { key: "notion",     name: "Notion",      toolkit: "NOTION",       category: "Knowledge",       blurb: "Pages & databases." },
-  { key: "perplexity", name: "Perplexity",  toolkit: "PERPLEXITYAI", category: "Knowledge",       blurb: "Live web research." },
   // Scheduling, CRM & data
   { key: "calendly",   name: "Calendly",    toolkit: "CALENDLY",     category: "Scheduling & CRM", blurb: "Scheduled events & invitees." },
   { key: "hubspot",    name: "HubSpot",     toolkit: "HUBSPOT",      category: "Scheduling & CRM", blurb: "Contacts, deals & notes." },
@@ -48,6 +46,10 @@ export const CATALOG: Integration[] = [
 
 const TOOLKIT_OF = (app: string) => CATALOG.find((c) => c.key === app.toLowerCase())?.toolkit ?? app.toUpperCase();
 const norm = (s: string) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+/** Real brand logo for a toolkit — served straight from Composio's logo CDN (SVG). Used by the Settings grid
+ *  so each app shows its actual logo (not a hand-drawn icon). Verified to resolve for every catalog slug. */
+export const logoFor = (toolkit: string) => `https://logos.composio.dev/api/${String(toolkit).toLowerCase()}`;
 
 export function integrationsReady(): boolean { return !!process.env.COMPOSIO_API_KEY; }
 
@@ -59,7 +61,7 @@ export function integrationsReady(): boolean { return !!process.env.COMPOSIO_API
 function isGatedAction(rawName: string): boolean {
   const n = rawName.toUpperCase();
   if (/DRAFT/.test(n) && !/(SEND|DELETE|TRASH)/.test(n)) return false; // creating/updating a draft is safe
-  return /(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|DELETE|REMOVE|TRASH|ARCHIVE|CREATE_POST|CREATE_TWEET|_POST_|_POST$|SHARE|INVITE)/.test(n);
+  return /(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|DELETE|REMOVE|TRASH|ARCHIVE|CREATE_POST|CREATE_TWEET|CREATE_MESSAGE|SCHEDULE_MESSAGE|CREATE_DM|_POST_|_POST$|SHARE|INVITE)/.test(n);
 }
 
 let _client: Composio | null = null;
@@ -73,19 +75,33 @@ const isActive = (i: any) => ["ACTIVE", "CONNECTED", "ENABLED"].includes(String(
 const acctToolkit = (i: any) => norm(i?.toolkit?.slug ?? i?.toolkit?.name ?? i?.toolkit ?? i?.appName ?? i?.app?.name ?? i?.app ?? i?.appUniqueId ?? i?.toolkitSlug ?? "");
 const acctId = (i: any) => String(i?.id ?? i?.connectedAccountId ?? i?.nanoId ?? "");
 
-/** Resolve (or lazily create) the managed-OAuth auth config for a toolkit. */
+/**
+ * Resolve (or lazily create) the ONE managed-OAuth auth config for a toolkit — i.e. one unique connect link
+ * per app. An in-flight lock makes concurrent calls (rapid repeat Connect clicks) share a single resolution,
+ * so they can't each "find none, create one" and spawn DUPLICATES (the "todoist (3)" problem). A client-side
+ * toolkit filter guards against the list API returning anything off-toolkit.
+ */
+const authConfigInFlight = new Map<string, Promise<string>>();
 async function resolveAuthConfigId(toolkit: string): Promise<string> {
-  const s = sdk();
-  const list: any = await s.authConfigs.list({ toolkit });
-  const configs: any[] = list?.items ?? (Array.isArray(list) ? list : []);
-  if (configs.length) {
-    const id = String(configs[0].id ?? configs[0].authConfigId ?? "").trim();
-    if (id && id !== "undefined") return id;
-  }
-  const created: any = await s.authConfigs.create(toolkit, { type: "use_composio_managed_auth" } as any);
-  const id = String(created?.id ?? created?.authConfigId ?? "").trim();
-  if (!id || id === "undefined") throw new Error(`Could not create auth config for ${toolkit}.`);
-  return id;
+  const key = toolkit.toUpperCase();
+  const pending = authConfigInFlight.get(key);
+  if (pending) return pending;
+  const p = (async () => {
+    const s = sdk();
+    const list: any = await s.authConfigs.list({ toolkit: key } as any);
+    const configs: any[] = (list?.items ?? (Array.isArray(list) ? list : []))
+      .filter((c: any) => norm(c?.toolkit?.slug ?? c?.toolkit?.name ?? c?.toolkit ?? "") === norm(toolkit));
+    if (configs.length) {
+      const id = String(configs[0].id ?? configs[0].authConfigId ?? "").trim();
+      if (id && id !== "undefined") return id;
+    }
+    const created: any = await s.authConfigs.create(key, { type: "use_composio_managed_auth" } as any);
+    const id = String(created?.id ?? created?.authConfigId ?? "").trim();
+    if (!id || id === "undefined") throw new Error(`Could not create auth config for ${toolkit}.`);
+    return id;
+  })();
+  authConfigInFlight.set(key, p);
+  try { return await p; } finally { authConfigInFlight.delete(key); }
 }
 
 /** Start an OAuth connection → returns the URL to send the user to + the connection id (a match hint). */
@@ -101,7 +117,7 @@ export async function initiateConnection(app: string, userId: string, callbackUr
 /** Connected/not for every app in one sweep (matches by toolkit, or by the captured connectionId hint). */
 export async function getAllConnectionStatuses(userId: string, apps: string[], connIdByApp: Record<string, string> = {}): Promise<Record<string, boolean>> {
   try {
-    const list: any = await sdk().connectedAccounts.list({ userIds: [userId] } as any);
+    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
     const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
     const toolkits = new Set(items.map(acctToolkit));
     const ids = new Set(items.map(acctId));
@@ -117,7 +133,7 @@ export async function getAllConnectionStatuses(userId: string, apps: string[], c
 /** Disconnect an app by deleting its active connected account. */
 export async function disconnect(app: string, userId: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    const list: any = await sdk().connectedAccounts.list({ userIds: [userId] } as any);
+    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
     const items: any[] = list?.items ?? (Array.isArray(list) ? list : []);
     const account = items.find((i) => isActive(i) && acctToolkit(i) === norm(TOOLKIT_OF(app)));
     if (!account) return { ok: true };
@@ -134,7 +150,7 @@ export async function disconnect(app: string, userId: string): Promise<{ ok: boo
 /** Lowercase toolkit slugs the user has ACTIVELY connected (any Composio app, not just our catalog). */
 async function listConnectedToolkits(userId: string): Promise<string[]> {
   try {
-    const list: any = await sdk().connectedAccounts.list({ userIds: [userId] } as any);
+    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
     const items: any[] = list?.items ?? (Array.isArray(list) ? list : []);
     const slugs = new Set<string>();
     for (const i of items) {
@@ -155,6 +171,25 @@ async function execute(action: string, userId: string, args: Record<string, unkn
   return JSON.stringify(result ?? {}, null, 2).slice(0, 4000);
 }
 
+/** Fire a USER-CONFIRMED one-click send (a reviewed Gmail draft / a composed Slack message). This is the ONLY
+ *  place an irreversible send happens — always from an explicit user click, NEVER the agent (the agent's gated
+ *  toolset can't reach these). Server hardcodes the send action; the agent only ever supplies the data. */
+export async function sendSendable(userId: string, s: { app: string; draftId?: string; channel?: string; text?: string; eventId?: string; attendees?: string[] }): Promise<{ ok: boolean; error?: string }> {
+  if (!integrationsReady() || !userId) return { ok: false, error: "Integrations not configured." };
+  let action = "", args: Record<string, unknown> = {};
+  if (s.app === "gmail" && s.draftId) { action = "GMAIL_SEND_DRAFT"; args = { draft_id: s.draftId }; }
+  else if (s.app === "slack" && s.channel) { action = "SLACK_CHAT_POST_MESSAGE"; args = { channel: s.channel, ...(s.text ? { text: s.text } : {}) }; }
+  // Calendar invite: the agent created the event SILENTLY (send_updates="none" in call()); the user-confirmed
+  // click is the ONLY thing that emails the attendees. Patch the event with send_updates="all" so they're invited.
+  else if (s.app === "gcal" && s.eventId && s.attendees?.length) { action = "GOOGLECALENDAR_PATCH_EVENT"; args = { event_id: s.eventId, attendees: s.attendees, send_updates: "all" }; }
+  else return { ok: false, error: "Nothing to send." };
+  try {
+    const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+    if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Send failed.") };
+    return { ok: true };
+  } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
+}
+
 export interface AgentTools { tools: Anthropic.Tool[]; call: (name: string, args: Record<string, unknown>) => Promise<string | null>; connected: string[]; }
 const EMPTY: AgentTools = { tools: [], call: async () => null, connected: [] };
 
@@ -163,6 +198,21 @@ const EMPTY: AgentTools = { tools: [], call: async () => null, connected: [] };
 const cache = new Map<string, { at: number; data: AgentTools }>();
 const CACHE_MS = 120_000;
 const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+
+// Rank a toolkit's actions by usefulness to an assistant, so the per-toolkit cap keeps the RIGHT ones
+// (read/create/update on the core nouns) rather than the alphabetically-first plumbing (ACL, channels,
+// calendar-list management). Composio returns actions roughly alphabetically, so without this Calendar
+// got ACL_*/CHANNELS_*/CREATE_CALENDAR and NO event read/update — the "only CREATE event" bug.
+function relevance(n: string): number {
+  let s = 0;
+  if (/(EVENT|MESSAGE|EMAIL|THREAD|DRAFT|FILE|DOCUMENT|FOLDER|SHEET|SPREADSHEET|ROW|CELL|SLIDE|PRESENTATION|ISSUE|PULL|COMMENT|TASK|REPO|CONTACT|PEOPLE|FREE.?SLOT|FREEBUSY)/.test(n)) s += 3;
+  if (/(FIND|SEARCH|LIST|GET|FETCH|READ|CREATE|UPDATE|PATCH|ADD|INSERT|MODIFY|APPEND|MOVE|COPY)/.test(n)) s += 2;
+  if (/(ACL|CHANNEL|WATCH|STOP|QUOTA|SETTING|COLOR|DUPLICATE|PERMISSION|SCOPE|SUBSCRIPTION|WEBHOOK|CALENDAR_LIST|CALENDARS_|CREATE_CALENDAR)/.test(n)) s -= 4;
+  return s;
+}
+// Is this action a pure READ (gather context) vs a write? Used to guarantee BOTH kinds survive the per-toolkit cap.
+const isRead = (n: string) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|FREE_BUSY|INSTANCES)/.test(n)
+  && !/(CREATE|UPDATE|INSERT|APPEND|ADD|PATCH|MODIFY|DELETE|REMOVE|WRITE|REPLACE|COPY|MOVE|BATCH_UPDATE|BATCH_MODIFY|SET_)/.test(n);
 
 /**
  * Composio tools for the apps the user connected, in Anthropic tool shape — READ + reversible WRITES, so
@@ -181,30 +231,62 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
 
   const tools: Anthropic.Tool[] = [];
   const map = new Map<string, string>(); // sanitized tool name → raw Composio action slug
-  const MAX = 64; // keep the prompt sane across many toolkits
-  for (const app of connected) {
+  const MAX = 200;         // overall ceiling — generous so even if EVERY catalog app is connected each still gets
+                           // a usable share (22 apps × ~9 = ~198). Well above the old 64. A safety cap only.
+  // Per-app share ADAPTS to how many apps are connected so EVERY one is represented, never starved: few apps
+  // → up to 20 tools each; many apps → as low as 8 (still enough for core read+write). This is what lets you
+  // actually USE each connected integration, not just the first few a flat cap happened to reach.
+  const perToolkit = Math.min(20, Math.max(8, Math.floor(MAX / connected.length)));
+  // Task-critical apps first (the to-do list is built from Gmail + Calendar), so they ALWAYS get their share
+  // before a big toolkit can crowd them out; anything else keeps its connected order behind these.
+  const PRIORITY = ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "googleslides", "slack", "notion", "linear", "todoist"];
+  const rank = (a: string) => { const i = PRIORITY.indexOf(a); return i === -1 ? PRIORITY.length : i; };
+  const ordered = [...connected].sort((a, b) => rank(a) - rank(b));
+  for (const app of ordered) {
     if (tools.length >= MAX) break;
     let raw: any[] = [];
-    try { raw = await sdk().tools.get(userId, { toolkits: [app.toUpperCase()] } as any) as any[]; } catch { raw = []; }
-    for (const t of (Array.isArray(raw) ? raw : [])) {
-      if (tools.length >= MAX) break;
-      const fn = (t as any)?.function ?? t;
-      const rawName = String(fn?.name ?? (t as any)?.name ?? (t as any)?.slug ?? "").trim();
-      if (!rawName || isGatedAction(rawName)) continue; // no irreversible sends/deletes for the agent
+    // limit: pull the FULL action set, not Composio's small write-heavy default (~20) — otherwise big
+    // toolkits like GitHub never surface their read actions (list issues/PRs/repos), and Calendar never
+    // surfaces UPDATE_EVENT. We rank + cap below, so fetching extra is cheap (cached 120s).
+    try { raw = await sdk().tools.get(userId, { toolkits: [app.toUpperCase()], limit: 300 } as any) as any[]; } catch { raw = []; }
+    // Rank by usefulness, THEN take the top perToolkit — so the slots go to read/create/update on the core
+    // nouns (events, messages, files) instead of whatever sorts first alphabetically.
+    const ranked = (Array.isArray(raw) ? raw : [])
+      .map((t) => ({ t, rawName: String(((t as any)?.function ?? t)?.name ?? (t as any)?.name ?? (t as any)?.slug ?? "").trim() }))
+      .filter((x) => x.rawName && !isGatedAction(x.rawName)) // no irreversible sends/deletes for the agent
+      .sort((a, b) => relevance(b.rawName) - relevance(a.rawName));
+    // Guarantee BOTH read and write coverage: on a relevance tie a big toolkit's writes (or reads) would win
+    // every slot (GitHub's CREATE_*/ADD_* sort before LIST_*/GET_* → no way to READ issues/PRs). Reserve ~60%
+    // for reads (the agent must gather context first), the rest for writes, then top up from whatever's left.
+    const reads = ranked.filter((x) => isRead(x.rawName));
+    const writes = ranked.filter((x) => !isRead(x.rawName));
+    const readQuota = Math.ceil(perToolkit * 0.6);
+    const chosen = [...reads.slice(0, readQuota), ...writes.slice(0, perToolkit - Math.min(readQuota, reads.length))];
+    for (const x of ranked) { if (chosen.length >= perToolkit) break; if (!chosen.includes(x)) chosen.push(x); }
+    let added = 0;
+    for (const { t, rawName } of chosen) {
+      if (tools.length >= MAX || added >= perToolkit) break; // cap PER toolkit so every connected app is represented
       const name = sanitize(rawName);
       if (map.has(name)) continue;
       map.set(name, rawName);
+      const fn = (t as any)?.function ?? t;
       const params = fn?.parameters ?? (t as any)?.parameters ?? (t as any)?.input_parameters ?? (t as any)?.inputSchema ?? {};
       const input_schema = (params && typeof params === "object")
         ? { type: "object" as const, properties: params.properties ?? {}, ...(Array.isArray(params.required) ? { required: params.required } : {}) }
         : { type: "object" as const, properties: {} };
       tools.push({ name, description: `[${app}] ${String(fn?.description ?? rawName).slice(0, 600)}`, input_schema });
+      added++;
     }
   }
   const call = async (name: string, args: Record<string, unknown>): Promise<string | null> => {
     const action = map.get(name);
     if (!action) return null;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete — leave it as a step for the user instead.`;
+    // Hard guard: a calendar event with attendees/notifications EMAILS invites. Force send_updates="none" so the
+    // agent can NEVER send a calendar invite — the event lands on the user's calendar silently; they invite people.
+    if (/^GOOGLECALENDAR_/.test(action) && args && (("attendees" in args) || ("send_updates" in args))) {
+      args = { ...args, send_updates: "none" };
+    }
     try { return await execute(action, userId, args || {}); }
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };

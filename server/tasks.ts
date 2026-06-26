@@ -1,19 +1,23 @@
 import { randomUUID } from "node:crypto";
-import type { WebTask, Quadrant, TaskLink, Profile } from "../shared/types.ts";
+import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
+import { dedupeFacts } from "../shared/types.ts";
 import { generateTasks, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
 import type { AgentTools } from "./integrations.ts";
 
-/** Fold a learned fact into the person-profile (append to the right list, deduped; 'about' replaces). */
+/** Fold a learned fact into the person-profile. 'name'/'about' replace; list facts append THEN dedupe by
+ *  entity (so reworded facts about the same person/project collapse instead of piling up). */
 export function applyProfileUpdate(profile: Profile, u: ProfileUpdate): void {
   const f = u.fact.trim();
   if (!f) return;
+  if (u.category === "name") { profile.name = f.slice(0, 60); return; }
   if (u.category === "about") { profile.about = f.slice(0, 400); return; }
   const key = u.category === "preference" ? "preferences" : u.category === "person" ? "people" : "projects";
-  const list = profile[key];
-  if (!list.some((x) => x.toLowerCase() === f.toLowerCase())) list.push(f.slice(0, 160));
+  profile[key] = dedupeFacts([...profile[key], f.slice(0, 160)]);
 }
 
 const URGENT_AT = 0.5, IMPORTANT_AT = 0.5;
+/** Most to-dos to keep ACTIVE (visible) at once — the list surfaces the top N by priority, never floods. */
+const ACTIVE_CAP = 15;
 
 /** Eisenhower: two axes → quadrant + a ranking score (Do > Schedule > Delegate > Later). */
 export function eisenhower(urgency: number, importance: number): { quadrant: Quadrant; score: number } {
@@ -25,13 +29,59 @@ export function eisenhower(urgency: number, importance: number): { quadrant: Qua
 
 /** Normalize a title for fuzzy comparison: lowercase, drop punctuation, collapse whitespace. */
 function normTitle(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
-/** Two titles are "the same task" if their word sets overlap heavily (catches model rephrasings). */
+/** Generic action verbs / fillers that DON'T distinguish one to-do from another — ignored when comparing
+ *  titles, so two tasks are judged "the same" by their DISTINCTIVE words (amounts, brands, names, dates). */
+const GENERIC_WORDS = new Set([
+  "use", "get", "got", "make", "made", "add", "set", "ask", "the", "for", "your", "you", "and", "with", "from",
+  "before", "after", "this", "that", "need", "needs", "send", "reply", "pay", "book", "buy", "read", "sort",
+  "plan", "prep", "review", "check", "email", "mail", "call", "off", "out", "new", "via", "per", "due", "day",
+  "days", "week", "soon", "now", "all", "any", "into", "onto", "about", "then", "complete", "finish", "update",
+]);
+function distinctiveTokens(s: string): Set<string> {
+  const words = normTitle(s).split(" ").filter((w) => w.length > 2);
+  const distinctive = words.filter((w) => !GENERIC_WORDS.has(w));
+  return new Set(distinctive.length ? distinctive : words); // if a title is ALL generic, fall back to every word
+}
+/** Two titles are "the same task" if their DISTINCTIVE word-sets overlap heavily, OR one is largely a subset
+ *  of the other with enough shared keywords. Catches the model's rewordings — e.g. "Use $100 Resy credit
+ *  before Jun 30 in Boston" / "Use $100 Amex Resy dining credit in Boston" / "Use Amex Resy $100 dining credit
+ *  before Jun 30" all collapse — while keeping genuinely different tasks (e.g. "Book flights to NYC" vs "Book
+ *  hotel in NYC", where the key noun differs) apart. */
 function nearDup(a: string, b: string): boolean {
-  const wa = new Set(normTitle(a).split(" ").filter((w) => w.length > 2));
-  const wb = new Set(normTitle(b).split(" ").filter((w) => w.length > 2));
-  if (!wa.size || !wb.size) return false;
-  let inter = 0; for (const w of wa) if (wb.has(w)) inter++;
-  return inter / (wa.size + wb.size - inter) >= 0.7; // Jaccard
+  const A = distinctiveTokens(a), B = distinctiveTokens(b);
+  if (!A.size || !B.size) return false;
+  let inter = 0; for (const w of A) if (B.has(w)) inter++;
+  const jaccard = inter / (A.size + B.size - inter);
+  const containment = inter / Math.min(A.size, B.size);
+  return jaccard >= 0.6 || (inter >= 3 && containment >= 0.75);
+}
+
+/**
+ * Keep at most `cap` ACTIVE to-dos (the top by priority), so the list never floods. Never drops work in
+ * progress (running/executed) or manual tasks — those can't be regenerated; it only trims the lowest-priority
+ * regenerable items (ready, non-manual), which resurface later once a slot frees up. Done/dismissed records
+ * are retained untouched (hidden from the list, but they still block regeneration of handled items).
+ */
+function capActive(ranked: WebTask[], cap: number): WebTask[] {
+  const active = ranked.filter((t) => t.status !== "done" && t.status !== "dismissed");
+  if (active.length <= cap) return ranked;
+  const keep = new Set<string>();
+  let count = 0;
+  // Always keep work-in-progress + manual tasks (they count toward the cap but are never dropped)…
+  for (const t of active) if (t.status !== "ready" || t.source === "manual") { keep.add(t.id); count++; }
+  // …then fill the remaining slots with the highest-scored regenerable ready tasks (ranked is score-sorted).
+  for (const t of active) { if (count >= cap) break; if (!keep.has(t.id)) { keep.add(t.id); count++; } }
+  return ranked.filter((t) => keep.has(t.id) || t.status === "done" || t.status === "dismissed");
+}
+
+/** Keep at most `keep` done/dismissed records (most recent) — enough to still block regeneration of handled
+ *  items, but bounded so the saved task list (and every cloud write) doesn't grow forever. Active tasks stay. */
+function pruneHandled(list: WebTask[], keep: number): WebTask[] {
+  const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
+  const handled = list.filter((t) => t.status === "done" || t.status === "dismissed")
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+    .slice(0, keep);
+  return [...active, ...handled];
 }
 
 /**
@@ -41,30 +91,46 @@ function nearDup(a: string, b: string): boolean {
  * — with a near-duplicate-title fallback for tasks that aren't tied to one item.
  */
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools): Promise<WebTask[]> {
-  const gen = await generateTasks(profile, extras);
+  // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do.
+  const handled = existing.filter((t) => t.status === "done" || t.status === "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
+  const gen = await generateTasks(profile, extras, handled);
   const now = new Date().toISOString();
 
-  const keyOf = (t: { source: string; title: string; anchorKey?: string }) => t.anchorKey || `${t.source}:${normTitle(t.title)}`;
+  // Collapse formatting drift in an anchor ("gmail:18fAb", "GMAIL_18fab" → same) so the SAME thread/event
+  // can't slip back in just because the model rephrased its id.
+  const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const linkOf = (t: { evidence?: TaskLink[] }) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
+  // When two candidates are the SAME to-do, keep the more-progressed one: a finished/in-flight task must never
+  // be dropped for a fresh duplicate, and a handled (done/dismissed) one suppresses a new copy → no resurfacing.
+  const rankStatus = (t: WebTask) => (t.status === "done" || t.status === "dismissed") ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
+  const betterOf = (a: WebTask, b: WebTask) => rankStatus(b) > rankStatus(a) ? b : a; // ties keep `a` (added first = existing / earlier)
 
-  // Keep EVERY existing task in the dedupe map — INCLUDING done & dismissed — so a thread/event we've
-  // already handled or dropped never comes back as a "new" task on a later refresh. (The client hides
-  // done/dismissed from the live list; they persist only to block regeneration.)
-  const kept = new Map<string, WebTask>();
-  for (const t of existing) kept.set(keyOf(t), t);
+  // Dedupe by THREE signals: a normalized anchor (the thread/event id), the source LINK (stable even when the
+  // model's anchor drifts), and a near-duplicate title (catches reworded, anchorless tasks). `absorb` folds a
+  // candidate into a matching kept task instead of adding a copy — run over the EXISTING list too, so duplicates
+  // already sitting in the saved list get cleaned up (not just new-vs-old), then over the freshly generated tasks.
+  const kept: WebTask[] = [];
+  const absorb = (t: WebTask) => {
+    const ak = normKey(t.anchorKey), link = linkOf(t);
+    const i = kept.findIndex((k) =>
+      (!!ak && normKey(k.anchorKey) === ak) ||
+      (!!link && linkOf(k) === link) ||
+      nearDup(k.title, t.title));
+    if (i >= 0) { kept[i] = betterOf(kept[i], t); return; }
+    kept.push(t);
+  };
 
+  for (const t of existing) absorb(t);
   for (const g of gen) {
-    const key = g.anchorKey || `${g.source}:${normTitle(g.title)}`;
-    if (kept.has(key)) continue;                                              // same anchor already tracked
-    if ([...kept.values()].some((e) => nearDup(e.title, g.title))) continue;  // reworded duplicate of an existing task
     const e = eisenhower(g.urgency, g.importance);
-    const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : "Open in Gmail", url: g.link }] : undefined;
-    kept.set(key, {
+    const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : undefined;
+    absorb({
       id: randomUUID(), title: g.title, why: g.why, when: g.when, source: g.source, risk: g.risk,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
     });
   }
-  return [...kept.values()].sort((a, b) => b.score - a.score);
+  return pruneHandled(capActive(kept.sort((a, b) => b.score - a.score), ACTIVE_CAP), 120);
 }
 
 /** Add a task the user typed; AI-refined when possible (else raw), classified through the same matrix. */
@@ -94,18 +160,24 @@ export function pendingAutoRun(list: WebTask[]): WebTask[] {
  * (drafts a reply, creates a doc/deck/sheet, adds a task/event, updates an issue — never an irreversible
  * send/delete), then the task shows its context, a synthesis of what it did, and a checklist of what's left.
  */
-export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools): Promise<WebTask | undefined> {
+export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   if (!task) return undefined;
   task.status = "running";
   task.autoRan = true; // set before the await so concurrent auto-runs skip it (pendingAutoRun checks !autoRan)
+  // A user revision: they reviewed a draft and asked for a change before sending → re-run with that instruction.
+  const focus = revision?.trim()
+    ? `The user reviewed your previous draft/output for this task and wants this CHANGE before they send it: "${revision.trim()}". Redo the task incorporating it — UPDATE the existing draft/doc (don't create a new copy) and re-offer it as a sendable.`
+    : undefined;
   try {
-    const out = await aiRun({ title: task.title, why: task.why, source: task.source }, profile, undefined, extras);
+    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     task.context = out.context;
     task.synthesis = out.synthesis;
     task.steps = out.steps;
+    task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
+    task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.status = "executed";
     return task;
   } catch (e) {
@@ -151,9 +223,22 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
     .map((s) => `- "${s.text}" → ${s.result}`)
     .join("\n");
   const focus = decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text;
-  const out = await aiRun({ title: task.title, why: task.why }, profile, focus, extras);
+  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
-  step.done = true;
   step.result = out.synthesis.slice(0, 1200);
+  // If the focused run still needs the user (it returned a needs-you step), it couldn't finish — flip this step
+  // to needs-you so it shows honestly (not a false ✓) and won't auto-retry; otherwise mark it done.
+  if ((out.steps || []).some((s) => !s.automatable)) { step.automatable = false; step.done = false; }
+  else { step.done = true; }
+  // Surface anything this step produced (a draft/doc/…) alongside the task's other artifacts, deduped by URL.
+  if (out.links?.length) {
+    const seen = new Set((task.links || []).map((l) => l.url));
+    task.links = [...(task.links || []), ...out.links.filter((l) => !seen.has(l.url))].slice(0, 8);
+  }
+  if (out.sendables?.length) {
+    const key = (s: Sendable) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
+    const seen = new Set((task.sendables || []).map(key));
+    task.sendables = [...(task.sendables || []), ...out.sendables.filter((s) => !seen.has(key(s)))].slice(0, 8);
+  }
   return task;
 }

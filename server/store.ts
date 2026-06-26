@@ -15,6 +15,17 @@ const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY ||
 const TABLE = "weave_web_state";
 
 const client: SupabaseClient | null = url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
+// Secrets (refresh tokens, password hashes) live in these tables. With the ANON key + the permissive dev RLS
+// policy they're readable by anyone holding that key — fine locally, NOT for production. So: FAIL CLOSED in
+// production (don't boot with a secret-exposing config), and warn loudly in dev. Fix is SUPABASE_SERVICE_KEY
+// (bypasses RLS) + restricting RLS to the service role.
+if (client && !process.env.SUPABASE_SERVICE_KEY) {
+  const msg = "Supabase is configured with the ANON key — refresh tokens + password hashes would be readable by anyone holding it.";
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(`[store] ${msg} Set SUPABASE_SERVICE_KEY (and restrict RLS to the service role) before deploying.`);
+  }
+  console.warn(`[store] SECURITY: ${msg} Fine locally; set SUPABASE_SERVICE_KEY before you deploy.`);
+}
 
 export const cloudEnabled = (): boolean => !!client;
 const USERS = "weave_web_users";
