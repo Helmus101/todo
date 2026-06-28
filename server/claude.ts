@@ -293,6 +293,9 @@ const RUN_SYSTEM =
   `seen "5 road-trip packing lists" — do not repeat that). If you genuinely can't update, leave a step rather ` +
   `than make a near-duplicate. An unwanted or duplicate Doc is worse than none.\n` +
   `When done, call "submit" with "context" + "synthesis" (what you did) and a "steps" list of what is LEFT.\n` +
+  `PERMISSION_REQUIRED: If you call a tool (like updating a doc or creating a calendar event) and it returns ` +
+  `"PERMISSION_REQUIRED", you CANNOT do it yourself this run. Instead, add it to your "steps" list with ` +
+  `automatable=true AND needsPermission=true so the user can explicitly approve it with one click.\n` +
   `WRITE GOOD STEPS — each step is ONE concrete action: imperative verb + the specific thing, concise (≤ ~12 ` +
   `words), no hedging or explanation. Good: "Send the draft reply to Sarah", "Pick the offsite date", "Approve ` +
   `& publish the brief". Bad: vague ("follow up"), bundled ("check email and update the doc and tell the team"), ` +
@@ -342,6 +345,7 @@ const RUN_TOOLS: Anthropic.Tool[] = [
       items: { type: "object", properties: {
         text: { type: "string", description: "ONE concrete action — imperative verb + the specific thing, ≤ ~12 words, no hedging. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'." },
         automatable: { type: "boolean", description: "true = OTTO can do it with its tools or by finding info (read/search, draft, create/update a doc/sheet/event/task, ENTER/FILL data, comment, research, open a page) — do it NOW unless it waits on a user step (then set dependsOn). false = needs the USER, ONLY for: a judgment/decision/approval, a credential you lack, a payment, or a physical act. NOT for being specific/numeric/tedious; sending a message is a one-click send, not a step." },
+        needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
         url: { type: "string", description: "a page to open, if the step is to visit/open one" },
       }, required: ["text", "automatable"] },
@@ -454,6 +458,7 @@ function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[
     .map((s: any) => ({
       text: String(s?.text || "").trim(),
       automatable: !!s?.automatable,
+      needsPermission: !!s?.needsPermission,
       dependsOn: Number.isInteger(s?.dependsOn) ? s.dependsOn : undefined,
       url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : undefined,
     }))

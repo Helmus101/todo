@@ -240,7 +240,8 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => { tasks.setS
 // Auto-do ONE automatable step (focused agent run over the connected apps).
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   try {
-    const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), await toolsFor(req));
+    const permTools = await integrations.getAgentToolsWithPermission(req.session.user!).catch(() => undefined);
+    const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), permTools);
     await commit(req);
     res.json(t || { error: "not found" });
   } catch (e: any) { res.status(500).json({ error: e?.message || "step run failed" }); }

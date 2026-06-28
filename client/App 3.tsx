@@ -207,8 +207,7 @@ export function App() {
     for (const task of next) {
       inflight.current.add(task.id);
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "running" } : t)));
-      let timer: ReturnType<typeof setTimeout>;
-      const timeout = new Promise<WebTask>((_, rej) => { timer = setTimeout(() => rej(new Error("timeout")), RUN_TIMEOUT_MS); });
+      const timeout = new Promise<WebTask>((_, rej) => setTimeout(() => rej(new Error("timeout")), RUN_TIMEOUT_MS));
       Promise.race([api.run(task.id), timeout])
         .then((u) => { if (u && u.id) { attempts.current.delete(u.id); setTasks((prev) => prev.map((t) => (t.id === u.id ? u : t))); } })
         .catch(() => {
@@ -220,7 +219,7 @@ export function App() {
           setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "ready", autoRan: true } : t)));
           if (n < 3) setTimeout(() => setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, autoRan: false } : t))), 5000);
         })
-        .finally(() => { clearTimeout(timer); inflight.current.delete(task.id); });
+        .finally(() => { inflight.current.delete(task.id); });
     }
   }, [tasks, connected]);
 
@@ -851,26 +850,21 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
   const run = async () => { setRunning(true); try { onTask(await api.run(task.id)); } finally { setRunning(false); } };
   // Confirmed send (user clicked through the inline confirm) — the ONLY thing that actually sends.
-  const doSend = async (i: number) => {
-    if (sending != null) return; // guard against a double-send race
-    setConfirmIdx(null); setSending(i);
-    try { onTask(await api.sendDraft(task.id, i)); } catch { /* retried by api */ } finally { setSending(null); }
-  };
+  const doSend = async (i: number) => { setConfirmIdx(null); setSending(i); try { onTask(await api.sendDraft(task.id, i)); } catch { /* retried by api */ } finally { setSending(null); } };
   // The user declined and said what to change → re-run the task with that note so Otto revises the draft.
   const doRevise = async () => {
     const note = changeText.trim();
     if (!note || revising) return;
     setRevising(true);
-    // The re-draft replaces the sendables list, so clear any open draft preview (its index may now be stale).
-    try { onTask(await api.revise(task.id, note)); setChangeIdx(null); setChangeText(""); setViewDraft(null); }
+    try { onTask(await api.revise(task.id, note)); setChangeIdx(null); setChangeText(""); }
     catch { /* surfaced via task state */ } finally { setRevising(false); }
   };
 
   const steps = task.steps || [];
   const blocked = (s: TaskStep) => s.dependsOn != null && !steps[s.dependsOn]?.done;
-  // A step can auto-run if it's automatable, unblocked, not done, not already-failed, doesn't need permission,
-  // and (not a tab-open OR the extension is here to open it unattended). Tab-opens without the extension wait for a click.
-  const canAuto = (s: TaskStep, i: number) => s.automatable && !s.needsPermission && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
+  // A step can auto-run if it's automatable, unblocked, not done, not already-failed, and (not a tab-open
+  // OR the extension is here to open it unattended). Tab-opens without the extension wait for a click.
+  const canAuto = (s: TaskStep, i: number) => s.automatable && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
 
   const doStep = async (i: number) => {
     const s = steps[i];
@@ -1033,11 +1027,11 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                       <button
                         type="button"
                         className={`step-mark ${busyHere ? "busy" : ""} ${!s.done && !s.automatable && !blk ? "tickable" : ""}`}
-                        title={s.done ? "Done — click to undo" : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? (s.needsPermission ? "Needs your approval" : "Otto does this automatically") : "Click to mark done"}
+                        title={s.done ? "Done — click to undo" : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? "Otto does this automatically" : "Click to mark done"}
                         disabled={busyHere || s.automatable || blk}
                         onClick={() => { if (s.automatable || blk) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
                       >
-                        {s.done ? "✓" : s.automatable ? (s.needsPermission ? "🔒" : "⚡") : "○"}
+                        {s.done ? "✓" : s.automatable ? "⚡" : "○"}
                       </button>
                       <div className="step-body">
                         <span className="step-text">{s.text}</span>
@@ -1060,7 +1054,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         {busyHere ? <span className="muted small">Working…</span>
                           : s.url ? <button className="btn xs ghost" onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open ↗</button>
                           : s.done || blk ? null
-                          : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>Approve & Run</button> : <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>)
+                          : s.automatable ? <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>
                           : null}
                       </div>
                     </li>
@@ -1090,11 +1084,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               </>
             ) : (
               <>
-                {task.autoRan ? (
-                  <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Retry"}</button>
-                ) : (
-                  <button className="btn primary" disabled>{running ? "Working…" : "Preparing…"}</button>
-                )}
+                <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Do it now"}</button>
                 <div className="actions-rest"><button className="btn xs ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button></div>
               </>
             )}

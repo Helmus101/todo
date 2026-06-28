@@ -83,9 +83,6 @@ export interface TaskStep {
   url?: string;         // if doing it means opening a page
   done?: boolean;
   result?: string;      // short note of what auto-doing it produced
-  /** Set by the server when the action was blocked by the permission gate (doc edit / calendar create).
-   *  The client shows an "Approve & Run" prompt; the user's click routes through runStep which bypasses the gate. */
-  needsPermission?: boolean;
 }
 
 /** A reviewed message/invite the agent prepared (a Gmail draft / a composed Slack message / a calendar event
@@ -139,7 +136,6 @@ export interface WebTask {
 export interface ConnectionStatus {
   loggedIn: boolean;          // signed into an email account
   user?: string;              // the account email
-  name?: string;              // what to call the user (from their profile) — personalizes the UI
   googleConnected: boolean;   // Gmail is connected (via Composio) — the minimum to generate tasks
   aiReady: boolean;           // ANTHROPIC_API_KEY present
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration

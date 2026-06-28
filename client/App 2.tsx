@@ -14,7 +14,7 @@ function subtitle(t: WebTask): string {
   if (t.status === "running") return "Working on it…";
   if (t.status === "executed") {
     const n = (t.steps || []).filter((s) => !s.done && !s.automatable).length;
-    return n ? `${n} thing${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} you` : "Done for you";
+    return n ? `Prepared — ${n} thing${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} you · tap to review` : "Done for you · tap to review & confirm";
   }
   return t.why;
 }
@@ -35,22 +35,6 @@ function openTabs(urls: string[], group?: string) {
   if (extPresent()) window.postMessage({ type: "weave-open-tabs", urls, group }, window.location.origin);
   else urls.forEach((u) => window.open(u, "_blank", "noopener"));
 }
-
-// Auto-open created documents (Doc/Sheet/Slides) when a task finishes — handy, but capped so you're never
-// flooded with tabs, only via the extension (a plain window.open would be popup-blocked without a click),
-// and EACH doc opens at most ONCE EVER. The opened-URL set is PERSISTED (localStorage) so reopening the app
-// never re-opens the same tabs again. Toggle in Settings (default ON).
-const DOC_RE = /docs\.google\.com\/(document|spreadsheets|presentation)/i;
-const OPENED_KEY = "otto-opened-docs";
-const openedDocs: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(OPENED_KEY) || "[]")); } catch { return new Set(); } })();
-const markDocsOpened = (urls: string[]) => {
-  urls.forEach((u) => openedDocs.add(u));
-  try { localStorage.setItem(OPENED_KEY, JSON.stringify([...openedDocs].slice(-300))); } catch { /* ignore */ }
-};
-let sessionDocsOpened = 0;               // burst control: cap how many open within one session load
-const SESSION_DOC_CAP = 4;               // ceiling on auto-opened docs per session load
-const PER_TASK_DOC_CAP = 2;              // and per task
-const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") !== "0"; } catch { return true; } };
 
 /** Render context/synthesis as a clean bullet list (one bullet per line; leading -/•/* stripped). Full
  *  text always shown — never truncated. Falls back to a single line if there's just one. */
@@ -112,11 +96,6 @@ const CACHED_STATUS: ConnectionStatus | null = (() => {
 })();
 
 const GREETING = () => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening"; };
-/** A friendly first name from the account email's local part ("tjong.willem@…" → "Tjong"). Personalizes the UI. */
-const firstName = (user?: string) => {
-  const local = (user || "").split("@")[0].split(/[._+-]+/)[0];
-  return local ? local.charAt(0).toUpperCase() + local.slice(1) : "";
-};
 
 /** Navigate the path router. "" → "/" (dashboard); otherwise "/<route>" (e.g. "task/<id>", "settings").
  *  pushState doesn't fire popstate, so we dispatch one to notify the router hook. */
@@ -207,8 +186,7 @@ export function App() {
     for (const task of next) {
       inflight.current.add(task.id);
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "running" } : t)));
-      let timer: ReturnType<typeof setTimeout>;
-      const timeout = new Promise<WebTask>((_, rej) => { timer = setTimeout(() => rej(new Error("timeout")), RUN_TIMEOUT_MS); });
+      const timeout = new Promise<WebTask>((_, rej) => setTimeout(() => rej(new Error("timeout")), RUN_TIMEOUT_MS));
       Promise.race([api.run(task.id), timeout])
         .then((u) => { if (u && u.id) { attempts.current.delete(u.id); setTasks((prev) => prev.map((t) => (t.id === u.id ? u : t))); } })
         .catch(() => {
@@ -220,7 +198,7 @@ export function App() {
           setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "ready", autoRan: true } : t)));
           if (n < 3) setTimeout(() => setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, autoRan: false } : t))), 5000);
         })
-        .finally(() => { clearTimeout(timer); inflight.current.delete(task.id); });
+        .finally(() => { inflight.current.delete(task.id); });
     }
   }, [tasks, connected]);
 
@@ -288,9 +266,9 @@ export function App() {
       ) : !status.googleConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
-        <main className="list-wrap" key="dash">
+        <main className="list-wrap">
           <div className="dash-head">
-            <h1 className="dash-greeting">{GREETING()}{(status.name || firstName(status.user)) ? <>, <span className="dash-name">{status.name || firstName(status.user)}</span></> : null}.</h1>
+            <h1 className="dash-greeting">{GREETING()}.</h1>
             <div className="dash-stats">
               <span><b>{live.length}</b> on your plate</span>
               {working ? <span className="dash-run"><b>{working}</b> running<span className="mini" /></span> : null}
@@ -312,9 +290,8 @@ export function App() {
             const shown = openId && !live.some((t) => t.id === openId)
               ? [...live, ...tasks.filter((t) => t.id === openId)]
               : live;
-            if (shown.length === 0 && busy) return <TaskSkeleton />;
             return shown.length === 0
-              ? <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}. New mail or meetings show up here.`}</div>
+              ? <div className="empty">{busy ? "Looking through your inbox, calendar & Drive…" : (note || "You're all clear. New mail or meetings show up here.")}</div>
               : <div className="list">{shown.map((t) => (
                   <Card
                     key={t.id}
@@ -333,33 +310,12 @@ export function App() {
   );
 }
 
-/** Loading placeholder while Otto scans the inbox/calendar — shimmer cards so the screen never sits empty. */
-function TaskSkeleton() {
-  const widths = ["68%", "54%", "61%"];
-  return (
-    <div className="list" aria-hidden="true">
-      {widths.map((w, i) => (
-        <div key={i} className="card skel">
-          <div className="card-main">
-            <span className="skel-box skel-pill" />
-            <div className="card-text">
-              <div className="skel-box skel-line" style={{ width: w }} />
-              <div className="skel-box skel-line sm" style={{ width: "36%" }} />
-            </div>
-          </div>
-        </div>
-      ))}
-      <div className="skel-note">Looking through your inbox, calendar &amp; Drive…</div>
-    </div>
-  );
-}
-
 /** A connect-Gmail call to action — shown on the dashboard until Gmail is linked (via Composio, in Settings). */
 function ConnectCard({ status }: { status: ConnectionStatus }) {
   return (
     <div className="connect-card">
-      <h2>{(status.name || firstName(status.user)) ? `Welcome, ${status.name || firstName(status.user)}` : "Welcome to Otto"}</h2>
-      <p>Connect Gmail to begin. Otto reads your inbox, calendar and Drive so it can do your to-dos — it only ever creates <b>drafts</b> and <b>docs</b>, and never sends without you.</p>
+      <h2>Connect Gmail to begin</h2>
+      <p>Otto reads your inbox, calendar and Drive so it can do your to-dos. It only ever creates <b>drafts</b> and <b>docs</b> — never sends without you.</p>
       {!status.googleConfigured && <div className="warn">Integrations aren't configured on the server (COMPOSIO_API_KEY).</div>}
       {!status.aiReady && <div className="warn">Server is missing ANTHROPIC_API_KEY — task generation is disabled.</div>}
       <a className="btn primary big" href="/settings">Connect in Settings</a>
@@ -384,14 +340,6 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <h3>Integrations</h3>
         <p className="settings-hint">Connect the apps you live in — start with <b>Gmail</b> and <b>Google Calendar</b> (that's what your to-dos are built from). Otto can read them and do the reversible work (draft a reply, create a doc, add a task). It can <b>never send, post, publish, or delete</b> on its own — those stay your call.</p>
         <Integrations onChanged={onChanged} />
-      </section>
-
-      <section className="settings-sec">
-        <h3>Preferences</h3>
-        <label className="pref-row">
-          <input type="checkbox" defaultChecked={autoOpenDocsOn()} onChange={(e) => { try { localStorage.setItem("otto-autoopen-docs", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
-          <span className="pref-text"><b>Open created documents automatically</b><span className="settings-hint">When Otto makes a Doc, Sheet or Slides, open it in a tab so you can review it — needs the Otto Tabs extension, and it's capped so you're never flooded.</span></span>
-        </label>
       </section>
 
       <section className="settings-sec">
@@ -471,13 +419,7 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
  *  flips to ✓ when they come back). Shown once after sign-up; "Skip"/finish clears the otto-onboard flag. */
 function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => void }) {
   const [step, setStep] = useState(0);
-  const [name, setName] = useState("");
   const [items, setItems] = useState<IntegrationItem[] | null>(null);
-  const saveName = async () => {
-    const n = name.trim();
-    if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { /* non-blocking */ } }
-    setStep(1);
-  };
   const load = useCallback(async () => { try { const r = await api.integrations(); setItems(r.items); onStatus(); } catch { setItems([]); } }, [onStatus]);
   useEffect(() => { void load(); }, [load]);
   // Connect opens OAuth in a new tab → refresh connection state when the user returns to this tab.
@@ -508,11 +450,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <li><b>○ Needs you</b> — a decision, a send, a payment</li>
               <li><b>✓ Done</b> — checked off</li>
             </ul>
-            <label className="field onboard-name"><span>What should Otto call you?</span>
-              <input className="addinput" placeholder="Your name" value={name} maxLength={60} autoFocus
-                onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
-            </label>
-            <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>Get started</button></div>
+            <div className="onboard-actions"><button className="btn primary big" onClick={() => setStep(1)}>Get started</button></div>
           </div>
         )}
         {step === 1 && (
@@ -623,14 +561,9 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
   const submit = async () => {
     if (busy || !email.trim() || !pw) return;
     setBusy(true); setErr("");
-    try {
-      const r = mode === "signup" ? await api.signup(email.trim(), pw) : await api.login(email.trim(), pw);
-      if (r.ok) onDone(mode === "signup"); else setErr(r.error || "Something went wrong.");
-    } catch {
-      setErr("Couldn't reach the server. Check your connection and try again.");
-    } finally {
-      setBusy(false);
-    }
+    const r = mode === "signup" ? await api.signup(email.trim(), pw) : await api.login(email.trim(), pw);
+    setBusy(false);
+    if (r.ok) onDone(mode === "signup"); else setErr(r.error || "Something went wrong.");
   };
   return (
     <div className="login-page">
@@ -841,36 +774,17 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const [showContext, setShowContext] = useState(false); // Context is hidden by default — shown only on demand
   const [sending, setSending] = useState<number | null>(null); // which sendable is being sent
   const [viewDraft, setViewDraft] = useState<number | null>(null); // which sendable's draft is expanded for review
-  const [confirmIdx, setConfirmIdx] = useState<number | null>(null); // which sendable is awaiting send confirmation
-  const [changeIdx, setChangeIdx] = useState<number | null>(null);   // which sendable's "what to change" box is open
-  const [changeText, setChangeText] = useState("");
-  const [revising, setRevising] = useState(false);
   const p = prio(task);
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
   // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
   const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
   const run = async () => { setRunning(true); try { onTask(await api.run(task.id)); } finally { setRunning(false); } };
-  // Confirmed send (user clicked through the inline confirm) — the ONLY thing that actually sends.
-  const doSend = async (i: number) => {
-    if (sending != null) return; // guard against a double-send race
-    setConfirmIdx(null); setSending(i);
-    try { onTask(await api.sendDraft(task.id, i)); } catch { /* retried by api */ } finally { setSending(null); }
-  };
-  // The user declined and said what to change → re-run the task with that note so Otto revises the draft.
-  const doRevise = async () => {
-    const note = changeText.trim();
-    if (!note || revising) return;
-    setRevising(true);
-    // The re-draft replaces the sendables list, so clear any open draft preview (its index may now be stale).
-    try { onTask(await api.revise(task.id, note)); setChangeIdx(null); setChangeText(""); setViewDraft(null); }
-    catch { /* surfaced via task state */ } finally { setRevising(false); }
-  };
 
   const steps = task.steps || [];
   const blocked = (s: TaskStep) => s.dependsOn != null && !steps[s.dependsOn]?.done;
-  // A step can auto-run if it's automatable, unblocked, not done, not already-failed, doesn't need permission,
-  // and (not a tab-open OR the extension is here to open it unattended). Tab-opens without the extension wait for a click.
-  const canAuto = (s: TaskStep, i: number) => s.automatable && !s.needsPermission && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
+  // A step can auto-run if it's automatable, unblocked, not done, not already-failed, and (not a tab-open
+  // OR the extension is here to open it unattended). Tab-opens without the extension wait for a click.
+  const canAuto = (s: TaskStep, i: number) => s.automatable && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
 
   const doStep = async (i: number) => {
     const s = steps[i];
@@ -901,21 +815,6 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
     const i = steps.findIndex((s, idx) => canAuto(s, idx));
     if (i >= 0) void doStep(i);
   }, [task, stepBusy, failed]);
-
-  // Auto-open documents Otto created (Doc/Sheet/Slides) once the task is done — capped per task + per
-  // session, once per URL, and only with the extension (so it isn't popup-blocked). Off if the user toggled it.
-  useEffect(() => {
-    if (task.status !== "executed" || !autoOpenDocsOn() || !extPresent()) return;
-    const room = SESSION_DOC_CAP - sessionDocsOpened;
-    if (room <= 0) return;
-    // Only docs we've NEVER auto-opened (persisted across reloads) — so the same tabs never reopen.
-    const docs = (task.links || []).map((l) => l.url).filter((u) => DOC_RE.test(u) && !openedDocs.has(u));
-    const toOpen = docs.slice(0, Math.min(room, PER_TASK_DOC_CAP));
-    if (!toOpen.length) return;
-    markDocsOpened(toOpen);
-    sessionDocsOpened += toOpen.length;
-    openTabs(toOpen, TAB_GROUP);
-  }, [task.status, task.links]);
 
   // Bring a deep-linked card into view when it opens (e.g. landing on #/task/<id> directly).
   const cardRef = useRef<HTMLDivElement>(null);
@@ -965,37 +864,19 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                     ) : null}
                     <div className="sendable-row">
                       <button className="btn xs ghost" onClick={() => setViewDraft((v) => (v === i ? null : i))}>{viewDraft === i ? "Hide details" : s.app === "gcal" ? "View event" : "View draft"}</button>
-                      {s.sent
-                        ? <button className="btn primary send-btn sent" disabled>✓ Sent</button>
-                        : sending === i
-                          ? <button className="btn primary send-btn" disabled>Sending…</button>
-                          : <button className="btn primary send-btn" onClick={() => { setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{`${sendIcon} ${s.label}`}</button>}
+                      <button
+                        className={`btn primary send-btn ${s.sent ? "sent" : ""}`}
+                        disabled={s.sent || sending === i}
+                        onClick={async () => {
+                          if (s.sent || sending === i) return;
+                          if (!window.confirm(`Send this ${noun}${recipients ? ` to ${recipients}` : ""} now? This sends it for real.`)) return;
+                          setSending(i);
+                          try { onTask(await api.sendDraft(task.id, i)); } catch { /* transient errors are retried by api */ } finally { setSending(null); }
+                        }}
+                      >
+                        {s.sent ? "✓ Sent" : sending === i ? "Sending…" : `${sendIcon} ${s.label}`}
+                      </button>
                     </div>
-                    {/* Confirm step — the recipient is spelled out in full before anything sends. */}
-                    {confirmIdx === i && !s.sent && sending !== i ? (
-                      <div className="confirm">
-                        <div className="confirm-q">Send this {noun} to <b>{recipients || "the recipient"}</b>?</div>
-                        <div className="confirm-acts">
-                          <button className="btn primary xs" onClick={() => void doSend(i)}>Yes, send</button>
-                          <button className="btn xs" onClick={() => { setConfirmIdx(null); setChangeText(""); setChangeIdx(i); }}>No — change something</button>
-                          <button className="btn xs ghost" onClick={() => setConfirmIdx(null)}>Cancel</button>
-                        </div>
-                      </div>
-                    ) : null}
-                    {/* Declined → say what to change; Otto re-drafts (updates the existing draft) and re-offers it. */}
-                    {changeIdx === i && !s.sent ? (
-                      <div className="confirm">
-                        <div className="confirm-q">What should change before sending?</div>
-                        <div className="change-row">
-                          <input className="addinput sm" autoFocus disabled={revising}
-                            placeholder="e.g. add my flight times, make it shorter, fix the date"
-                            value={changeText} onChange={(e) => setChangeText(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") void doRevise(); }} />
-                          <button className="btn primary xs" disabled={revising || !changeText.trim()} onClick={() => void doRevise()}>{revising ? "Revising…" : "Revise"}</button>
-                          <button className="btn xs ghost" disabled={revising} onClick={() => { setChangeIdx(null); setChangeText(""); }}>Cancel</button>
-                        </div>
-                      </div>
-                    ) : null}
                     {viewDraft === i ? (
                       <div className="draft">
                         {s.app === "gcal" ? (
@@ -1033,11 +914,11 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                       <button
                         type="button"
                         className={`step-mark ${busyHere ? "busy" : ""} ${!s.done && !s.automatable && !blk ? "tickable" : ""}`}
-                        title={s.done ? "Done — click to undo" : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? (s.needsPermission ? "Needs your approval" : "Otto does this automatically") : "Click to mark done"}
+                        title={s.done ? "Done — click to undo" : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? "Otto does this automatically" : "Click to mark done"}
                         disabled={busyHere || s.automatable || blk}
                         onClick={() => { if (s.automatable || blk) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
                       >
-                        {s.done ? "✓" : s.automatable ? (s.needsPermission ? "🔒" : "⚡") : "○"}
+                        {s.done ? "✓" : s.automatable ? "⚡" : "○"}
                       </button>
                       <div className="step-body">
                         <span className="step-text">{s.text}</span>
@@ -1055,12 +936,10 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         ) : null}
                       </div>
                       <div className="step-act">
-                        {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
-                            stays reachable from the task. Done/blocked: just reopen the tab; otherwise open + mark done. */}
                         {busyHere ? <span className="muted small">Working…</span>
-                          : s.url ? <button className="btn xs ghost" onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open ↗</button>
                           : s.done || blk ? null
-                          : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>Approve & Run</button> : <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>)
+                          : s.url ? <button className="btn xs ghost" onClick={() => void doStep(i)}>Open ↗</button>
+                          : s.automatable ? <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>
                           : null}
                       </div>
                     </li>
@@ -1082,20 +961,14 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
           <div className="actions">
             {task.status === "executed" ? (
               <>
-                <button className="btn primary" title="Looks good — mark this handled" onClick={() => void act(() => api.confirm(task.id))}>Looks good</button>
-                <div className="actions-rest">
-                  <button className="btn xs ghost" disabled={running} title="Have Otto do it over" onClick={() => void run()}>{running ? "Working…" : "↻ Redo"}</button>
-                  <button className="btn xs ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button>
-                </div>
+                <button className="btn primary" title="Looks good — mark this handled" onClick={() => void act(() => api.confirm(task.id))}>Confirm</button>
+                <button className="btn" disabled={running} title="Have Otto do it over" onClick={() => void run()}>{running ? "Working…" : "↻ Redo"}</button>
+                <button className="btn ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button>
               </>
             ) : (
               <>
-                {task.autoRan ? (
-                  <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Retry"}</button>
-                ) : (
-                  <button className="btn primary" disabled>{running ? "Working…" : "Preparing…"}</button>
-                )}
-                <div className="actions-rest"><button className="btn xs ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button></div>
+                <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Do it now"}</button>
+                <button className="btn ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button>
               </>
             )}
           </div>

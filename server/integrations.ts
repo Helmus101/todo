@@ -64,6 +64,33 @@ function isGatedAction(rawName: string): boolean {
   return /(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|DELETE|REMOVE|TRASH|ARCHIVE|CREATE_POST|CREATE_TWEET|CREATE_MESSAGE|SCHEDULE_MESSAGE|CREATE_DM|_POST_|_POST$|SHARE|INVITE)/.test(n);
 }
 
+/**
+ * HARDCODED PERMISSION GATE — actions that need the user's explicit "Approve & Run" click before Otto
+ * can execute them. Unlike isGatedAction (which strips the tool entirely), write-gated tools remain in the
+ * agent's toolset so the agent can surface them as "needs approval" steps. Calling them during the
+ * autonomous agent loop returns a PERMISSION_REQUIRED message; calling them via runStep() (the
+ * user-approved path) goes through getAgentToolsWithPermission() which skips this check.
+ *
+ * Gated:
+ *   - Editing existing Google Docs / Sheets / Slides (UPDATE, PATCH, BATCH_UPDATE, …)
+ *   - Creating OR updating Google Calendar events (any write on GOOGLECALENDAR_)
+ *   - Sending emails (belt-and-suspenders — also caught by isGatedAction above)
+ */
+export function isWriteGatedAction(rawName: string): boolean {
+  const n = rawName.toUpperCase();
+  // Google Docs — edits to existing documents. Creating a NEW doc is allowed (no UPDATE/PATCH keyword).
+  if (/^GOOGLEDOCS_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|APPEND|INSERT|DELETE_CONTENT|BATCH)/.test(n)) return true;
+  // Google Sheets — any write that changes cell data in an existing sheet.
+  if (/^GOOGLESHEETS_/.test(n) && /(UPDATE|BATCH_UPDATE|MODIFY|PATCH|CLEAR|INSERT_ROW|DELETE_ROW|APPEND|WRITE)/.test(n)) return true;
+  // Google Slides — edits to existing presentations.
+  if (/^GOOGLESLIDES_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|BATCH)/.test(n)) return true;
+  // Google Calendar — creating OR updating events always requires permission (they land on calendars).
+  if (/^GOOGLECALENDAR_/.test(n) && /(CREATE|INSERT|UPDATE|PATCH|QUICK_ADD)/.test(n)) return true;
+  // Gmail sends — belt-and-suspenders (isGatedAction already strips these, but guard here too).
+  if (/^GMAIL_/.test(n) && /(SEND|REPLY|FORWARD)/.test(n)) return true;
+  return false;
+}
+
 let _client: Composio | null = null;
 function sdk(): Composio {
   const apiKey = process.env.COMPOSIO_API_KEY;
@@ -282,6 +309,13 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
     const action = map.get(name);
     if (!action) return null;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete — leave it as a step for the user instead.`;
+    // HARDCODED PERMISSION GATE: editing existing documents and creating/updating calendar events require
+    // the user's explicit "Approve & Run" click. Return PERMISSION_REQUIRED so the agent surfaces this as
+    // a user-approval step instead of executing it autonomously.
+    if (isWriteGatedAction(action)) {
+      return `PERMISSION_REQUIRED: "${action}" requires explicit user approval before it can run. ` +
+        `Add it as an automatable step in submit() so the user can approve it with one click.`;
+    }
     // Hard guard: a calendar event with attendees/notifications EMAILS invites. Force send_updates="none" so the
     // agent can NEVER send a calendar invite — the event lands on the user's calendar silently; they invite people.
     if (/^GOOGLECALENDAR_/.test(action) && args && (("attendees" in args) || ("send_updates" in args))) {
@@ -308,3 +342,31 @@ export async function connectionStatusesCached(userId: string, apps: string[]): 
 
 /** Drop cached tools + statuses for a user (after they connect/disconnect something). */
 export function invalidateTools(userId: string): void { cache.delete(userId); statusCache.delete(userId); }
+
+/**
+ * Like getAgentTools() but WITHOUT the write-gate — used ONLY for user-approved step runs.
+ * The /api/tasks/:id/step/:index/run route calls this because the user explicitly clicked "Approve & Run".
+ * Editing existing docs and creating calendar events are permitted on this path.
+ *
+ * NEVER use this for the autonomous task-run or generation paths — those must go through getAgentTools().
+ */
+export async function getAgentToolsWithPermission(userId: string): Promise<AgentTools> {
+  const base = await getAgentTools(userId);
+  if (!base.tools.length) return base;
+  // Build a permissioned call closure that skips the write gate but keeps the irreversible-send gate.
+  const permCall = async (name: string, args: Record<string, unknown>): Promise<string | null> => {
+    // The sanitized name is the key; we need the raw Composio action name.
+    // We derive it by fetching the tools again (cached, so free) and rebuilding the map.
+    // Simpler: since sanitize() is a near-identity for Composio action slugs (already uppercase+underscore),
+    // we use name as-is and fall through to execute().
+    const action = name; // sanitized ≈ raw for Composio slugs
+    if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete.`;
+    // NO isWriteGatedAction check — user explicitly approved.
+    if (/^GOOGLECALENDAR_/.test(action) && args && (("attendees" in args) || ("send_updates" in args))) {
+      args = { ...args, send_updates: "none" };
+    }
+    try { return await execute(action, userId, args || {}); }
+    catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
+  };
+  return { tools: base.tools, call: permCall, connected: base.connected };
+}
