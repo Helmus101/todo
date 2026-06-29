@@ -14,6 +14,14 @@ import type Anthropic from "@anthropic-ai/sdk";
 
 export interface Integration { key: string; name: string; toolkit: string; blurb: string; category: string; }
 
+/** Details of a connected account for a specific app/toolkit. */
+export interface ConnectedAccount {
+  id: string;           // Composio connected account ID
+  email?: string;       // Account email (if available from Composio)
+  toolkit: string;      // e.g. "GMAIL"
+  status: string;       // e.g. "ACTIVE", "CONNECTED"
+}
+
 /** The catalog shown on Settings. `toolkit` is the Composio slug; `key` is our stable id used in URLs. */
 export const CATALOG: Integration[] = [
   // Google — connected through Composio (read + write), one tile per service.
@@ -120,9 +128,22 @@ async function resolveAuthConfigId(toolkit: string): Promise<string> {
       .filter((c: any) => norm(c?.toolkit?.slug ?? c?.toolkit?.name ?? c?.toolkit ?? "") === norm(toolkit));
     if (configs.length) {
       const id = String(configs[0].id ?? configs[0].authConfigId ?? "").trim();
-      if (id && id !== "undefined") return id;
+      if (id && id !== "undefined") {
+        // Check if allowMultiple is already enabled
+        const config = configs[0];
+        if (config.allowMultiple === true) {
+          return id;
+        }
+        // Delete and recreate with allowMultiple enabled
+        try {
+          console.log(`[integrations] Deleting and recreating auth config ${id} to enable allowMultiple`);
+          await (s.authConfigs as any).delete(id);
+        } catch (e) {
+          console.warn(`[integrations] Failed to delete auth config ${id}:`, (e as any)?.message);
+        }
+      }
     }
-    const created: any = await s.authConfigs.create(key, { type: "use_composio_managed_auth" } as any);
+    const created: any = await s.authConfigs.create(key, { type: "use_composio_managed_auth", allowMultiple: true } as any);
     const id = String(created?.id ?? created?.authConfigId ?? "").trim();
     if (!id || id === "undefined") throw new Error(`Could not create auth config for ${toolkit}.`);
     return id;
@@ -157,6 +178,27 @@ export async function getAllConnectionStatuses(userId: string, apps: string[], c
   }
 }
 
+/** Get all connected accounts for a specific app (returns multiple accounts if connected). */
+export async function getConnectedAccounts(userId: string, app: string): Promise<ConnectedAccount[]> {
+  try {
+    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
+    const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+    const targetToolkit = norm(TOOLKIT_OF(app));
+    return items
+      .filter((i) => acctToolkit(i) === targetToolkit)
+      .map((i) => ({
+        id: acctId(i),
+        email: i?.email || i?.accountEmail || i?.metadata?.email,
+        toolkit: acctToolkit(i),
+        status: i?.status || i?.connectionStatus || i?.state || "ACTIVE",
+      }))
+      .filter((a) => a.id); // only return accounts with valid IDs
+  } catch (e: any) {
+    console.warn("[integrations] getConnectedAccounts error:", e?.message ?? e);
+    return [];
+  }
+}
+
 /** Disconnect an app by deleting its active connected account. */
 export async function disconnect(app: string, userId: string): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -170,6 +212,18 @@ export async function disconnect(app: string, userId: string): Promise<{ ok: boo
     return { ok: true };
   } catch (e: any) {
     console.error(`[integrations] disconnect(${app}) failed:`, e?.message);
+    return { ok: false, error: e?.message ?? String(e) };
+  }
+}
+
+/** Disconnect a specific account by its Composio ID (for multi-account support). */
+export async function disconnectAccount(accountId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    if (!accountId) return { ok: false, error: "account id required" };
+    await (sdk().connectedAccounts as any).delete(accountId);
+    return { ok: true };
+  } catch (e: any) {
+    console.error(`[integrations] disconnectAccount(${accountId}) failed:`, e?.message);
     return { ok: false, error: e?.message ?? String(e) };
   }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
-import { api, type IntegrationItem } from "./api.ts";
+import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 
 const PRIORITY: Record<string, { label: string; cls: string }> = {
   do: { label: "Do now", cls: "p0" },
@@ -414,25 +414,48 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
   const [items, setItems] = useState<IntegrationItem[] | null>(null);
   const [ready, setReady] = useState(true);
   const [busy, setBusy] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null); // which app's accounts are expanded
+  const [accounts, setAccounts] = useState<Record<string, ConnectedAccount[]>>({});
   const load = useCallback(async () => {
     try { const r = await api.integrations(); setItems(r.items); setReady(r.ready); onChanged?.(); }
     catch { setItems([]); }
   }, [onChanged]);
+  const loadAccounts = useCallback(async (key: string) => {
+    try { const r = await api.integrationAccounts(key); setAccounts((prev) => ({ ...prev, [key]: r.accounts })); }
+    catch { setAccounts((prev) => ({ ...prev, [key]: [] })); }
+  }, []);
+  // Reload accounts for expanded apps when returning from OAuth
+  const reloadExpandedAccounts = useCallback(async () => {
+    if (expanded) await loadAccounts(expanded);
+  }, [expanded, loadAccounts]);
   useEffect(() => { void load(); }, [load]);
   // Returning from an OAuth redirect → refresh once shortly after mount so a just-connected app flips to ✓.
   useEffect(() => { const id = setTimeout(() => void load(), 1200); return () => clearTimeout(id); }, [load]);
   // Connect opens OAuth in a NEW TAB — so when the user comes back to this tab, re-check what's now connected.
   useEffect(() => {
-    const on = () => { if (!document.hidden) void load(); };
+    const on = () => { if (!document.hidden) { void load(); void reloadExpandedAccounts(); } };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); };
-  }, [load]);
+  }, [load, reloadExpandedAccounts]);
 
   const disconnect = async (key: string) => {
     if (busy) return;
     setBusy(key);
-    try { await api.disconnectIntegration(key); await load(); } finally { setBusy(""); }
+    try { await api.disconnectIntegration(key); await load(); setAccounts((prev) => ({ ...prev, [key]: [] })); setExpanded(null); } finally { setBusy(""); }
+  };
+  const disconnectAccount = async (key: string, accountId: string) => {
+    if (busy) return;
+    setBusy(accountId);
+    try { await api.disconnectAccount(key, accountId); await loadAccounts(key); // Reload accounts to update count
+      // If only one account left, collapse and reload main status
+      const updated = await api.integrationAccounts(key);
+      if (updated.accounts.length <= 1) { setExpanded(null); await load(); } }
+    finally { setBusy(""); }
+  };
+  const toggleExpand = async (key: string) => {
+    if (expanded === key) { setExpanded(null); }
+    else { setExpanded(key); if (!accounts[key]) await loadAccounts(key); }
   };
 
   if (items === null) return <div className="muted small">Loading integrations…</div>;
@@ -454,12 +477,34 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
                   <div className="int-name">{i.name}{i.connected && <span className="int-dot" title="Connected" />}</div>
                   <div className="int-blurb">{i.blurb}</div>
                 </div>
-                {i.connected
-                  ? <button className="btn xs ghost" disabled={busy === i.key} onClick={() => void disconnect(i.key)}>{busy === i.key ? "…" : "Disconnect"}</button>
-                  : <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>}
+                {i.connected ? (
+                  <div className="int-actions">
+                    <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">+ Add</a>
+                    <button className="btn xs ghost" disabled={busy === i.key} onClick={() => void disconnect(i.key)}>{busy === i.key ? "…" : "Disconnect"}</button>
+                    {(accounts[i.key]?.length || 0) > 1 && (
+                      <button className="btn xs ghost" onClick={() => void toggleExpand(i.key)}>
+                        {expanded === i.key ? "▼" : "▶"} {accounts[i.key]?.length}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>
+                )}
               </div>
             ))}
           </div>
+          {expanded && items.find((i) => i.key === expanded)?.connected && (accounts[expanded] || []).length > 1 && (
+            <div className="int-accounts">
+              {accounts[expanded]?.map((acc) => (
+                <div key={acc.id} className="int-account">
+                  <span className="int-account-email">{acc.email || acc.id}</span>
+                  <button className="btn xs ghost" disabled={busy === acc.id} onClick={() => void disconnectAccount(expanded, acc.id)}>
+                    {busy === acc.id ? "…" : "Disconnect"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>

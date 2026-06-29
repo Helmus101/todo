@@ -1,7 +1,8 @@
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../shared/types.ts";
 
-export interface IntegrationItem { key: string; name: string; blurb: string; category: string; logo: string; connected: boolean; }
+export interface IntegrationItem { key: string; name: string; blurb: string; category: string; logo: string; connected: boolean; accounts?: ConnectedAccount[]; }
+export interface ConnectedAccount { id: string; email?: string; toolkit: string; status: string; }
 export interface IntegrationsResp { ready: boolean; items: IntegrationItem[]; }
 export interface ChatSource { title: string; url: string; }
 export interface ChatMsg { role: "user" | "assistant"; content: string; }
@@ -51,7 +52,9 @@ export const api = {
   signup: (email: string, password: string) => authPost("/api/auth/signup", { email, password }),
   login: (email: string, password: string) => authPost("/api/auth/login", { email, password }),
   integrations: (): Promise<IntegrationsResp> => req("/api/integrations").then(j),
+  integrationAccounts: (app: string): Promise<{ accounts: ConnectedAccount[] }> => req(`/api/integrations/${app}/accounts`).then(j),
   disconnectIntegration: (app: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect`),
+  disconnectAccount: (app: string, accountId: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect/${accountId}`),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
   generate: (): Promise<WebTask[]> => post("/api/tasks/generate"),
   add: (title: string): Promise<WebTask[]> => post("/api/tasks", { title }),

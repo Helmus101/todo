@@ -37,6 +37,30 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
   *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; }
 }
 
+/* Mobile responsive adjustments */
+@media (max-width: 640px) {
+  .landing-nav { padding: 20px 20px; }
+  .landing-nav .brand { font-size: 18px; }
+  .hero { padding: 20px 20px 60px; }
+  .hero-title { max-width: 12ch; }
+  .hero-sub { max-width: 40ch; }
+  .screen { padding: 24px 20px; }
+  .screen.connect h1 { max-width: 14ch; }
+  .topbar { padding: 12px 16px; }
+  .topbar .brand { font-size: 16px; }
+  .list-wrap { padding: 32px 16px 72px; }
+  .list-head { font-size: 20px; }
+  .card-main { padding: 14px 16px; }
+  .card-title { font-size: 15px; }
+  .card-sub { font-size: 12px; }
+  .detail { padding: 20px 16px; }
+  .step { padding: 10px 0; }
+  .step-text { font-size: 14px; }
+  .btn { height: 44px; font-size: 14px; padding: 0 14px; }
+  .addinput { height: 44px; font-size: 16px; }
+  .authcard { max-width: 100%; }
+}
+
 .brand { font-family: var(--serif); font-weight: 600; font-style: italic; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 8px; }
 .brand .logo { flex: none; font-style: normal; }
 
@@ -436,6 +460,12 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .int-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
 .int-blurb { font-size: 11.5px; color: var(--ink-3); line-height: 1.4; margin-top: 2px; overflow-wrap: anywhere; }
 .int-tile .btn { flex: none; }
+.int-actions { display: flex; gap: 6px; align-items: center; }
+/* Multi-account support */
+.int-accounts { margin-top: 8px; padding: 8px 12px; background: var(--bg-2); border-radius: 10px; border: 1px solid var(--line); }
+.int-account { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; }
+.int-account:not(:last-child) { border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 2px; }
+.int-account-email { font-size: 12px; color: var(--ink-2); font-weight: 500; word-break: break-all; }
 @media (max-width: 560px) { .int-grid { grid-template-columns: 1fr; } }
 
 /* ── Chat page ───────────────────────────────────────────────────────────────── */

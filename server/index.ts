@@ -26,16 +26,36 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8788);
 const PROD = process.env.NODE_ENV === "production";
 
-// Fail closed: a missing SESSION_SECRET in production would sign cookies with a public default.
-if (PROD && !process.env.SESSION_SECRET) {
-  throw new Error("SESSION_SECRET must be set in production — it signs the session cookie that gates account + Google access.");
+// Fail closed: required environment variables in production
+if (PROD) {
+  if (!process.env.SESSION_SECRET) {
+    throw new Error("SESSION_SECRET must be set in production — it signs the session cookie that gates account access.");
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY must be set in production — required for AI task generation and execution.");
+  }
+  if (!process.env.COMPOSIO_API_KEY) {
+    throw new Error("COMPOSIO_API_KEY must be set in production — required for app integrations.");
+  }
+  if (!process.env.PUBLIC_URL) {
+    throw new Error("PUBLIC_URL must be set in production — required for OAuth callbacks.");
+  }
 }
 
 const app = express();
 app.set("trust proxy", 1);
 // Liveness probe for the host platform — no auth, no session, no DB; just "the process is up".
 app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
-app.use(express.json());
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  if (PROD) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
+app.use(express.json({ limit: "1mb" }));
 app.use(session({
   store: await makeSessionStore(), // Supabase-backed when cloud is configured → sessions survive restarts/deploys
   secret: process.env.SESSION_SECRET || "dev-insecure-secret-change-me",
@@ -142,6 +162,14 @@ app.get("/api/integrations", requireAuth, async (req, res) => {
   });
 });
 
+// Get connected accounts for a specific app (supports multiple accounts)
+app.get("/api/integrations/:app/accounts", requireAuth, async (req, res) => {
+  const app2 = String(req.params.app);
+  if (!integrations.CATALOG.some((c) => c.key === app2)) { res.status(404).json({ error: "Unknown integration." }); return; }
+  const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2) : [];
+  res.json({ accounts });
+});
+
 // GET so a plain <a href> can carry the user through the OAuth redirect (like /auth/google).
 app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
   try {
@@ -163,6 +191,20 @@ app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
   const app2 = String(req.params.app);
   const result = integrations.integrationsReady() ? await integrations.disconnect(app2, req.session.user!) : { ok: true };
   if (req.session.integrations) delete req.session.integrations[app2];
+  integrations.invalidateTools(req.session.user!);
+  await saveSession(req);
+  res.json(result);
+});
+
+// Disconnect a specific account by ID (for multi-account support)
+app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req, res) => {
+  const app2 = String(req.params.app);
+  const accountId = String(req.params.accountId);
+  // Verify the account belongs to this user and app before disconnecting
+  const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2) : [];
+  const account = accounts.find((a) => a.id === accountId);
+  if (!account) { res.status(404).json({ error: "Account not found." }); return; }
+  const result = await integrations.disconnectAccount(accountId);
   integrations.invalidateTools(req.session.user!);
   await saveSession(req);
   res.json(result);
@@ -194,11 +236,14 @@ app.get("/api/tasks", requireAuth, (req, res) => { res.json(req.session.tasks ||
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try {
     const extras = await toolsFor(req);
-    if (!extras?.tools?.length) { res.status(400).json({ error: "Connect Gmail (and Calendar) in Settings so Otto has something to read." }); return; }
+    if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
     req.session.tasks = await tasks.generate(req.session.tasks || [], (req.session.profile ||= emptyProfile()), extras);
     await commit(req);
     res.json(req.session.tasks);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "generate failed" }); }
+  } catch (e: any) {
+    console.error("[tasks] generate error:", e);
+    res.status(500).json({ error: e?.message || "generate failed" });
+  }
 });
 
 app.post("/api/tasks", requireAuth, async (req, res) => {
@@ -217,7 +262,10 @@ app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, r
     const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req));
     await commit(req);
     res.json(t || { error: "not found" });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "run failed" }); }
+  } catch (e: any) {
+    console.error("[tasks] run error for task", req.params.id, ":", e);
+    res.status(500).json({ error: e?.message || "run failed" });
+  }
 });
 
 // Revise: the user declined to send and said what to change → re-run the task with that instruction so Otto
@@ -229,14 +277,41 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
     const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req), note);
     await commit(req);
     res.json(t || { error: "not found" });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "revise failed" }); }
+  } catch (e: any) {
+    console.error("[tasks] revise error for task", req.params.id, ":", e);
+    res.status(500).json({ error: e?.message || "revise failed" });
+  }
 });
 
 // These return the FULL task list (client filters out done/dismissed for display) — so the dashboard's
 // "handled" count + the deep-link "already handled" fallback keep working after a confirm/dismiss.
-app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => { tasks.setStatus(req.session.tasks || [], String(req.params.id), "done"); await commit(req); res.json(req.session.tasks || []); });
-app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => { tasks.reject(req.session.tasks || [], String(req.params.id)); await commit(req); res.json(req.session.tasks || []); });
-app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => { tasks.setStatus(req.session.tasks || [], String(req.params.id), "dismissed"); await commit(req); res.json(req.session.tasks || []); });
+app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
+  const id = String(req.params.id);
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  if (task) {
+    task.status = "done";
+    await commit(req);
+  }
+  res.json(req.session.tasks || []);
+});
+app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => {
+  const id = String(req.params.id);
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  if (task) {
+    tasks.reject(req.session.tasks || [], id);
+    await commit(req);
+  }
+  res.json(req.session.tasks || []);
+});
+app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
+  const id = String(req.params.id);
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  if (task) {
+    task.status = "dismissed";
+    await commit(req);
+  }
+  res.json(req.session.tasks || []);
+});
 // Auto-do ONE automatable step (focused agent run over the connected apps).
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   try {
@@ -244,13 +319,24 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), a
     const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), permTools);
     await commit(req);
     res.json(t || { error: "not found" });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "step run failed" }); }
+  } catch (e: any) {
+    console.error("[tasks] step run error for task", req.params.id, "step", req.params.index, ":", e);
+    res.status(500).json({ error: e?.message || "step run failed" });
+  }
 });
 // Mark a step done/undone (a manual step the user did, or after the client opened a URL step).
 app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
+  const id = String(req.params.id);
+  const index = Number(req.params.index);
   const done = req.body?.done !== false;
-  tasks.setStepDone(req.session.tasks || [], String(req.params.id), Number(req.params.index), done, typeof req.body?.result === "string" ? req.body.result : undefined);
-  await commit(req);
+  const result = typeof req.body?.result === "string" ? req.body.result : undefined;
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  const step = task?.steps?.[index];
+  if (step) {
+    step.done = done;
+    if (result !== undefined) step.result = result;
+    await commit(req);
+  }
   res.json(req.session.tasks || []);
 });
 // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.

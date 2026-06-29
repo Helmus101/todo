@@ -1,0 +1,35 @@
+{
+  "name": "Otto — the to-do list that does itself",
+  "short_name": "Otto",
+  "description": "Otto reads your inbox, calendar and Drive, then quietly does the to-dos it safely can — drafting replies, prepping docs, organizing tasks — and surfaces only what needs you.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0c0d",
+  "theme_color": "#0c0c0d",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "View Tasks",
+      "short_name": "Tasks",
+      "description": "View your to-do list",
+      "url": "/tasks",
+      "icons": [{ "src": "/favicon.svg", "sizes": "512x512" }]
+    },
+    {
+      "name": "Settings",
+      "short_name": "Settings",
+      "description": "Manage integrations and preferences",
+      "url": "/settings",
+      "icons": [{ "src": "/favicon.svg", "sizes": "512x512" }]
+    }
+  ]
+}
