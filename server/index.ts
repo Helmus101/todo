@@ -31,8 +31,8 @@ if (PROD) {
   if (!process.env.SESSION_SECRET) {
     throw new Error("SESSION_SECRET must be set in production — it signs the session cookie that gates account access.");
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY must be set in production — required for AI task generation and execution.");
+  if (!process.env.DEEPSEEK_API_KEY) {
+    throw new Error("DEEPSEEK_API_KEY must be set in production — required for AI task generation and execution.");
   }
   if (!process.env.COMPOSIO_API_KEY) {
     throw new Error("COMPOSIO_API_KEY must be set in production — required for app integrations.");
@@ -78,15 +78,53 @@ app.use(async (req, _res, next) => {
 });
 
 const saveSession = (req: express.Request) => new Promise<void>((r) => req.session.save((err) => { if (err) console.warn("[session] save failed:", (err as any)?.message || err); r(); }));
+const mergeTasks = (existing: WebTask[], incoming: WebTask[]): WebTask[] => {
+  const map = new Map<string, WebTask>();
+  for (const t of existing) map.set(t.id, t);
+  for (const t of incoming) {
+    const ext = map.get(t.id);
+    if (!ext) {
+      map.set(t.id, t);
+    } else {
+      const rank = (s: WebTask["status"]) => (s === "done" || s === "dismissed") ? 4 : s === "executed" ? 3 : s === "running" ? 2 : 1;
+      if (rank(t.status) >= rank(ext.status)) {
+        map.set(t.id, { ...ext, ...t });
+      }
+    }
+  }
+  return Array.from(map.values());
+};
+
+const mergeProfiles = (p1: Profile, p2: Profile): Profile => {
+  return {
+    name: p2.name || p1.name,
+    about: p2.about || p1.about,
+    preferences: Array.from(new Set([...(p1.preferences || []), ...(p2.preferences || [])])),
+    people: Array.from(new Set([...(p1.people || []), ...(p2.people || [])])),
+    projects: Array.from(new Set([...(p1.projects || []), ...(p2.projects || [])])),
+  };
+};
+
 // Persist the session AND this ACCOUNT's durable state (profile + tasks) to the cloud, keyed by the
 // account email — so it follows the account across devices and survives restarts. (Integration
 // connections live in Composio, keyed by the same account email, so there's nothing extra to store.)
 const commit = async (req: express.Request) => {
   await saveSession(req);
-  await saveState(req.session.user, {
-    profile: req.session.profile || emptyProfile(),
-    tasks: req.session.tasks || [],
-  });
+  if (req.session.user) {
+    try {
+      const current = await loadState(req.session.user);
+      const mergedTasks = mergeTasks(current.tasks || [], req.session.tasks || []);
+      const mergedProfile = mergeProfiles(current.profile || emptyProfile(), req.session.profile || emptyProfile());
+      req.session.tasks = mergedTasks;
+      req.session.profile = mergedProfile;
+      await saveState(req.session.user, { profile: mergedProfile, tasks: mergedTasks });
+    } catch {
+      await saveState(req.session.user, {
+        profile: req.session.profile || emptyProfile(),
+        tasks: req.session.tasks || [],
+      });
+    }
+  }
 };
 
 const requireAuth: RequestHandler = (req, res, next) => {
@@ -94,8 +132,8 @@ const requireAuth: RequestHandler = (req, res, next) => {
   next();
 };
 
-// Per-account rate limiter (in-memory sliding window) for the expensive Opus/Composio endpoints, so a runaway
-// client loop or a leaked session can't run up the Anthropic bill. Keyed by account email (falls back to IP).
+// Per-account rate limiter (in-memory sliding window) for the expensive AI/Composio endpoints, so a runaway
+// client loop or a leaked session can't run up the bill. Keyed by account email (falls back to IP).
 const rlHits = new Map<string, number[]>();
 const rateLimit = (max: number, windowMs: number): RequestHandler => (req, res, next) => {
   const key = `${req.session.user || req.ip}:${req.path}`;
@@ -233,10 +271,18 @@ app.get("/api/status", async (req, res) => {
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 app.get("/api/tasks", requireAuth, (req, res) => { res.json(req.session.tasks || []); });
 
+// Server-side floor between full generate sweeps per account — each one is a multi-round, multi-tool agent
+// pass (real API credits), so two open tabs / rapid refreshes must not stack them. Returns the current list
+// instead of erroring, so the client just sees "no new tasks yet".
+const lastGenAt = new Map<string, number>();
+const GEN_FLOOR_MS = 3 * 60_000;
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try {
+    const since = Date.now() - (lastGenAt.get(req.session.user!) || 0);
+    if (since < GEN_FLOOR_MS && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
     const extras = await toolsFor(req);
     if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
+    lastGenAt.set(req.session.user!, Date.now());
     req.session.tasks = await tasks.generate(req.session.tasks || [], (req.session.profile ||= emptyProfile()), extras);
     await commit(req);
     res.json(req.session.tasks);
@@ -316,7 +362,8 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   try {
     const permTools = await integrations.getAgentToolsWithPermission(req.session.user!).catch(() => undefined);
-    const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), permTools);
+    const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
+    const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), permTools, answer);
     await commit(req);
     res.json(t || { error: "not found" });
   } catch (e: any) {
@@ -353,7 +400,7 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
   res.json(t);
 });
 
-// ── Chat (Claude + web search, grounded in the user's profile + to-dos) ─────────
+// ── Chat (DeepSeek + web search, grounded in the user's profile + to-dos) ─────────
 app.post("/api/chat", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   try {
     const messages: ChatTurn[] = Array.isArray(req.body?.messages)
@@ -409,7 +456,7 @@ if (PROD) {
 }
 
 // A single failing run must NEVER take down the server. An unhandled rejection/exception from a
-// concurrent Claude run (Anthropic SDK, googleapis, a tool reject) would otherwise crash the whole
+// concurrent AI run (DeepSeek, googleapis, a tool reject) would otherwise crash the whole
 // process — killing every in-flight /run with "socket hang up" so tasks never finish (no steps).
 // Log and keep serving; the affected request already has its own try/catch and 500s on its own.
 process.on("unhandledRejection", (reason) => console.error("[weave-web] unhandledRejection:", reason));

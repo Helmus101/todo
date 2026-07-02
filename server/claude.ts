@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import type { Profile, TaskStep, TaskLink, Sendable } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
 import { webSearch } from "./chat.ts";
@@ -25,24 +25,59 @@ function nowBlock(): string {
   return `CURRENT DATE & TIME: ${date}, ${time}${tz ? ` (${tz})` : ""}. Reason about "today", "tomorrow", deadlines, scheduling and date conflicts relative to THIS. If you need a date/fact you're unsure of (a public deadline, a format, current info), use web_search rather than guess.\n`;
 }
 
-const MODEL = process.env.CLAUDE_MODEL || "claude-opus-4-8";
-
-export function aiReady(): boolean { return !!process.env.ANTHROPIC_API_KEY; }
-
-function clientOrThrow(): Anthropic {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("Set ANTHROPIC_API_KEY in web/.env.");
-  return new Anthropic({ apiKey });
+function deadlineBlock(text: string): string {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  const match = raw.match(/\b(before|by|until|due)\b\s*[:\-]?\s*([^\n]+)/i);
+  if (!match) return "";
+  // Don't emit a deadline hint for a date that is clearly in the past — the agent would
+  // think it missed the window, stall, or produce unhelpful "deadline passed" steps.
+  const snippet = match[0];
+  const yearMatch = snippet.match(/\b(20\d{2})\b/);
+  const monthDayMatch = snippet.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})/i);
+  if (monthDayMatch) {
+    const year = yearMatch ? Number(yearMatch[1]) : new Date().getFullYear();
+    const months: Record<string,number> = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+    const mo = months[monthDayMatch[1].slice(0,3).toLowerCase()];
+    const dy = Number(monthDayMatch[2]);
+    if (mo !== undefined) {
+      const deadline = new Date(year, mo, dy);
+      if (deadline < new Date()) return ""; // already past — suppress the misleading hint
+    }
+  }
+  return `EXPLICIT DEADLINE PHRASE FROM THE TASK: "${snippet}". Treat that deadline/date as exact and preserve it unless the source data clearly contradicts it.\n`;
 }
 
-// Prompt caching: an ephemeral cache breakpoint on the last tool + the system prompt means the large, static
-// prefix (the tool list alone is ~100+ defs) is billed ONCE per ~5-min window instead of re-sent on every agent
-// round and every auto-run — a big input-token cut with zero behaviour change.
-function cacheLastTool(tools: Anthropic.Tool[]): Anthropic.Tool[] {
-  if (!tools.length) return tools;
-  return tools.map((t, i) => (i === tools.length - 1 ? ({ ...t, cache_control: { type: "ephemeral" } } as any) : t));
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+
+export function aiReady(): boolean {
+  return !!process.env.DEEPSEEK_API_KEY;
 }
-const sysCached = (text: string): any => [{ type: "text", text, cache_control: { type: "ephemeral" } }];
+
+function deepseekClient(): OpenAI {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) throw new Error("Set DEEPSEEK_API_KEY in web/.env.");
+  return new OpenAI({
+    apiKey,
+    baseURL: "https://api.deepseek.com",
+  });
+}
+
+async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000): Promise<T> {
+  let lastErr: any;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+      const isNetworkError = e?.code === "ENOTFOUND" || e?.message?.includes("fetch failed") || e?.message?.includes("socket hang up") || e?.status === 502 || e?.status === 503 || e?.status === 504 || e?.status === 429;
+      if (!isNetworkError || i === retries - 1) throw e;
+      console.warn(`[ai] request failed (${e?.message || e}), retrying in ${delayMs}ms... (attempt ${i + 1}/${retries})`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      delayMs *= 2;
+    }
+  }
+  throw lastErr;
+}
 
 /** Tolerant: pull the first JSON value (object or array) out of a model reply. */
 function firstJson<T>(raw: string): T | null {
@@ -61,6 +96,18 @@ function firstJson<T>(raw: string): T | null {
     else if (ch === close) { depth--; if (depth === 0) { try { return JSON.parse(body.slice(start, i + 1)) as T; } catch { return null; } } }
   }
   return null;
+}
+
+function parseToolArgs(raw: any): any {
+  if (raw == null) return {};
+  if (typeof raw === "object") return raw;
+  const text = String(raw || "").trim();
+  if (!text) return {};
+  try { return JSON.parse(text); }
+  catch {
+    const repaired = firstJson<any>(text);
+    return repaired && typeof repaired === "object" ? repaired : {};
+  }
 }
 
 export interface GeneratedTask {
@@ -88,15 +135,31 @@ const GEN_SYSTEM =
   `- GitHub / Linear / Jira: issues & PRs assigned to you, review requests, things blocking others.\n` +
   `- Notion / Todoist / Asana / Trello / ClickUp: tasks assigned or due soon.\n` +
   `- Any other connected app: whatever is genuinely waiting on this person.\n` +
+  `- COMMITMENTS THEY MADE: also check their recently SENT mail/messages (e.g. Gmail search "in:sent newer_than:7d") ` +
+  `for promises THEY made to others — "I'll send you X", "I'll get back to you by Friday", "let me check and ` +
+  `follow up" — and create a task to FULFILL each one that looks unfulfilled (no later reply/attachment in the ` +
+  `thread). Title it as the commitment ("Send Sarah the budget deck"), set "when" from the promised deadline, ` +
+  `and anchor it to the sent thread ('gmail:<threadId>'). A broken promise is worse than a missed email.\n` +
   `Surface a clear, actionable to-do for EVERYTHING that needs them (one per item). Skip true non-actionable ` +
   `noise. Rank by urgency/importance rather than dropping. Ground every task STRICTLY in what the tools return; ` +
   `never invent people, dates, or facts. You may also use web_search for quick external context (e.g. who a ` +
-  `sender is, a public deadline). NEVER resurface a to-do the user already finished or DISMISSED — if an ` +
+  `sender is, a public deadline).\n` +
+  `GMAIL — SEARCH IT SEVERAL WAYS, not one generic fetch: (1) recent inbox needing action ` +
+  `("in:inbox newer_than:7d -category:promotions -category:social"), (2) unread ("is:unread in:inbox"), ` +
+  `(3) their SENT mail for open loops ("in:sent newer_than:10d") — read what THEY promised and check whether ` +
+  `they delivered, and (4) threads where someone asked them something and the last message is NOT theirs ` +
+  `(they owe a reply).\n` +
+  `USE THEIR PROFILE AS SEARCH LEADS: pick the 2-3 most active projects/people listed below and run ONE ` +
+  `targeted search each (the name in Gmail or the relevant app) to find loose ends — an unanswered thread, ` +
+  `an upcoming deadline, a doc waiting on them. What did they say they'd do but haven't?\n` +
+  `NEVER resurface a to-do the user already finished or DISMISSED — if an ` +
   `"ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ` +
   `READ ONLY here — do NOT create, modify, draft, or send anything during ` +
-  `generation. Be efficient: a few targeted reads PER connected app, then submit.`;
+  `generation. BUDGET: you have roughly 10-12 tool calls TOTAL — batch your Gmail searches into one round ` +
+  `(issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, ` +
+  `and submit as soon as you have the picture. Thorough ≠ exhaustive.`;
 
-const SUBMIT_TASKS_TOOL: Anthropic.Tool = {
+const SUBMIT_TASKS_TOOL = {
   name: "submit_tasks",
   description: "Submit the full actionable to-do list you found.",
   input_schema: { type: "object", properties: {
@@ -116,7 +179,7 @@ const SUBMIT_TASKS_TOOL: Anthropic.Tool = {
 
 // Shared web-search tool for the task agents — gives generation + execution the same "look it up" power the
 // chat has, so planning or doing a task can pull in external context (a person, a deadline, a how-to, a link).
-const WEB_SEARCH_TOOL: Anthropic.Tool = {
+const WEB_SEARCH_TOOL = {
   name: "web_search",
   description: "Search the web for current or background facts you can't get from the connected apps — a person/company, a deadline or figure, how to do something, a reference link. Returns top results (title, url, snippet).",
   input_schema: { type: "object", properties: { query: { type: "string", description: "the search query" } }, required: ["query"] },
@@ -152,8 +215,7 @@ function parseGenerated(arr: any): GeneratedTask[] {
  */
 export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[]): Promise<GeneratedTask[]> {
   if (!extras?.tools?.length) return []; // nothing connected to read
-  const client = clientOrThrow();
-  const tools: Anthropic.Tool[] = cacheLastTool([...extras.tools, WEB_SEARCH_TOOL, SUBMIT_TASKS_TOOL]);
+  const tools = [...extras.tools, WEB_SEARCH_TOOL, SUBMIT_TASKS_TOOL];
   const connectedLine = extras.connected?.length
     ? `My connected apps you can read: ${extras.connected.join(", ")}. Check EACH of them, not just email.`
     : `Use whatever tools you have to read what needs me.`;
@@ -161,35 +223,54 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     ? `\nALREADY HANDLED — I already finished or dismissed these; do NOT create a task for any of them again, even if its source email/event is still around:\n` +
       handled.slice(0, 40).map((h) => `- ${h.title}${h.anchorKey ? ` [${h.anchorKey}]` : ""}`).join("\n") + `\n`
     : "";
-  const messages: Anthropic.MessageParam[] = [{
+  const messages: any[] = [{
     role: "user",
     content: nowBlock() + profileBlock(profile) + handledBlock +
-      `\n${connectedLine}\nSweep across all of them for everything genuinely awaiting me, then call submit_tasks ` +
-      `with my full actionable to-do list. Be efficient: a few targeted reads per app, then submit.`,
+      `\n${connectedLine}\nSweep across all of them for everything genuinely awaiting me — including what I ` +
+      `promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above — ` +
+      `then call submit_tasks with my full actionable to-do list.`,
   }];
-  const MAX = 7;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.
+  // The prompt tells the agent to BATCH searches as parallel calls in one round, so 12 rounds is plenty.
+  const MAX = 12;
   for (let i = 0; i < MAX; i++) {
-    const forceSubmit = i === MAX - 1;
-    const res = await client.messages.create({
-      model: MODEL, max_tokens: 4000, system: sysCached(GEN_SYSTEM), tools, messages,
-      ...(forceSubmit ? { tool_choice: { type: "tool" as const, name: "submit_tasks" } } : {}),
-    });
-    const toolUses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    if (!toolUses.length) return [];
-    messages.push({ role: "assistant", content: res.content });
-    const results: Anthropic.ToolResultBlockParam[] = [];
+    const client = deepseekClient();
+    const lastRoundHint = i === MAX - 1 ? "You must call submit_tasks now with the full actionable list. Do not answer with prose." : "";
+    const apiMessages = lastRoundHint ? [...messages, { role: "user" as const, content: lastRoundHint }] : messages;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model: actualModel,
+      max_tokens: 4000,
+      messages: [
+        { role: "system", content: GEN_SYSTEM },
+        ...apiMessages,
+      ],
+      tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+    }));
+    const toolUses = res.choices[0]?.message?.tool_calls || [];
+    if (!toolUses.length) {
+      const assistantText = res.choices[0]?.message?.content || "";
+      if (i < MAX - 1) {
+        if (assistantText) messages.push({ role: "assistant", content: assistantText });
+        messages.push({ role: "user", content: "You have not used any tools yet. Inspect the connected apps first. Call at least one connected tool now and do not answer with prose." });
+        continue;
+      }
+      return [];
+    }
+    messages.push({ role: "assistant", content: res.choices[0]?.message?.content || "", tool_calls: toolUses });
     let submitted: GeneratedTask[] | null = null;
     for (const tu of toolUses) {
+      const input = parseToolArgs((tu as any).function?.arguments);
+      const toolName = (tu as any).function?.name;
       let content = "ok";
       try {
-        if (tu.name === "submit_tasks") { submitted = parseGenerated((tu.input as any)?.tasks); content = "submitted"; }
-        else if (tu.name === "web_search") { content = await runWebSearch(tu.input); }
-        else { const r = await extras.call(tu.name, (tu.input as any) || {}); content = r ?? `Unknown tool: ${tu.name}`; }
+        if (toolName === "submit_tasks") { submitted = parseGenerated(input?.tasks); content = "submitted"; }
+        else if (toolName === "web_search") { content = await runWebSearch(input); }
+        else { const r = await extras.call(toolName, input || {}); content = r ?? `Unknown tool: ${toolName}`; }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
-      results.push({ type: "tool_result", tool_use_id: tu.id, content: String(content).slice(0, 6000) });
+      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 6000) });
     }
     if (submitted) { if (!submitted.length) console.warn("[claude] generateTasks submitted 0 tasks"); return submitted; }
-    messages.push({ role: "user", content: results });
   }
   return [];
 }
@@ -204,18 +285,22 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
   const raw = String(text || "").trim();
   if (!raw) return null;
   try {
-    const res = await clientOrThrow().messages.create({
-      model: MODEL, max_tokens: 500,
-      system: "You turn a person's rough to-do note into one crisp, actionable task. Preserve their intent and any specifics they gave; do NOT invent names, dates, or facts they didn't state. Output STRICT JSON only.",
-      messages: [{
-        role: "user",
-        content: profileBlock(profile) +
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model,
+      max_tokens: 500,
+      messages: [
+        { role: "system", content: "You turn a person's rough to-do note into one crisp, actionable task. Preserve their intent and any specifics they gave; do NOT invent names, dates, or facts they didn't state. Output STRICT JSON only." },
+        { role: "user", content: profileBlock(profile) +
           `\nRough note: "${raw.slice(0, 300)}"\n\nReturn JSON: {"title": short imperative <= 9 words, ` +
-          `"why": one concise clause capturing the intent, "when": a concise deadline/timeline if implied (e.g. "today", "by Fri") else "", ` +
-          `"urgency": 0..1 time pressure, "importance": 0..1 stakes}. JSON only.`,
-      }],
-    });
-    const out = firstJson<any>(res.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join(""));
+          `"why": one concise clause capturing the intent, ` +
+          `"when": a deadline for COMPLETING THIS TASK (e.g. "today", "by Fri") — ONLY if the note explicitly says when the TASK itself must be done (e.g. "by tomorrow", "before June 30"). If the note only mentions dates as background context (e.g. a trip date, event date, year mentioned in passing) leave this "", ` +
+          `"urgency": 0..1 time pressure, "importance": 0..1 stakes}. JSON only.` }
+      ],
+    }));
+    const textContent = res.choices[0]?.message?.content || "";
+    const out = firstJson<any>(textContent);
     if (!out || typeof out.title !== "string" || !out.title.trim()) return null;
     return {
       title: String(out.title).slice(0, 90),
@@ -246,6 +331,12 @@ const RUN_SYSTEM =
   `NOT ask the user for anything you could find or do yourself. Be rigorously honest and grounded; never invent specifics.\n` +
   `You can also use web_search for any external fact or context you need (a person, company, deadline, how-to, ` +
   `or a reference link) — look it up rather than guess.\n` +
+  `GOOGLE SHEETS — YOU MUST ACTUALLY WRITE: if the task involves updating a spreadsheet (e.g. filling in ` +
+  `restaurant names, meal ideas, trip data, any cells), you MUST call the Sheets write tools ` +
+  `(GOOGLESHEETS_BATCH_UPDATE_VALUES, GOOGLESHEETS_UPDATE_VALUES, GOOGLESHEETS_APPEND_VALUES, etc.) to ACTUALLY ` +
+  `write the data into the cells — do NOT just produce a plan or list in synthesis. Read the sheet first to ` +
+  `find the exact cells/ranges that need filling, then call the write tool with real content. Sheet cell writes ` +
+  `are FULLY PERMITTED and reversible — you do NOT need user approval to write cells. Do it now.\n` +
   `GATHER CONTEXT AGGRESSIVELY — BEFORE you act, search EVERYWHERE for relevant information:\n` +
   `- Search Gmail for related threads (e.g., hotel bookings, flight confirmations, restaurant reservations, addresses, phone numbers)\n` +
   `- Search Calendar for related events (e.g., travel dates, meeting times, deadlines)\n` +
@@ -317,6 +408,12 @@ const RUN_SYSTEM =
   `When UNSURE, it's OTTO's — attempt it. "Tedious", "specific", "numeric", or "I'd have to look it up" are NEVER ` +
   `reasons to hand a step to the user. When a user step unblocks one of yours, say so — "Pick the date — I'll ` +
   `then book it". Add "url" only for an open-a-page step.\n` +
+  `ASK ONLY WHEN TRULY STUCK: if a step is automatable EXCEPT for one detail you could not find or infer ` +
+  `(a choice between real options, a preference, a date only they know), keep automatable=true and set ` +
+  `"question" — ONE short, specific question — plus "options": 2-4 LIKELY answers with your best inference ` +
+  `FIRST (they tap one and you run). Search EVERYTHING first (inbox, Drive, calendar, their profile, the web); ` +
+  `a question you could have answered yourself is a failure. Prep everything around it so their answer is the ` +
+  `only missing piece. Never ask more than 2 questions per task.\n` +
   `BRIEF, DON'T JUST DEFER: even when the final action is the USER's (a decision, or a booking/login/payment you ` +
   `can't do), do ALL the research around it FIRST — find the real options + facts, put each as a "links" entry ` +
   `they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or ` +
@@ -341,7 +438,7 @@ const RUN_SYSTEM =
   `not before. Be BRIEF: "synthesis" is ONE sentence; "context" is 1-2 short bullets. Don't narrate problems or ` +
   `steps you skipped — just the result.`;
 
-const RUN_TOOLS: Anthropic.Tool[] = [
+const RUN_TOOLS = [
   { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
     context: { type: "string", description: "what this is about — 1-2 SHORT bullets, each a line beginning with '- '. Brief; the user only sees this if they expand it." },
@@ -355,6 +452,8 @@ const RUN_TOOLS: Anthropic.Tool[] = [
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
         url: { type: "string", description: "a page to open, if the step is to visit/open one" },
+        question: { type: "string", description: "ONLY if this automatable step is missing ONE detail you could not find or infer anywhere (a choice, a preference, a date only the user knows): one short, direct question. Search everything first — a question you could have answered yourself is a failure." },
+        options: { type: "array", items: { type: "string" }, description: "2-4 likely answers to 'question', your best inference FIRST (the user taps one and you run). Short — a few words each. Omit for free-form answers." },
       }, required: ["text", "automatable"] },
     },
     links: {
@@ -392,9 +491,8 @@ const RUN_TOOLS: Anthropic.Tool[] = [
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
 export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
-  const client = clientOrThrow();
   const profileUpdates: ProfileUpdate[] = [];
-  const tools = cacheLastTool([...RUN_TOOLS, WEB_SEARCH_TOOL, ...(extras?.tools?.length ? extras.tools : [])]);
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(extras?.tools?.length ? extras.tools : [])];
   const connectedLine = extras?.connected?.length
     ? `\nConnected apps you can use (read + reversible writes; never send/post/delete): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
@@ -408,55 +506,107 @@ export async function runTask(task: { title: string; why: string; source?: strin
     ? `\nALREADY CREATED FOR THIS TASK (you made these on a prior run — OPEN and UPDATE the existing one, do NOT create a new copy):\n${priorArtifacts.map((l) => `- ${l.label}: ${l.url}`).join("\n")}\n`
     : "";
   const head = nowBlock() + `TASK: ${task.title}\nWHY: ${task.why}\n` + profileBlock(profile) + artifactsBlock + connectedLine;
-  const messages: Anthropic.MessageParam[] = [{
+  const deadlineHint = deadlineBlock(`${task.title}\n${task.why}`);
+  const messages: any[] = [{
     role: "user",
     content: focus
       // Focused single-step run (the user hit "Auto-do" on one automatable step).
-      ? head + `\nDo ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) — don't describe it, DO it — then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.`
-      : head + manualHint + `\nGather what you need, then ACTUALLY DO the reversible work now with your tools (draft/create/update) — don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`,
+      ? head + deadlineHint + `\nDo ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) — don't describe it, DO it — then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.`
+      : head + deadlineHint + manualHint + `\nGather what you need, then ACTUALLY DO the reversible work now with your tools (draft/create/update) — don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`,
   }];
 
-  const MAX = 8;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const MAX = 24; // enough turns for multi-city/multi-step tasks (read sheet → search each city → write rows)
   for (let i = 0; i < MAX; i++) {
-    // On the final round, FORCE a submit so it always returns a real result instead of "ran out of steps".
-    const forceSubmit = i === MAX - 1;
-    const res = await client.messages.create({
-      model: MODEL, max_tokens: 4000, system: sysCached(RUN_SYSTEM), tools, messages,
-      ...(forceSubmit ? { tool_choice: { type: "tool" as const, name: "submit" } } : {}),
-    });
-    const toolUses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    if (!toolUses.length) {
-      const text = res.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");
-      const out = firstJson<RunOutput>(text);
-      return finalize(out, text, profileUpdates);
+    // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
+    // actually WRITE the data (not just keep reading) and move toward finishing.
+    if (i === 10 && !focus) {
+      messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. If this task involves writing to a spreadsheet or document, START WRITING NOW — call the write tool (e.g. GOOGLESHEETS_BATCH_UPDATE_VALUES or GOOGLESHEETS_APPEND_VALUES) with the real data. Do not keep reading without writing. Complete the work and call submit when done." });
     }
-    messages.push({ role: "assistant", content: res.content });
-    const results: Anthropic.ToolResultBlockParam[] = [];
+    const client = deepseekClient();
+    const lastRoundHint = i === MAX - 1 ? "You must call submit now with the final result. Do not answer with prose." : "";
+    const apiMessages = lastRoundHint ? [...messages, { role: "user" as const, content: lastRoundHint }] : messages;
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: actualModel,
+      max_tokens: 4000,
+      messages: [
+        { role: "system", content: RUN_SYSTEM },
+        ...apiMessages,
+      ],
+      tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
+    }));
+    const toolUses = res.choices[0]?.message?.tool_calls || [];
+    if (!toolUses.length) {
+      const textContent = res.choices[0]?.message?.content || "";
+      const out = firstJson<RunOutput>(textContent);
+      if (out) return finalize(out, textContent, profileUpdates);
+      if (i < MAX - 1) {
+        if (textContent) messages.push({ role: "assistant", content: textContent });
+        messages.push({ role: "user", content: "You still have not used any tools. Read the connected apps and do the work now. Do not answer with prose until you have actually acted." });
+        continue;
+      }
+      return finalize(out, textContent, profileUpdates);
+    }
+    messages.push({ role: "assistant", content: res.choices[0]?.message?.content || "", tool_calls: toolUses });
     let submitted: RunOutput | null = null;
     for (const tu of toolUses) {
-      const input = tu.input as any;
+      const input = parseToolArgs((tu as any).function?.arguments);
       let content = "ok";
       try {
-        if (tu.name === "remember") {
+        const toolName = (tu as any).function?.name;
+        if (toolName === "remember") {
           const fact = String(input.fact || "").trim();
           const cat = ["name", "about", "preference", "person", "project"].includes(input.category) ? input.category : "preference";
           if (fact) profileUpdates.push({ category: cat, fact });
           content = "saved";
         }
-        else if (tu.name === "submit") { submitted = finalize(input as RunOutput, "", profileUpdates); content = "submitted"; }
-        else if (tu.name === "web_search") { content = await runWebSearch(input); }
+        else if (toolName === "submit") { submitted = finalize(input as RunOutput, "", profileUpdates); content = "submitted"; }
+        else if (toolName === "web_search") { content = await runWebSearch(input); }
         else {
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.
-          const r = extras ? await extras.call(tu.name, input || {}) : null;
-          content = r ?? `Unknown tool: ${tu.name}`;
+          const r = extras ? await extras.call(toolName, input || {}) : null;
+          content = r ?? `Unknown tool: ${toolName}`;
         }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
-      results.push({ type: "tool_result", tool_use_id: tu.id, content: String(content).slice(0, 6000) });
+      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 6000) });
     }
     if (submitted) return submitted;
-    messages.push({ role: "user", content: results });
   }
-  return { context: "", synthesis: "- Gathered context but ran out of steps before finishing — try Run again.", steps: [], links: [], sendables: [], profileUpdates };
+  // Rescue path: if the model never called submit, ask it once (without tools) to produce a final JSON result.
+  try {
+    const client = deepseekClient();
+    const transcript = messages.map((m) => {
+      const role = String(m?.role || "assistant");
+      const content = typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? "");
+      return `${role.toUpperCase()}: ${content}`;
+    }).join("\n\n").slice(-24000);
+    const rescue: any = await client.chat.completions.create({
+      model: actualModel,
+      max_tokens: 1400,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You must output STRICT JSON only: {context:string,synthesis:string,steps:array,links:array,sendables:array}. " +
+            "Use the transcript to produce the best possible final result. Keep synthesis to one short sentence.",
+        },
+        { role: "user", content: transcript },
+      ],
+    });
+    const text = rescue.choices[0]?.message?.content || "";
+    const out = firstJson<RunOutput>(text);
+    if (out) return finalize(out, text, profileUpdates);
+  } catch {
+    // fall through to a safe non-error output
+  }
+  return {
+    context: "- Couldn't finalize this run automatically.",
+    synthesis: "Prepared what I could, but this task still needs another run.",
+    steps: [{ text: "Run this task again", automatable: true }],
+    links: [],
+    sendables: [],
+    profileUpdates,
+  };
 }
 
 function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[]): RunOutput {
@@ -468,6 +618,8 @@ function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[
       needsPermission: !!s?.needsPermission,
       dependsOn: Number.isInteger(s?.dependsOn) ? s.dependsOn : undefined,
       url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : undefined,
+      question: s?.question ? String(s.question).trim().slice(0, 200) : undefined,
+      options: Array.isArray(s?.options) ? s.options.map((o: any) => String(o).trim()).filter(Boolean).slice(0, 4) : undefined,
     }))
     .filter((s: TaskStep) => s.text)
     .slice(0, 10);

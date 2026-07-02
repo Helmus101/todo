@@ -86,6 +86,10 @@ export interface TaskStep {
   /** Set by the server when the action was blocked by the permission gate (doc edit / calendar create).
    *  The client shows an "Approve & Run" prompt; the user's click routes through runStep which bypasses the gate. */
   needsPermission?: boolean;
+  /** The ONE piece of info the agent needs from the user to automate this step (a choice, a date, a name).
+   *  The client shows it inline with `options` as tappable answers + a free-text input; answering runs the step. */
+  question?: string;
+  options?: string[];   // 2-4 likely answers, best inference first (tap-to-answer MCQ)
 }
 
 /** A reviewed message/invite the agent prepared (a Gmail draft / a composed Slack message / a calendar event

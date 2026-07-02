@@ -139,6 +139,8 @@ export function App() {
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
   const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.setItem("otto-intro", "1"); } catch { /* ignore */ } setOnboard(false); setIntroSeen(true); };
   const dismissIntro = () => { try { localStorage.setItem("otto-intro", "1"); } catch { /* ignore */ } setIntroSeen(true); };
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [doingAll, setDoingAll] = useState(false); // "Do everything" bulk action in flight
   const generatedOnce = useRef(false);
   const inflight = useRef<Set<string>>(new Set()); // ids currently auto-running (bounded concurrency)
   const attempts = useRef<Map<string, number>>(new Map()); // per-task auto-run attempts (capped retry)
@@ -185,7 +187,8 @@ export function App() {
         generatedOnce.current = true;
         let lastGen = 0;
         try { lastGen = Number(localStorage.getItem("otto-lastgen") || 0); } catch { /* ignore */ }
-        if (t.length === 0 || Date.now() - lastGen > 4 * 60 * 1000) {
+        // Only re-scan on open if it's been a while (each generate is a full multi-tool agent sweep — pricey).
+        if (t.length === 0 || Date.now() - lastGen > 20 * 60 * 1000) {
           setBusy(true); setNote("");
           try { setTasks(retry(await api.generate())); try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } }
           catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
@@ -210,31 +213,36 @@ export function App() {
       let timer: ReturnType<typeof setTimeout>;
       const timeout = new Promise<WebTask>((_, rej) => { timer = setTimeout(() => rej(new Error("timeout")), RUN_TIMEOUT_MS); });
       Promise.race([api.run(task.id), timeout])
-        .then((u) => { if (u && u.id) { attempts.current.delete(u.id); setTasks((prev) => prev.map((t) => (t.id === u.id ? u : t))); } })
+        // If the user dismissed/confirmed the task while it was running, keep THEIR state — never resurrect it.
+        .then((u) => { if (u && u.id) { attempts.current.delete(u.id); setTasks((prev) => prev.map((t) => (t.id === u.id ? (t.status === "dismissed" || t.status === "done" ? t : u) : t))); } })
         .catch(() => {
           // Pause this task now. A failure is often transient (the dev server restarted mid-run → socket
           // hang up). Retry a couple of times with a short delay; only give up (stay paused, user can hit
           // Run again) after that, so a real fault doesn't loop forever.
           const n = (attempts.current.get(task.id) || 0) + 1;
           attempts.current.set(task.id, n);
-          setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "ready", autoRan: true } : t)));
+          setTasks((prev) => prev.map((t) => (t.id === task.id ? (t.status === "dismissed" || t.status === "done" ? t : { ...t, status: "ready", autoRan: true }) : t)));
           if (n < 3) setTimeout(() => setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, autoRan: false } : t))), 5000);
         })
         .finally(() => { clearTimeout(timer); inflight.current.delete(task.id); });
     }
   }, [tasks, connected]);
 
-  // Auto-generate fresh to-dos every 10 minutes while the app is open.
+  // Auto-refresh to-dos periodically while the app is open — kept infrequent (each generate is a full
+  // multi-tool agent sweep = real API credits). Manual ↻ Refresh covers "check right now".
   useEffect(() => {
     if (!connected || !status?.aiReady) return;
     // Only re-scan while the tab is visible — no point burning a full generate pass on a backgrounded tab.
-    const id = setInterval(() => { if (!document.hidden) void api.generate().then(setTasks).catch(() => {}); }, 10 * 60 * 1000);
+    const id = setInterval(() => {
+      if (document.hidden) return;
+      void api.generate().then((t) => { setTasks(t); try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } }).catch(() => {});
+    }, 45 * 60 * 1000);
     return () => clearInterval(id);
   }, [connected, status?.aiReady]);
 
   const generate = async () => {
     setBusy(true); setNote("");
-    try { const t = await api.generate(); setTasks(t); if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now."); }
+    try { const t = await api.generate(); setTasks(t); try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now."); }
     catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
     finally { setBusy(false); }
   };
@@ -262,9 +270,35 @@ export function App() {
   }
 
   const live = tasks.filter((t) => t.status !== "done" && t.status !== "dismissed").sort((a, b) => b.score - a.score);
+  const completed = tasks.filter((t) => t.status === "done").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const working = tasks.filter((t) => t.status === "running").length;
-  const handled = tasks.filter((t) => t.status === "done").length;
+  const handled = completed.length;
   const openId = route.startsWith("task/") ? route.slice(5) : null; // the deep-linked task, if any
+
+  // "Do everything": one button that clears whatever is waiting on a click —
+  // (a) re-runs ready tasks that failed/never produced a result, and
+  // (b) approves + runs every permission-gated step that isn't blocked.
+  const failedReady = live.filter((t) => t.status === "ready" && t.autoRan && !t.synthesis);
+  const approvals = live.flatMap((t) =>
+    t.status === "executed"
+      ? (t.steps || []).map((s, i) => ({ t, s, i })).filter(({ s }) =>
+          s.automatable && s.needsPermission && !s.done && (s.dependsOn == null || t.steps?.[s.dependsOn]?.done))
+      : []);
+  const doEverything = async () => {
+    if (doingAll) return;
+    setDoingAll(true);
+    try {
+      for (const t of failedReady) {
+        try { const u = await api.run(t.id); if (u?.id) setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x))); }
+        catch { /* keep going — each failure surfaces on its own card */ }
+      }
+      for (const { t, i } of approvals) {
+        try { const u = await api.runStep(t.id, i); if (u?.id) setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x))); }
+        catch { /* keep going */ }
+      }
+    } finally { setDoingAll(false); }
+  };
+  const doAllCount = failedReady.length + approvals.length;
 
   return (
     <div className="app">
@@ -294,7 +328,7 @@ export function App() {
             <div className="dash-stats">
               <span><b>{live.length}</b> on your plate</span>
               {working ? <span className="dash-run"><b>{working}</b> running<span className="mini" /></span> : null}
-              {handled ? <span><b>{handled}</b> handled</span> : null}
+              {handled ? <span className="dash-stat-link" onClick={() => setShowCompleted((v) => !v)}><b>{handled}</b> handled {showCompleted ? "▾" : "▸"}</span> : null}
             </div>
           </div>
           {!introSeen && (
@@ -326,7 +360,34 @@ export function App() {
                   />
                 ))}</div>;
           })()}
+          {showCompleted && completed.length > 0 && (
+            <div className="completed-section">
+              <h3 className="completed-head">Completed</h3>
+              <div className="list">{completed.map((t) => (
+                <Card
+                  key={t.id}
+                  task={t}
+                  open={false}
+                  onToggle={() => {}}
+                  onChange={setTasks}
+                  onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                />
+              ))}</div>
+            </div>
+          )}
           {note && live.length > 0 && <div className="empty" style={{ padding: "10px 16px" }}>{note}</div>}
+          {doAllCount > 0 && (
+            <div className="doall-bar">
+              <span className="doall-info">
+                {failedReady.length ? `${failedReady.length} to retry` : ""}
+                {failedReady.length && approvals.length ? " · " : ""}
+                {approvals.length ? `${approvals.length} step${approvals.length > 1 ? "s" : ""} awaiting your approval` : ""}
+              </span>
+              <button className="btn primary" disabled={doingAll} onClick={() => void doEverything()}>
+                {doingAll ? "Doing everything…" : `⚡ Do everything (${doAllCount})`}
+              </button>
+            </div>
+          )}
         </main>
       )}
     </div>
@@ -361,7 +422,7 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
       <h2>{(status.name || firstName(status.user)) ? `Welcome, ${status.name || firstName(status.user)}` : "Welcome to Otto"}</h2>
       <p>Connect Gmail to begin. Otto reads your inbox, calendar and Drive so it can do your to-dos — it only ever creates <b>drafts</b> and <b>docs</b>, and never sends without you.</p>
       {!status.googleConfigured && <div className="warn">Integrations aren't configured on the server (COMPOSIO_API_KEY).</div>}
-      {!status.aiReady && <div className="warn">Server is missing ANTHROPIC_API_KEY — task generation is disabled.</div>}
+      {!status.aiReady && <div className="warn">Server is missing DEEPSEEK_API_KEY — task generation is disabled.</div>}
       <a className="btn primary big" href="/settings">Connect in Settings</a>
     </div>
   );
@@ -596,7 +657,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   );
 }
 
-/** Chat PAGE (route /chat): a Claude-backed assistant that can search the web (DuckDuckGo fallback) and
+/** Chat PAGE (route /chat): a DeepSeek-backed assistant that can search the web (DuckDuckGo fallback) and
  *  knows the user's profile + current to-dos. Sources render as clickable chips under each answer. */
 function ChatPage() {
   const [msgs, setMsgs] = useState<{ role: "user" | "assistant"; content: string; sources?: { title: string; url: string }[]; via?: string }[]>([]);
@@ -796,7 +857,7 @@ function ProfileEditor() {
   const [p, setP] = useState<Profile | null>(null);
   useEffect(() => { void api.profile().then(setP).catch(() => setP(null)); }, []);
   if (!p) return <p className="muted small">Loading…</p>;
-  const count = (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length;
+  const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length;
   const lists = [
     { key: "preference" as const, label: "Preferences", items: p.preferences },
     { key: "person" as const, label: "People", items: p.people },
@@ -804,6 +865,7 @@ function ProfileEditor() {
   ];
   return (
     <div className="memory-body">
+      <NameRow name={p.name || ""} onSave={async (v) => setP(await api.setProfile("name", v))} />
       <AboutRow about={p.about} onSave={async (v) => setP(await api.setProfile("about", v))} />
       {lists.map((l) => (
         <div className="prof-group" key={l.key}>
@@ -817,7 +879,7 @@ function ProfileEditor() {
         </div>
       ))}
       {count === 0
-        ? <div className="muted small">Empty for now — Otto fills this in as it works, or add things here.</div>
+        ? <div className="muted small">Empty for now — Otto fills this in as it works, or add your name, about, preferences, people and projects here.</div>
         : <div className="forget-row">
             <button
               className="btn xs forget"
@@ -825,6 +887,20 @@ function ProfileEditor() {
             >Forget everything</button>
             <span className="muted small">Wipes Otto's memory — it starts from zero and learns you again as it works.</span>
           </div>}
+    </div>
+  );
+}
+
+function NameRow({ name, onSave }: { name: string; onSave: (v: string) => Promise<void> }) {
+  const [text, setText] = useState(name);
+  useEffect(() => { setText(name); }, [name]);
+  return (
+    <div className="prof-group">
+      <div className="prof-label">Name</div>
+      <div className="addrow">
+        <input className="addinput sm" placeholder="What should Otto call you?" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void onSave(text.trim()); }} />
+        <button className="btn" disabled={text.trim() === name.trim()} onClick={() => void onSave(text.trim())}>Save</button>
+      </div>
     </div>
   );
 }
@@ -915,15 +991,15 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const blocked = (s: TaskStep) => s.dependsOn != null && !steps[s.dependsOn]?.done;
   // A step can auto-run if it's automatable, unblocked, not done, not already-failed, doesn't need permission,
   // and (not a tab-open OR the extension is here to open it unattended). Tab-opens without the extension wait for a click.
-  const canAuto = (s: TaskStep, i: number) => s.automatable && !s.needsPermission && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
+  const canAuto = (s: TaskStep, i: number) => s.automatable && !s.needsPermission && !s.question && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
 
-  const doStep = async (i: number) => {
+  const doStep = async (i: number, answer?: string) => {
     const s = steps[i];
     if (!s || stepBusy != null) return;
     setStepBusy(i);
     try {
       if (s.url) { openTab(s.url, TAB_GROUP); onChange(await api.stepDone(task.id, i, true, "Opened ↗")); }
-      else { onTask(await api.runStep(task.id, i)); }
+      else { onTask(await api.runStep(task.id, i, answer)); }
     } catch { setFailed((f) => (f.includes(i) ? f : [...f, i])); } // stop auto-retrying; user can click to retry
     finally { setStepBusy(null); }
   };
@@ -1078,16 +1154,40 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                       <button
                         type="button"
                         className={`step-mark ${busyHere ? "busy" : ""} ${!s.done && !s.automatable && !blk ? "tickable" : ""}`}
-                        title={s.done ? "Done — click to undo" : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? (s.needsPermission ? "Needs your approval" : "Otto does this automatically") : "Click to mark done"}
+                        title={s.done ? "Done — click to undo" : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? (s.needsPermission ? "Needs your approval" : s.question ? "Otto needs one answer from you" : "Otto does this automatically") : "Click to mark done"}
                         disabled={busyHere || s.automatable || blk}
                         onClick={() => { if (s.automatable || blk) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
                       >
-                        {s.done ? "✓" : s.automatable ? (s.needsPermission ? "🔒" : "⚡") : "○"}
+                        {s.done ? "✓" : s.automatable ? (s.needsPermission ? "🔒" : s.question ? "?" : "⚡") : "○"}
                       </button>
                       <div className="step-body">
                         <span className="step-text">{s.text}</span>
                         {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                         {!s.done && blk ? <span className="step-dep">waits for step {(s.dependsOn ?? 0) + 1}</span> : null}
+                        {/* Otto needs ONE detail to do this step itself — tap a likely answer or type one; answering runs it. */}
+                        {s.question && !s.done && !blk && !busyHere ? (
+                          <div className="step-q">
+                            <span className="step-q-text">{s.question}</span>
+                            {s.options?.length ? (
+                              <div className="step-q-opts">
+                                {s.options.map((o, k) => (
+                                  <button key={k} className="btn xs opt" disabled={stepBusy != null} onClick={() => void doStep(i, o)}>{o}</button>
+                                ))}
+                              </div>
+                            ) : null}
+                            <div className="step-q-free">
+                              <input
+                                className="step-input"
+                                placeholder={s.options?.length ? "Or type your own answer…" : "Type your answer — Otto takes it from there"}
+                                value={decided[i] || ""}
+                                disabled={stepBusy != null}
+                                onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === "Enter" && (decided[i] || "").trim()) void doStep(i, decided[i].trim()); }}
+                              />
+                              <button className="btn xs primary" disabled={stepBusy != null || !(decided[i] || "").trim()} onClick={() => void doStep(i, decided[i].trim())}>Answer</button>
+                            </div>
+                          </div>
+                        ) : null}
                         {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. */}
                         {gatesAnother && !s.done && !blk && !s.automatable ? (
                           <input
@@ -1105,7 +1205,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         {busyHere ? <span className="muted small">Working…</span>
                           : s.url ? <button className="btn xs ghost" onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open ↗</button>
                           : s.done || blk ? null
-                          : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>Approve & Run</button> : <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>)
+                          : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>Approve & Run</button> : s.question ? null : <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>)
                           : null}
                       </div>
                     </li>

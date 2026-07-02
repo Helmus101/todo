@@ -16,8 +16,6 @@ export function applyProfileUpdate(profile: Profile, u: ProfileUpdate): void {
 }
 
 const URGENT_AT = 0.5, IMPORTANT_AT = 0.5;
-/** Most to-dos to keep ACTIVE (visible) at once — the list surfaces the top N by priority, never floods. */
-const ACTIVE_CAP = 15;
 
 /** Eisenhower: two axes → quadrant + a ranking score (Do > Schedule > Delegate > Later). */
 export function eisenhower(urgency: number, importance: number): { quadrant: Quadrant; score: number } {
@@ -56,24 +54,6 @@ function nearDup(a: string, b: string): boolean {
   return jaccard >= 0.6 || (inter >= 3 && containment >= 0.75);
 }
 
-/**
- * Keep at most `cap` ACTIVE to-dos (the top by priority), so the list never floods. Never drops work in
- * progress (running/executed) or manual tasks — those can't be regenerated; it only trims the lowest-priority
- * regenerable items (ready, non-manual), which resurface later once a slot frees up. Done/dismissed records
- * are retained untouched (hidden from the list, but they still block regeneration of handled items).
- */
-function capActive(ranked: WebTask[], cap: number): WebTask[] {
-  const active = ranked.filter((t) => t.status !== "done" && t.status !== "dismissed");
-  if (active.length <= cap) return ranked;
-  const keep = new Set<string>();
-  let count = 0;
-  // Always keep work-in-progress + manual tasks (they count toward the cap but are never dropped)…
-  for (const t of active) if (t.status !== "ready" || t.source === "manual") { keep.add(t.id); count++; }
-  // …then fill the remaining slots with the highest-scored regenerable ready tasks (ranked is score-sorted).
-  for (const t of active) { if (count >= cap) break; if (!keep.has(t.id)) { keep.add(t.id); count++; } }
-  return ranked.filter((t) => keep.has(t.id) || t.status === "done" || t.status === "dismissed");
-}
-
 /** Keep at most `keep` done/dismissed records (most recent) — enough to still block regeneration of handled
  *  items, but bounded so the saved task list (and every cloud write) doesn't grow forever. Active tasks stay. */
 function pruneHandled(list: WebTask[], keep: number): WebTask[] {
@@ -92,7 +72,16 @@ function pruneHandled(list: WebTask[], keep: number): WebTask[] {
  */
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools): Promise<WebTask[]> {
   // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do.
-  const handled = existing.filter((t) => t.status === "done" || t.status === "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
+  const handled = existing
+    .filter((t) => t.status === "done" || t.status === "dismissed")
+    .map((t) => ({
+      title: t.title,
+      why: t.why,
+      source: t.source,
+      when: t.when,
+      anchorKey: t.anchorKey,
+      link: t.evidence?.find((e) => e.url)?.url,
+    }));
   const gen = await generateTasks(profile, extras, handled);
   const now = new Date().toISOString();
 
@@ -110,12 +99,16 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   // candidate into a matching kept task instead of adding a copy — run over the EXISTING list too, so duplicates
   // already sitting in the saved list get cleaned up (not just new-vs-old), then over the freshly generated tasks.
   const kept: WebTask[] = [];
+  const sameTask = (a: WebTask, b: WebTask): boolean =>
+    nearDup(a.title, b.title) || nearDup(a.title, b.why) || nearDup(a.why, b.title) || nearDup(a.why, b.why) ||
+    (a.source === b.source && (nearDup(a.title, b.title) || nearDup(a.why, b.why)));
+
   const absorb = (t: WebTask) => {
     const ak = normKey(t.anchorKey), link = linkOf(t);
     const i = kept.findIndex((k) =>
       (!!ak && normKey(k.anchorKey) === ak) ||
       (!!link && linkOf(k) === link) ||
-      nearDup(k.title, t.title));
+      sameTask(k, t));
     if (i >= 0) { kept[i] = betterOf(kept[i], t); return; }
     kept.push(t);
   };
@@ -130,7 +123,20 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
       status: "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
     });
   }
-  return pruneHandled(capActive(kept.sort((a, b) => b.score - a.score), ACTIVE_CAP), 120);
+
+  // A second pass on absorb catches any near-duplicates that were introduced only by the freshly generated set.
+  // This is intentionally redundant with the first pass so a handled task can't resurface just because the model
+  // rephrased both the title and the why.
+  const deduped: WebTask[] = [];
+  for (const t of kept) {
+    const i = deduped.findIndex((k) =>
+      (!!t.anchorKey && !!k.anchorKey && normKey(t.anchorKey) === normKey(k.anchorKey)) ||
+      (!!linkOf(t) && linkOf(t) === linkOf(k)) ||
+      sameTask(t, k));
+    if (i >= 0) deduped[i] = betterOf(deduped[i], t);
+    else deduped.push(t);
+  }
+  return pruneHandled(deduped.sort((a, b) => b.score - a.score), 120);
 }
 
 /** Add a task the user typed; AI-refined when possible (else raw), classified through the same matrix. */
@@ -213,7 +219,7 @@ export function setStepDone(list: WebTask[], id: string, index: number, done: bo
  * itself via the connected apps and marks the step done with a short result. (URL-open steps are handled on
  * the client; this is for draft/doc/research/create/update steps.)
  */
-export async function runStep(list: WebTask[], id: string, index: number, profile: Profile, extras?: AgentTools): Promise<WebTask | undefined> {
+export async function runStep(list: WebTask[], id: string, index: number, profile: Profile, extras?: AgentTools, answer?: string): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   const step = task?.steps?.[index];
   if (!task || !step) return task;
@@ -222,14 +228,20 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
     .filter((s, idx) => idx !== index && s.done && s.result)
     .map((s) => `- "${s.text}" → ${s.result}`)
     .join("\n");
-  const focus = decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text;
+  // The user answered this step's inline question — that answer IS the missing piece; use it and do the step.
+  const qa = answer?.trim()
+    ? step.question
+      ? `\nThe user answered your question ("${step.question}"): "${answer.trim()}". That is the missing detail — use it and complete the step now; do not ask again.`
+      : `\nInfo from the user for this step: "${answer.trim()}". Use it.`
+    : "";
+  const focus = (decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text) + qa;
   const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);
   // If the focused run still needs the user (it returned a needs-you step), it couldn't finish — flip this step
   // to needs-you so it shows honestly (not a false ✓) and won't auto-retry; otherwise mark it done.
   if ((out.steps || []).some((s) => !s.automatable)) { step.automatable = false; step.done = false; }
-  else { step.done = true; }
+  else { step.done = true; step.question = undefined; step.options = undefined; } // answered + done → no stale question
   // Surface anything this step produced (a draft/doc/…) alongside the task's other artifacts, deduped by URL.
   if (out.links?.length) {
     const seen = new Set((task.links || []).map((l) => l.url));

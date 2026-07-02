@@ -88,8 +88,9 @@ export function isWriteGatedAction(rawName: string): boolean {
   const n = rawName.toUpperCase();
   // Google Docs — edits to existing documents. Creating a NEW doc is allowed (no UPDATE/PATCH keyword).
   if (/^GOOGLEDOCS_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|APPEND|INSERT|DELETE_CONTENT|BATCH)/.test(n)) return true;
-  // Google Sheets — any write that changes cell data in an existing sheet.
-  if (/^GOOGLESHEETS_/.test(n) && /(UPDATE|BATCH_UPDATE|MODIFY|PATCH|CLEAR|INSERT_ROW|DELETE_ROW|APPEND|WRITE)/.test(n)) return true;
+  // Google Sheets — cell writes are REVERSIBLE (cells can be cleared/rewritten), so the agent may update
+  // sheets autonomously. Only structural deletes (delete entire rows/sheets) still require approval.
+  if (/^GOOGLESHEETS_/.test(n) && /(DELETE_ROW|DELETE_SHEET|DELETE_COLUMN)/.test(n)) return true;
   // Google Slides — edits to existing presentations.
   if (/^GOOGLESLIDES_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|BATCH)/.test(n)) return true;
   // Google Calendar — creating OR updating events always requires permission (they land on calendars).

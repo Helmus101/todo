@@ -390,6 +390,8 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .dash-greeting { font-family: var(--serif); font-weight: 600; font-size: clamp(1.7rem, 3.2vw, 2.3rem); letter-spacing: -0.02em; margin: 0 0 8px; }
 .dash-stats { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
 .dash-stats b { color: var(--ink); font-weight: 700; }
+.dash-stat-link { cursor: pointer; user-select: none; }
+.dash-stat-link:hover { color: var(--ink); }
 .dash-run { display: inline-flex; align-items: center; }
 .dash-run .mini { display: inline-block; width: 9px; height: 9px; border: 2px solid var(--line-2); border-top-color: var(--ink); border-radius: 50%; animation: spin .7s linear infinite; margin-left: 7px; }
 
@@ -400,6 +402,12 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .intro-body p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
 .intro-body b { color: var(--ink); }
 .intro .btn { flex: none; }
+
+/* Completed tasks section */
+.completed-section { margin-top: 32px; }
+.completed-head { font-family: var(--serif); font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink); margin: 0 0 12px; }
+.completed-section .card { opacity: 0.7; }
+.completed-section .card:hover { opacity: 1; }
 
 /* First-run onboarding overlay (new accounts) */
 .onboard-overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 20px; background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(6px); animation: fade .2s ease; }
@@ -537,6 +545,24 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .skel-line { height: 12px; }
 .skel-line.sm { height: 10px; margin-top: 9px; }
 .skel-note { text-align: center; color: var(--ink-3); font-size: 13px; padding: 16px 8px 4px; }
+
+/* Inline step question — Otto needs ONE detail; tap a likely answer or type one, and it runs. */
+.step-q { display: flex; flex-direction: column; gap: 7px; margin-top: 7px; padding: 9px 11px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
+.step-q-text { font-size: 13px; font-weight: 550; }
+.step-q-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn.opt { border-radius: 999px; }
+.step-q-free { display: flex; gap: 6px; align-items: center; }
+.step-q-free .step-input { flex: 1; margin: 0; }
+
+/* "Do everything" bar — sticks to the bottom of the list; one click clears retries + approvals. */
+.doall-bar {
+  position: sticky; bottom: 12px; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 14px; padding: 10px 14px;
+  background: var(--card); border: 1px solid var(--line-2); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+.doall-info { color: var(--ink-2); font-size: 13px; }
 
 /* Boot + crash screens — never a blank white page. */
 .brand.boot { font-size: 22px; margin-bottom: 20px; opacity: .92; }
