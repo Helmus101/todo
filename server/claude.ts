@@ -98,6 +98,19 @@ function firstJson<T>(raw: string): T | null {
   return null;
 }
 
+/** Older tool results have served their purpose (the model already acted on them). Truncating them hard
+ *  before each round stops the transcript growing quadratically over a long run — the biggest token sink.
+ *  The most recent results stay full so current work is never degraded. */
+const TRIM_KEEP = 8, TRIM_TO = 700;
+function trimOldToolResults(messages: any[]): any[] {
+  if (messages.length <= TRIM_KEEP) return messages;
+  const cut = messages.length - TRIM_KEEP;
+  return messages.map((m, i) =>
+    i < cut && m.role === "tool" && typeof m.content === "string" && m.content.length > TRIM_TO
+      ? { ...m, content: m.content.slice(0, TRIM_TO) + "\n…[older result truncated]" }
+      : m);
+}
+
 function parseToolArgs(raw: any): any {
   if (raw == null) return {};
   if (typeof raw === "object") return raw;
@@ -234,10 +247,13 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.
   // The prompt tells the agent to BATCH searches as parallel calls in one round, so 12 rounds is plenty.
   const MAX = 12;
+  let tokIn = 0, tokOut = 0, rounds = 0;
+  try {
   for (let i = 0; i < MAX; i++) {
     const client = deepseekClient();
     const lastRoundHint = i === MAX - 1 ? "You must call submit_tasks now with the full actionable list. Do not answer with prose." : "";
-    const apiMessages = lastRoundHint ? [...messages, { role: "user" as const, content: lastRoundHint }] : messages;
+    const base = trimOldToolResults(messages);
+    const apiMessages = lastRoundHint ? [...base, { role: "user" as const, content: lastRoundHint }] : base;
     const res = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
       max_tokens: 4000,
@@ -247,6 +263,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
     }));
+    rounds++; tokIn += (res as any).usage?.prompt_tokens || 0; tokOut += (res as any).usage?.completion_tokens || 0;
     const toolUses = res.choices[0]?.message?.tool_calls || [];
     if (!toolUses.length) {
       const assistantText = res.choices[0]?.message?.content || "";
@@ -273,6 +290,9 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     if (submitted) { if (!submitted.length) console.warn("[claude] generateTasks submitted 0 tasks"); return submitted; }
   }
   return [];
+  } finally {
+    console.log(`[ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
+  }
 }
 
 export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; }
@@ -355,13 +375,17 @@ const RUN_SYSTEM =
   `instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the ` +
   `user gets a one-click "Send invites" button that SHOWS exactly who will be invited before they confirm. You ` +
   `never send the invite; the user's click does, with the recipient list in plain view.\n` +
-  `VOICE — SOUND LIKE THE USER, NOT AN AI: when you draft an email or message, write the way THEY actually write ` +
-  `— default to fairly casual, warm, direct and brief (how a real person emails a colleague). Match them: skim a ` +
-  `couple of their OWN recent sent emails (search "in:sent") or their earlier replies in the thread, and mirror ` +
-  `their greeting + sign-off, sentence length, formality, and contractions. AVOID AI tells — no "I hope this ` +
-  `email finds you well", "I wanted to reach out", "Please don't hesitate", "Thank you for your understanding", ` +
-  `em-dash-heavy corporate phrasing, or stiff over-formality. Nudge a touch more polished only for someone senior ` +
-  `or unknown. If you pick up a durable detail of their style, "remember" it as a preference.\n` +
+  `VOICE — SOUND LIKE THE USER, NOT AN AI: before drafting ANY email or message, READ 2-3 of their OWN sent ` +
+  `emails (search "in:sent", ideally to the same recipient or thread) and copy their ACTUAL writing mechanics:\n` +
+  `- CAPITALIZATION: if they write in lowercase ("hey, sounds good"), you write in lowercase. If they use proper caps, so do you.\n` +
+  `- SENTENCE LENGTH & TOTAL LENGTH: if their emails are 2 short lines, yours are 2 short lines — never longer than they'd write.\n` +
+  `- THEIR WORDS: reuse their habitual greeting ("hey"/"hi"/none), sign-off ("thanks!"/"best"/just their name), ` +
+  `filler words, contractions, and punctuation habits (do they use exclamation marks? ellipses? no periods at line ends?).\n` +
+  `- FORMALITY: match the register they use with THIS recipient specifically, if you can see prior thread messages.\n` +
+  `AVOID AI tells — no "I hope this email finds you well", "I wanted to reach out", "Please don't hesitate", ` +
+  `"Thank you for your understanding", em-dash-heavy corporate phrasing, or stiff over-formality. Nudge a touch ` +
+  `more polished only for someone senior or unknown. If you pick up a durable detail of their style (e.g. ` +
+  `"writes lowercase, signs off 'cheers'"), "remember" it as a preference so future drafts skip the lookup.\n` +
   `BE SPECIFIC — INCLUDE THE CONCRETE DETAILS: a draft must contain the real specifics the recipient needs, ` +
   `never vague placeholders. If it's about travel, include the actual FLIGHT TIMES / dates / flight numbers / ` +
   `arrival + departure; if about a meeting, the exact date, time + timezone; if about a place, the address. ` +
@@ -517,6 +541,8 @@ export async function runTask(task: { title: string; why: string; source?: strin
 
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   const MAX = 24; // enough turns for multi-city/multi-step tasks (read sheet → search each city → write rows)
+  let tokIn = 0, tokOut = 0, rounds = 0;
+  try {
   for (let i = 0; i < MAX; i++) {
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
@@ -525,7 +551,8 @@ export async function runTask(task: { title: string; why: string; source?: strin
     }
     const client = deepseekClient();
     const lastRoundHint = i === MAX - 1 ? "You must call submit now with the final result. Do not answer with prose." : "";
-    const apiMessages = lastRoundHint ? [...messages, { role: "user" as const, content: lastRoundHint }] : messages;
+    const base = trimOldToolResults(messages);
+    const apiMessages = lastRoundHint ? [...base, { role: "user" as const, content: lastRoundHint }] : base;
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
       max_tokens: 4000,
@@ -535,6 +562,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
     }));
+    rounds++; tokIn += res.usage?.prompt_tokens || 0; tokOut += res.usage?.completion_tokens || 0;
     const toolUses = res.choices[0]?.message?.tool_calls || [];
     if (!toolUses.length) {
       const textContent = res.choices[0]?.message?.content || "";
@@ -607,6 +635,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
     sendables: [],
     profileUpdates,
   };
+  } finally {
+    console.log(`[ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
+  }
 }
 
 function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[]): RunOutput {

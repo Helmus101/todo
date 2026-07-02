@@ -228,17 +228,9 @@ export function App() {
     }
   }, [tasks, connected]);
 
-  // Auto-refresh to-dos periodically while the app is open — kept infrequent (each generate is a full
-  // multi-tool agent sweep = real API credits). Manual ↻ Refresh covers "check right now".
-  useEffect(() => {
-    if (!connected || !status?.aiReady) return;
-    // Only re-scan while the tab is visible — no point burning a full generate pass on a backgrounded tab.
-    const id = setInterval(() => {
-      if (document.hidden) return;
-      void api.generate().then((t) => { setTasks(t); try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } }).catch(() => {});
-    }, 45 * 60 * 1000);
-    return () => clearInterval(id);
-  }, [connected, status?.aiReady]);
+  // NO background auto-generate: each sweep is a full multi-tool agent pass (real API credits). Tasks are
+  // found on app load (throttled above) and via the ↻ Refresh button — that's it. Leaving the tab open all
+  // day costs nothing.
 
   const generate = async () => {
     setBusy(true); setNote("");
@@ -541,12 +533,9 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
                 {i.connected ? (
                   <div className="int-actions">
                     <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">+ Add</a>
-                    <button className="btn xs ghost" disabled={busy === i.key} onClick={() => void disconnect(i.key)}>{busy === i.key ? "…" : "Disconnect"}</button>
-                    {(accounts[i.key]?.length || 0) > 1 && (
-                      <button className="btn xs ghost" onClick={() => void toggleExpand(i.key)}>
-                        {expanded === i.key ? "▼" : "▶"} {accounts[i.key]?.length}
-                      </button>
-                    )}
+                    <button className="btn xs ghost" onClick={() => void toggleExpand(i.key)}>
+                      {expanded === i.key ? "Accounts ▾" : `Accounts${accounts[i.key]?.length ? ` (${accounts[i.key].length})` : ""} ▸`}
+                    </button>
                   </div>
                 ) : (
                   <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>
@@ -554,16 +543,22 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
               </div>
             ))}
           </div>
-          {expanded && items.find((i) => i.key === expanded)?.connected && (accounts[expanded] || []).length > 1 && (
+          {expanded && items.some((i) => i.key === expanded && i.category === cat && i.connected) && (
             <div className="int-accounts">
-              {accounts[expanded]?.map((acc) => (
-                <div key={acc.id} className="int-account">
-                  <span className="int-account-email">{acc.email || acc.id}</span>
-                  <button className="btn xs ghost" disabled={busy === acc.id} onClick={() => void disconnectAccount(expanded, acc.id)}>
-                    {busy === acc.id ? "…" : "Disconnect"}
-                  </button>
-                </div>
-              ))}
+              {accounts[expanded] === undefined ? (
+                <div className="muted small">Loading accounts…</div>
+              ) : accounts[expanded].length === 0 ? (
+                <div className="muted small">No account details available.</div>
+              ) : (
+                accounts[expanded].map((acc) => (
+                  <div key={acc.id} className="int-account">
+                    <span className="int-account-email">{acc.email || `Account ${acc.id.slice(0, 8)}…`}</span>
+                    <button className="btn xs ghost" disabled={busy === acc.id} onClick={() => void disconnectAccount(expanded, acc.id)}>
+                      {busy === acc.id ? "…" : "Disconnect"}
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>
@@ -989,6 +984,8 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
 
   const steps = task.steps || [];
   const blocked = (s: TaskStep) => s.dependsOn != null && !steps[s.dependsOn]?.done;
+  // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
+  const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
   // A step can auto-run if it's automatable, unblocked, not done, not already-failed, doesn't need permission,
   // and (not a tab-open OR the extension is here to open it unattended). Tab-opens without the extension wait for a click.
   const canAuto = (s: TaskStep, i: number) => s.automatable && !s.needsPermission && !s.question && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
@@ -1203,7 +1200,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
                             stays reachable from the task. Done/blocked: just reopen the tab; otherwise open + mark done. */}
                         {busyHere ? <span className="muted small">Working…</span>
-                          : s.url ? <button className="btn xs ghost" onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open ↗</button>
+                          : s.url ? <button className="btn xs ghost" title={s.url} onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open {urlHost(s.url)} ↗</button>
                           : s.done || blk ? null
                           : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>Approve & Run</button> : s.question ? null : <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>)
                           : null}
