@@ -5,6 +5,9 @@
  *
  * NOTE: on Vercel you MUST configure Supabase (SUPABASE_URL + SUPABASE_SERVICE_KEY) — the in-memory
  * session/rate-limit fallbacks don't survive between serverless invocations.
+ *
+ * When deployed to Vercel, build-vercel.sh bundles this file and its dependencies with esbuild,
+ * producing api/index.js that Vercel's runtime executes.
  */
 import app from "../server/index.ts";
 
