@@ -262,8 +262,8 @@ export function App() {
           <a className={`tab ${route === "settings" ? "active" : ""}`} href="/settings">Settings</a>
         </nav>
         <div className="spacer" />
-        {extOn && <span className="ext-chip" title="Otto Tabs extension is connected — pages open automatically">⚡ Tabs connected</span>}
-        {(route === "" || route === "tasks" || route.startsWith("task/")) && status.googleConnected && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? "Finding…" : "↻ Refresh"}</button>}
+        {extOn && <span className="ext-chip" title="Otto Tabs extension is connected — pages open automatically">Tabs connected</span>}
+        {(route === "" || route === "tasks" || route.startsWith("task/")) && status.googleConnected && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? "Finding…" : "Refresh"}</button>}
       </header>
 
       {onboard && <Onboarding onStatus={loadStatus} onDone={finishOnboard} />}
@@ -281,7 +281,7 @@ export function App() {
             <div className="list-status">
               <span><b>{live.length}</b> active</span>
               {working ? <span> · <b>{working}</b> running</span> : null}
-              {handled ? <span className="dash-stat-link" onClick={() => setShowCompleted((v) => !v)}> · <b>{handled}</b> completed {showCompleted ? "▾" : "▸"}</span> : null}
+              {handled ? <span className="dash-stat-link" onClick={() => setShowCompleted((v) => !v)}> · <b>{handled}</b> completed {showCompleted ? "−" : "+"}</span> : null}
             </div>
           </div>
           {!introSeen && (
@@ -507,9 +507,9 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             <h2>Welcome to Otto</h2>
             <p className="onboard-lead">Otto is a to-do list that does itself. It reads your inbox, calendar &amp; files, quietly does the reversible work — drafting replies, prepping docs, organizing tasks — and surfaces only what needs you.</p>
             <ul className="onboard-points">
-              <li><b>⚡ Otto did it</b> — done for you, ready to review</li>
-              <li><b>○ Needs you</b> — a decision, a send, a payment</li>
-              <li><b>✓ Done</b> — checked off</li>
+              <li>Done for you — ready to review</li>
+              <li>Needs you — a decision, a send, a payment</li>
+              <li>Completed — checked off</li>
             </ul>
             <label className="field onboard-name"><span>What should Otto call you?</span>
               <input className="addinput" placeholder="Your name" value={name} maxLength={60} autoFocus
@@ -529,7 +529,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
                     <img className="int-logo" src={i.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                     <div className="onboard-app-name">{i.name}</div>
                     {i.connected
-                      ? <span className="onboard-app-ok">✓ Connected</span>
+                      ? <span className="onboard-app-ok">Connected</span>
                       : <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>}
                   </div>
                 ))}
@@ -746,8 +746,8 @@ function Landing() {
 }
 
 const SOURCE: Record<string, string> = {
-  gmail: "✉ Gmail", calendar: "📅 Calendar", googlecalendar: "📅 Calendar", manual: "✎ You",
-  slack: "💬 Slack", discord: "💬 Discord", twitter: "𝕏", linkedin: "LinkedIn",
+  gmail: "Gmail", calendar: "Calendar", googlecalendar: "Calendar", manual: "You",
+  slack: "Slack", discord: "Discord", twitter: "X", linkedin: "LinkedIn",
   github: "GitHub", linear: "Linear", jira: "Jira", notion: "Notion",
   todoist: "Todoist", asana: "Asana", trello: "Trello", clickup: "ClickUp",
   perplexity: "Perplexity", calendly: "Calendly", hubspot: "HubSpot", airtable: "Airtable",
@@ -955,18 +955,18 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const needsYou = !isDone && task.status === "executed" &&
     (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
   return (
-    <div ref={cardRef} className={`card ${p.cls} ${open ? "open" : ""} ${task.status === "running" ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""}`}>
+    <div ref={cardRef} className={`card ${p.cls} ${open ? "open" : ""} ${task.status === "running" ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" ? "dismissed" : ""}`}>
       <div className="card-main" onClick={onToggle}>
         <span className={`pill ${p.cls}`}>{p.label}</span>
         <div className="card-text">
-          <div className="card-title">{task.title}{task.status === "executed" && <span className="tick">✓</span>}</div>
+          <div className="card-title">{task.title}</div>
           <div className="card-sub">{task.when && <span className="when">{task.when}</span>}{subtitle(task)}</div>
         </div>
         {task.status === "running" ? <span className="card-spin" title="Working…" />
           : task.status === "executed" && (task.steps?.length ?? 0) > 0
             ? <span className="card-prog" title="Steps done">{(task.steps || []).filter((s) => s.done).length}/{task.steps!.length}</span>
             : null}
-        <span className="caret">{open ? "▾" : "▸"}</span>
+        <span className="caret">{open ? "−" : "+"}</span>
       </div>
 
       {open && (
@@ -986,7 +986,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                   // Who this goes to — ALWAYS shown before the user sends (a calendar invite lists every attendee).
                   const recipients = s.app === "gcal" ? (s.attendees || []).join(", ") : (s.to || s.channel || "");
                   const noun = s.app === "gcal" ? "calendar invite" : s.app === "slack" ? "Slack message" : "email";
-                  const sendIcon = s.app === "gcal" ? "📅" : "✉";
+                  const sendIcon = "";
                   return (
                   <div key={i} className="sendable">
                     {/* The recipient is on the face of the card, not hidden behind a click — you see who before you send. */}
@@ -999,7 +999,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                     <div className="sendable-row">
                       <button className="btn xs ghost" onClick={() => setViewDraft((v) => (v === i ? null : i))}>{viewDraft === i ? "Hide details" : s.app === "gcal" ? "View event" : "View draft"}</button>
                       {s.sent
-                        ? <button className="btn primary send-btn sent" disabled>✓ Sent</button>
+                        ? <button className="btn primary send-btn sent" disabled>Sent</button>
                         : sending === i
                           ? <button className="btn primary send-btn" disabled>Sending…</button>
                           : <button className="btn primary send-btn" onClick={() => { setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{`${sendIcon} ${s.label}`}</button>}
@@ -1070,7 +1070,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         disabled={busyHere || s.automatable || blk}
                         onClick={() => { if (s.automatable || blk) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
                       >
-                        {s.done ? "✓" : s.automatable ? (s.needsPermission ? "🔒" : s.question ? "?" : "⚡") : "○"}
+                        {s.done ? "✓" : s.automatable ? (s.needsPermission ? "⊙" : s.question ? "?" : "•") : "○"}
                       </button>
                       <div className="step-body">
                         <span className="step-text">{s.text}</span>
@@ -1126,7 +1126,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               </ul>
           </section>
           )}
-          <button className="ctx-toggle" onClick={() => setShowContext((v) => !v)}>{showContext ? "Hide context ▾" : "Show context ▸"}</button>
+          <button className="ctx-toggle" onClick={() => setShowContext((v) => !v)}>{showContext ? "Hide context" : "Show context"}</button>
           {showContext && (
             <section className="ctx">
               <div className="ctx-src">{sourceLabel(task.source)}</div>
@@ -1141,7 +1141,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               <>
                 <button className="btn primary" title="Looks good — mark this handled" onClick={() => void act(() => api.confirm(task.id))}>Looks good</button>
                 <div className="actions-rest">
-                  <button className="btn xs ghost" disabled={running} title="Have Otto do it over" onClick={() => void run()}>{running ? "Working…" : "↻ Redo"}</button>
+                  <button className="btn xs ghost" disabled={running} title="Have Otto do it over" onClick={() => void run()}>{running ? "Working…" : "Redo"}</button>
                   <button className="btn xs ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button>
                 </div>
               </>
