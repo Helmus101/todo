@@ -128,23 +128,13 @@ async function resolveAuthConfigId(toolkit: string): Promise<string> {
     const configs: any[] = (list?.items ?? (Array.isArray(list) ? list : []))
       .filter((c: any) => norm(c?.toolkit?.slug ?? c?.toolkit?.name ?? c?.toolkit ?? "") === norm(toolkit));
     if (configs.length) {
+      // Reuse the existing config as-is. NEVER delete/recreate it — deleting an auth config wipes every
+      // connected account under it (that's what made "add a 2nd account" disconnect the 1st). Multi-account
+      // is enabled per-connection via the allowMultiple option on connectedAccounts.link(), not here.
       const id = String(configs[0].id ?? configs[0].authConfigId ?? "").trim();
-      if (id && id !== "undefined") {
-        // Check if allowMultiple is already enabled
-        const config = configs[0];
-        if (config.allowMultiple === true) {
-          return id;
-        }
-        // Delete and recreate with allowMultiple enabled
-        try {
-          console.log(`[integrations] Deleting and recreating auth config ${id} to enable allowMultiple`);
-          await (s.authConfigs as any).delete(id);
-        } catch (e) {
-          console.warn(`[integrations] Failed to delete auth config ${id}:`, (e as any)?.message);
-        }
-      }
+      if (id && id !== "undefined") return id;
     }
-    const created: any = await s.authConfigs.create(key, { type: "use_composio_managed_auth", allowMultiple: true } as any);
+    const created: any = await s.authConfigs.create(key, { type: "use_composio_managed_auth" } as any);
     const id = String(created?.id ?? created?.authConfigId ?? "").trim();
     if (!id || id === "undefined") throw new Error(`Could not create auth config for ${toolkit}.`);
     return id;
@@ -156,7 +146,8 @@ async function resolveAuthConfigId(toolkit: string): Promise<string> {
 /** Start an OAuth connection → returns the URL to send the user to + the connection id (a match hint). */
 export async function initiateConnection(app: string, userId: string, callbackUrl: string): Promise<{ redirectUrl: string; connectionId: string }> {
   const authConfigId = await resolveAuthConfigId(TOOLKIT_OF(app));
-  const req: any = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl } as any);
+  // allowMultiple: adding another account (e.g. a 2nd Gmail) must NOT replace/deactivate the existing one.
+  const req: any = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl, allowMultiple: true } as any);
   const redirectUrl = String(req?.redirectUrl ?? req?.redirectUri ?? "").trim();
   const connectionId = String(req?.id ?? req?.connectedAccountId ?? "").trim();
   if (!redirectUrl) throw new Error(`Composio returned no redirect URL for ${app}.`);
@@ -205,11 +196,11 @@ export async function disconnect(app: string, userId: string): Promise<{ ok: boo
   try {
     const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
     const items: any[] = list?.items ?? (Array.isArray(list) ? list : []);
-    const account = items.find((i) => isActive(i) && acctToolkit(i) === norm(TOOLKIT_OF(app)));
-    if (!account) return { ok: true };
-    const id = acctId(account);
-    if (!id) return { ok: false, error: "no connected account id" };
-    await (sdk().connectedAccounts as any).delete(id);
+    const accounts = items.filter((i) => isActive(i) && acctToolkit(i) === norm(TOOLKIT_OF(app)));
+    for (const account of accounts) {
+      const id = acctId(account);
+      if (id) await (sdk().connectedAccounts as any).delete(id);
+    }
     return { ok: true };
   } catch (e: any) {
     console.error(`[integrations] disconnect(${app}) failed:`, e?.message);

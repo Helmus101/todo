@@ -443,7 +443,8 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
 });
 
 // ── Static (production) ─────────────────────────────────────────────────────
-if (PROD) {
+// On Vercel the built client is served by Vercel's static layer (see vercel.json), not Express.
+if (PROD && !process.env.VERCEL) {
   const dist = path.resolve(__dirname, "../dist");
   app.use(express.static(dist));
   // SPA fallback for NAVIGATION routes only. A request that looks like an asset (has a file extension) but
@@ -462,4 +463,10 @@ if (PROD) {
 process.on("unhandledRejection", (reason) => console.error("[weave-web] unhandledRejection:", reason));
 process.on("uncaughtException", (err) => console.error("[weave-web] uncaughtException:", err));
 
-app.listen(PORT, () => console.log(`[weave-web] listening on :${PORT} (${PROD ? "production" : "dev"})`));
+// On Vercel the app is exported and invoked per-request by the serverless wrapper (api/index.ts) —
+// there is no long-lived listener. Everywhere else (local, Docker, Railway/Render/Fly) we listen.
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => console.log(`[weave-web] listening on :${PORT} (${PROD ? "production" : "dev"})`));
+}
+
+export default app;

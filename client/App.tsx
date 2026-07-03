@@ -500,11 +500,13 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
   const disconnectAccount = async (key: string, accountId: string) => {
     if (busy) return;
     setBusy(accountId);
-    try { await api.disconnectAccount(key, accountId); await loadAccounts(key); // Reload accounts to update count
-      // If only one account left, collapse and reload main status
+    try {
+      await api.disconnectAccount(key, accountId);
       const updated = await api.integrationAccounts(key);
-      if (updated.accounts.length <= 1) { setExpanded(null); await load(); } }
-    finally { setBusy(""); }
+      setAccounts((prev) => ({ ...prev, [key]: updated.accounts }));
+      // Last account removed → collapse the dropdown and refresh the tile back to "Connect".
+      if (updated.accounts.length === 0) { setExpanded(null); await load(); }
+    } finally { setBusy(""); }
   };
   const toggleExpand = async (key: string) => {
     if (expanded === key) { setExpanded(null); }
@@ -532,9 +534,9 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
                 </div>
                 {i.connected ? (
                   <div className="int-actions">
-                    <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">+ Add</a>
+                    <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">+ Add account</a>
                     <button className="btn xs ghost" onClick={() => void toggleExpand(i.key)}>
-                      {expanded === i.key ? "Accounts ▾" : `Accounts${accounts[i.key]?.length ? ` (${accounts[i.key].length})` : ""} ▸`}
+                      {expanded === i.key ? "▼" : "▶"} {accounts[i.key] ? `${accounts[i.key].length} account${accounts[i.key].length !== 1 ? "s" : ""}` : "Accounts"}
                     </button>
                   </div>
                 ) : (
@@ -543,18 +545,18 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
               </div>
             ))}
           </div>
-          {expanded && items.some((i) => i.key === expanded && i.category === cat && i.connected) && (
+          {expanded && items.some((i) => i.key === expanded && i.category === cat) && (
             <div className="int-accounts">
               {accounts[expanded] === undefined ? (
                 <div className="muted small">Loading accounts…</div>
-              ) : accounts[expanded].length === 0 ? (
-                <div className="muted small">No account details available.</div>
+              ) : accounts[expanded]?.length === 0 ? (
+                <div className="muted small">No accounts connected for {items.find((i) => i.key === expanded)?.name}.</div>
               ) : (
                 accounts[expanded].map((acc) => (
                   <div key={acc.id} className="int-account">
-                    <span className="int-account-email">{acc.email || `Account ${acc.id.slice(0, 8)}…`}</span>
+                    <span className="int-account-email">{acc.email || acc.id}</span>
                     <button className="btn xs ghost" disabled={busy === acc.id} onClick={() => void disconnectAccount(expanded, acc.id)}>
-                      {busy === acc.id ? "…" : "Disconnect"}
+                      {busy === acc.id ? "Removing…" : "Remove"}
                     </button>
                   </div>
                 ))
