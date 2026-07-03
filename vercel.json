@@ -2,7 +2,7 @@
   "buildCommand": "npm run build && bash scripts/build-vercel.sh",
   "outputDirectory": "dist",
   "functions": {
-    "api/index.ts": {
+    "api/index.mjs": {
       "maxDuration": 300
     }
   },
