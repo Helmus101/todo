@@ -1201,7 +1201,9 @@ async function resolveAuthConfigId(toolkit) {
 }
 async function initiateConnection(app2, userId, callbackUrl) {
   const authConfigId = await resolveAuthConfigId(TOOLKIT_OF(app2));
-  const req = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl, allowMultiple: true });
+  await disconnect(app2, userId).catch(() => {
+  });
+  const req = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl });
   const redirectUrl = String(req?.redirectUrl ?? req?.redirectUri ?? "").trim();
   const connectionId = String(req?.id ?? req?.connectedAccountId ?? "").trim();
   if (!redirectUrl) throw new Error(`Composio returned no redirect URL for ${app2}.`);
@@ -1664,12 +1666,13 @@ app.get("/api/status", async (req, res) => {
 app.get("/api/tasks", requireAuth, (req, res) => {
   res.json(req.session.tasks || []);
 });
-var lastGenAt = /* @__PURE__ */ new Map();
-var GEN_FLOOR_MS = 3 * 6e4;
+var lastGenDate = /* @__PURE__ */ new Map();
+var today = () => (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   try {
-    const since = Date.now() - (lastGenAt.get(req.session.user) || 0);
-    if (since < GEN_FLOOR_MS && (req.session.tasks || []).length) {
+    const todayStr = today();
+    const lastGen = lastGenDate.get(req.session.user) || req.session.lastGenDay;
+    if (lastGen === todayStr && (req.session.tasks || []).length) {
       res.json(req.session.tasks);
       return;
     }
@@ -1678,7 +1681,8 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
       res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." });
       return;
     }
-    lastGenAt.set(req.session.user, Date.now());
+    lastGenDate.set(req.session.user, todayStr);
+    req.session.lastGenDay = todayStr;
     req.session.tasks = await generate(req.session.tasks || [], req.session.profile ||= emptyProfile(), extras);
     await commit(req);
     res.json(req.session.tasks);

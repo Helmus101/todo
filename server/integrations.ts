@@ -143,11 +143,13 @@ async function resolveAuthConfigId(toolkit: string): Promise<string> {
   try { return await p; } finally { authConfigInFlight.delete(key); }
 }
 
-/** Start an OAuth connection → returns the URL to send the user to + the connection id (a match hint). */
+/** Start an OAuth connection → returns the URL to send the user to + the connection id (a match hint).
+ *  ONE account per app: any existing connection for this toolkit is removed first, so connecting again
+ *  REPLACES it (also required — without allowMultiple, Composio errors if an active account exists). */
 export async function initiateConnection(app: string, userId: string, callbackUrl: string): Promise<{ redirectUrl: string; connectionId: string }> {
   const authConfigId = await resolveAuthConfigId(TOOLKIT_OF(app));
-  // allowMultiple: adding another account (e.g. a 2nd Gmail) must NOT replace/deactivate the existing one.
-  const req: any = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl, allowMultiple: true } as any);
+  await disconnect(app, userId).catch(() => {});
+  const req: any = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl } as any);
   const redirectUrl = String(req?.redirectUrl ?? req?.redirectUri ?? "").trim();
   const connectionId = String(req?.id ?? req?.connectedAccountId ?? "").trim();
   if (!redirectUrl) throw new Error(`Composio returned no redirect URL for ${app}.`);

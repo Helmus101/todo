@@ -19,6 +19,7 @@ declare module "express-session" {
     tasks?: WebTask[];
     profile?: Profile;
     integrations?: Record<string, string>; // app key → Composio connectionId hint (status is live from Composio)
+    lastGenDay?: string;  // "YYYY-MM-DD" of the last full generate sweep — the once-a-day floor (survives serverless cold starts)
   }
 }
 
@@ -271,18 +272,20 @@ app.get("/api/status", async (req, res) => {
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 app.get("/api/tasks", requireAuth, (req, res) => { res.json(req.session.tasks || []); });
 
-// Server-side floor between full generate sweeps per account — each one is a multi-round, multi-tool agent
-// pass (real API credits), so two open tabs / rapid refreshes must not stack them. Returns the current list
-// instead of erroring, so the client just sees "no new tasks yet".
-const lastGenAt = new Map<string, number>();
-const GEN_FLOOR_MS = 3 * 60_000;
+// Daily auto-generate: the dashboard silently POSTs here on load; this floor makes it a no-op unless it's
+// the first call of the calendar day (per account). So generation is AUTOMATIC (no button) yet runs the
+// expensive multi-tool agent at most once a day.
+const lastGenDate = new Map<string, string>(); // user → "YYYY-MM-DD" (fast path; session is the durable copy)
+const today = () => new Date().toISOString().split("T")[0];
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try {
-    const since = Date.now() - (lastGenAt.get(req.session.user!) || 0);
-    if (since < GEN_FLOOR_MS && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
+    const todayStr = today();
+    const lastGen = lastGenDate.get(req.session.user!) || req.session.lastGenDay;
+    if (lastGen === todayStr && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
     const extras = await toolsFor(req);
     if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
-    lastGenAt.set(req.session.user!, Date.now());
+    lastGenDate.set(req.session.user!, todayStr);
+    req.session.lastGenDay = todayStr;
     req.session.tasks = await tasks.generate(req.session.tasks || [], (req.session.profile ||= emptyProfile()), extras);
     await commit(req);
     res.json(req.session.tasks);
