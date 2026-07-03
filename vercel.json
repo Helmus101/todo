@@ -1,5 +1,4 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
@@ -12,6 +11,6 @@
     { "source": "/auth/:path*", "destination": "/api" },
     { "source": "/integrations/:path*", "destination": "/api" },
     { "source": "/healthz", "destination": "/api" },
-    { "source": "/:path((?!assets/|api($|/)).*)", "destination": "/index.html" }
+    { "source": "/:path*", "destination": "/index.html" }
   ]
 }
