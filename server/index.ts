@@ -276,6 +276,7 @@ app.get("/api/tasks", requireAuth, (req, res) => { res.json(req.session.tasks ||
 // the first call of the calendar day (per account). So generation is AUTOMATIC (no button) yet runs the
 // expensive multi-tool agent at most once a day.
 const lastGenDate = new Map<string, string>(); // user → "YYYY-MM-DD" (fast path; session is the durable copy)
+const genInflight = new Map<string, Promise<void>>(); // user → running sweep, so two tabs never double-run the agent
 const today = () => new Date().toISOString().split("T")[0];
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try {
@@ -284,10 +285,20 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     if (lastGen === todayStr && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
     const extras = await toolsFor(req);
     if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
-    lastGenDate.set(req.session.user!, todayStr);
-    req.session.lastGenDay = todayStr;
-    req.session.tasks = await tasks.generate(req.session.tasks || [], (req.session.profile ||= emptyProfile()), extras);
-    await commit(req);
+    // Mark the day done ONLY after generation succeeds — a failed/timed-out run must not burn the
+    // whole day's one attempt (that left users with no new tasks until tomorrow).
+    const user = req.session.user!;
+    let sweep = genInflight.get(user);
+    if (!sweep) {
+      sweep = (async () => {
+        req.session.tasks = await tasks.generate(req.session.tasks || [], (req.session.profile ||= emptyProfile()), extras);
+        lastGenDate.set(user, todayStr);
+        req.session.lastGenDay = todayStr;
+        await commit(req);
+      })().finally(() => genInflight.delete(user));
+      genInflight.set(user, sweep);
+    }
+    await sweep;
     res.json(req.session.tasks);
   } catch (e: any) {
     console.error("[tasks] generate error:", e);

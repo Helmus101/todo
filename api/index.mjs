@@ -1668,6 +1668,7 @@ app.get("/api/tasks", requireAuth, (req, res) => {
   res.json(req.session.tasks || []);
 });
 var lastGenDate = /* @__PURE__ */ new Map();
+var genInflight = /* @__PURE__ */ new Map();
 var today = () => (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   try {
@@ -1682,10 +1683,18 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
       res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." });
       return;
     }
-    lastGenDate.set(req.session.user, todayStr);
-    req.session.lastGenDay = todayStr;
-    req.session.tasks = await generate(req.session.tasks || [], req.session.profile ||= emptyProfile(), extras);
-    await commit(req);
+    const user = req.session.user;
+    let sweep = genInflight.get(user);
+    if (!sweep) {
+      sweep = (async () => {
+        req.session.tasks = await generate(req.session.tasks || [], req.session.profile ||= emptyProfile(), extras);
+        lastGenDate.set(user, todayStr);
+        req.session.lastGenDay = todayStr;
+        await commit(req);
+      })().finally(() => genInflight.delete(user));
+      genInflight.set(user, sweep);
+    }
+    await sweep;
     res.json(req.session.tasks);
   } catch (e) {
     console.error("[tasks] generate error:", e);

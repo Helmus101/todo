@@ -178,9 +178,9 @@ export function App() {
       const retry = (list: WebTask[]) => list.map((x) => (x.status === "ready" && x.autoRan && !x.synthesis ? { ...x, autoRan: false } : x));
       const t = retry(await api.tasks().catch(() => [] as WebTask[]));
       setTasks(t);
-      // Silently trigger daily generation in background (doesn't block UI). Server checks if we've already
-      // generated today; if not, queues a scan and returns immediately.
-      void api.generate().catch(() => {});
+      // Silently trigger daily generation in background (doesn't block UI — the saved list above shows
+      // immediately). When the scan finishes, fold the fresh list in so today's new tasks actually appear.
+      void api.generate().then((fresh) => setTasks(retry(fresh))).catch(() => {});
     })();
   }, [connected, status?.aiReady]);
 
