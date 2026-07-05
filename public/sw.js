@@ -1,60 +1,36 @@
-const CACHE_NAME = "otto-v1";
-const STATIC_ASSETS = [
-  "/",
-  "/favicon.svg",
-  "/manifest.json",
-  "/client/main.tsx",
-  "/client/App.tsx",
-  "/client/api.ts",
-  "/client/styles.css",
-];
+// Network-first service worker. The old cache-first version served stale HTML after each
+// deploy (pointing at hashed assets that no longer existed) → blank page. Now: always try
+// the network; the cache is ONLY an offline fallback. API responses are never cached.
+const CACHE_NAME = "otto-v2";
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
+  self.skipWaiting(); // replace the old (broken) worker immediately
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((name) => name !== CACHE_NAME)
-          .map((name) => caches.delete(name))
-      );
-    })
+    caches.keys()
+      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))))
+      .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener("fetch", (event) => {
-  // Skip cross-origin requests
-  if (!event.request.url.startsWith(self.location.origin)) {
-    return;
-  }
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+  if (event.request.method !== "GET") return;
+  // Never intercept API/auth traffic — stale task data is worse than a failed request.
+  if (/^\/(api|auth|integrations)\//.test(url.pathname) || url.pathname === "/healthz") return;
 
-  // Network-first for API requests, cache-first for static assets
-  if (event.request.url.includes("/api/")) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          // Cache successful API responses
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          return response;
-        })
-        .catch(() => {
-          // If network fails, try cache
-          return caches.match(event.request);
-        })
-    );
-  } else {
-    event.respondWith(
-      caches.match(event.request).then((response) => {
-        return response || fetch(event.request);
+        }
+        return response;
       })
-    );
-  }
+      .catch(() => caches.match(event.request, { ignoreSearch: url.pathname === "/" }))
+  );
 });

@@ -431,7 +431,13 @@ const RUN_SYSTEM =
   `physical action. Reviewing-then-SENDING a message is NOT a step — offer it as a one-click send (sendables).\n` +
   `When UNSURE, it's OTTO's — attempt it. "Tedious", "specific", "numeric", or "I'd have to look it up" are NEVER ` +
   `reasons to hand a step to the user. When a user step unblocks one of yours, say so — "Pick the date — I'll ` +
-  `then book it". Add "url" only for an open-a-page step.\n` +
+  `then book it".\n` +
+  `PREP EVERY USER STEP TO THE MAX (universal rule): a user step must arrive READY-TO-DO, never bare. Attach a ` +
+  `"url" that lands them ONE click from done whenever such a link exists or can be constructed — driving/transit → ` +
+  `a Google Maps directions link (https://www.google.com/maps/dir/?api=1&origin=<from>&destination=<to>), a call → ` +
+  `tel:<number>, a payment/booking/return/check-in → the exact page for it, a form → the form itself. Fold the key ` +
+  `facts they'd otherwise look up (address, confirmation #, time, phone, amount) into the step text or "context". ` +
+  `If no link applies, the step text itself must carry everything needed.\n` +
   `ASK ONLY WHEN TRULY STUCK: if a step is automatable EXCEPT for one detail you could not find or infer ` +
   `(a choice between real options, a preference, a date only they know), keep automatable=true and set ` +
   `"question" — ONE short, specific question — plus "options": 2-4 LIKELY answers with your best inference ` +
@@ -475,7 +481,7 @@ const RUN_TOOLS = [
         automatable: { type: "boolean", description: "true = OTTO can do it with its tools or by finding info (read/search, draft, create/update a doc/sheet/event/task, ENTER/FILL data, comment, research, open a page) — do it NOW unless it waits on a user step (then set dependsOn). false = needs the USER, ONLY for: a judgment/decision/approval, a credential you lack, a payment, or a physical act. NOT for being specific/numeric/tedious; sending a message is a one-click send, not a step." },
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
-        url: { type: "string", description: "a page to open, if the step is to visit/open one" },
+        url: { type: "string", description: "a link that puts the user ONE click from doing this step — directions (Google Maps dir link), a tel: number, the exact booking/payment/return page, a form. Include one whenever it exists or can be constructed; not just for 'open a page' steps." },
         question: { type: "string", description: "ONLY if this automatable step is missing ONE detail you could not find or infer anywhere (a choice, a preference, a date only the user knows): one short, direct question. Search everything first — a question you could have answered yourself is a failure." },
         options: { type: "array", items: { type: "string" }, description: "2-4 likely answers to 'question', your best inference FIRST (the user taps one and you run). Short — a few words each. Omit for free-form answers." },
       }, required: ["text", "automatable"] },

@@ -905,7 +905,9 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
     if (!s || stepBusy != null) return;
     setStepBusy(i);
     try {
-      if (s.url) { openTab(s.url, TAB_GROUP); onChange(await api.stepDone(task.id, i, true, "Opened ↗")); }
+      // A helper link on a USER step (directions, a booking page…) just opens — the user still has to
+      // do the real-world part, so only automatable page-opens self-complete.
+      if (s.url) { openTab(s.url, TAB_GROUP); if (s.automatable) onChange(await api.stepDone(task.id, i, true, "Opened ↗")); }
       else { onTask(await api.runStep(task.id, i, answer)); }
     } catch { setFailed((f) => (f.includes(i) ? f : [...f, i])); } // stop auto-retrying; user can click to retry
     finally { setStepBusy(null); }
@@ -917,7 +919,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
     if (!idxs.length) return;
     openTabs(idxs.map((i) => steps[i].url!), TAB_GROUP);
     let res: WebTask[] | null = null;
-    for (const i of idxs) res = await api.stepDone(task.id, i, true, "Opened ↗");
+    for (const i of idxs) if (steps[i].automatable) res = await api.stepDone(task.id, i, true, "Opened ↗");
     if (res) onChange(res);
   };
   const openableCount = steps.filter((s) => s.url && !s.done && !blocked(s)).length;
