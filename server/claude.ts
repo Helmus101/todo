@@ -297,6 +297,25 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     }
     if (submitted) { if (!submitted.length) console.warn("[claude] generateTasks submitted 0 tasks"); return submitted; }
   }
+  // Round budget exhausted without a submit — a sweep that read everything but never reported is why
+  // "Refresh finds nothing". Force ONE final call where the model MUST call submit_tasks with what it has.
+  try {
+    const client = deepseekClient();
+    const res = await retryRequest(() => client.chat.completions.create({
+      model: actualModel,
+      max_tokens: 4000,
+      messages: [
+        { role: "system", content: GEN_SYSTEM },
+        ...trimOldToolResults(messages),
+        { role: "user", content: "STOP researching. Call submit_tasks NOW with every actionable task you found so far." },
+      ],
+      tools: [{ type: "function" as const, function: { name: SUBMIT_TASKS_TOOL.name, description: SUBMIT_TASKS_TOOL.description, parameters: SUBMIT_TASKS_TOOL.input_schema } }],
+      tool_choice: { type: "function", function: { name: "submit_tasks" } },
+    }));
+    rounds++; tokIn += (res as any).usage?.prompt_tokens || 0; tokOut += (res as any).usage?.completion_tokens || 0;
+    const tu = res.choices[0]?.message?.tool_calls?.[0];
+    if (tu) return parseGenerated(parseToolArgs((tu as any).function?.arguments)?.tasks);
+  } catch (e: any) { console.warn("[claude] forced submit failed:", e?.message || e); }
   return [];
   } finally {
     console.log(`[ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);

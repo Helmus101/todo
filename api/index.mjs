@@ -483,6 +483,27 @@ Sweep across all of them for everything genuinely awaiting me \u2014 including w
         return submitted;
       }
     }
+    try {
+      const client2 = deepseekClient();
+      const res = await retryRequest2(() => client2.chat.completions.create({
+        model: actualModel,
+        max_tokens: 4e3,
+        messages: [
+          { role: "system", content: GEN_SYSTEM },
+          ...trimOldToolResults(messages),
+          { role: "user", content: "STOP researching. Call submit_tasks NOW with every actionable task you found so far." }
+        ],
+        tools: [{ type: "function", function: { name: SUBMIT_TASKS_TOOL.name, description: SUBMIT_TASKS_TOOL.description, parameters: SUBMIT_TASKS_TOOL.input_schema } }],
+        tool_choice: { type: "function", function: { name: "submit_tasks" } }
+      }));
+      rounds++;
+      tokIn += res.usage?.prompt_tokens || 0;
+      tokOut += res.usage?.completion_tokens || 0;
+      const tu = res.choices[0]?.message?.tool_calls?.[0];
+      if (tu) return parseGenerated(parseToolArgs(tu.function?.arguments)?.tasks);
+    } catch (e) {
+      console.warn("[claude] forced submit failed:", e?.message || e);
+    }
     return [];
   } finally {
     console.log(`[ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
@@ -994,7 +1015,7 @@ async function generate(existing, profile, extras) {
   const rankStatus = (t) => t.status === "done" || t.status === "dismissed" ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
   const betterOf = (a, b) => rankStatus(b) > rankStatus(a) ? b : a;
   const kept = [];
-  const sameTask = (a, b) => nearDup(a.title, b.title) || nearDup(a.title, b.why) || nearDup(a.why, b.title) || nearDup(a.why, b.why) || a.source === b.source && (nearDup(a.title, b.title) || nearDup(a.why, b.why));
+  const sameTask = (a, b) => nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
   const absorb = (t) => {
     const ak = normKey(t.anchorKey), link = linkOf(t);
     const i = kept.findIndex((k) => !!ak && normKey(k.anchorKey) === ak || !!link && linkOf(k) === link || sameTask(k, t));

@@ -99,9 +99,10 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   // candidate into a matching kept task instead of adding a copy — run over the EXISTING list too, so duplicates
   // already sitting in the saved list get cleaned up (not just new-vs-old), then over the freshly generated tasks.
   const kept: WebTask[] = [];
+  // Titles must near-match, or (same source AND same trigger). The old cross-field checks (title vs why)
+  // were loose enough to swallow genuinely NEW tasks into old done ones — "Refresh finds nothing".
   const sameTask = (a: WebTask, b: WebTask): boolean =>
-    nearDup(a.title, b.title) || nearDup(a.title, b.why) || nearDup(a.why, b.title) || nearDup(a.why, b.why) ||
-    (a.source === b.source && (nearDup(a.title, b.title) || nearDup(a.why, b.why)));
+    nearDup(a.title, b.title) || (a.source === b.source && nearDup(a.why, b.why));
 
   const absorb = (t: WebTask) => {
     const ak = normKey(t.anchorKey), link = linkOf(t);

@@ -231,7 +231,17 @@ export function App() {
 
   const generate = async () => {
     setBusy(true); setNote("");
-    try { const t = await api.generate(true); setTasks(t); try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now."); }
+    try {
+      const before = new Set(tasks.map((t) => t.id));
+      const t = await api.generate(true);
+      setTasks(t);
+      try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
+      // Honest feedback on what the sweep found — "nothing happened" and "nothing new" look identical otherwise.
+      const added = t.filter((x) => !before.has(x.id) && x.status !== "done" && x.status !== "dismissed").length;
+      if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now.");
+      else if (!added) setNote("Swept your apps — no new tasks; everything actionable is already on your list.");
+      else setNote(`Found ${added} new task${added === 1 ? "" : "s"}.`);
+    }
     catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
     finally { setBusy(false); }
   };
