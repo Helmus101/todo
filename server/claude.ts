@@ -12,7 +12,7 @@ function profileBlock(p?: Profile): string {
   if (p.preferences?.length) parts.push(`Preferences: ${p.preferences.join("; ")}`);
   if (p.people?.length) parts.push(`Key people: ${p.people.join("; ")}`);
   if (p.projects?.length) parts.push(`Ongoing projects: ${p.projects.join("; ")}`);
-  return parts.length ? `\nWHO THIS PERSON IS (use to judge what matters + match their style):\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
+  return parts.length ? `\nWHO THIS PERSON IS — their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
 }
 
 /** Current date + time, injected into every agent prompt so "today"/"tomorrow"/deadlines/scheduling are
@@ -165,6 +165,13 @@ const GEN_SYSTEM =
   `USE THEIR PROFILE AS SEARCH LEADS: pick the 2-3 most active projects/people listed below and run ONE ` +
   `targeted search each (the name in Gmail or the relevant app) to find loose ends — an unanswered thread, ` +
   `an upcoming deadline, a doc waiting on them. What did they say they'd do but haven't?\n` +
+  `PREFERENCES ARE BINDING, not decoration — the "Preferences" lines in their profile MUST shape the list:\n` +
+  `- FILTER: if a preference says they don't care about something (a topic, a sender, a kind of work), do NOT ` +
+  `create tasks for it, even if it looks actionable.\n` +
+  `- RANK: raise importance for tasks matching what they've said matters (their priorities, projects, people); ` +
+  `lower it for what they've deprioritized. Two equal emails ≠ two equal tasks if a preference separates them.\n` +
+  `- SHAPE: phrase titles/whys in line with how they work (e.g. "batch admin on Fridays" → set "when" accordingly; ` +
+  `"prefers calls over email" → the task suggests a call). When a preference influenced a task, reflect it in "why".\n` +
   `NEVER resurface a to-do the user already finished or DISMISSED — if an ` +
   `"ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ` +
   `READ ONLY here — do NOT create, modify, draft, or send anything during ` +
@@ -241,7 +248,8 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     content: nowBlock() + profileBlock(profile) + handledBlock +
       `\n${connectedLine}\nSweep across all of them for everything genuinely awaiting me — including what I ` +
       `promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above — ` +
-      `then call submit_tasks with my full actionable to-do list.`,
+      `then call submit_tasks with my full actionable to-do list. Respect my stated preferences above when ` +
+      `choosing, ranking, and phrasing tasks.`,
   }];
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.

@@ -56,7 +56,7 @@ export const api = {
   disconnectIntegration: (app: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect`),
   disconnectAccount: (app: string, accountId: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect/${accountId}`),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
-  generate: (): Promise<WebTask[]> => post("/api/tasks/generate"),
+  generate: (force = false): Promise<WebTask[]> => post("/api/tasks/generate", force ? { force: true } : undefined),
   add: (title: string): Promise<WebTask[]> => post("/api/tasks", { title }),
   run: (id: string): Promise<WebTask> => post(`/api/tasks/${id}/run`),
   revise: (id: string, note: string): Promise<WebTask> => post(`/api/tasks/${id}/revise`, { note }),

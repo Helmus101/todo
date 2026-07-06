@@ -181,7 +181,13 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     task.context = out.context;
     task.synthesis = out.synthesis;
-    task.steps = out.steps;
+    // A re-run (Redo / revision) must NOT forget which steps the user already completed: carry each
+    // prior step's done/doneAt/result onto the matching new step (matched by near-duplicate text).
+    const prior = (task.steps || []).filter((s) => s.done);
+    task.steps = (out.steps || []).map((s) => {
+      const old = prior.find((o) => nearDup(o.text, s.text));
+      return old ? { ...s, done: true, doneAt: old.doneAt, result: s.result || old.result } : s;
+    });
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.status = "executed";
@@ -211,6 +217,7 @@ export function setStepDone(list: WebTask[], id: string, index: number, done: bo
   const step = t?.steps?.[index];
   if (!step) return;
   step.done = done;
+  step.doneAt = done ? new Date().toISOString() : undefined;
   if (result !== undefined) step.result = result;
 }
 
@@ -241,7 +248,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   // If the focused run still needs the user (it returned a needs-you step), it couldn't finish — flip this step
   // to needs-you so it shows honestly (not a false ✓) and won't auto-retry; otherwise mark it done.
   if ((out.steps || []).some((s) => !s.automatable)) { step.automatable = false; step.done = false; }
-  else { step.done = true; step.question = undefined; step.options = undefined; } // answered + done → no stale question
+  else { step.done = true; step.doneAt = new Date().toISOString(); step.question = undefined; step.options = undefined; } // answered + done → no stale question
   // Surface anything this step produced (a draft/doc/…) alongside the task's other artifacts, deduped by URL.
   if (out.links?.length) {
     const seen = new Set((task.links || []).map((l) => l.url));

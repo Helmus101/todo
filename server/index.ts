@@ -281,8 +281,9 @@ const today = () => new Date().toISOString().split("T")[0];
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try {
     const todayStr = today();
+    const force = req.body?.force === true; // the manual Refresh button — always run a REAL sweep
     const lastGen = lastGenDate.get(req.session.user!) || req.session.lastGenDay;
-    if (lastGen === todayStr && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
+    if (!force && lastGen === todayStr && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
     const extras = await toolsFor(req);
     if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
     // Mark the day done ONLY after generation succeeds — a failed/timed-out run must not burn the
@@ -395,6 +396,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
   const step = task?.steps?.[index];
   if (step) {
     step.done = done;
+    step.doneAt = done ? new Date().toISOString() : undefined;
     if (result !== undefined) step.result = result;
     await commit(req);
   }

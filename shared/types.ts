@@ -82,6 +82,7 @@ export interface TaskStep {
   dependsOn?: number;   // index of a prerequisite step
   url?: string;         // if doing it means opening a page
   done?: boolean;
+  doneAt?: string;      // ISO timestamp of when it was completed — shown so progress is never "forgotten"
   result?: string;      // short note of what auto-doing it produced
   /** Set by the server when the action was blocked by the permission gate (doc edit / calendar create).
    *  The client shows an "Approve & Run" prompt; the user's click routes through runStep which bypasses the gate. */

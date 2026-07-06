@@ -9,6 +9,17 @@ const PRIORITY: Record<string, { label: string; cls: string }> = {
   later: { label: "Later", cls: "p3" },
 };
 const prio = (t: WebTask) => PRIORITY[t.quadrant] || PRIORITY.schedule;
+/** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
+const relTime = (iso: string): string => {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
 
 function subtitle(t: WebTask): string {
   if (t.status === "running") return "Working on it…";
@@ -220,7 +231,7 @@ export function App() {
 
   const generate = async () => {
     setBusy(true); setNote("");
-    try { const t = await api.generate(); setTasks(t); try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now."); }
+    try { const t = await api.generate(true); setTasks(t); try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now."); }
     catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
     finally { setBusy(false); }
   };
@@ -872,7 +883,16 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const [changeText, setChangeText] = useState("");
   const [revising, setRevising] = useState(false);
   const p = prio(task);
+  const [leaving, setLeaving] = useState(false);
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
+  // Confirm ("Looks good") / Dismiss: play the quick exit animation WHILE the API call runs, then remove
+  // the card — so it visibly slides away instead of blinking out (or lingering).
+  const leave = async (fn: () => Promise<WebTask[]>) => {
+    if (leaving) return;
+    setLeaving(true);
+    const [list] = await Promise.all([fn(), new Promise((r) => setTimeout(r, 280))]);
+    onChange(list);
+  };
   // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
   const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
   const run = async () => { setRunning(true); try { onTask(await api.run(task.id)); } finally { setRunning(false); } };
@@ -957,7 +977,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const needsYou = !isDone && task.status === "executed" &&
     (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
   return (
-    <div ref={cardRef} className={`card ${p.cls} ${open ? "open" : ""} ${task.status === "running" ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" ? "dismissed" : ""}`}>
+    <div ref={cardRef} className={`card ${p.cls} ${open ? "open" : ""} ${task.status === "running" ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
       <div className="card-main" onClick={onToggle}>
         <span className={`pill ${p.cls}`}>{p.label}</span>
         <div className="card-text">
@@ -1067,15 +1087,16 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                       {/* The mark IS the control for a needs-you step: click ○ to tick it done (no separate button). */}
                       <button
                         type="button"
-                        className={`step-mark ${busyHere ? "busy" : ""} ${!s.done && !s.automatable && !blk ? "tickable" : ""}`}
-                        title={s.done ? "Done — click to undo" : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? (s.needsPermission ? "Needs your approval" : s.question ? "Otto needs one answer from you" : "Otto does this automatically") : "Click to mark done"}
-                        disabled={busyHere || s.automatable || blk}
-                        onClick={() => { if (s.automatable || blk) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
+                        className={`step-mark ${busyHere ? "busy" : ""} ${!s.done && !blk ? "tickable" : ""}`}
+                        title={s.done ? `Done${s.doneAt ? " " + relTime(s.doneAt) : ""} — click to undo` : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? (s.needsPermission ? "Needs your approval" : s.question ? "Otto needs one answer from you" : "Otto does this automatically — or click if you already did it") : "Click to mark done"}
+                        disabled={busyHere || blk}
+                        onClick={() => { if (blk || busyHere) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
                       >
                         {s.done ? "✓" : s.automatable ? (s.needsPermission ? "⊙" : s.question ? "?" : "•") : "○"}
                       </button>
                       <div className="step-body">
                         <span className="step-text">{s.text}</span>
+                        {s.done && s.doneAt ? <span className="step-when">done {relTime(s.doneAt)}</span> : null}
                         {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                         {!s.done && blk ? <span className="step-dep">waits for step {(s.dependsOn ?? 0) + 1}</span> : null}
                         {/* Otto needs ONE detail to do this step itself — tap a likely answer or type one; answering runs it. */}
@@ -1141,10 +1162,10 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
           <div className="actions">
             {task.status === "executed" ? (
               <>
-                <button className="btn primary" title="Looks good — mark this handled" onClick={() => void act(() => api.confirm(task.id))}>Looks good</button>
+                <button className="btn primary" title="Looks good — mark this handled" onClick={() => void leave(() => api.confirm(task.id))}>Looks good</button>
                 <div className="actions-rest">
                   <button className="btn xs ghost" disabled={running} title="Have Otto do it over" onClick={() => void run()}>{running ? "Working…" : "Redo"}</button>
-                  <button className="btn xs ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button>
+                  <button className="btn xs ghost" title="Remove this task" onClick={() => void leave(() => api.dismiss(task.id))}>Dismiss</button>
                 </div>
               </>
             ) : (
@@ -1154,7 +1175,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                 ) : (
                   <button className="btn primary" disabled>{running ? "Working…" : "Preparing…"}</button>
                 )}
-                <div className="actions-rest"><button className="btn xs ghost" title="Remove this task" onClick={() => void act(() => api.dismiss(task.id))}>Dismiss</button></div>
+                <div className="actions-rest"><button className="btn xs ghost" title="Remove this task" onClick={() => void leave(() => api.dismiss(task.id))}>Dismiss</button></div>
               </>
             )}
           </div>

@@ -284,7 +284,7 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .card.is-done, .card.dismissed { opacity: 0.55; filter: saturate(0.35); }
 .card.is-done:hover, .card.dismissed:hover { opacity: 0.8; filter: saturate(0.8); }
 
-.card-main { display: flex; align-items: center; gap: 12px; padding: 15px 17px; cursor: pointer; }
+.card-main { display: flex; align-items: center; gap: 13px; padding: 16px 20px; cursor: pointer; }
 .card-text { flex: 1; min-width: 0; }
 .card-title { font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.35; }
 .card-sub { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; line-height: 1.45; }
@@ -307,8 +307,8 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .pill.p3 { background: rgba(22,24,29,0.04); color: var(--ink-3); }
 
 /* ─── Card detail (open state) ────────────────────────────────────────────── */
-.detail { padding: 4px 17px 17px; }
-.detail section { margin-bottom: 16px; }
+.detail { padding: 4px 20px 20px; }
+.detail section { margin-bottom: 18px; }
 .detail section:last-child { margin-bottom: 0; }
 .detail h4 { font-size: 11px; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.07em; margin: 0 0 9px; }
 .detail p { margin: 0; font-size: 13.5px; color: var(--ink); line-height: 1.55; }
@@ -328,12 +328,16 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 
 /* Steps */
 .steps { list-style: none; margin: 0; padding: 0; }
-.step { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; font-size: 13.5px; line-height: 1.5; }
+.step { display: flex; align-items: flex-start; gap: 12px; padding: 11px 0; font-size: 13.5px; line-height: 1.5; }
 .step + .step { box-shadow: 0 -1px 0 rgba(22,24,29,0.05); }
 .step-mark { flex: none; margin-top: 1px; }
+.step-mark.tickable { cursor: pointer; }
+.step-mark.tickable:hover { color: var(--accent); transform: scale(1.12); }
 .step.done { color: var(--ink-3); }
 .step.done .step-text { text-decoration: line-through; text-decoration-color: rgba(22,24,29,0.25); }
+.step-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .step-text { flex: 1; min-width: 0; }
+.step-when { font-size: 11.5px; color: var(--ink-3); font-weight: 500; }
 .step-result { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; }
 /* Action row: primary action right-aligned at the card edge. */
 .step .btn { margin-left: auto; flex: none; }
@@ -362,6 +366,8 @@ button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
 .change-row input { flex: 1; }
 
 /* Card footer actions */
+.actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding-top: 14px; box-shadow: 0 -1px 0 rgba(22,24,29,0.05); }
+.actions .actions-rest { margin-top: 0; margin-left: auto; }
 .actions-rest { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
 .completed-section { margin-top: 36px; }

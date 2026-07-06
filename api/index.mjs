@@ -241,7 +241,7 @@ function profileBlock(p) {
   if (p.people?.length) parts.push(`Key people: ${p.people.join("; ")}`);
   if (p.projects?.length) parts.push(`Ongoing projects: ${p.projects.join("; ")}`);
   return parts.length ? `
-WHO THIS PERSON IS (use to judge what matters + match their style):
+WHO THIS PERSON IS \u2014 their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:
 ${parts.map((x) => `- ${x}`).join("\n")}
 ` : "";
 }
@@ -366,6 +366,10 @@ var GEN_SYSTEM = `You are a sharp chief-of-staff turning someone's live world in
 Surface a clear, actionable to-do for EVERYTHING that needs them (one per item). Skip true non-actionable noise. Rank by urgency/importance rather than dropping. Ground every task STRICTLY in what the tools return; never invent people, dates, or facts. You may also use web_search for quick external context (e.g. who a sender is, a public deadline).
 GMAIL \u2014 SEARCH IT SEVERAL WAYS, not one generic fetch: (1) recent inbox needing action ("in:inbox newer_than:7d -category:promotions -category:social"), (2) unread ("is:unread in:inbox"), (3) their SENT mail for open loops ("in:sent newer_than:10d") \u2014 read what THEY promised and check whether they delivered, and (4) threads where someone asked them something and the last message is NOT theirs (they owe a reply).
 USE THEIR PROFILE AS SEARCH LEADS: pick the 2-3 most active projects/people listed below and run ONE targeted search each (the name in Gmail or the relevant app) to find loose ends \u2014 an unanswered thread, an upcoming deadline, a doc waiting on them. What did they say they'd do but haven't?
+PREFERENCES ARE BINDING, not decoration \u2014 the "Preferences" lines in their profile MUST shape the list:
+- FILTER: if a preference says they don't care about something (a topic, a sender, a kind of work), do NOT create tasks for it, even if it looks actionable.
+- RANK: raise importance for tasks matching what they've said matters (their priorities, projects, people); lower it for what they've deprioritized. Two equal emails \u2260 two equal tasks if a preference separates them.
+- SHAPE: phrase titles/whys in line with how they work (e.g. "batch admin on Fridays" \u2192 set "when" accordingly; "prefers calls over email" \u2192 the task suggests a call). When a preference influenced a task, reflect it in "why".
 NEVER resurface a to-do the user already finished or DISMISSED \u2014 if an "ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. READ ONLY here \u2014 do NOT create, modify, draft, or send anything during generation. BUDGET: you have roughly 10-12 tool calls TOTAL \u2014 batch your Gmail searches into one round (issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, and submit as soon as you have the picture. Thorough \u2260 exhaustive.`;
 var SUBMIT_TASKS_TOOL = {
   name: "submit_tasks",
@@ -420,7 +424,7 @@ ALREADY HANDLED \u2014 I already finished or dismissed these; do NOT create a ta
     role: "user",
     content: nowBlock() + profileBlock(profile) + handledBlock + `
 ${connectedLine}
-Sweep across all of them for everything genuinely awaiting me \u2014 including what I promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above \u2014 then call submit_tasks with my full actionable to-do list.`
+Sweep across all of them for everything genuinely awaiting me \u2014 including what I promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above \u2014 then call submit_tasks with my full actionable to-do list. Respect my stated preferences above when choosing, ranking, and phrasing tasks.`
   }];
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   const MAX = 12;
@@ -1061,7 +1065,11 @@ async function runById(list, id, profile, extras, revision) {
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     task.context = out.context;
     task.synthesis = out.synthesis;
-    task.steps = out.steps;
+    const prior = (task.steps || []).filter((s) => s.done);
+    task.steps = (out.steps || []).map((s) => {
+      const old = prior.find((o) => nearDup(o.text, s.text));
+      return old ? { ...s, done: true, doneAt: old.doneAt, result: s.result || old.result } : s;
+    });
     task.links = out.links?.length ? out.links : void 0;
     task.sendables = out.sendables?.length ? out.sendables : void 0;
     task.status = "executed";
@@ -1101,6 +1109,7 @@ ${decisions}` : step.text) + qa;
     step.done = false;
   } else {
     step.done = true;
+    step.doneAt = (/* @__PURE__ */ new Date()).toISOString();
     step.question = void 0;
     step.options = void 0;
   }
@@ -1673,8 +1682,9 @@ var today = () => (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   try {
     const todayStr = today();
+    const force = req.body?.force === true;
     const lastGen = lastGenDate.get(req.session.user) || req.session.lastGenDay;
-    if (lastGen === todayStr && (req.session.tasks || []).length) {
+    if (!force && lastGen === todayStr && (req.session.tasks || []).length) {
       res.json(req.session.tasks);
       return;
     }
@@ -1785,6 +1795,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
   const step = task?.steps?.[index];
   if (step) {
     step.done = done;
+    step.doneAt = done ? (/* @__PURE__ */ new Date()).toISOString() : void 0;
     if (result !== void 0) step.result = result;
     await commit(req);
   }
