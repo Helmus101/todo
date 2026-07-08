@@ -48,10 +48,17 @@ function distinctiveTokens(s: string): Set<string> {
 function nearDup(a: string, b: string): boolean {
   const A = distinctiveTokens(a), B = distinctiveTokens(b);
   if (!A.size || !B.size) return false;
-  let inter = 0; for (const w of A) if (B.has(w)) inter++;
+  // Stem-ish matching: "sun"/"sunday", "jul"/"july", "reply"/"replying" count as the same word — catches
+  // the model re-abbreviating dates/verbs, the most common "same task, slightly different wording" case.
+  const matches = (w: string, set: Set<string>) => {
+    if (set.has(w)) return true;
+    for (const x of set) if (w.length >= 3 && x.length >= 3 && (x.startsWith(w) || w.startsWith(x))) return true;
+    return false;
+  };
+  let inter = 0; for (const w of A) if (matches(w, B)) inter++;
   const jaccard = inter / (A.size + B.size - inter);
   const containment = inter / Math.min(A.size, B.size);
-  return jaccard >= 0.6 || (inter >= 3 && containment >= 0.75);
+  return jaccard >= 0.55 || (inter >= 3 && containment >= 0.75) || (inter >= 2 && containment >= 0.9);
 }
 
 /** Keep at most `keep` done/dismissed records (most recent) — enough to still block regeneration of handled
@@ -253,7 +260,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   // Surface anything this step produced (a draft/doc/…) alongside the task's other artifacts, deduped by URL.
   if (out.links?.length) {
     const seen = new Set((task.links || []).map((l) => l.url));
-    task.links = [...(task.links || []), ...out.links.filter((l) => !seen.has(l.url))].slice(0, 8);
+    task.links = [...(task.links || []), ...out.links.filter((l) => !seen.has(l.url))].slice(0, 3);
   }
   if (out.sendables?.length) {
     const key = (s: Sendable) => s.draftId || s.eventId || `${s.channel}:${s.text}`;

@@ -101,7 +101,7 @@ function firstJson<T>(raw: string): T | null {
 /** Older tool results have served their purpose (the model already acted on them). Truncating them hard
  *  before each round stops the transcript growing quadratically over a long run — the biggest token sink.
  *  The most recent results stay full so current work is never degraded. */
-const TRIM_KEEP = 8, TRIM_TO = 700;
+const TRIM_KEEP = 6, TRIM_TO = 500;
 function trimOldToolResults(messages: any[]): any[] {
   if (messages.length <= TRIM_KEEP) return messages;
   const cut = messages.length - TRIM_KEEP;
@@ -174,8 +174,10 @@ const GEN_SYSTEM =
   `"prefers calls over email" → the task suggests a call). When a preference influenced a task, reflect it in "why".\n` +
   `NEVER resurface a to-do the user already finished or DISMISSED — if an ` +
   `"ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ` +
+  `ONE TASK PER UNDERLYING ITEM: never submit two wordings of the same to-do — one thread/event/commitment = ` +
+  `ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task.\n` +
   `READ ONLY here — do NOT create, modify, draft, or send anything during ` +
-  `generation. BUDGET: you have roughly 10-12 tool calls TOTAL — batch your Gmail searches into one round ` +
+  `generation. BUDGET: you have roughly 7-8 tool calls TOTAL — batch your Gmail searches into ONE round ` +
   `(issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, ` +
   `and submit as soon as you have the picture. Thorough ≠ exhaustive.`;
 
@@ -254,7 +256,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.
   // The prompt tells the agent to BATCH searches as parallel calls in one round, so 12 rounds is plenty.
-  const MAX = 12;
+  const MAX = 9;
   let tokIn = 0, tokOut = 0, rounds = 0;
   try {
   for (let i = 0; i < MAX; i++) {
@@ -293,7 +295,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
         else if (toolName === "web_search") { content = await runWebSearch(input); }
         else { const r = await extras.call(toolName, input || {}); content = r ?? `Unknown tool: ${toolName}`; }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
-      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 6000) });
+      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 4000) });
     }
     if (submitted) { if (!submitted.length) console.warn("[claude] generateTasks submitted 0 tasks"); return submitted; }
   }
@@ -573,13 +575,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
   }];
 
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
-  const MAX = 24; // enough turns for multi-city/multi-step tasks (read sheet → search each city → write rows)
+  const MAX = 14; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
   let tokIn = 0, tokOut = 0, rounds = 0;
   try {
   for (let i = 0; i < MAX; i++) {
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
-    if (i === 10 && !focus) {
+    if (i === 6 && !focus) {
       messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. If this task involves writing to a spreadsheet or document, START WRITING NOW — call the write tool (e.g. GOOGLESHEETS_BATCH_UPDATE_VALUES or GOOGLESHEETS_APPEND_VALUES) with the real data. Do not keep reading without writing. Complete the work and call submit when done." });
     }
     const client = deepseekClient();
@@ -588,7 +590,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     const apiMessages = lastRoundHint ? [...base, { role: "user" as const, content: lastRoundHint }] : base;
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
-      max_tokens: 4000,
+      max_tokens: 2500,
       messages: [
         { role: "system", content: RUN_SYSTEM },
         ...apiMessages,
@@ -629,7 +631,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           content = r ?? `Unknown tool: ${toolName}`;
         }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
-      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 6000) });
+      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 4000) });
     }
     if (submitted) return submitted;
   }
@@ -658,16 +660,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
     const out = firstJson<RunOutput>(text);
     if (out) return finalize(out, text, profileUpdates);
   } catch {
-    // fall through to a safe non-error output
+    // fall through to the throw below
   }
-  return {
-    context: "- Couldn't finalize this run automatically.",
-    synthesis: "Prepared what I could, but this task still needs another run.",
-    steps: [{ text: "Run this task again", automatable: true }],
-    links: [],
-    sendables: [],
-    profileUpdates,
-  };
+  // No usable result even after the rescue pass. NEVER fake an "executed" state ("Prepared what I
+  // could…" + a Run-again step) — throw so the task honestly returns to ready and retries.
+  throw new Error("The run didn't produce a result — it will retry.");
   } finally {
     console.log(`[ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
@@ -690,7 +687,7 @@ function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[
   const links: TaskLink[] = (Array.isArray(out?.links) ? out.links : [])
     .map((l: any) => ({ label: String(l?.label || "Open").slice(0, 80), url: String(l?.url || "").trim() }))
     .filter((l: TaskLink) => /^https?:\/\//i.test(l.url))
-    .slice(0, 6);
+    .slice(0, 3); // max 3 open links per task — the essentials, not a link dump
   const sendables: Sendable[] = (Array.isArray(out?.sendables) ? out.sendables : [])
     .map((s: any): Sendable => ({
       app: s?.app === "slack" ? "slack" : s?.app === "gcal" ? "gcal" : "gmail",

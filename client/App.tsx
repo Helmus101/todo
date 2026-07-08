@@ -2,13 +2,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
 import { api, type IntegrationItem } from "./api.ts";
 
-const PRIORITY: Record<string, { label: string; cls: string }> = {
-  do: { label: "Do now", cls: "p0" },
-  schedule: { label: "Schedule", cls: "p1" },
-  delegate: { label: "Quick", cls: "p2" },
-  later: { label: "Later", cls: "p3" },
-};
-const prio = (t: WebTask) => PRIORITY[t.quadrant] || PRIORITY.schedule;
 /** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
 const relTime = (iso: string): string => {
   const ms = Date.now() - new Date(iso).getTime();
@@ -151,11 +144,16 @@ export function App() {
   const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.setItem("otto-intro", "1"); } catch { /* ignore */ } setOnboard(false); setIntroSeen(true); };
   const dismissIntro = () => { try { localStorage.setItem("otto-intro", "1"); } catch { /* ignore */ } setIntroSeen(true); };
   const [showCompleted, setShowCompleted] = useState(false);
+  // The staggered card entrance runs ONCE on first paint; later list updates (a step ticked, a background
+  // sweep folding in) must not replay the whole cascade — that's what made loads feel janky.
+  const [settled, setSettled] = useState(false);
   const generatedOnce = useRef(false);
   const inflight = useRef<Set<string>>(new Set()); // ids currently auto-running (bounded concurrency)
   const attempts = useRef<Map<string, number>>(new Map()); // per-task auto-run attempts (capped retry)
   const RUN_LIMIT = 3;            // run a few at once so the list clears faster (cheap now that tools are cached)
-  const RUN_TIMEOUT_MS = 120_000; // a stuck run can never wedge the whole queue
+  // Generous: abandoning early would START A SECOND full agent run while the first still burns credits
+  // server-side. The server's round budget keeps real runs well under this.
+  const RUN_TIMEOUT_MS = 240_000;
 
   const loadStatus = useCallback(async () => { try { setStatus(await api.status()); } catch { /* keep last */ } }, []);
 
@@ -181,6 +179,13 @@ export function App() {
   }, [reloadKey]);
 
   const connected = !!status?.googleConnected;
+
+  // Let the first card cascade finish, then mark the list settled so re-renders don't replay it.
+  useEffect(() => {
+    if (!connected) return;
+    const id = setTimeout(() => setSettled(true), 900);
+    return () => clearTimeout(id);
+  }, [connected]);
 
   // Once Google is connected: load tasks + trigger daily auto-generate (silent, in background).
   useEffect(() => {
@@ -309,7 +314,7 @@ export function App() {
             <div className="intro">
               <div className="intro-body">
                 <div className="intro-title">How it works</div>
-                <p>Click the button above once per day. Otto scans your inbox, calendar & files then quietly does what it safely can — drafting replies, prepping docs. You review & confirm.</p>
+                <p>Once a day, Otto automatically scans your inbox, calendar & files, then quietly does what it safely can — drafting replies, prepping docs. You just review & confirm. Hit Refresh anytime for a fresh sweep.</p>
               </div>
               <button className="btn xs ghost" onClick={dismissIntro}>Got it</button>
             </div>
@@ -323,7 +328,7 @@ export function App() {
             if (shown.length === 0 && busy) return <TaskSkeleton />;
             return shown.length === 0
               ? <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}. New mail or meetings show up here.`}</div>
-              : <div className="list">{shown.map((t) => (
+              : <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => (
                   <Card
                     key={t.id}
                     task={t}
@@ -464,7 +469,7 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
   const count = items.filter((i) => i.connected).length;
   return (
     <div className="integrations">
-      {count > 0 && <div className="muted small" style={{ marginBottom: 10 }}>{count} connected.</div>}
+      {count > 0 && <div className="muted small int-count">{count} connected.</div>}
       {cats.map((cat) => (
         <div key={cat} className="int-group">
           <div className="int-cat">{cat}</div>
@@ -695,44 +700,26 @@ function Landing() {
       </header>
 
       <main className="hero">
-        <span className="hero-eyebrow"><span className="live-dot" /> Your day, quietly handled</span>
         <h1 className="hero-title">The to-do list that <em>does itself</em>.</h1>
         <p className="hero-sub">Otto reads your inbox, calendar and Drive — then gets ahead of the work. It drafts the replies, preps the docs, and clears your list before you have to ask.</p>
         <div className="hero-cta">
-          <a className="btn primary" href="/signup">Get started — it's free</a>
-          <a className="btn" href="/login">Log in</a>
+          <a className="btn primary big" href="/signup">Get started — it's free</a>
+          <a className="btn ghost" href="/login">Log in</a>
         </div>
-        {/* Bento — show the product working instead of describing it. */}
-        <div className="bento" aria-hidden="true">
-          <div className="bento-box tall">
-            <div className="bento-label"><span className="live-dot" /> Live — drafting in your voice</div>
-            <div className="demo-window">
-              <div className="demo-titlebar"><span /><span /><span /></div>
-              <div className="demo-body">
-                <p className="demo-line"><b>To:</b> sarah@acme.com</p>
-                <p className="demo-line"><b>Subject:</b> Re: Q3 budget review</p>
-                <p className="demo-line" style={{ marginTop: 8 }}>hi sarah,</p>
-                <p className="demo-line">sounds good — thursday works. i'll bring the updated numbers and we can walk through the deltas together<span className="demo-caret" /></p>
-              </div>
+        <div className="fineprint">Only ever drafts &amp; docs — Otto never sends anything without you.</div>
+        {/* One product visual: the live drafting demo, nothing else. */}
+        <div className="hero-demo" aria-hidden="true">
+          <div className="hero-demo-label"><span className="live-dot" /> Live — drafting in your voice</div>
+          <div className="demo-window">
+            <div className="demo-titlebar"><span /><span /><span /></div>
+            <div className="demo-body">
+              <p className="demo-line"><b>To:</b> sarah@acme.com</p>
+              <p className="demo-line"><b>Subject:</b> Re: Q3 budget review</p>
+              <p className="demo-line gap">hi sarah,</p>
+              <p className="demo-line">sounds good — thursday works. i'll bring the updated numbers and we can walk through the deltas together<span className="demo-caret" /></p>
             </div>
           </div>
-          <div className="bento-box">
-            <div className="bento-label">Synced</div>
-            <div className="sync-row">
-              <span className="sync-chip"><img src="https://logos.composio.dev/api/gmail" alt="" />Gmail</span>
-              <span className="sync-chip"><img src="https://logos.composio.dev/api/googlecalendar" alt="" />Calendar</span>
-              <span className="sync-chip"><img src="https://logos.composio.dev/api/googledrive" alt="" />Drive</span>
-              <span className="sync-chip"><img src="https://logos.composio.dev/api/slack" alt="" />Slack</span>
-            </div>
-          </div>
-          <div className="bento-box">
-            <div className="bento-label">Quietly handled</div>
-            <div className="ticker-num">14</div>
-            <div className="ticker-sub">tasks cleared today — drafts, docs &amp; prep, ready for your OK</div>
-          </div>
         </div>
-
-        <div className="fineprint" style={{ marginTop: 28 }}>Only ever drafts &amp; docs — Otto never sends anything without you.</div>
       </main>
 
       <section className="landing-sec">
@@ -751,7 +738,6 @@ function Landing() {
           <div className="feature"><div><h3>Drafts, never sends</h3><p>Every email is a draft you review. Nothing leaves your account without your explicit OK.</p></div></div>
           <div className="feature"><div><h3>Learns who you are</h3><p>It remembers your people, projects and preferences, so its work sounds like you — and sharpens over time.</p></div></div>
           <div className="feature"><div><h3>Your account, your data</h3><p>Saved privately to your account. It reads your apps and creates drafts &amp; docs — nothing destructive.</p></div></div>
-          <div className="feature"><div><h3>Clears itself</h3><p>Reversible work happens in the background. You open the app to a list that's already half-done.</p></div></div>
         </div>
       </section>
 
@@ -892,7 +878,6 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const [changeIdx, setChangeIdx] = useState<number | null>(null);   // which sendable's "what to change" box is open
   const [changeText, setChangeText] = useState("");
   const [revising, setRevising] = useState(false);
-  const p = prio(task);
   const [leaving, setLeaving] = useState(false);
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
   // Confirm ("Looks good") / Dismiss: play the quick exit animation WHILE the API call runs, then remove
@@ -945,7 +930,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
 
   // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
   const openAllPages = async () => {
-    const idxs = steps.map((s, i) => ({ s, i })).filter(({ s }) => s.url && !s.done && !blocked(s)).map(({ i }) => i);
+    const idxs = steps.map((s, i) => ({ s, i })).filter(({ s }) => s.url && !s.done && !blocked(s)).map(({ i }) => i).slice(0, 3);
     if (!idxs.length) return;
     openTabs(idxs.map((i) => steps[i].url!), TAB_GROUP);
     let res: WebTask[] | null = null;
@@ -987,9 +972,8 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const needsYou = !isDone && task.status === "executed" &&
     (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
   return (
-    <div ref={cardRef} className={`card ${p.cls} ${open ? "open" : ""} ${task.status === "running" ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
+    <div ref={cardRef} className={`card ${open ? "open" : ""} ${task.status === "running" ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
       <div className="card-main" onClick={onToggle}>
-        <span className={`pill ${p.cls}`}>{p.label}</span>
         <div className="card-text">
           <div className="card-title">{task.title}</div>
           <div className="card-sub">{task.when && <span className="when">{task.when}</span>}{subtitle(task)}</div>
@@ -998,7 +982,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
           : task.status === "executed" && (task.steps?.length ?? 0) > 0
             ? <span className="card-prog" title="Steps done">{(task.steps || []).filter((s) => s.done).length}/{task.steps!.length}</span>
             : null}
-        <span className="caret">{open ? "−" : "+"}</span>
+        <span className="caret">›</span>
       </div>
 
       {open && (
@@ -1009,7 +993,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               ? <Bullets text={task.synthesis} />
               : <p className="muted">{task.status === "running" ? "Working on it now…" : task.status === "executed" ? "Nothing to report." : "Hasn't run yet."}</p>}
             {task.links?.length ? (
-              <ul className="links artifacts">{task.links.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
+              <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : urlHost(l.url)) || "Open link"} ↗</a></li>)}</ul>
             ) : null}
             {/* The agent drafted it — review it right here, then fire it (with a confirm). The only time anything sends. */}
             {task.sendables?.length ? (
@@ -1102,7 +1086,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         disabled={busyHere || blk}
                         onClick={() => { if (blk || busyHere) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
                       >
-                        {s.done ? "✓" : s.automatable ? (s.needsPermission ? "⊙" : s.question ? "?" : "•") : "○"}
+                        {s.done ? "✓" : ""}
                       </button>
                       <div className="step-body">
                         <span className="step-text">{s.text}</span>
@@ -1148,7 +1132,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
                             stays reachable from the task. Done/blocked: just reopen the tab; otherwise open + mark done. */}
                         {busyHere ? <span className="muted small">Working…</span>
-                          : s.url ? <button className="btn xs ghost" title={s.url} onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open {urlHost(s.url)} ↗</button>
+                          : s.url ? <button className="btn xs ghost" title={s.url} onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open {urlHost(s.url) || "link"} ↗</button>
                           : s.done || blk ? null
                           : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>Approve & Run</button> : s.question ? null : <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>)
                           : null}
@@ -1174,7 +1158,6 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               <>
                 <button className="btn primary" title="Looks good — mark this handled" onClick={() => void leave(() => api.confirm(task.id))}>Looks good</button>
                 <div className="actions-rest">
-                  <button className="btn xs ghost" disabled={running} title="Have Otto do it over" onClick={() => void run()}>{running ? "Working…" : "Redo"}</button>
                   <button className="btn xs ghost" title="Remove this task" onClick={() => void leave(() => api.dismiss(task.id))}>Dismiss</button>
                 </div>
               </>
