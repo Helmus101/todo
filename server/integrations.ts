@@ -334,12 +334,11 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
 
   const tools: Anthropic.Tool[] = [];
   const map = new Map<string, string>(); // sanitized tool name → raw Composio action slug
-  const MAX = 200;         // overall ceiling — generous so even if EVERY catalog app is connected each still gets
-                           // a usable share (22 apps × ~9 = ~198). Well above the old 64. A safety cap only.
-  // Per-app share ADAPTS to how many apps are connected so EVERY one is represented, never starved: few apps
-  // → up to 20 tools each; many apps → as low as 8 (still enough for core read+write). This is what lets you
-  // actually USE each connected integration, not just the first few a flat cap happened to reach.
-  const perToolkit = Math.min(20, Math.max(8, Math.floor(MAX / connected.length)));
+  // Every tool schema here is resent on EVERY round of every agent call — the single biggest fixed cost
+  // multiplier in the whole system (schemas × rounds). Kept lean: still enough slots per app for real
+  // read+write coverage (guaranteed by the 60/40 split below), just not the old alphabet-soup ceiling.
+  const MAX = 110;
+  const perToolkit = Math.min(12, Math.max(6, Math.floor(MAX / connected.length)));
   // Task-critical apps first (the to-do list is built from Gmail + Calendar), so they ALWAYS get their share
   // before a big toolkit can crowd them out; anything else keeps its connected order behind these.
   const PRIORITY = ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "googleslides", "slack", "notion", "linear", "todoist"];
@@ -377,7 +376,9 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
       const input_schema = (params && typeof params === "object")
         ? { type: "object" as const, properties: params.properties ?? {}, ...(Array.isArray(params.required) ? { required: params.required } : {}) }
         : { type: "object" as const, properties: {} };
-      tools.push({ name, description: `[${app}] ${String(fn?.description ?? rawName).slice(0, 600)}`, input_schema });
+      // Trimmed from 600 chars — this text is resent every round for every tool; the name + a short
+      // gist is enough for the model to pick the right action, the input_schema explains the params.
+      tools.push({ name, description: `[${app}] ${String(fn?.description ?? rawName).slice(0, 220)}`, input_schema });
       added++;
     }
   }

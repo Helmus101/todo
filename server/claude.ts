@@ -104,7 +104,7 @@ function firstJson<T>(raw: string): T | null {
 /** Older tool results have served their purpose (the model already acted on them). Truncating them hard
  *  before each round stops the transcript growing quadratically over a long run — the biggest token sink.
  *  The most recent results stay full so current work is never degraded. */
-const TRIM_KEEP = 6, TRIM_TO = 500;
+const TRIM_KEEP = 4, TRIM_TO = 250;
 function trimOldToolResults(messages: any[]): any[] {
   if (messages.length <= TRIM_KEEP) return messages;
   const cut = messages.length - TRIM_KEEP;
@@ -180,7 +180,7 @@ const GEN_SYSTEM =
   `ONE TASK PER UNDERLYING ITEM: never submit two wordings of the same to-do — one thread/event/commitment = ` +
   `ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task.\n` +
   `READ ONLY here — do NOT create, modify, draft, or send anything during ` +
-  `generation. BUDGET: you have roughly 7-8 tool calls TOTAL — batch your Gmail searches into ONE round ` +
+  `generation. BUDGET: you have roughly 5 tool calls TOTAL — batch your Gmail searches into ONE round ` +
   `(issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, ` +
   `and submit as soon as you have the picture. Thorough ≠ exhaustive.`;
 
@@ -290,8 +290,9 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   }];
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.
-  // The prompt tells the agent to BATCH searches as parallel calls in one round, so 12 rounds is plenty.
-  const MAX = 9;
+  // The prompt tells the agent to BATCH searches as parallel calls in one round, so 6 is plenty; the forced
+  // final round below is the safety net for a straggler.
+  const MAX = 6;
   let tokIn = 0, tokOut = 0, rounds = 0;
   try {
   for (let i = 0; i < MAX; i++) {
@@ -330,7 +331,9 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
         else if (toolName === "web_search") { content = await runWebSearch(input); }
         else { const r = await extras.call(toolName, input || {}); content = r ?? `Unknown tool: ${toolName}`; }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
-      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 4000) });
+      // Capped well below the old 4000 — a fresh result only needs enough to extract the fact/id you asked
+      // for; anything you need beyond that, search again. This cap applies to every tool call, every round.
+      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
     }
     if (submitted) { if (!submitted.tasks.length) console.warn("[claude] generateTasks submitted 0 tasks"); return submitted; }
   }
@@ -629,13 +632,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
   }];
 
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
-  const MAX = 14; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
+  const MAX = 8; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
   let tokIn = 0, tokOut = 0, rounds = 0;
   try {
   for (let i = 0; i < MAX; i++) {
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
-    if (i === 6 && !focus) {
+    if (i === 4 && !focus) {
       messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. If this task involves writing to a spreadsheet or document, START WRITING NOW — call the write tool (e.g. GOOGLESHEETS_BATCH_UPDATE_VALUES or GOOGLESHEETS_APPEND_VALUES) with the real data. Do not keep reading without writing. Complete the work and call submit when done." });
     }
     const client = deepseekClient();
@@ -688,7 +691,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
           content = r ?? `Unknown tool: ${toolName}`;
         }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
-      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 4000) });
+      // Capped well below the old 4000 — a fresh result only needs enough to extract the fact/id you asked
+      // for; anything you need beyond that, search again. This cap applies to every tool call, every round.
+      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
     }
     if (submitted) return submitted;
   }

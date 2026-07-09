@@ -367,8 +367,8 @@ function firstJson(raw) {
   }
   return null;
 }
-var TRIM_KEEP = 6;
-var TRIM_TO = 500;
+var TRIM_KEEP = 4;
+var TRIM_TO = 250;
 function trimOldToolResults(messages) {
   if (messages.length <= TRIM_KEEP) return messages;
   const cut = messages.length - TRIM_KEEP;
@@ -402,7 +402,7 @@ PREFERENCES ARE BINDING, not decoration \u2014 the "Preferences" lines in their 
 - RANK: raise importance for tasks matching what they've said matters (their priorities, projects, people); lower it for what they've deprioritized. Two equal emails \u2260 two equal tasks if a preference separates them.
 - SHAPE: phrase titles/whys in line with how they work (e.g. "batch admin on Fridays" \u2192 set "when" accordingly; "prefers calls over email" \u2192 the task suggests a call). When a preference influenced a task, reflect it in "why".
 NEVER resurface a to-do the user already finished or DISMISSED \u2014 if an "ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ONE TASK PER UNDERLYING ITEM: never submit two wordings of the same to-do \u2014 one thread/event/commitment = ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task.
-READ ONLY here \u2014 do NOT create, modify, draft, or send anything during generation. BUDGET: you have roughly 7-8 tool calls TOTAL \u2014 batch your Gmail searches into ONE round (issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, and submit as soon as you have the picture. Thorough \u2260 exhaustive.`;
+READ ONLY here \u2014 do NOT create, modify, draft, or send anything during generation. BUDGET: you have roughly 5 tool calls TOTAL \u2014 batch your Gmail searches into ONE round (issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, and submit as soon as you have the picture. Thorough \u2260 exhaustive.`;
 var SUBMIT_TASKS_TOOL = {
   name: "submit_tasks",
   description: "Submit the full actionable to-do list you found.",
@@ -479,7 +479,7 @@ ${connectedLine}
 Sweep across all of them for everything genuinely awaiting me \u2014 including what I promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above \u2014 then call submit_tasks with my full actionable to-do list. Respect my stated preferences above when choosing, ranking, and phrasing tasks.`
   }];
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
-  const MAX = 9;
+  const MAX = 6;
   let tokIn = 0, tokOut = 0, rounds = 0;
   try {
     for (let i = 0; i < MAX; i++) {
@@ -528,7 +528,7 @@ Sweep across all of them for everything genuinely awaiting me \u2014 including w
         } catch (e) {
           content = "ERROR: " + (e?.message || e);
         }
-        messages.push({ role: "tool", tool_call_id: tu.id || `tool_${Date.now()}`, content: String(content).slice(0, 4e3) });
+        messages.push({ role: "tool", tool_call_id: tu.id || `tool_${Date.now()}`, content: String(content).slice(0, 2e3) });
       }
       if (submitted) {
         if (!submitted.tasks.length) console.warn("[claude] generateTasks submitted 0 tasks");
@@ -706,11 +706,11 @@ Do ONLY this one step now: "${focus}". Actually DO it with your tools (draft/cre
 Gather what you need, then ACTUALLY DO the reversible work now with your tools (draft/create/update) \u2014 don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`
   }];
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
-  const MAX = 14;
+  const MAX = 8;
   let tokIn = 0, tokOut = 0, rounds = 0;
   try {
     for (let i = 0; i < MAX; i++) {
-      if (i === 6 && !focus) {
+      if (i === 4 && !focus) {
         messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. If this task involves writing to a spreadsheet or document, START WRITING NOW \u2014 call the write tool (e.g. GOOGLESHEETS_BATCH_UPDATE_VALUES or GOOGLESHEETS_APPEND_VALUES) with the real data. Do not keep reading without writing. Complete the work and call submit when done." });
       }
       const client2 = deepseekClient();
@@ -767,7 +767,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
         } catch (e) {
           content = "ERROR: " + (e?.message || e);
         }
-        messages.push({ role: "tool", tool_call_id: tu.id || `tool_${Date.now()}`, content: String(content).slice(0, 4e3) });
+        messages.push({ role: "tool", tool_call_id: tu.id || `tool_${Date.now()}`, content: String(content).slice(0, 2e3) });
       }
       if (submitted) return submitted;
     }
@@ -1455,8 +1455,8 @@ async function getAgentTools(userId) {
   }
   const tools = [];
   const map = /* @__PURE__ */ new Map();
-  const MAX = 200;
-  const perToolkit = Math.min(20, Math.max(8, Math.floor(MAX / connected.length)));
+  const MAX = 110;
+  const perToolkit = Math.min(12, Math.max(6, Math.floor(MAX / connected.length)));
   const PRIORITY = ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "googleslides", "slack", "notion", "linear", "todoist"];
   const rank = (a) => {
     const i = PRIORITY.indexOf(a);
@@ -1489,7 +1489,7 @@ async function getAgentTools(userId) {
       const fn = t?.function ?? t;
       const params = fn?.parameters ?? t?.parameters ?? t?.input_parameters ?? t?.inputSchema ?? {};
       const input_schema = params && typeof params === "object" ? { type: "object", properties: params.properties ?? {}, ...Array.isArray(params.required) ? { required: params.required } : {} } : { type: "object", properties: {} };
-      tools.push({ name, description: `[${app2}] ${String(fn?.description ?? rawName).slice(0, 600)}`, input_schema });
+      tools.push({ name, description: `[${app2}] ${String(fn?.description ?? rawName).slice(0, 220)}`, input_schema });
       added++;
     }
   }
