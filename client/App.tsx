@@ -129,10 +129,17 @@ const navigate = (r: string) => {
   window.dispatchEvent(new PopStateEvent("popstate"));
 };
 
+// Last-known task list — hydrates the dashboard INSTANTLY on open (server truth replaces it right after).
+const CACHED_TASKS: WebTask[] = (() => {
+  try { const t = JSON.parse(localStorage.getItem("otto-tasks") || "[]"); return Array.isArray(t) ? t : []; } catch { return []; }
+})();
+
 export function App() {
   const [status, setStatus] = useState<ConnectionStatus | null>(CACHED_STATUS);
   const [route] = usePathRoute();
-  const [tasks, setTasks] = useState<WebTask[]>([]);
+  const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
+  const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
+  const [scanning, setScanning] = useState(false); // the daily background sweep is running
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [extOn, setExtOn] = useState(extPresent()); // is the Otto Tabs extension present? (it sets data-weave-ext)
@@ -161,6 +168,11 @@ export function App() {
   useEffect(() => {
     try { status ? localStorage.setItem("weave-status", JSON.stringify(status)) : localStorage.removeItem("weave-status"); } catch { /* ignore */ }
   }, [status]);
+
+  // Persist tasks so the NEXT open paints the dashboard instantly (capped — enough for first paint).
+  useEffect(() => {
+    try { localStorage.setItem("otto-tasks", JSON.stringify(tasks.slice(0, 60))); } catch { /* ignore */ }
+  }, [tasks]);
 
   // The content script sets data-weave-ext at document_start; re-check shortly after mount in case of timing.
   useEffect(() => { const id = setTimeout(() => setExtOn(extPresent()), 600); return () => clearTimeout(id); }, []);
@@ -192,11 +204,15 @@ export function App() {
     if (!connected) return;
     void (async () => {
       const retry = (list: WebTask[]) => list.map((x) => (x.status === "ready" && x.autoRan && !x.synthesis ? { ...x, autoRan: false } : x));
-      const t = retry(await api.tasks().catch(() => [] as WebTask[]));
-      setTasks(t);
+      const t = await api.tasks().catch(() => null);
+      if (t) { setTasks(retry(t)); setLoaded(true); }
       // Silently trigger daily generation in background (doesn't block UI — the saved list above shows
       // immediately). When the scan finishes, fold the fresh list in so today's new tasks actually appear.
-      void api.generate().then((fresh) => setTasks(retry(fresh))).catch(() => {});
+      setScanning(true);
+      void api.generate()
+        .then((fresh) => { setTasks(retry(fresh)); setLoaded(true); })
+        .catch(() => {})
+        .finally(() => setScanning(false));
     })();
   }, [connected, status?.aiReady]);
 
@@ -204,7 +220,9 @@ export function App() {
   // Each run is synchronous server-side (returns the executed task) and races a timeout so a single slow
   // or hung run can never block the rest of the list. Completion re-renders → this effect picks the next.
   useEffect(() => {
-    if (!connected) return;
+    // `loaded` gate: never auto-run off the CACHED list — a task finished on another device could look
+    // "ready" here and get pointlessly (and expensively) re-run before server truth arrives.
+    if (!connected || !loaded) return;
     const slots = RUN_LIMIT - inflight.current.size;
     if (slots <= 0) return;
     const next = tasks.filter((t) => t.status === "ready" && !t.autoRan && !inflight.current.has(t.id)).slice(0, slots);
@@ -228,7 +246,7 @@ export function App() {
         })
         .finally(() => { clearTimeout(timer); inflight.current.delete(task.id); });
     }
-  }, [tasks, connected]);
+  }, [tasks, connected, loaded]);
 
   // NO background auto-generate: each sweep is a full multi-tool agent pass (real API credits). Tasks are
   // found on app load (throttled above) and via the ↻ Refresh button — that's it. Leaving the tab open all
@@ -250,7 +268,7 @@ export function App() {
     catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
     finally { setBusy(false); }
   };
-  const signOut = async () => { await api.logout(); setTasks([]); generatedOnce.current = false; navigate(""); void loadStatus(); };
+  const signOut = async () => { await api.logout(); setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus(); };
 
   // Signed in, the dashboard lives at /tasks. Redirect the bare "/" there (landing only shows signed-OUT).
   useEffect(() => { if (status?.loggedIn && route === "") navigate("tasks"); }, [status?.loggedIn, route]);
@@ -308,6 +326,7 @@ export function App() {
               <span><b>{live.length}</b> active</span>
               {working ? <span> · <b>{working}</b> running</span> : null}
               {handled ? <span className="dash-stat-link" onClick={() => setShowCompleted((v) => !v)}> · <b>{handled}</b> completed {showCompleted ? "−" : "+"}</span> : null}
+              {scanning && <span className="scan-note"><span className="scan-dot" /> checking for new tasks…</span>}
             </div>
           </div>
           {!introSeen && (
@@ -325,7 +344,9 @@ export function App() {
             const shown = openId && !live.some((t) => t.id === openId)
               ? [...live, ...tasks.filter((t) => t.id === openId)]
               : live;
-            if (shown.length === 0 && busy) return <TaskSkeleton />;
+            // Until the first server response, an empty list means "still loading", not "all clear" —
+            // show the skeleton instead of flashing the empty state.
+            if (shown.length === 0 && (busy || !loaded)) return <TaskSkeleton />;
             return shown.length === 0
               ? <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}. New mail or meetings show up here.`}</div>
               : <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => (
@@ -462,7 +483,16 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
     try { await api.disconnectIntegration(key); await load(); } finally { setBusy(""); }
   };
 
-  if (items === null) return <div className="muted small">Loading integrations…</div>;
+  if (items === null) return (
+    <div className="int-grid" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="int-tile">
+          <span className="skel-box int-logo" />
+          <div className="int-info"><span className="skel-box skel-line" style={{ width: ["42%", "56%", "48%"][i] }} /><span className="skel-box skel-line sm" style={{ width: "70%" }} /></div>
+        </div>
+      ))}
+    </div>
+  );
   if (!ready) return <div className="warn">Integrations need <b>COMPOSIO_API_KEY</b> set on the server (it's in Otto's root <code>.env</code>). Restart the server after adding it.</div>;
 
   const cats = [...new Set(items.map((i) => i.category))];

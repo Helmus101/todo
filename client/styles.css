@@ -144,6 +144,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .list-status b { font-weight: 600; color: var(--ink); }
 .dash-stat-link { cursor: pointer; }
 .dash-stat-link:hover { color: var(--ink); }
+.scan-note { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; color: var(--ink-3); }
+.scan-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s infinite; }
 
 .intro {
   display: flex; align-items: flex-start; gap: 14px;
