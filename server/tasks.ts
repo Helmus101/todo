@@ -202,11 +202,13 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.status = "executed";
+    task.updatedAt = new Date().toISOString();
     return task;
   } catch (e) {
     // Failure (Claude/Composio error) → never leave it stuck on "running". Back to ready so the user can
     // retry manually; keep autoRan=true so it doesn't auto-retry in a loop on a persistent fault.
     task.status = "ready";
+    task.updatedAt = new Date().toISOString();
     throw e;
   }
 }
@@ -214,7 +216,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
 /** Reject what the agent did → re-surface so it can be run again. */
 export function reject(list: WebTask[], id: string): void {
   const t = list.find((x) => x.id === id);
-  if (t) { t.status = "ready"; t.synthesis = undefined; t.steps = undefined; t.links = undefined; t.autoRan = false; }
+  if (t) { t.status = "ready"; t.synthesis = undefined; t.steps = undefined; t.links = undefined; t.autoRan = false; t.updatedAt = new Date().toISOString(); }
 }
 
 /** Mark a step done/undone (a manual step the user did, or after auto-do). */
@@ -225,6 +227,7 @@ export function setStepDone(list: WebTask[], id: string, index: number, done: bo
   step.done = done;
   step.doneAt = done ? new Date().toISOString() : undefined;
   if (result !== undefined) step.result = result;
+  t!.updatedAt = new Date().toISOString();
 }
 
 /**
@@ -265,5 +268,6 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
     const seen = new Set((task.sendables || []).map(key));
     task.sendables = [...(task.sendables || []), ...out.sendables.filter((s) => !seen.has(key(s)))].slice(0, 8);
   }
+  task.updatedAt = new Date().toISOString();
   return task;
 }

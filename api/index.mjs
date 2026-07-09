@@ -1162,9 +1162,11 @@ async function runById(list, id, profile, extras, revision) {
     task.links = out.links?.length ? out.links : void 0;
     task.sendables = out.sendables?.length ? out.sendables : void 0;
     task.status = "executed";
+    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     return task;
   } catch (e) {
     task.status = "ready";
+    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     throw e;
   }
 }
@@ -1176,6 +1178,7 @@ function reject(list, id) {
     t.steps = void 0;
     t.links = void 0;
     t.autoRan = false;
+    t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   }
 }
 async function runStep(list, id, index, profile, extras, answer) {
@@ -1211,6 +1214,7 @@ ${decisions}` : step.text) + qa;
     const seen = new Set((task.sendables || []).map(key2));
     task.sendables = [...task.sendables || [], ...out.sendables.filter((s) => !seen.has(key2(s)))].slice(0, 8);
   }
+  task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   return task;
 }
 
@@ -1600,18 +1604,24 @@ var saveSession = (req) => new Promise((r) => req.session.save((err) => {
   r();
 }));
 var mergeTasks = (existing, incoming) => {
+  const rank = (s) => s === "done" || s === "dismissed" ? 4 : s === "executed" ? 3 : s === "running" ? 2 : 1;
+  const when = (t) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
   const map = /* @__PURE__ */ new Map();
   for (const t of existing) map.set(t.id, t);
   for (const t of incoming) {
     const ext = map.get(t.id);
     if (!ext) {
       map.set(t.id, t);
-    } else {
-      const rank = (s) => s === "done" || s === "dismissed" ? 4 : s === "executed" ? 3 : s === "running" ? 2 : 1;
-      if (rank(t.status) >= rank(ext.status)) {
-        map.set(t.id, { ...ext, ...t });
-      }
+      continue;
     }
+    const winner = rank(t.status) > rank(ext.status) ? t : rank(t.status) < rank(ext.status) ? ext : when(t) >= when(ext) ? t : ext;
+    const loser = winner === t ? ext : t;
+    const steps = winner.steps?.map((s) => {
+      if (s.done) return s;
+      const other = loser.steps?.find((o) => o.text === s.text);
+      return other?.done ? { ...s, done: true, doneAt: other.doneAt, result: s.result ?? other.result } : s;
+    });
+    map.set(t.id, steps ? { ...winner, steps } : winner);
   }
   return Array.from(map.values());
 };
@@ -1791,7 +1801,15 @@ app.get("/api/status", async (req, res) => {
   };
   res.json(s);
 });
-app.get("/api/tasks", requireAuth, (req, res) => {
+app.get("/api/tasks", requireAuth, async (req, res) => {
+  try {
+    if (req.session.user && cloudEnabled()) {
+      const cloud = await loadState(req.session.user);
+      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+      await saveSession(req);
+    }
+  } catch {
+  }
   res.json(req.session.tasks || []);
 });
 var lastGenDate = /* @__PURE__ */ new Map();
@@ -1887,6 +1905,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
     task.status = "done";
+    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -1905,6 +1924,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
     task.status = "dismissed";
+    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -1934,6 +1954,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
     step.done = done;
     step.doneAt = done ? (/* @__PURE__ */ new Date()).toISOString() : void 0;
     if (result !== void 0) step.result = result;
+    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -1952,6 +1973,7 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
       return;
     }
     s.sent = true;
+    t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await commit(req);
   }
   res.json(t);

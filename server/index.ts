@@ -79,19 +79,27 @@ app.use(async (req, _res, next) => {
 });
 
 const saveSession = (req: express.Request) => new Promise<void>((r) => req.session.save((err) => { if (err) console.warn("[session] save failed:", (err as any)?.message || err); r(); }));
+// Cross-device/tab merge. The more-PROGRESSED copy of a task wins (done can never regress to executed/ready);
+// equal progress → the most recently UPDATED copy wins (so a stale session can't overwrite fresh work, which
+// used to wipe step ticks). Step done-state is unioned across both copies: ticked anywhere = ticked.
 const mergeTasks = (existing: WebTask[], incoming: WebTask[]): WebTask[] => {
+  const rank = (s: WebTask["status"]) => (s === "done" || s === "dismissed") ? 4 : s === "executed" ? 3 : s === "running" ? 2 : 1;
+  const when = (t: WebTask) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
   const map = new Map<string, WebTask>();
   for (const t of existing) map.set(t.id, t);
   for (const t of incoming) {
     const ext = map.get(t.id);
-    if (!ext) {
-      map.set(t.id, t);
-    } else {
-      const rank = (s: WebTask["status"]) => (s === "done" || s === "dismissed") ? 4 : s === "executed" ? 3 : s === "running" ? 2 : 1;
-      if (rank(t.status) >= rank(ext.status)) {
-        map.set(t.id, { ...ext, ...t });
-      }
-    }
+    if (!ext) { map.set(t.id, t); continue; }
+    const winner = rank(t.status) > rank(ext.status) ? t
+      : rank(t.status) < rank(ext.status) ? ext
+      : when(t) >= when(ext) ? t : ext;
+    const loser = winner === t ? ext : t;
+    const steps = winner.steps?.map((s) => {
+      if (s.done) return s;
+      const other = loser.steps?.find((o) => o.text === s.text);
+      return other?.done ? { ...s, done: true, doneAt: other.doneAt, result: s.result ?? other.result } : s;
+    });
+    map.set(t.id, steps ? { ...winner, steps } : winner);
   }
   return Array.from(map.values());
 };
@@ -272,7 +280,18 @@ app.get("/api/status", async (req, res) => {
 });
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
-app.get("/api/tasks", requireAuth, (req, res) => { res.json(req.session.tasks || []); });
+// Reconcile with the cloud copy on every load, so a task finished on ANOTHER device/tab never shows
+// undone here (and never gets pointlessly re-run by this device's auto-run).
+app.get("/api/tasks", requireAuth, async (req, res) => {
+  try {
+    if (req.session.user && cloudEnabled()) {
+      const cloud = await loadState(req.session.user);
+      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+      await saveSession(req);
+    }
+  } catch { /* best-effort — fall back to the session copy */ }
+  res.json(req.session.tasks || []);
+});
 
 // Daily auto-generate: the dashboard silently POSTs here on load; this floor makes it a no-op unless it's
 // the first call of the calendar day (per account). So generation is AUTOMATIC (no button) yet runs the
@@ -367,6 +386,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
     task.status = "done";
+    task.updatedAt = new Date().toISOString();
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -385,6 +405,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
     task.status = "dismissed";
+    task.updatedAt = new Date().toISOString();
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -416,6 +437,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
     step.done = done;
     step.doneAt = done ? new Date().toISOString() : undefined;
     if (result !== undefined) step.result = result;
+    task!.updatedAt = new Date().toISOString();
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -429,6 +451,7 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
     const r = await integrations.sendSendable(req.session.user!, s);
     if (!r.ok) { res.status(500).json({ error: r.error || "send failed" }); return; }
     s.sent = true;
+    t!.updatedAt = new Date().toISOString();
     await commit(req);
   }
   res.json(t);
