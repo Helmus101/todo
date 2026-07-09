@@ -1065,6 +1065,21 @@ function pruneHandled(list, keep) {
   const handled = list.filter((t) => t.status === "done" || t.status === "dismissed").sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, keep);
   return [...active, ...handled];
 }
+var normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+var linkOf = (t) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
+var rankStatus = (t) => t.status === "done" || t.status === "dismissed" ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
+var betterOf = (a, b) => rankStatus(b) > rankStatus(a) ? b : a;
+var sameTask = (a, b) => nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
+function dedupeTasks(list) {
+  const kept = [];
+  for (const t of list) {
+    const ak = normKey(t.anchorKey), link = linkOf(t);
+    const i = kept.findIndex((k) => !!ak && normKey(k.anchorKey) === ak || !!link && linkOf(k) === link || sameTask(k, t));
+    if (i >= 0) kept[i] = betterOf(kept[i], t);
+    else kept.push(t);
+  }
+  return kept;
+}
 async function generate(existing, profile, extras) {
   const handled = existing.filter((t) => t.status === "done" || t.status === "dismissed").map((t) => ({
     title: t.title,
@@ -1077,26 +1092,11 @@ async function generate(existing, profile, extras) {
   const gen = await generateTasks(profile, extras, handled);
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  const normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const linkOf = (t) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
-  const rankStatus = (t) => t.status === "done" || t.status === "dismissed" ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
-  const betterOf = (a, b) => rankStatus(b) > rankStatus(a) ? b : a;
-  const kept = [];
-  const sameTask = (a, b) => nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
-  const absorb = (t) => {
-    const ak = normKey(t.anchorKey), link = linkOf(t);
-    const i = kept.findIndex((k) => !!ak && normKey(k.anchorKey) === ak || !!link && linkOf(k) === link || sameTask(k, t));
-    if (i >= 0) {
-      kept[i] = betterOf(kept[i], t);
-      return;
-    }
-    kept.push(t);
-  };
-  for (const t of existing) absorb(t);
+  const candidates = [...existing];
   for (const g of gen.tasks) {
     const e = eisenhower(g.urgency, g.importance);
     const evidence = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : void 0;
-    absorb({
+    candidates.push({
       id: randomUUID(),
       title: g.title,
       why: g.why,
@@ -1113,13 +1113,7 @@ async function generate(existing, profile, extras) {
       evidence
     });
   }
-  const deduped = [];
-  for (const t of kept) {
-    const i = deduped.findIndex((k) => !!t.anchorKey && !!k.anchorKey && normKey(t.anchorKey) === normKey(k.anchorKey) || !!linkOf(t) && linkOf(t) === linkOf(k) || sameTask(t, k));
-    if (i >= 0) deduped[i] = betterOf(deduped[i], t);
-    else deduped.push(t);
-  }
-  return pruneHandled(deduped.sort((a, b) => b.score - a.score), 120);
+  return pruneHandled(dedupeTasks(candidates).sort((a, b) => b.score - a.score), 120);
 }
 function addManual(list, title, refined) {
   const urgency = refined ? refined.urgency : 0.6;
@@ -1623,7 +1617,7 @@ var mergeTasks = (existing, incoming) => {
     });
     map.set(t.id, steps ? { ...winner, steps } : winner);
   }
-  return Array.from(map.values());
+  return dedupeTasks(Array.from(map.values()));
 };
 var mergeProfiles = (p1, p2) => {
   return {

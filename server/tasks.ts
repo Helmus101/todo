@@ -75,6 +75,40 @@ function pruneHandled(list: WebTask[], keep: number): WebTask[] {
   return [...active, ...handled];
 }
 
+// Collapse formatting drift in an anchor ("gmail:18fAb", "GMAIL_18fab" → same) so the SAME thread/event
+// can't slip back in just because the model rephrased its id.
+const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+const linkOf = (t: { evidence?: TaskLink[] }) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
+// When two candidates are the SAME to-do, keep the more-progressed one: a finished/in-flight task must never
+// be dropped for a fresh duplicate, and a handled (done/dismissed) one suppresses a new copy → no resurfacing.
+const rankStatus = (t: WebTask) => (t.status === "done" || t.status === "dismissed") ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
+const betterOf = (a: WebTask, b: WebTask) => rankStatus(b) > rankStatus(a) ? b : a; // ties keep `a` (added first)
+// Titles must near-match, or (same source AND same trigger). The old cross-field checks (title vs why)
+// were loose enough to swallow genuinely NEW tasks into old done ones — "Refresh finds nothing".
+const sameTask = (a: WebTask, b: WebTask): boolean =>
+  nearDup(a.title, b.title) || (a.source === b.source && nearDup(a.why, b.why));
+
+/**
+ * Collapse duplicate to-dos in ANY task list by THREE signals: a normalized anchor (the thread/event id),
+ * the source LINK (stable even when the model's anchor drifts), and a near-duplicate title (catches
+ * reworded, anchorless tasks). Used by generate() (new sweep vs existing) AND by the cross-device cloud
+ * merge — two sessions can each mint a FRESH random id for the same real-world item (e.g. two tabs both
+ * sweeping the same Gmail thread at once), so an id-only union isn't enough to keep it from duplicating.
+ */
+export function dedupeTasks(list: WebTask[]): WebTask[] {
+  const kept: WebTask[] = [];
+  for (const t of list) {
+    const ak = normKey(t.anchorKey), link = linkOf(t);
+    const i = kept.findIndex((k) =>
+      (!!ak && normKey(k.anchorKey) === ak) ||
+      (!!link && linkOf(k) === link) ||
+      sameTask(k, t));
+    if (i >= 0) kept[i] = betterOf(kept[i], t);
+    else kept.push(t);
+  }
+  return kept;
+}
+
 /**
  * Regenerate from the user's connected apps (the agent reads Gmail + Calendar via Composio), preserving
  * manual tasks and anything already run. Dedupe is ANCHOR-based (the agent returns a stable anchorKey like
@@ -99,59 +133,17 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const now = new Date().toISOString();
 
-  // Collapse formatting drift in an anchor ("gmail:18fAb", "GMAIL_18fab" → same) so the SAME thread/event
-  // can't slip back in just because the model rephrased its id.
-  const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const linkOf = (t: { evidence?: TaskLink[] }) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
-  // When two candidates are the SAME to-do, keep the more-progressed one: a finished/in-flight task must never
-  // be dropped for a fresh duplicate, and a handled (done/dismissed) one suppresses a new copy → no resurfacing.
-  const rankStatus = (t: WebTask) => (t.status === "done" || t.status === "dismissed") ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
-  const betterOf = (a: WebTask, b: WebTask) => rankStatus(b) > rankStatus(a) ? b : a; // ties keep `a` (added first = existing / earlier)
-
-  // Dedupe by THREE signals: a normalized anchor (the thread/event id), the source LINK (stable even when the
-  // model's anchor drifts), and a near-duplicate title (catches reworded, anchorless tasks). `absorb` folds a
-  // candidate into a matching kept task instead of adding a copy — run over the EXISTING list too, so duplicates
-  // already sitting in the saved list get cleaned up (not just new-vs-old), then over the freshly generated tasks.
-  const kept: WebTask[] = [];
-  // Titles must near-match, or (same source AND same trigger). The old cross-field checks (title vs why)
-  // were loose enough to swallow genuinely NEW tasks into old done ones — "Refresh finds nothing".
-  const sameTask = (a: WebTask, b: WebTask): boolean =>
-    nearDup(a.title, b.title) || (a.source === b.source && nearDup(a.why, b.why));
-
-  const absorb = (t: WebTask) => {
-    const ak = normKey(t.anchorKey), link = linkOf(t);
-    const i = kept.findIndex((k) =>
-      (!!ak && normKey(k.anchorKey) === ak) ||
-      (!!link && linkOf(k) === link) ||
-      sameTask(k, t));
-    if (i >= 0) { kept[i] = betterOf(kept[i], t); return; }
-    kept.push(t);
-  };
-
-  for (const t of existing) absorb(t);
+  const candidates: WebTask[] = [...existing];
   for (const g of gen.tasks) {
     const e = eisenhower(g.urgency, g.importance);
     const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : undefined;
-    absorb({
+    candidates.push({
       id: randomUUID(), title: g.title, why: g.why, when: g.when, source: g.source, risk: g.risk,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
     });
   }
-
-  // A second pass on absorb catches any near-duplicates that were introduced only by the freshly generated set.
-  // This is intentionally redundant with the first pass so a handled task can't resurface just because the model
-  // rephrased both the title and the why.
-  const deduped: WebTask[] = [];
-  for (const t of kept) {
-    const i = deduped.findIndex((k) =>
-      (!!t.anchorKey && !!k.anchorKey && normKey(t.anchorKey) === normKey(k.anchorKey)) ||
-      (!!linkOf(t) && linkOf(t) === linkOf(k)) ||
-      sameTask(t, k));
-    if (i >= 0) deduped[i] = betterOf(deduped[i], t);
-    else deduped.push(t);
-  }
-  return pruneHandled(deduped.sort((a, b) => b.score - a.score), 120);
+  return pruneHandled(dedupeTasks(candidates).sort((a, b) => b.score - a.score), 120);
 }
 
 /** Add a task the user typed; AI-refined when possible (else raw), classified through the same matrix. */

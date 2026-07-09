@@ -158,9 +158,14 @@ export function App() {
   const inflight = useRef<Set<string>>(new Set()); // ids currently auto-running (bounded concurrency)
   const attempts = useRef<Map<string, number>>(new Map()); // per-task auto-run attempts (capped retry)
   const RUN_LIMIT = 3;            // run a few at once so the list clears faster (cheap now that tools are cached)
-  // Generous: abandoning early would START A SECOND full agent run while the first still burns credits
-  // server-side. The server's round budget keeps real runs well under this.
-  const RUN_TIMEOUT_MS = 240_000;
+  // Frees a CONCURRENCY SLOT so one slow run can't block the rest of the list — it does NOT cancel the
+  // request or mark the task failed; the real fetch keeps going server-side and its own outcome still lands
+  // whenever it arrives. (Server's round budget keeps real runs well under this.)
+  const SLOT_FREE_MS = 90_000;
+  // True dead-man's switch: only fires if the request NEVER comes back at all (a genuinely hung connection,
+  // not just a slow-but-working run). Flips to ready for a manual retry — no auto-loop, since a fault that
+  // survives this long needs a human look, not another silent attempt.
+  const STUCK_MS = 600_000;
 
   const loadStatus = useCallback(async () => { try { setStatus(await api.status()); } catch { /* keep last */ } }, []);
 
@@ -217,8 +222,8 @@ export function App() {
   }, [connected, status?.aiReady]);
 
   // Auto-run, client-driven with BOUNDED CONCURRENCY: keep up to RUN_LIMIT ready tasks running at once.
-  // Each run is synchronous server-side (returns the executed task) and races a timeout so a single slow
-  // or hung run can never block the rest of the list. Completion re-renders → this effect picks the next.
+  // Each run is synchronous server-side (returns the executed task); completion re-renders → this effect
+  // picks the next. A slow run frees its concurrency slot without being declared failed (see SLOT_FREE_MS).
   useEffect(() => {
     // `loaded` gate: never auto-run off the CACHED list — a task finished on another device could look
     // "ready" here and get pointlessly (and expensively) re-run before server truth arrives.
@@ -230,21 +235,31 @@ export function App() {
     for (const task of next) {
       inflight.current.add(task.id);
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "running" } : t)));
-      let timer: ReturnType<typeof setTimeout>;
-      const timeout = new Promise<WebTask>((_, rej) => { timer = setTimeout(() => rej(new Error("timeout")), RUN_TIMEOUT_MS); });
-      Promise.race([api.run(task.id), timeout])
+      let slotFreed = false;
+      const freeSlot = () => { if (!slotFreed) { slotFreed = true; inflight.current.delete(task.id); } };
+      const slotTimer = setTimeout(freeSlot, SLOT_FREE_MS);
+      const stuckTimer = setTimeout(() => {
+        // The request truly never came back — not just slow. Let the user retry by hand instead of
+        // leaving the card stuck on "running" forever.
+        setTasks((prev) => prev.map((t) => (t.id === task.id && t.status === "running" ? { ...t, status: "ready", autoRan: true } : t)));
+      }, STUCK_MS);
+      api.run(task.id)
         // If the user dismissed/confirmed the task while it was running, keep THEIR state — never resurrect it.
         .then((u) => { if (u && u.id) { attempts.current.delete(u.id); setTasks((prev) => prev.map((t) => (t.id === u.id ? (t.status === "dismissed" || t.status === "done" ? t : u) : t))); } })
-        .catch(() => {
-          // Pause this task now. A failure is often transient (the dev server restarted mid-run → socket
-          // hang up). Retry a couple of times with a short delay; only give up (stay paused, user can hit
-          // Run again) after that, so a real fault doesn't loop forever.
+        .catch((e: any) => {
+          // A 409 means another in-flight run — this same task's own request via another tab/device, or a
+          // stale attempt still holding the server-side lock — will deliver the real result on its own.
+          // Retrying here can never succeed while the lock is held, so back off quietly: no status flip,
+          // no attempt charged, no misleading "will retry" flicker for a task that's actually fine.
+          if (e?.status === 409) return;
+          // A real failure. Retry a couple of times with a short delay; only give up (stay paused, user can
+          // hit Run again) after that, so a persistent fault doesn't loop forever.
           const n = (attempts.current.get(task.id) || 0) + 1;
           attempts.current.set(task.id, n);
           setTasks((prev) => prev.map((t) => (t.id === task.id ? (t.status === "dismissed" || t.status === "done" ? t : { ...t, status: "ready", autoRan: true }) : t)));
           if (n < 3) setTimeout(() => setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, autoRan: false } : t))), 5000);
         })
-        .finally(() => { clearTimeout(timer); inflight.current.delete(task.id); });
+        .finally(() => { clearTimeout(slotTimer); clearTimeout(stuckTimer); freeSlot(); });
     }
   }, [tasks, connected, loaded]);
 

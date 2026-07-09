@@ -101,7 +101,10 @@ const mergeTasks = (existing: WebTask[], incoming: WebTask[]): WebTask[] => {
     });
     map.set(t.id, steps ? { ...winner, steps } : winner);
   }
-  return Array.from(map.values());
+  // The id-union above can still leave TWO entries for the same real-world item: two sessions/tabs each
+  // mint a fresh random id when they independently discover the same Gmail thread/event. dedupeTasks
+  // collapses those by anchor/link/near-title, same as a single generate() sweep already does.
+  return tasks.dedupeTasks(Array.from(map.values()));
 };
 
 // Entity-level dedupe (not raw Set union): reworded copies of the same fact from different sessions/devices

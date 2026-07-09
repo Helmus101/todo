@@ -37,7 +37,11 @@ async function req(url: string, init?: RequestInit, retries = 6): Promise<Respon
 }
 
 const j = async (r: Response) => {
-  if (!r.ok && r.status !== 401) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+  if (!r.ok && r.status !== 401) {
+    const err: any = new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    err.status = r.status; // callers need this to tell "already running elsewhere" (409) from a real failure
+    throw err;
+  }
   return r.json();
 };
 const post = (url: string, body?: unknown) =>
