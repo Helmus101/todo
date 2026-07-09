@@ -79,6 +79,26 @@ async function retryRequest(fn, retries = 3, delayMs = 1e3) {
   }
   throw lastErr;
 }
+var REMEMBER_TOOL = {
+  type: "function",
+  function: {
+    name: "remember",
+    description: "Save a durable fact about WHO THIS PERSON IS for future tasks and chats \u2014 a preference, a key person/relationship, an ongoing project, their name, or a one-line about. Save NEW facts and CORRECTED versions of outdated profile lines (a corrected fact replaces the old one). Be selective; not for one-off chat details.",
+    parameters: { type: "object", properties: {
+      category: { type: "string", enum: ["name", "about", "preference", "person", "project"] },
+      fact: { type: "string", description: "one short sentence" }
+    }, required: ["category", "fact"] }
+  }
+};
+function collectRemember(input, out) {
+  const fact = String(input?.fact || "").trim().slice(0, 200);
+  const category = ["name", "about", "preference", "person", "project"].includes(input?.category) ? input.category : "preference";
+  if (fact && out.length < 6) {
+    out.push({ category, fact });
+    return "saved";
+  }
+  return "skipped";
+}
 function clientOrThrow() {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("Set DEEPSEEK_API_KEY.");
@@ -100,13 +120,14 @@ ${tasksSummary.trim()}
 `;
   return out;
 }
-var SYSTEM = (profile, tasksSummary) => `You are Otto's assistant \u2014 a sharp, concise, friendly chat assistant. You can SEARCH THE WEB for current or factual information; do so whenever the answer depends on recent events, current facts, prices, or anything you're not sure of, and CITE your sources. You know who the user is and what's on their plate (below) \u2014 use it to personalize answers and connect things to their world. Be direct and genuinely useful; no filler.
+var SYSTEM = (profile, tasksSummary) => `You are Otto's assistant \u2014 a sharp, concise, friendly chat assistant. You can SEARCH THE WEB for current or factual information; do so whenever the answer depends on recent events, current facts, prices, or anything you're not sure of, and CITE your sources. You know who the user is and what's on their plate (below) \u2014 use it to personalize answers and connect things to their world. When they mention a durable fact about themselves (a preference, a key person, a project, their name) or correct something in their profile, call "remember" to save it \u2014 silently, don't announce it. Be direct and genuinely useful; no filler.
 ` + contextBlock(profile, tasksSummary);
 var dropMd = (s) => s.replace(/\*\*/g, "").replace(/^#+\s*/gm, "").trim();
 var toApi = (messages) => messages.filter((m) => m.content?.trim()).map((m) => ({ role: m.role, content: m.content }));
 async function deepseekChat(messages, profile, tasksSummary) {
   const client2 = clientOrThrow();
   const sources = [];
+  const profileUpdates = [];
   const convo = toApi(messages);
   const tool = {
     type: "function",
@@ -121,23 +142,27 @@ async function deepseekChat(messages, profile, tasksSummary) {
       model: ACTUAL_MODEL,
       max_tokens: 2200,
       messages: [{ role: "system", content: SYSTEM(profile, tasksSummary) }, ...convo],
-      tools: [tool]
+      tools: [tool, REMEMBER_TOOL]
     }));
     const msg = res.choices?.[0]?.message;
     const toolCalls = msg?.tool_calls || [];
     if (!toolCalls.length) {
       const reply = String(msg?.content || "").trim();
-      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+web" };
+      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+web", profileUpdates };
     }
     convo.push({ role: "assistant", content: msg?.content || "", tool_calls: toolCalls });
     for (const call of toolCalls) {
       const args = JSON.parse(String(call.function?.arguments || "{}") || "{}");
+      if (call.function?.name === "remember") {
+        convo.push({ role: "tool", tool_call_id: call.id, content: collectRemember(args, profileUpdates) });
+        continue;
+      }
       const hits = await duckDuckGo(String(args?.query || "")).catch(() => []);
       for (const h of hits) sources.push({ title: h.title, url: h.url });
       convo.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(hits.slice(0, 6)) });
     }
   }
-  return { reply: "I searched but couldn't pull it together \u2014 try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo" };
+  return { reply: "I searched but couldn't pull it together \u2014 try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
 }
 async function chat(messages, profile, tasksSummary) {
   try {
@@ -154,6 +179,7 @@ async function webSearch(query) {
 async function deepseekDuckDuckGo(messages, profile, tasksSummary) {
   const client2 = clientOrThrow();
   const sources = [];
+  const profileUpdates = [];
   const convo = toApi(messages);
   const tool = {
     type: "function",
@@ -168,23 +194,27 @@ async function deepseekDuckDuckGo(messages, profile, tasksSummary) {
       model: ACTUAL_MODEL,
       max_tokens: 2200,
       messages: [{ role: "system", content: SYSTEM(profile, tasksSummary) }, ...convo],
-      tools: [tool]
+      tools: [tool, REMEMBER_TOOL]
     }));
     const msg = res.choices?.[0]?.message;
     const toolCalls = msg?.tool_calls || [];
     if (!toolCalls.length) {
       const reply = String(msg?.content || "").trim();
-      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+duckduckgo" };
+      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
     }
     convo.push({ role: "assistant", content: msg?.content || "", tool_calls: toolCalls });
     for (const call of toolCalls) {
       const args = JSON.parse(String(call.function?.arguments || "{}") || "{}");
+      if (call.function?.name === "remember") {
+        convo.push({ role: "tool", tool_call_id: call.id, content: collectRemember(args, profileUpdates) });
+        continue;
+      }
       const hits = await duckDuckGo(String(args?.query || "")).catch(() => []);
       for (const h of hits) sources.push({ title: h.title, url: h.url });
       convo.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(hits.slice(0, 6)) });
     }
   }
-  return { reply: "I searched but couldn't pull it together \u2014 try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo" };
+  return { reply: "I searched but couldn't pull it together \u2014 try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
 }
 function dedupe(s) {
   const seen = /* @__PURE__ */ new Set();
@@ -234,12 +264,13 @@ function decodeDdgUrl(href) {
 // server/claude.ts
 function profileBlock(p) {
   if (!p) return "";
+  const recent = (l) => (l || []).slice(-12);
   const parts = [];
   if (p.name) parts.push(`Their name: ${p.name}`);
   if (p.about) parts.push(`About them: ${p.about}`);
-  if (p.preferences?.length) parts.push(`Preferences: ${p.preferences.join("; ")}`);
-  if (p.people?.length) parts.push(`Key people: ${p.people.join("; ")}`);
-  if (p.projects?.length) parts.push(`Ongoing projects: ${p.projects.join("; ")}`);
+  if (recent(p.preferences).length) parts.push(`Preferences: ${recent(p.preferences).join("; ")}`);
+  if (recent(p.people).length) parts.push(`Key people: ${recent(p.people).join("; ")}`);
+  if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
   return parts.length ? `
 WHO THIS PERSON IS \u2014 their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:
 ${parts.map((x) => `- ${x}`).join("\n")}
@@ -386,9 +417,20 @@ var SUBMIT_TASKS_TOOL = {
       importance: { type: "number", description: "0..1 stakes" },
       anchorKey: { type: "string", description: "ALWAYS set this \u2014 the item's STABLE id EXACTLY as the tool returned it, prefixed by app: 'gmail:<threadId>', 'calendar:<eventId>', etc. Use the SAME value every run so the task is never duplicated." },
       link: { type: "string", description: "a URL to open the source item, if you have one" }
-    }, required: ["title", "why", "source", "urgency", "importance"] } }
+    }, required: ["title", "why", "source", "urgency", "importance"] } },
+    profileUpdates: { type: "array", description: "0-4 durable facts about WHO THIS PERSON IS that you discovered while sweeping (their role, a key relationship, an ongoing project, a work preference) \u2014 including a CORRECTED/updated version of a profile line above that's now outdated. Not task content; only lasting identity facts.", items: { type: "object", properties: {
+      category: { type: "string", enum: ["name", "about", "preference", "person", "project"] },
+      fact: { type: "string", description: "one short sentence" }
+    }, required: ["category", "fact"] } }
   }, required: ["tasks"] }
 };
+function parseProfileUpdates(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.map((u) => ({
+    category: ["name", "about", "preference", "person", "project"].includes(u?.category) ? u.category : "preference",
+    fact: String(u?.fact || "").trim().slice(0, 200)
+  })).filter((u) => u.fact).slice(0, 4);
+}
 var WEB_SEARCH_TOOL = {
   name: "web_search",
   description: "Search the web for current or background facts you can't get from the connected apps \u2014 a person/company, a deadline or figure, how to do something, a reference link. Returns top results (title, url, snippet).",
@@ -399,9 +441,17 @@ async function runWebSearch(input) {
   if (!q) return "[]";
   return JSON.stringify((await webSearch(q)).slice(0, 6));
 }
+var SELF_BRIEF_TOOL = {
+  name: "send_self_brief",
+  description: "Email a brief TO THE USER'S OWN INBOX (the server addresses it to them \u2014 you cannot pick a recipient). Use when something upcoming needs prep they should see WITHOUT opening this app: a meeting/event in the next ~48h (send who/when/where or link, agenda, 2-4 prep points, doc links) or day-of logistics. Plain text, tight, scannable. NEVER a way to message anyone else; at most one per task.",
+  input_schema: { type: "object", properties: {
+    subject: { type: "string", description: "short subject, e.g. 'Brief: Q3 review with Sarah \u2014 Thu 2pm'" },
+    body: { type: "string", description: "the brief \u2014 plain text, short lines/bullets, all specifics included" }
+  }, required: ["subject", "body"] }
+};
 function parseGenerated(arr) {
   if (!Array.isArray(arr)) return [];
-  return arr.filter((t) => t && typeof t.title === "string" && t.title.trim()).map((t) => ({
+  return arr.filter((t) => t && typeof t.title === "string" && t.title.trim().length >= 4 && String(t.why || "").trim()).map((t) => ({
     title: String(t.title).slice(0, 90),
     why: String(t.why || "").slice(0, 400),
     when: t.when ? String(t.when).slice(0, 40) : void 0,
@@ -411,10 +461,11 @@ function parseGenerated(arr) {
     importance: clamp01(t.importance ?? 0.6),
     anchorKey: t.anchorKey ? String(t.anchorKey).trim().slice(0, 120) : void 0,
     link: t.link && /^https?:\/\//i.test(String(t.link)) ? String(t.link) : void 0
-  })).slice(0, 50);
+  })).slice(0, 30);
 }
 async function generateTasks(profile, extras, handled) {
-  if (!extras?.tools?.length) return [];
+  const empty = { tasks: [], profileUpdates: [] };
+  if (!extras?.tools?.length) return empty;
   const tools = [...extras.tools, WEB_SEARCH_TOOL, SUBMIT_TASKS_TOOL];
   const connectedLine = extras.connected?.length ? `My connected apps you can read: ${extras.connected.join(", ")}. Check EACH of them, not just email.` : `Use whatever tools you have to read what needs me.`;
   const handledBlock = handled?.length ? `
@@ -456,7 +507,7 @@ Sweep across all of them for everything genuinely awaiting me \u2014 including w
           messages.push({ role: "user", content: "You have not used any tools yet. Inspect the connected apps first. Call at least one connected tool now and do not answer with prose." });
           continue;
         }
-        return [];
+        return empty;
       }
       messages.push({ role: "assistant", content: res.choices[0]?.message?.content || "", tool_calls: toolUses });
       let submitted = null;
@@ -466,7 +517,7 @@ Sweep across all of them for everything genuinely awaiting me \u2014 including w
         let content = "ok";
         try {
           if (toolName === "submit_tasks") {
-            submitted = parseGenerated(input?.tasks);
+            submitted = { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) };
             content = "submitted";
           } else if (toolName === "web_search") {
             content = await runWebSearch(input);
@@ -480,7 +531,7 @@ Sweep across all of them for everything genuinely awaiting me \u2014 including w
         messages.push({ role: "tool", tool_call_id: tu.id || `tool_${Date.now()}`, content: String(content).slice(0, 4e3) });
       }
       if (submitted) {
-        if (!submitted.length) console.warn("[claude] generateTasks submitted 0 tasks");
+        if (!submitted.tasks.length) console.warn("[claude] generateTasks submitted 0 tasks");
         return submitted;
       }
     }
@@ -501,13 +552,16 @@ Sweep across all of them for everything genuinely awaiting me \u2014 including w
       tokIn += res.usage?.prompt_tokens || 0;
       tokOut += res.usage?.completion_tokens || 0;
       const tu = res.choices[0]?.message?.tool_calls?.[0];
-      if (tu) return parseGenerated(parseToolArgs(tu.function?.arguments)?.tasks);
+      if (tu) {
+        const input = parseToolArgs(tu.function?.arguments);
+        return { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) };
+      }
     } catch (e) {
       console.warn("[claude] forced submit failed:", e?.message || e);
     }
-    return [];
+    return empty;
   } finally {
-    console.log(`[ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
+    console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
 }
 async function refineManualTask(text, profile) {
@@ -552,8 +606,9 @@ GATHER CONTEXT AGGRESSIVELY \u2014 BEFORE you act, search EVERYWHERE for relevan
 - Use web_search for external details (addresses, directions, company info)
 Example: if the task is "prep to go somewhere from hotel", search Gmail for the hotel booking confirmation to get the hotel name, address, checkout time; search Calendar for departure details; search Drive for any itinerary. NEVER leave placeholders like "[hotel name]" or "[address]" \u2014 find the real details.
 HARD LIMIT \u2014 you can READ and WRITE, but you can NEVER do an irreversible OUTBOUND or DESTRUCTIVE action: no sending/forwarding email, no sending/posting messages, no publishing, no deleting (those tools are not even available to you). For email you ONLY ever leave a DRAFT; for Slack you only COMPOSE the message. You never send/post \u2014 instead OFFER the send as a one-click button via "sendables" (see submit), which the user reviews and fires. Never say you "sent", "emailed", "posted", or "messaged" \u2014 say you DRAFTED/PREPARED it. Never claim an action you didn't take.
+THE ONE SEND EXCEPTION \u2014 send_self_brief goes ONLY to the user's own inbox (the server addresses it; you cannot pick a recipient). When the task involves something UPCOMING they must walk into prepared \u2014 a meeting or event in the next ~48h, travel/day-of logistics \u2014 ALSO send them a tight brief (who/when/where or link, agenda, 2-4 prep points, doc links) so it's waiting in their inbox. Mention it in "synthesis" ("\u2026and emailed you a brief"). At most one per task; never for anything that isn't time-sensitive prep.
 CALENDAR INVITES: create/update the event freely \u2014 but it lands on the user's calendar SILENTLY, with NO emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the user gets a one-click "Send invites" button that SHOWS exactly who will be invited before they confirm. You never send the invite; the user's click does, with the recipient list in plain view.
-VOICE \u2014 SOUND LIKE THE USER, NOT AN AI: before drafting ANY email or message, READ 2-3 of their OWN sent emails (search "in:sent", ideally to the same recipient or thread) and copy their ACTUAL writing mechanics:
+VOICE \u2014 SOUND LIKE THE USER, NOT AN AI. For a REPLY, the THREAD is the source of truth: FIRST reread the ENTIRE thread you're replying to and mirror ITS conventions \u2014 the register the user (and the other side) already use there, the greeting/sign-off used IN THAT THREAD (often none mid-thread), its typical message length, its formality. Your draft must read as the natural NEXT message of that exact thread. Only when the thread has no messages from the user (or it's a fresh email) fall back to their broader style: READ 2-3 of their OWN sent emails (search "in:sent", ideally to the same recipient) and copy their ACTUAL writing mechanics:
 - CAPITALIZATION: if they write in lowercase ("hey, sounds good"), you write in lowercase. If they use proper caps, so do you.
 - SENTENCE LENGTH & TOTAL LENGTH: if their emails are 2 short lines, yours are 2 short lines \u2014 never longer than they'd write.
 - THEIR WORDS: reuse their habitual greeting ("hey"/"hi"/none), sign-off ("thanks!"/"best"/just their name), filler words, contractions, and punctuation habits (do they use exclamation marks? ellipses? no periods at line ends?).
@@ -575,7 +630,9 @@ ASK ONLY WHEN TRULY STUCK: if a step is automatable EXCEPT for one detail you co
 BRIEF, DON'T JUST DEFER: even when the final action is the USER's (a decision, or a booking/login/payment you can't do), do ALL the research around it FIRST \u2014 find the real options + facts, put each as a "links" entry they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or click \u2014 NEVER "go figure it out". E.g. "book a Boston restaurant" \u2192 research a few fitting spots, link each (Resy/the restaurant site), recommend one with a one-line why; the step is just "Pick one & book".
 ALWAYS SURFACE WHAT YOU MADE: whenever you create or draft something (a Gmail draft, a Google Doc/Sheet/Slides deck, a calendar event, a task, an issue/PR or comment), put a LINK to it in submit's "links" so the user can open and review it. Build the URL from the id the tool returned \u2014 Doc: https://docs.google.com/document/d/<id>/edit, Sheet: https://docs.google.com/spreadsheets/d/<id>/edit, Slides: https://docs.google.com/presentation/d/<id>/edit, Gmail draft: https://mail.google.com/mail/u/0/#drafts, calendar event: the htmlLink it returned. If a result already includes a URL / webViewLink, use that. Never invent a link \u2014 only include one you actually got back.
 ONE-CLICK SEND (the ONLY way anything goes out \u2014 always with the recipient shown): for every email you DRAFTED, add a "sendables" entry {app:"gmail", label, to (the recipient, ALWAYS set it), subject, body, draftId} \u2014 include the EXACT subject + body you wrote (so the user can review the draft IN THE APP) plus the draft_id the create-draft tool returned. For every Slack message you COMPOSED, add {app:"slack", label, channel, text} \u2014 do NOT post it. For a calendar event that should invite people, add {app:"gcal", label, eventId, attendees:[the invitees' emails], summary, when} \u2014 do NOT notify them. Each gives the user a Send button that names the recipient(s) first; you still never send. Don't ALSO add a "send it" step \u2014 the button is the send.
-Use "remember" for a durable fact about WHO THIS PERSON IS (a preference, a key person, an ongoing project, or a one-line "about"). Be selective. Call "submit" ONLY after you've actually done the reversible work \u2014 not before. Be BRIEF: "synthesis" is ONE sentence; "context" is 1-2 short bullets. Don't narrate problems or steps you skipped \u2014 just the result.`;
+Use "remember" for a durable fact about WHO THIS PERSON IS (a preference, a key person, an ongoing project, or a one-line "about") \u2014 save NEW facts AND corrected versions of profile lines that turned out outdated or wrong (a corrected fact REPLACES the old one). Be selective.
+QUALITY BAR \u2014 self-check BEFORE calling submit, fix anything that fails: (1) every draft/doc contains the REAL specifics (dates, times, numbers, names, addresses) \u2014 zero placeholders; (2) drafts match the user's actual voice per the VOICE rules \u2014 reread one sent email if unsure; (3) each sendable's subject/body is EXACTLY what you wrote into the created draft (same draftId); (4) every link came from a tool result \u2014 never constructed from guesswork. A polished half is worth more than a sloppy whole.
+Call "submit" ONLY after you've actually done the reversible work \u2014 not before. Be BRIEF: "synthesis" is ONE sentence; "context" is 1-2 short bullets. Don't narrate problems or steps you skipped \u2014 just the result.`;
 var RUN_TOOLS = [
   { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them \u2014 save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
@@ -624,7 +681,7 @@ var RUN_TOOLS = [
 ];
 async function runTask(task, profile, focus, extras) {
   const profileUpdates = [];
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...extras?.tools?.length ? extras.tools : []];
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...extras?.selfBrief ? [SELF_BRIEF_TOOL] : [], ...extras?.tools?.length ? extras.tools : []];
   const connectedLine = extras?.connected?.length ? `
 Connected apps you can use (read + reversible writes; never send/post/delete): ${extras.connected.join(", ")}.
 ` : `
@@ -701,6 +758,8 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
             content = "submitted";
           } else if (toolName === "web_search") {
             content = await runWebSearch(input);
+          } else if (toolName === "send_self_brief") {
+            content = extras?.selfBrief ? await extras.selfBrief(String(input?.subject || ""), String(input?.body || "")) : "ERROR: not available";
           } else {
             const r = extras ? await extras.call(toolName, input || {}) : null;
             content = r ?? `Unknown tool: ${toolName}`;
@@ -737,16 +796,18 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
     }
     throw new Error("The run didn't produce a result \u2014 it will retry.");
   } finally {
-    console.log(`[ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
+    console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
 }
 function finalize(out, fallbackText, profileUpdates) {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
-  const steps = rawSteps.map((s) => ({
+  const steps = rawSteps.map((s, idx) => ({
     text: String(s?.text || "").trim(),
     automatable: !!s?.automatable,
     needsPermission: !!s?.needsPermission,
-    dependsOn: Number.isInteger(s?.dependsOn) ? s.dependsOn : void 0,
+    // Valid only if it points at a REAL other step — a bad index (9 in a 3-step list, or itself)
+    // would permanently block the step client-side.
+    dependsOn: Number.isInteger(s?.dependsOn) && s.dependsOn >= 0 && s.dependsOn < rawSteps.length && s.dependsOn !== idx ? s.dependsOn : void 0,
     url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : void 0,
     question: s?.question ? String(s.question).trim().slice(0, 200) : void 0,
     options: Array.isArray(s?.options) ? s.options.map((o) => String(o).trim()).filter(Boolean).slice(0, 4) : void 0
@@ -767,9 +828,13 @@ function finalize(out, fallbackText, profileUpdates) {
     when: s?.when ? String(s.when).slice(0, 120) : void 0
   })).filter((s) => s.app === "gmail" && !!s.draftId || s.app === "slack" && !!s.channel && !!s.text || s.app === "gcal" && !!s.eventId && !!s.attendees?.length).slice(0, 6);
   const brief = (s, lines, chars) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
+  const synthesis = brief(String(out?.synthesis || fallbackText || ""), 3, 550);
+  if (!synthesis && !steps.length && !links.length && !sendables.length) {
+    throw new Error("The run produced no output \u2014 it will retry.");
+  }
   return {
     context: brief(String(out?.context || ""), 3, 600),
-    synthesis: brief(String(out?.synthesis || fallbackText || "Done."), 3, 550),
+    synthesis: synthesis || "Done.",
     steps,
     links,
     sendables,
@@ -904,7 +969,9 @@ function applyProfileUpdate(profile, u) {
     return;
   }
   const key2 = u.category === "preference" ? "preferences" : u.category === "person" ? "people" : "projects";
-  profile[key2] = dedupeFacts([...profile[key2], f.slice(0, 160)]);
+  const fact = f.slice(0, 160);
+  const rest = profile[key2].filter((x) => !sameFact(x, fact));
+  profile[key2] = dedupeFacts([...rest, fact]);
 }
 var URGENT_AT = 0.5;
 var IMPORTANT_AT = 0.5;
@@ -1008,6 +1075,7 @@ async function generate(existing, profile, extras) {
     link: t.evidence?.find((e) => e.url)?.url
   }));
   const gen = await generateTasks(profile, extras, handled);
+  for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   const linkOf = (t) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
@@ -1025,7 +1093,7 @@ async function generate(existing, profile, extras) {
     kept.push(t);
   };
   for (const t of existing) absorb(t);
-  for (const g of gen) {
+  for (const g of gen.tasks) {
     const e = eisenhower(g.urgency, g.importance);
     const evidence = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : void 0;
     absorb({
@@ -1077,6 +1145,7 @@ function addManual(list, title, refined) {
 async function runById(list, id, profile, extras, revision) {
   const task = list.find((t) => t.id === id);
   if (!task) return void 0;
+  if (task.status === "running") return task;
   task.status = "running";
   task.autoRan = true;
   const focus = revision?.trim() ? `The user reviewed your previous draft/output for this task and wants this CHANGE before they send it: "${revision.trim()}". Redo the task incorporating it \u2014 UPDATE the existing draft/doc (don't create a new copy) and re-offer it as a sendable.` : void 0;
@@ -1336,6 +1405,29 @@ async function sendSendable(userId, s) {
   }
 }
 var EMPTY = { tools: [], call: async () => null, connected: [] };
+async function sendSelfBrief(userId, subject, body) {
+  if (!integrationsReady() || !userId) return "ERROR: integrations not configured";
+  const subj = String(subject || "").trim().slice(0, 200);
+  const text = String(body || "").trim().slice(0, 8e3);
+  if (!subj || !text) return "ERROR: subject and body are required";
+  let to = userId;
+  try {
+    to = (await getConnectedAccounts(userId, "gmail"))[0]?.email || userId;
+  } catch {
+  }
+  if (!/^[\w.+-]+@[\w.-]+\.\w+$/.test(to)) return "ERROR: no usable own-address to send to";
+  try {
+    const r = await sdk().tools.execute("GMAIL_SEND_EMAIL", {
+      userId,
+      arguments: { recipient_email: to, subject: subj, body: text },
+      dangerouslySkipVersionCheck: true
+    });
+    if (r && (r.successful === false || r.error)) return `ERROR: ${String(r.error || "send failed")}`;
+    return `Sent the brief to ${to} (the user's own inbox).`;
+  } catch (e) {
+    return `ERROR: ${e?.message ?? e}`;
+  }
+}
 var cache = /* @__PURE__ */ new Map();
 var CACHE_MS = 12e4;
 var sanitize = (s) => s.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
@@ -1413,7 +1505,13 @@ async function getAgentTools(userId) {
       return `Tool error (${action}): ${e?.message ?? e}`;
     }
   };
-  const data = { tools, call, connected };
+  const data = {
+    tools,
+    call,
+    connected,
+    // Only offered when Gmail is connected — that's both the send channel and the recipient source.
+    selfBrief: connected.includes("gmail") ? (subject, body) => sendSelfBrief(userId, subject, body) : void 0
+  };
   cache.set(userId, { at: Date.now(), data });
   return data;
 }
@@ -1445,7 +1543,7 @@ async function getAgentToolsWithPermission(userId) {
       return `Tool error (${action}): ${e?.message ?? e}`;
     }
   };
-  return { tools: base.tools, call: permCall, connected: base.connected };
+  return { tools: base.tools, call: permCall, connected: base.connected, selfBrief: base.selfBrief };
 }
 
 // server/index.ts
@@ -1521,9 +1619,9 @@ var mergeProfiles = (p1, p2) => {
   return {
     name: p2.name || p1.name,
     about: p2.about || p1.about,
-    preferences: Array.from(/* @__PURE__ */ new Set([...p1.preferences || [], ...p2.preferences || []])),
-    people: Array.from(/* @__PURE__ */ new Set([...p1.people || [], ...p2.people || []])),
-    projects: Array.from(/* @__PURE__ */ new Set([...p1.projects || [], ...p2.projects || []]))
+    preferences: dedupeFacts([...p1.preferences || [], ...p2.preferences || []]),
+    people: dedupeFacts([...p1.people || [], ...p2.people || []]),
+    projects: dedupeFacts([...p1.projects || [], ...p2.projects || []])
   };
 };
 var commit = async (req) => {
@@ -1742,15 +1840,30 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   await commit(req);
   res.json(req.session.tasks);
 });
-app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
-  try {
-    const t = await runById(req.session.tasks || [], String(req.params.id), req.session.profile ||= emptyProfile(), await toolsFor(req));
-    await commit(req);
-    res.json(t || { error: "not found" });
-  } catch (e) {
-    console.error("[tasks] run error for task", req.params.id, ":", e);
-    res.status(500).json({ error: e?.message || "run failed" });
+var runningTasks = /* @__PURE__ */ new Set();
+var withTaskLock = async (id, res, fn) => {
+  if (runningTasks.has(id)) {
+    res.status(409).json({ error: "already running" });
+    return;
   }
+  runningTasks.add(id);
+  try {
+    await fn();
+  } finally {
+    runningTasks.delete(id);
+  }
+};
+app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
+  await withTaskLock(String(req.params.id), res, async () => {
+    try {
+      const t = await runById(req.session.tasks || [], String(req.params.id), req.session.profile ||= emptyProfile(), await toolsFor(req));
+      await commit(req);
+      res.json(t || { error: "not found" });
+    } catch (e) {
+      console.error("[tasks] run error for task", req.params.id, ":", e);
+      res.status(500).json({ error: e?.message || "run failed" });
+    }
+  });
 });
 app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, res) => {
   const note = String(req.body?.note || "").trim();
@@ -1758,14 +1871,16 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, r
     res.status(400).json({ error: "note required" });
     return;
   }
-  try {
-    const t = await runById(req.session.tasks || [], String(req.params.id), req.session.profile ||= emptyProfile(), await toolsFor(req), note);
-    await commit(req);
-    res.json(t || { error: "not found" });
-  } catch (e) {
-    console.error("[tasks] revise error for task", req.params.id, ":", e);
-    res.status(500).json({ error: e?.message || "revise failed" });
-  }
+  await withTaskLock(String(req.params.id), res, async () => {
+    try {
+      const t = await runById(req.session.tasks || [], String(req.params.id), req.session.profile ||= emptyProfile(), await toolsFor(req), note);
+      await commit(req);
+      res.json(t || { error: "not found" });
+    } catch (e) {
+      console.error("[tasks] revise error for task", req.params.id, ":", e);
+      res.status(500).json({ error: e?.message || "revise failed" });
+    }
+  });
 });
 app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
   const id = String(req.params.id);
@@ -1795,16 +1910,18 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
   res.json(req.session.tasks || []);
 });
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
-  try {
-    const permTools = await getAgentToolsWithPermission(req.session.user).catch(() => void 0);
-    const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : void 0;
-    const t = await runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), req.session.profile ||= emptyProfile(), permTools, answer);
-    await commit(req);
-    res.json(t || { error: "not found" });
-  } catch (e) {
-    console.error("[tasks] step run error for task", req.params.id, "step", req.params.index, ":", e);
-    res.status(500).json({ error: e?.message || "step run failed" });
-  }
+  await withTaskLock(String(req.params.id), res, async () => {
+    try {
+      const permTools = await getAgentToolsWithPermission(req.session.user).catch(() => void 0);
+      const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : void 0;
+      const t = await runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), req.session.profile ||= emptyProfile(), permTools, answer);
+      await commit(req);
+      res.json(t || { error: "not found" });
+    } catch (e) {
+      console.error("[tasks] step run error for task", req.params.id, "step", req.params.index, ":", e);
+      res.status(500).json({ error: e?.message || "step run failed" });
+    }
+  });
 });
 app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
   const id = String(req.params.id);
@@ -1849,6 +1966,11 @@ app.post("/api/chat", requireAuth, rateLimit(20, 6e4), async (req, res) => {
     const live = (req.session.tasks || []).filter((t) => t.status !== "done" && t.status !== "dismissed").slice(0, 25);
     const tasksSummary = live.map((t) => `- ${t.title}${t.when ? ` (${t.when})` : ""}`).join("\n");
     const out = await chat(messages, req.session.profile, tasksSummary);
+    if (out.profileUpdates?.length) {
+      const profile = req.session.profile ||= emptyProfile();
+      for (const u of out.profileUpdates) applyProfileUpdate(profile, u);
+      await commit(req);
+    }
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: e?.message || "chat failed" });

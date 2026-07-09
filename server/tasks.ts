@@ -1,18 +1,22 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
-import { dedupeFacts } from "../shared/types.ts";
+import { dedupeFacts, sameFact } from "../shared/types.ts";
 import { generateTasks, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
 import type { AgentTools } from "./integrations.ts";
 
-/** Fold a learned fact into the person-profile. 'name'/'about' replace; list facts append THEN dedupe by
- *  entity (so reworded facts about the same person/project collapse instead of piling up). */
+/** Fold a learned fact into the person-profile. 'name'/'about' replace. List facts REPLACE an existing
+ *  same-entity fact (newest wording wins — so a correction actually takes effect; dedupeFacts alone keeps
+ *  the LONGER wording, which lets stale facts survive), else append; then dedupe + cap. */
 export function applyProfileUpdate(profile: Profile, u: ProfileUpdate): void {
   const f = u.fact.trim();
   if (!f) return;
   if (u.category === "name") { profile.name = f.slice(0, 60); return; }
   if (u.category === "about") { profile.about = f.slice(0, 400); return; }
   const key = u.category === "preference" ? "preferences" : u.category === "person" ? "people" : "projects";
-  profile[key] = dedupeFacts([...profile[key], f.slice(0, 160)]);
+  const fact = f.slice(0, 160);
+  // Drop EVERY stored wording of this entity (old lists may hold several), then add the newest.
+  const rest = profile[key].filter((x) => !sameFact(x, fact));
+  profile[key] = dedupeFacts([...rest, fact]);
 }
 
 const URGENT_AT = 0.5, IMPORTANT_AT = 0.5;
@@ -90,6 +94,9 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
       link: t.evidence?.find((e) => e.url)?.url,
     }));
   const gen = await generateTasks(profile, extras, handled);
+  // The sweep reads the user's whole world — fold anything it learned about WHO THEY ARE into the
+  // profile, so preferences/people/projects keep updating continuously (not only during task runs).
+  for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const now = new Date().toISOString();
 
   // Collapse formatting drift in an anchor ("gmail:18fAb", "GMAIL_18fab" → same) so the SAME thread/event
@@ -122,7 +129,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   };
 
   for (const t of existing) absorb(t);
-  for (const g of gen) {
+  for (const g of gen.tasks) {
     const e = eisenhower(g.urgency, g.importance);
     const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : undefined;
     absorb({
@@ -164,11 +171,6 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
   return list;
 }
 
-/** Tasks that should auto-run (reversible prep) — ready and not yet auto-run. */
-export function pendingAutoRun(list: WebTask[]): WebTask[] {
-  return list.filter((t) => t.status === "ready" && !t.autoRan).sort((a, b) => b.score - a.score);
-}
-
 /**
  * Run a task: the agent gathers facts and does the reversible work itself through the user's connected apps
  * (drafts a reply, creates a doc/deck/sheet, adds a task/event, updates an issue — never an irreversible
@@ -177,6 +179,7 @@ export function pendingAutoRun(list: WebTask[]): WebTask[] {
 export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   if (!task) return undefined;
+  if (task.status === "running") return task; // already in flight (second tab/device) — never double-run
   task.status = "running";
   task.autoRan = true; // set before the await so concurrent auto-runs skip it (pendingAutoRun checks !autoRan)
   // A user revision: they reviewed a draft and asked for a change before sending → re-run with that instruction.
@@ -206,11 +209,6 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     task.status = "ready";
     throw e;
   }
-}
-
-export function setStatus(list: WebTask[], id: string, status: WebTask["status"]): void {
-  const t = list.find((x) => x.id === id);
-  if (t) t.status = status;
 }
 
 /** Reject what the agent did → re-surface so it can be run again. */

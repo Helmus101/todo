@@ -265,8 +265,36 @@ export async function sendSendable(userId: string, s: { app: string; draftId?: s
   } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
 }
 
-export interface AgentTools { tools: Anthropic.Tool[]; call: (name: string, args: Record<string, unknown>) => Promise<string | null>; connected: string[]; }
+export interface AgentTools {
+  tools: Anthropic.Tool[];
+  call: (name: string, args: Record<string, unknown>) => Promise<string | null>;
+  connected: string[];
+  /** Send a brief TO THE USER'S OWN INBOX — the recipient is resolved server-side (never model-supplied),
+   *  so this is the one send the agent may make autonomously without breaking the "never sends" guarantee. */
+  selfBrief?: (subject: string, body: string) => Promise<string>;
+}
 const EMPTY: AgentTools = { tools: [], call: async () => null, connected: [] };
+
+/** Email the user THEMSELVES (e.g. an event brief). The recipient is the connected Gmail account's own
+ *  address (fallback: the account email they log in with) — hardcoded here, never chosen by the model. */
+export async function sendSelfBrief(userId: string, subject: string, body: string): Promise<string> {
+  if (!integrationsReady() || !userId) return "ERROR: integrations not configured";
+  const subj = String(subject || "").trim().slice(0, 200);
+  const text = String(body || "").trim().slice(0, 8000);
+  if (!subj || !text) return "ERROR: subject and body are required";
+  let to = userId;
+  try { to = (await getConnectedAccounts(userId, "gmail"))[0]?.email || userId; } catch { /* fall back to account email */ }
+  if (!/^[\w.+-]+@[\w.-]+\.\w+$/.test(to)) return "ERROR: no usable own-address to send to";
+  try {
+    const r: any = await sdk().tools.execute("GMAIL_SEND_EMAIL", {
+      userId,
+      arguments: { recipient_email: to, subject: subj, body: text },
+      dangerouslySkipVersionCheck: true,
+    } as any);
+    if (r && (r.successful === false || r.error)) return `ERROR: ${String(r.error || "send failed")}`;
+    return `Sent the brief to ${to} (the user's own inbox).`;
+  } catch (e: any) { return `ERROR: ${e?.message ?? e}`; }
+}
 
 // Building the tool list is N Composio calls; cache per account for a short window so we don't pay it on
 // every single task run. (Server process memory — Date.now() is fine here, this isn't a workflow script.)
@@ -372,7 +400,11 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
     try { return await execute(action, userId, args || {}); }
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };
-  const data: AgentTools = { tools, call, connected };
+  const data: AgentTools = {
+    tools, call, connected,
+    // Only offered when Gmail is connected — that's both the send channel and the recipient source.
+    selfBrief: connected.includes("gmail") ? (subject, body) => sendSelfBrief(userId, subject, body) : undefined,
+  };
   cache.set(userId, { at: Date.now(), data });
   return data;
 }
@@ -416,5 +448,5 @@ export async function getAgentToolsWithPermission(userId: string): Promise<Agent
     try { return await execute(action, userId, args || {}); }
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };
-  return { tools: base.tools, call: permCall, connected: base.connected };
+  return { tools: base.tools, call: permCall, connected: base.connected, selfBrief: base.selfBrief };
 }

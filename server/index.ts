@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts } from "../shared/types.ts";
 import { aiReady, refineManualTask } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore } from "./store.ts";
 import * as tasks from "./tasks.ts";
@@ -96,13 +96,15 @@ const mergeTasks = (existing: WebTask[], incoming: WebTask[]): WebTask[] => {
   return Array.from(map.values());
 };
 
+// Entity-level dedupe (not raw Set union): reworded copies of the same fact from different sessions/devices
+// must collapse, or the cloud profile grows forever — and it's injected into EVERY agent prompt.
 const mergeProfiles = (p1: Profile, p2: Profile): Profile => {
   return {
     name: p2.name || p1.name,
     about: p2.about || p1.about,
-    preferences: Array.from(new Set([...(p1.preferences || []), ...(p2.preferences || [])])),
-    people: Array.from(new Set([...(p1.people || []), ...(p2.people || [])])),
-    projects: Array.from(new Set([...(p1.projects || []), ...(p2.projects || [])])),
+    preferences: dedupeFacts([...(p1.preferences || []), ...(p2.preferences || [])]),
+    people: dedupeFacts([...(p1.people || []), ...(p2.people || [])]),
+    projects: dedupeFacts([...(p1.projects || []), ...(p2.projects || [])]),
   };
 };
 
@@ -317,16 +319,28 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   res.json(req.session.tasks);
 });
 
+// Per-task run lock: a second run/revise/step call for the SAME task while one is in flight would burn a
+// full duplicate agent run (real credits) and race its writes. In-memory is fine — concurrent requests in
+// one process are the case that matters; cross-instance overlap is already softened by runById's status guard.
+const runningTasks = new Set<string>();
+const withTaskLock = async (id: string, res: express.Response, fn: () => Promise<void>): Promise<void> => {
+  if (runningTasks.has(id)) { res.status(409).json({ error: "already running" }); return; }
+  runningTasks.add(id);
+  try { await fn(); } finally { runningTasks.delete(id); }
+};
+
 // The client drives runs (calls this for each ready task) — synchronous, returns the executed task.
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
-  try {
-    const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req));
-    await commit(req);
-    res.json(t || { error: "not found" });
-  } catch (e: any) {
-    console.error("[tasks] run error for task", req.params.id, ":", e);
-    res.status(500).json({ error: e?.message || "run failed" });
-  }
+  await withTaskLock(String(req.params.id), res, async () => {
+    try {
+      const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req));
+      await commit(req);
+      res.json(t || { error: "not found" });
+    } catch (e: any) {
+      console.error("[tasks] run error for task", req.params.id, ":", e);
+      res.status(500).json({ error: e?.message || "run failed" });
+    }
+  });
 });
 
 // Revise: the user declined to send and said what to change → re-run the task with that instruction so Otto
@@ -334,14 +348,16 @@ app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, r
 app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   const note = String(req.body?.note || "").trim();
   if (!note) { res.status(400).json({ error: "note required" }); return; }
-  try {
-    const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req), note);
-    await commit(req);
-    res.json(t || { error: "not found" });
-  } catch (e: any) {
-    console.error("[tasks] revise error for task", req.params.id, ":", e);
-    res.status(500).json({ error: e?.message || "revise failed" });
-  }
+  await withTaskLock(String(req.params.id), res, async () => {
+    try {
+      const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req), note);
+      await commit(req);
+      res.json(t || { error: "not found" });
+    } catch (e: any) {
+      console.error("[tasks] revise error for task", req.params.id, ":", e);
+      res.status(500).json({ error: e?.message || "revise failed" });
+    }
+  });
 });
 
 // These return the FULL task list (client filters out done/dismissed for display) — so the dashboard's
@@ -375,16 +391,18 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
 });
 // Auto-do ONE automatable step (focused agent run over the connected apps).
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
-  try {
-    const permTools = await integrations.getAgentToolsWithPermission(req.session.user!).catch(() => undefined);
-    const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
-    const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), permTools, answer);
-    await commit(req);
-    res.json(t || { error: "not found" });
-  } catch (e: any) {
-    console.error("[tasks] step run error for task", req.params.id, "step", req.params.index, ":", e);
-    res.status(500).json({ error: e?.message || "step run failed" });
-  }
+  await withTaskLock(String(req.params.id), res, async () => {
+    try {
+      const permTools = await integrations.getAgentToolsWithPermission(req.session.user!).catch(() => undefined);
+      const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
+      const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), permTools, answer);
+      await commit(req);
+      res.json(t || { error: "not found" });
+    } catch (e: any) {
+      console.error("[tasks] step run error for task", req.params.id, "step", req.params.index, ":", e);
+      res.status(500).json({ error: e?.message || "step run failed" });
+    }
+  });
 });
 // Mark a step done/undone (a manual step the user did, or after the client opened a URL step).
 app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
@@ -427,6 +445,12 @@ app.post("/api/chat", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     const live = (req.session.tasks || []).filter((t) => t.status !== "done" && t.status !== "dismissed").slice(0, 25);
     const tasksSummary = live.map((t) => `- ${t.title}${t.when ? ` (${t.when})` : ""}`).join("\n");
     const out = await chat(messages, req.session.profile, tasksSummary);
+    // Chat is where users volunteer who they are — persist anything the assistant chose to remember.
+    if (out.profileUpdates?.length) {
+      const profile = (req.session.profile ||= emptyProfile());
+      for (const u of out.profileUpdates) tasks.applyProfileUpdate(profile, u);
+      await commit(req);
+    }
     res.json(out);
   } catch (e: any) { res.status(500).json({ error: e?.message || "chat failed" }); }
 });

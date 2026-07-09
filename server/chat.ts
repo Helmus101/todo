@@ -28,7 +28,29 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000
 
 export interface ChatTurn { role: "user" | "assistant"; content: string; }
 export interface ChatSource { title: string; url: string; }
-export interface ChatResult { reply: string; sources: ChatSource[]; via: "deepseek+web" | "deepseek+duckduckgo"; }
+/** Structurally identical to claude.ts's ProfileUpdate (defined here too because claude.ts imports this module). */
+export interface ChatProfileUpdate { category: "name" | "about" | "preference" | "person" | "project"; fact: string; }
+export interface ChatResult { reply: string; sources: ChatSource[]; via: "deepseek+web" | "deepseek+duckduckgo"; profileUpdates: ChatProfileUpdate[]; }
+
+/** The same "remember" tool the task agents have — chat is often where users volunteer who they are
+ *  ("my cofounder is Alex", "I hate morning meetings"), so it must learn too. */
+const REMEMBER_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "remember",
+    description: "Save a durable fact about WHO THIS PERSON IS for future tasks and chats — a preference, a key person/relationship, an ongoing project, their name, or a one-line about. Save NEW facts and CORRECTED versions of outdated profile lines (a corrected fact replaces the old one). Be selective; not for one-off chat details.",
+    parameters: { type: "object", properties: {
+      category: { type: "string", enum: ["name", "about", "preference", "person", "project"] },
+      fact: { type: "string", description: "one short sentence" },
+    }, required: ["category", "fact"] },
+  },
+};
+function collectRemember(input: any, out: ChatProfileUpdate[]): string {
+  const fact = String(input?.fact || "").trim().slice(0, 200);
+  const category = ["name", "about", "preference", "person", "project"].includes(input?.category) ? input.category : "preference";
+  if (fact && out.length < 6) { out.push({ category, fact }); return "saved"; }
+  return "skipped";
+}
 
 function clientOrThrow(): OpenAI {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -52,7 +74,9 @@ const SYSTEM = (profile?: Profile, tasksSummary?: string) =>
   `You are Otto's assistant — a sharp, concise, friendly chat assistant. You can SEARCH THE WEB for current ` +
   `or factual information; do so whenever the answer depends on recent events, current facts, prices, or anything ` +
   `you're not sure of, and CITE your sources. You know who the user is and what's on their plate (below) — use it ` +
-  `to personalize answers and connect things to their world. Be direct and genuinely useful; no filler.\n` +
+  `to personalize answers and connect things to their world. When they mention a durable fact about themselves ` +
+  `(a preference, a key person, a project, their name) or correct something in their profile, call "remember" to ` +
+  `save it — silently, don't announce it. Be direct and genuinely useful; no filler.\n` +
   contextBlock(profile, tasksSummary);
 
 const dropMd = (s: string) => s.replace(/\*\*/g, "").replace(/^#+\s*/gm, "").trim();
@@ -64,6 +88,7 @@ const toApi = (messages: ChatTurn[]) =>
 async function deepseekChat(messages: ChatTurn[], profile?: Profile, tasksSummary?: string): Promise<ChatResult> {
   const client = clientOrThrow();
   const sources: ChatSource[] = [];
+  const profileUpdates: ChatProfileUpdate[] = [];
   const convo: any[] = toApi(messages);
   const tool = {
     type: "function" as const,
@@ -78,23 +103,27 @@ async function deepseekChat(messages: ChatTurn[], profile?: Profile, tasksSummar
       model: ACTUAL_MODEL,
       max_tokens: 2200,
       messages: [{ role: "system", content: SYSTEM(profile, tasksSummary) }, ...convo],
-      tools: [tool],
+      tools: [tool, REMEMBER_TOOL],
     }));
     const msg = res.choices?.[0]?.message;
     const toolCalls = msg?.tool_calls || [];
     if (!toolCalls.length) {
       const reply = String(msg?.content || "").trim();
-      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+web" };
+      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+web", profileUpdates };
     }
     convo.push({ role: "assistant", content: msg?.content || "", tool_calls: toolCalls });
     for (const call of toolCalls) {
       const args = JSON.parse(String(call.function?.arguments || "{}") || "{}");
+      if (call.function?.name === "remember") {
+        convo.push({ role: "tool", tool_call_id: call.id, content: collectRemember(args, profileUpdates) });
+        continue;
+      }
       const hits = await duckDuckGo(String(args?.query || "")).catch(() => []);
       for (const h of hits) sources.push({ title: h.title, url: h.url });
       convo.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(hits.slice(0, 6)) });
     }
   }
-  return { reply: "I searched but couldn't pull it together — try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo" };
+  return { reply: "I searched but couldn't pull it together — try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
 }
 
 export async function chat(messages: ChatTurn[], profile?: Profile, tasksSummary?: string): Promise<ChatResult> {
@@ -116,6 +145,7 @@ export async function webSearch(query: string): Promise<{ title: string; url: st
 async function deepseekDuckDuckGo(messages: ChatTurn[], profile?: Profile, tasksSummary?: string): Promise<ChatResult> {
   const client = clientOrThrow();
   const sources: ChatSource[] = [];
+  const profileUpdates: ChatProfileUpdate[] = [];
   const convo: any[] = toApi(messages);
   const tool = {
     type: "function" as const,
@@ -130,23 +160,27 @@ async function deepseekDuckDuckGo(messages: ChatTurn[], profile?: Profile, tasks
       model: ACTUAL_MODEL,
       max_tokens: 2200,
       messages: [{ role: "system", content: SYSTEM(profile, tasksSummary) }, ...convo],
-      tools: [tool],
+      tools: [tool, REMEMBER_TOOL],
     }));
     const msg = res.choices?.[0]?.message;
     const toolCalls = msg?.tool_calls || [];
     if (!toolCalls.length) {
       const reply = String(msg?.content || "").trim();
-      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+duckduckgo" };
+      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
     }
     convo.push({ role: "assistant", content: msg?.content || "", tool_calls: toolCalls });
     for (const call of toolCalls) {
       const args = JSON.parse(String(call.function?.arguments || "{}") || "{}");
+      if (call.function?.name === "remember") {
+        convo.push({ role: "tool", tool_call_id: call.id, content: collectRemember(args, profileUpdates) });
+        continue;
+      }
       const hits = await duckDuckGo(String(args?.query || "")).catch(() => []);
       for (const h of hits) sources.push({ title: h.title, url: h.url });
       convo.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(hits.slice(0, 6)) });
     }
   }
-  return { reply: "I searched but couldn't pull it together — try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo" };
+  return { reply: "I searched but couldn't pull it together — try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
 }
 
 function dedupe(s: ChatSource[]): ChatSource[] {

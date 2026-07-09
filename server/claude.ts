@@ -6,12 +6,15 @@ import { webSearch } from "./chat.ts";
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
 function profileBlock(p?: Profile): string {
   if (!p) return "";
+  // Newest 12 facts per category go into the prompt (storage keeps up to 40): keeps every call lean —
+  // this block ships with EVERY agent request, so its size is a direct cost multiplier.
+  const recent = (l?: string[]) => (l || []).slice(-12);
   const parts: string[] = [];
   if (p.name) parts.push(`Their name: ${p.name}`);
   if (p.about) parts.push(`About them: ${p.about}`);
-  if (p.preferences?.length) parts.push(`Preferences: ${p.preferences.join("; ")}`);
-  if (p.people?.length) parts.push(`Key people: ${p.people.join("; ")}`);
-  if (p.projects?.length) parts.push(`Ongoing projects: ${p.projects.join("; ")}`);
+  if (recent(p.preferences).length) parts.push(`Preferences: ${recent(p.preferences).join("; ")}`);
+  if (recent(p.people).length) parts.push(`Key people: ${recent(p.people).join("; ")}`);
+  if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
   return parts.length ? `\nWHO THIS PERSON IS — their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
 }
 
@@ -196,8 +199,24 @@ const SUBMIT_TASKS_TOOL = {
       anchorKey: { type: "string", description: "ALWAYS set this — the item's STABLE id EXACTLY as the tool returned it, prefixed by app: 'gmail:<threadId>', 'calendar:<eventId>', etc. Use the SAME value every run so the task is never duplicated." },
       link: { type: "string", description: "a URL to open the source item, if you have one" },
     }, required: ["title", "why", "source", "urgency", "importance"] } },
+    profileUpdates: { type: "array", description: "0-4 durable facts about WHO THIS PERSON IS that you discovered while sweeping (their role, a key relationship, an ongoing project, a work preference) — including a CORRECTED/updated version of a profile line above that's now outdated. Not task content; only lasting identity facts.", items: { type: "object", properties: {
+      category: { type: "string", enum: ["name", "about", "preference", "person", "project"] },
+      fact: { type: "string", description: "one short sentence" },
+    }, required: ["category", "fact"] } },
   }, required: ["tasks"] },
 };
+
+/** Validate model-supplied profile updates (shared by generation submit + chat remember). */
+export function parseProfileUpdates(arr: any): ProfileUpdate[] {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((u): ProfileUpdate => ({
+      category: ["name", "about", "preference", "person", "project"].includes(u?.category) ? u.category : "preference",
+      fact: String(u?.fact || "").trim().slice(0, 200),
+    }))
+    .filter((u) => u.fact)
+    .slice(0, 4);
+}
 
 // Shared web-search tool for the task agents — gives generation + execution the same "look it up" power the
 // chat has, so planning or doing a task can pull in external context (a person, a deadline, a how-to, a link).
@@ -212,10 +231,23 @@ async function runWebSearch(input: any): Promise<string> {
   return JSON.stringify((await webSearch(q)).slice(0, 6));
 }
 
+// The ONE autonomous send the run agent has: an email to the USER THEMSELVES. The server resolves the
+// recipient (their own connected Gmail address) — the model supplies only subject + body, so it is
+// structurally impossible to message anyone else through this.
+const SELF_BRIEF_TOOL = {
+  name: "send_self_brief",
+  description: "Email a brief TO THE USER'S OWN INBOX (the server addresses it to them — you cannot pick a recipient). Use when something upcoming needs prep they should see WITHOUT opening this app: a meeting/event in the next ~48h (send who/when/where or link, agenda, 2-4 prep points, doc links) or day-of logistics. Plain text, tight, scannable. NEVER a way to message anyone else; at most one per task.",
+  input_schema: { type: "object", properties: {
+    subject: { type: "string", description: "short subject, e.g. 'Brief: Q3 review with Sarah — Thu 2pm'" },
+    body: { type: "string", description: "the brief — plain text, short lines/bullets, all specifics included" },
+  }, required: ["subject", "body"] },
+};
+
 function parseGenerated(arr: any): GeneratedTask[] {
   if (!Array.isArray(arr)) return [];
   return arr
-    .filter((t) => t && typeof t.title === "string" && t.title.trim())
+    // Grounding gate: a task needs a real title AND a concrete trigger ("why") — junk without evidence is dropped.
+    .filter((t) => t && typeof t.title === "string" && t.title.trim().length >= 4 && String(t.why || "").trim())
     .map((t): GeneratedTask => ({
       title: String(t.title).slice(0, 90),
       why: String(t.why || "").slice(0, 400),
@@ -227,7 +259,7 @@ function parseGenerated(arr: any): GeneratedTask[] {
       anchorKey: t.anchorKey ? String(t.anchorKey).trim().slice(0, 120) : undefined,
       link: t.link && /^https?:\/\//i.test(String(t.link)) ? String(t.link) : undefined,
     }))
-    .slice(0, 50);
+    .slice(0, 30);
 }
 
 /**
@@ -235,8 +267,11 @@ function parseGenerated(arr: any): GeneratedTask[] {
  * it reads the recent inbox + upcoming events itself, then submits tasks. Returns [] if nothing is connected
  * to read (the client then prompts the user to connect Gmail/Calendar in Settings).
  */
-export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[]): Promise<GeneratedTask[]> {
-  if (!extras?.tools?.length) return []; // nothing connected to read
+export interface GenerationResult { tasks: GeneratedTask[]; profileUpdates: ProfileUpdate[]; }
+
+export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[]): Promise<GenerationResult> {
+  const empty: GenerationResult = { tasks: [], profileUpdates: [] };
+  if (!extras?.tools?.length) return empty; // nothing connected to read
   const tools = [...extras.tools, WEB_SEARCH_TOOL, SUBMIT_TASKS_TOOL];
   const connectedLine = extras.connected?.length
     ? `My connected apps you can read: ${extras.connected.join(", ")}. Check EACH of them, not just email.`
@@ -282,22 +317,22 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
         messages.push({ role: "user", content: "You have not used any tools yet. Inspect the connected apps first. Call at least one connected tool now and do not answer with prose." });
         continue;
       }
-      return [];
+      return empty;
     }
     messages.push({ role: "assistant", content: res.choices[0]?.message?.content || "", tool_calls: toolUses });
-    let submitted: GeneratedTask[] | null = null;
+    let submitted: GenerationResult | null = null;
     for (const tu of toolUses) {
       const input = parseToolArgs((tu as any).function?.arguments);
       const toolName = (tu as any).function?.name;
       let content = "ok";
       try {
-        if (toolName === "submit_tasks") { submitted = parseGenerated(input?.tasks); content = "submitted"; }
+        if (toolName === "submit_tasks") { submitted = { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) }; content = "submitted"; }
         else if (toolName === "web_search") { content = await runWebSearch(input); }
         else { const r = await extras.call(toolName, input || {}); content = r ?? `Unknown tool: ${toolName}`; }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
       messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 4000) });
     }
-    if (submitted) { if (!submitted.length) console.warn("[claude] generateTasks submitted 0 tasks"); return submitted; }
+    if (submitted) { if (!submitted.tasks.length) console.warn("[claude] generateTasks submitted 0 tasks"); return submitted; }
   }
   // Round budget exhausted without a submit — a sweep that read everything but never reported is why
   // "Refresh finds nothing". Force ONE final call where the model MUST call submit_tasks with what it has.
@@ -316,11 +351,14 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     }));
     rounds++; tokIn += (res as any).usage?.prompt_tokens || 0; tokOut += (res as any).usage?.completion_tokens || 0;
     const tu = res.choices[0]?.message?.tool_calls?.[0];
-    if (tu) return parseGenerated(parseToolArgs((tu as any).function?.arguments)?.tasks);
+    if (tu) {
+      const input = parseToolArgs((tu as any).function?.arguments);
+      return { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) };
+    }
   } catch (e: any) { console.warn("[claude] forced submit failed:", e?.message || e); }
-  return [];
+  return empty;
   } finally {
-    console.log(`[ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
+    console.log(`${new Date().toISOString()} [ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
 }
 
@@ -399,13 +437,22 @@ const RUN_SYSTEM =
   `never send/post — instead OFFER the send as a one-click button via "sendables" (see submit), which the user ` +
   `reviews and fires. Never say you "sent", "emailed", "posted", or "messaged" — say you DRAFTED/PREPARED it. ` +
   `Never claim an action you didn't take.\n` +
+  `THE ONE SEND EXCEPTION — send_self_brief goes ONLY to the user's own inbox (the server addresses it; you ` +
+  `cannot pick a recipient). When the task involves something UPCOMING they must walk into prepared — a meeting ` +
+  `or event in the next ~48h, travel/day-of logistics — ALSO send them a tight brief (who/when/where or link, ` +
+  `agenda, 2-4 prep points, doc links) so it's waiting in their inbox. Mention it in "synthesis" ("…and emailed ` +
+  `you a brief"). At most one per task; never for anything that isn't time-sensitive prep.\n` +
   `CALENDAR INVITES: create/update the event freely — but it lands on the user's calendar SILENTLY, with NO ` +
   `emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; ` +
   `instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the ` +
   `user gets a one-click "Send invites" button that SHOWS exactly who will be invited before they confirm. You ` +
   `never send the invite; the user's click does, with the recipient list in plain view.\n` +
-  `VOICE — SOUND LIKE THE USER, NOT AN AI: before drafting ANY email or message, READ 2-3 of their OWN sent ` +
-  `emails (search "in:sent", ideally to the same recipient or thread) and copy their ACTUAL writing mechanics:\n` +
+  `VOICE — SOUND LIKE THE USER, NOT AN AI. For a REPLY, the THREAD is the source of truth: FIRST reread the ` +
+  `ENTIRE thread you're replying to and mirror ITS conventions — the register the user (and the other side) ` +
+  `already use there, the greeting/sign-off used IN THAT THREAD (often none mid-thread), its typical message ` +
+  `length, its formality. Your draft must read as the natural NEXT message of that exact thread. Only when the ` +
+  `thread has no messages from the user (or it's a fresh email) fall back to their broader style: READ 2-3 of ` +
+  `their OWN sent emails (search "in:sent", ideally to the same recipient) and copy their ACTUAL writing mechanics:\n` +
   `- CAPITALIZATION: if they write in lowercase ("hey, sounds good"), you write in lowercase. If they use proper caps, so do you.\n` +
   `- SENTENCE LENGTH & TOTAL LENGTH: if their emails are 2 short lines, yours are 2 short lines — never longer than they'd write.\n` +
   `- THEIR WORDS: reuse their habitual greeting ("hey"/"hi"/none), sign-off ("thanks!"/"best"/just their name), ` +
@@ -493,7 +540,14 @@ const RUN_SYSTEM =
   `button that names the recipient(s) first; you still never send. Don't ALSO add a "send it" step — the button ` +
   `is the send.\n` +
   `Use "remember" for a durable fact about WHO THIS PERSON IS (a preference, a key person, an ongoing project, ` +
-  `or a one-line "about"). Be selective. Call "submit" ONLY after you've actually done the reversible work — ` +
+  `or a one-line "about") — save NEW facts AND corrected versions of profile lines that turned out outdated or ` +
+  `wrong (a corrected fact REPLACES the old one). Be selective.\n` +
+  `QUALITY BAR — self-check BEFORE calling submit, fix anything that fails: (1) every draft/doc contains the ` +
+  `REAL specifics (dates, times, numbers, names, addresses) — zero placeholders; (2) drafts match the user's ` +
+  `actual voice per the VOICE rules — reread one sent email if unsure; (3) each sendable's subject/body is ` +
+  `EXACTLY what you wrote into the created draft (same draftId); (4) every link came from a tool result — ` +
+  `never constructed from guesswork. A polished half is worth more than a sloppy whole.\n` +
+  `Call "submit" ONLY after you've actually done the reversible work — ` +
   `not before. Be BRIEF: "synthesis" is ONE sentence; "context" is 1-2 short bullets. Don't narrate problems or ` +
   `steps you skipped — just the result.`;
 
@@ -551,7 +605,7 @@ const RUN_TOOLS = [
  */
 export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
   const profileUpdates: ProfileUpdate[] = [];
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(extras?.tools?.length ? extras.tools : [])];
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(extras?.selfBrief ? [SELF_BRIEF_TOOL] : []), ...(extras?.tools?.length ? extras.tools : [])];
   const connectedLine = extras?.connected?.length
     ? `\nConnected apps you can use (read + reversible writes; never send/post/delete): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
@@ -625,6 +679,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         else if (toolName === "submit") { submitted = finalize(input as RunOutput, "", profileUpdates); content = "submitted"; }
         else if (toolName === "web_search") { content = await runWebSearch(input); }
+        else if (toolName === "send_self_brief") {
+          content = extras?.selfBrief ? await extras.selfBrief(String(input?.subject || ""), String(input?.body || "")) : "ERROR: not available";
+        }
         else {
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.
           const r = extras ? await extras.call(toolName, input || {}) : null;
@@ -666,18 +723,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // could…" + a Run-again step) — throw so the task honestly returns to ready and retries.
   throw new Error("The run didn't produce a result — it will retry.");
   } finally {
-    console.log(`[ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
+    console.log(`${new Date().toISOString()} [ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
 }
 
 function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[]): RunOutput {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
   const steps: TaskStep[] = rawSteps
-    .map((s: any) => ({
+    .map((s: any, idx: number) => ({
       text: String(s?.text || "").trim(),
       automatable: !!s?.automatable,
       needsPermission: !!s?.needsPermission,
-      dependsOn: Number.isInteger(s?.dependsOn) ? s.dependsOn : undefined,
+      // Valid only if it points at a REAL other step — a bad index (9 in a 3-step list, or itself)
+      // would permanently block the step client-side.
+      dependsOn: Number.isInteger(s?.dependsOn) && s.dependsOn >= 0 && s.dependsOn < rawSteps.length && s.dependsOn !== idx ? s.dependsOn : undefined,
       url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : undefined,
       question: s?.question ? String(s.question).trim().slice(0, 200) : undefined,
       options: Array.isArray(s?.options) ? s.options.map((o: any) => String(o).trim()).filter(Boolean).slice(0, 4) : undefined,
@@ -707,9 +766,15 @@ function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[
     .slice(0, 6);
   // Brevity backstop: a few lines + a hard char cap, so even a verbose run can't produce a wall of text.
   const brief = (s: string, lines: number, chars: number) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
+  const synthesis = brief(String(out?.synthesis || fallbackText || ""), 3, 550);
+  // A completely empty result (no report, no steps, no artifacts) is a FAILED run, not a quiet success —
+  // throwing routes it to the honest-failure path (task returns to ready + client auto-retries).
+  if (!synthesis && !steps.length && !links.length && !sendables.length) {
+    throw new Error("The run produced no output — it will retry.");
+  }
   return {
     context: brief(String(out?.context || ""), 3, 600),
-    synthesis: brief(String(out?.synthesis || fallbackText || "Done."), 3, 550),
+    synthesis: synthesis || "Done.",
     steps,
     links,
     sendables,

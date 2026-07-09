@@ -45,7 +45,7 @@ function factTokens(s: string): Set<string> {
 /** Are two profile facts about the SAME entity? Shared email, OR an identical long opening, OR heavy
  *  distinctive-token overlap — so "Emilie … onboarding and convention" and a reworded copy collapse,
  *  while genuinely different facts (road-trip itinerary vs university visits) stay separate. */
-function sameFact(a: string, b: string): boolean {
+export function sameFact(a: string, b: string): boolean {
   const ea = emailsIn(a), eb = emailsIn(b);
   if (ea.length && eb.length && ea.some((e) => eb.includes(e))) return true;
   const pa = normFact(a).slice(0, 42), pb = normFact(b).slice(0, 42);
