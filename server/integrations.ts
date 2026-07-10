@@ -317,6 +317,14 @@ function relevance(n: string): number {
 const isRead = (n: string) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|FREE_BUSY|INSTANCES)/.test(n)
   && !/(CREATE|UPDATE|INSERT|APPEND|ADD|PATCH|MODIFY|DELETE|REMOVE|WRITE|REPLACE|COPY|MOVE|BATCH_UPDATE|BATCH_MODIFY|SET_)/.test(n);
 
+/** A READ-ONLY view of an AgentTools set, for the generation sweep: it only ever reads, so shipping write
+ *  schemas to it every round is pure token waste — and this makes "READ ONLY" structural, not prompt-enforced.
+ *  (Sanitized tool names keep the Composio verb words, so isRead matches them directly.) No selfBrief either:
+ *  the sweep must not send anything. */
+export function readOnly(t: AgentTools): AgentTools {
+  return { tools: t.tools.filter((x) => isRead(x.name)), call: t.call, connected: t.connected };
+}
+
 /**
  * Composio tools for the apps the user connected, in Anthropic tool shape — READ + reversible WRITES, so
  * the run/generation agent can both gather facts AND do the work (draft a reply, create a doc, add a task,

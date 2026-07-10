@@ -405,6 +405,7 @@ PREFERENCES ARE BINDING, not decoration \u2014 the "Preferences" lines in their 
 - RANK: raise importance for tasks matching what they've said matters (their priorities, projects, people); lower it for what they've deprioritized. Two equal emails \u2260 two equal tasks if a preference separates them.
 - SHAPE: phrase titles/whys in line with how they work (e.g. "batch admin on Fridays" \u2192 set "when" accordingly; "prefers calls over email" \u2192 the task suggests a call). When a preference influenced a task, reflect it in "why".
 NEVER resurface a to-do the user already finished or DISMISSED \u2014 if an "ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ONE TASK PER UNDERLYING ITEM: never submit two wordings of the same to-do \u2014 one thread/event/commitment = ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task.
+QUALITY OVER QUANTITY \u2014 surface the handful (\u2264 ~12) of items that genuinely matter; skip marginal "maybes". A short list the user trusts beats a complete list they ignore.
 READ ONLY here \u2014 do NOT create, modify, draft, or send anything during generation. BUDGET: you have roughly 5 tool calls TOTAL \u2014 batch your Gmail searches into ONE round (issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, and submit as soon as you have the picture. Thorough \u2260 exhaustive.`;
 var SUBMIT_TASKS_TOOL = {
   name: "submit_tasks",
@@ -452,9 +453,10 @@ var SELF_BRIEF_TOOL = {
     body: { type: "string", description: "the brief \u2014 plain text, short lines/bullets, all specifics included" }
   }, required: ["subject", "body"] }
 };
+var ANCHORED_SOURCES = /* @__PURE__ */ new Set(["gmail", "calendar", "googlecalendar", "slack"]);
 function parseGenerated(arr) {
   if (!Array.isArray(arr)) return [];
-  return arr.filter((t) => t && typeof t.title === "string" && t.title.trim().length >= 4 && String(t.why || "").trim()).map((t) => ({
+  return arr.filter((t) => t && typeof t.title === "string" && t.title.trim().length >= 4 && String(t.why || "").trim()).filter((t) => !ANCHORED_SOURCES.has(String(t.source || "").trim().toLowerCase()) || !!String(t.anchorKey || "").trim() || /^https?:\/\//i.test(String(t.link || ""))).map((t) => ({
     title: String(t.title).slice(0, 90),
     why: String(t.why || "").slice(0, 400),
     when: t.when ? String(t.when).slice(0, 40) : void 0,
@@ -464,9 +466,9 @@ function parseGenerated(arr) {
     importance: clamp01(t.importance ?? 0.6),
     anchorKey: t.anchorKey ? String(t.anchorKey).trim().slice(0, 120) : void 0,
     link: t.link && /^https?:\/\//i.test(String(t.link)) ? String(t.link) : void 0
-  })).slice(0, 30);
+  })).slice(0, 20);
 }
-async function generateTasks(profile, extras, handled) {
+async function generateTasks(profile, extras, handled, active) {
   const empty = { tasks: [], profileUpdates: [] };
   if (!extras?.tools?.length) return empty;
   const tools = [...extras.tools, WEB_SEARCH_TOOL, SUBMIT_TASKS_TOOL];
@@ -475,15 +477,21 @@ async function generateTasks(profile, extras, handled) {
 ALREADY HANDLED \u2014 I already finished or dismissed these; do NOT create a task for any of them again, even if its source email/event is still around:
 ` + handled.slice(0, 40).map((h) => `- ${h.title}${h.anchorKey ? ` [${h.anchorKey}]` : ""}`).join("\n") + `
 ` : "";
+  const activeBlock = active?.length ? `
+ALREADY ON THEIR LIST (active) \u2014 do NOT re-report these; submit ONLY items that are on NEITHER this list nor the handled list. If nothing new is waiting, submit an empty list \u2014 that is a GOOD answer:
+` + active.slice(0, 30).map((a) => `- ${a.title}${a.anchorKey ? ` [${a.anchorKey}]` : ""}`).join("\n") + `
+` : "";
   const messages = [{
     role: "user",
-    content: nowBlock() + profileBlock(profile) + handledBlock + `
+    content: nowBlock() + profileBlock(profile) + activeBlock + handledBlock + `
 ${connectedLine}
-Sweep across all of them for everything genuinely awaiting me \u2014 including what I promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above \u2014 then call submit_tasks with my full actionable to-do list. Respect my stated preferences above when choosing, ranking, and phrasing tasks.`
+Sweep across all of them for everything genuinely awaiting me that is NOT already covered above \u2014 including what I promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above \u2014 then call submit_tasks with the NEW actionable items. Respect my stated preferences above when choosing, ranking, and phrasing tasks.`
   }];
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   const MAX = 6;
   let tokIn = 0, tokOut = 0, rounds = 0;
+  let didRead = false;
+  let lazyRejected = false;
   try {
     for (let i = 0; i < MAX; i++) {
       const client2 = deepseekClient();
@@ -520,11 +528,19 @@ Sweep across all of them for everything genuinely awaiting me \u2014 including w
         let content = "ok";
         try {
           if (toolName === "submit_tasks") {
-            submitted = { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) };
-            content = "submitted";
+            const parsed = { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) };
+            if (!parsed.tasks.length && !didRead && !lazyRejected) {
+              lazyRejected = true;
+              content = "Rejected: you submitted before sweeping. Read the connected apps first (batch your searches), then resubmit \u2014 an empty list is only acceptable AFTER you have actually looked.";
+            } else {
+              submitted = parsed;
+              content = "submitted";
+            }
           } else if (toolName === "web_search") {
+            didRead = true;
             content = await runWebSearch(input);
           } else {
+            didRead = true;
             const r = await extras.call(toolName, input || {});
             content = r ?? `Unknown tool: ${toolName}`;
           }
@@ -961,260 +977,6 @@ async function saveState(email, state) {
 
 // server/tasks.ts
 import { randomUUID } from "node:crypto";
-function applyProfileUpdate(profile, u) {
-  const f = u.fact.trim();
-  if (!f) return;
-  if (u.category === "name") {
-    profile.name = f.slice(0, 60);
-    return;
-  }
-  if (u.category === "about") {
-    profile.about = f.slice(0, 400);
-    return;
-  }
-  const key2 = u.category === "preference" ? "preferences" : u.category === "person" ? "people" : "projects";
-  const fact = f.slice(0, 160);
-  const rest = profile[key2].filter((x) => !sameFact(x, fact));
-  profile[key2] = dedupeFacts([...rest, fact]);
-}
-var URGENT_AT = 0.5;
-var IMPORTANT_AT = 0.5;
-function eisenhower(urgency, importance) {
-  const urgent = urgency >= URGENT_AT, important = importance >= IMPORTANT_AT;
-  const quadrant = important ? urgent ? "do" : "schedule" : urgent ? "delegate" : "later";
-  const rank = important ? urgent ? 3 : 2 : urgent ? 1 : 0;
-  return { quadrant, score: rank + (0.6 * importance + 0.4 * urgency) * 0.99 };
-}
-function normTitle(s) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-var GENERIC_WORDS = /* @__PURE__ */ new Set([
-  "use",
-  "get",
-  "got",
-  "make",
-  "made",
-  "add",
-  "set",
-  "ask",
-  "the",
-  "for",
-  "your",
-  "you",
-  "and",
-  "with",
-  "from",
-  "before",
-  "after",
-  "this",
-  "that",
-  "need",
-  "needs",
-  "send",
-  "reply",
-  "pay",
-  "book",
-  "buy",
-  "read",
-  "sort",
-  "plan",
-  "prep",
-  "review",
-  "check",
-  "email",
-  "mail",
-  "call",
-  "off",
-  "out",
-  "new",
-  "via",
-  "per",
-  "due",
-  "day",
-  "days",
-  "week",
-  "soon",
-  "now",
-  "all",
-  "any",
-  "into",
-  "onto",
-  "about",
-  "then",
-  "complete",
-  "finish",
-  "update"
-]);
-function distinctiveTokens(s) {
-  const words = normTitle(s).split(" ").filter((w) => w.length > 2);
-  const distinctive = words.filter((w) => !GENERIC_WORDS.has(w));
-  return new Set(distinctive.length ? distinctive : words);
-}
-function nearDup(a, b) {
-  const A = distinctiveTokens(a), B = distinctiveTokens(b);
-  if (!A.size || !B.size) return false;
-  const matches = (w, set) => {
-    if (set.has(w)) return true;
-    for (const x of set) if (w.length >= 3 && x.length >= 3 && (x.startsWith(w) || w.startsWith(x))) return true;
-    return false;
-  };
-  let inter = 0;
-  for (const w of A) if (matches(w, B)) inter++;
-  const jaccard = inter / (A.size + B.size - inter);
-  const containment = inter / Math.min(A.size, B.size);
-  return jaccard >= 0.55 || inter >= 3 && containment >= 0.75 || inter >= 2 && containment >= 0.9;
-}
-function pruneHandled(list, keep) {
-  const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
-  const handled = list.filter((t) => t.status === "done" || t.status === "dismissed").sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, keep);
-  return [...active, ...handled];
-}
-var normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-var linkOf = (t) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
-var rankStatus = (t) => t.status === "done" || t.status === "dismissed" ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
-var betterOf = (a, b) => rankStatus(b) > rankStatus(a) ? b : a;
-var sameTask = (a, b) => nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
-function dedupeTasks(list) {
-  const kept = [];
-  for (const t of list) {
-    const ak = normKey(t.anchorKey), link = linkOf(t);
-    const i = kept.findIndex((k) => !!ak && normKey(k.anchorKey) === ak || !!link && linkOf(k) === link || sameTask(k, t));
-    if (i >= 0) kept[i] = betterOf(kept[i], t);
-    else kept.push(t);
-  }
-  return kept;
-}
-async function generate(existing, profile, extras) {
-  const handled = existing.filter((t) => t.status === "done" || t.status === "dismissed").map((t) => ({
-    title: t.title,
-    why: t.why,
-    source: t.source,
-    when: t.when,
-    anchorKey: t.anchorKey,
-    link: t.evidence?.find((e) => e.url)?.url
-  }));
-  const gen = await generateTasks(profile, extras, handled);
-  for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const candidates = [...existing];
-  for (const g of gen.tasks) {
-    const e = eisenhower(g.urgency, g.importance);
-    const evidence = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : void 0;
-    candidates.push({
-      id: randomUUID(),
-      title: g.title,
-      why: g.why,
-      when: g.when,
-      source: g.source,
-      risk: g.risk,
-      urgency: g.urgency,
-      importance: g.importance,
-      quadrant: e.quadrant,
-      score: e.score,
-      status: "ready",
-      createdAt: now,
-      anchorKey: g.anchorKey,
-      evidence
-    });
-  }
-  return pruneHandled(dedupeTasks(candidates).sort((a, b) => b.score - a.score), 120);
-}
-function addManual(list, title, refined) {
-  const urgency = refined ? refined.urgency : 0.6;
-  const importance = refined ? refined.importance : 0.75;
-  const e = eisenhower(urgency, importance);
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  list.unshift({
-    id: randomUUID(),
-    title: (refined?.title || title).trim().slice(0, 120),
-    why: refined?.why || "Added by you.",
-    when: refined?.when,
-    source: "manual",
-    risk: "low",
-    urgency,
-    importance,
-    quadrant: e.quadrant,
-    score: e.score,
-    status: "ready",
-    createdAt: now
-  });
-  return list;
-}
-async function runById(list, id, profile, extras, revision) {
-  const task = list.find((t) => t.id === id);
-  if (!task) return void 0;
-  if (task.status === "running") return task;
-  task.status = "running";
-  task.autoRan = true;
-  const focus = revision?.trim() ? `The user reviewed your previous draft/output for this task and wants this CHANGE before they send it: "${revision.trim()}". Redo the task incorporating it \u2014 UPDATE the existing draft/doc (don't create a new copy) and re-offer it as a sendable.` : void 0;
-  try {
-    const out = await runTask({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
-    for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
-    task.context = out.context;
-    task.synthesis = out.synthesis;
-    const prior = (task.steps || []).filter((s) => s.done);
-    task.steps = (out.steps || []).map((s) => {
-      const old = prior.find((o) => nearDup(o.text, s.text));
-      return old ? { ...s, done: true, doneAt: old.doneAt, result: s.result || old.result } : s;
-    });
-    task.links = out.links?.length ? out.links : void 0;
-    task.sendables = out.sendables?.length ? out.sendables : void 0;
-    task.status = "executed";
-    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    return task;
-  } catch (e) {
-    task.status = "ready";
-    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-    throw e;
-  }
-}
-function reject(list, id) {
-  const t = list.find((x) => x.id === id);
-  if (t) {
-    t.status = "ready";
-    t.synthesis = void 0;
-    t.steps = void 0;
-    t.links = void 0;
-    t.autoRan = false;
-    t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-  }
-}
-async function runStep(list, id, index, profile, extras, answer) {
-  const task = list.find((t) => t.id === id);
-  const step = task?.steps?.[index];
-  if (!task || !step) return task;
-  const decisions = (task.steps || []).filter((s, idx) => idx !== index && s.done && s.result).map((s) => `- "${s.text}" \u2192 ${s.result}`).join("\n");
-  const qa = answer?.trim() ? step.question ? `
-The user answered your question ("${step.question}"): "${answer.trim()}". That is the missing detail \u2014 use it and complete the step now; do not ask again.` : `
-Info from the user for this step: "${answer.trim()}". Use it.` : "";
-  const focus = (decisions ? `${step.text}
-
-What the user has already decided/done:
-${decisions}` : step.text) + qa;
-  const out = await runTask({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
-  for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
-  step.result = out.synthesis.slice(0, 1200);
-  if ((out.steps || []).some((s) => !s.automatable)) {
-    step.automatable = false;
-    step.done = false;
-  } else {
-    step.done = true;
-    step.doneAt = (/* @__PURE__ */ new Date()).toISOString();
-    step.question = void 0;
-    step.options = void 0;
-  }
-  if (out.links?.length) {
-    const seen = new Set((task.links || []).map((l) => l.url));
-    task.links = [...task.links || [], ...out.links.filter((l) => !seen.has(l.url))].slice(0, 3);
-  }
-  if (out.sendables?.length) {
-    const key2 = (s) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
-    const seen = new Set((task.sendables || []).map(key2));
-    task.sendables = [...task.sendables || [], ...out.sendables.filter((s) => !seen.has(key2(s)))].slice(0, 8);
-  }
-  task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-  return task;
-}
 
 // server/integrations.ts
 import { Composio } from "@composio/core";
@@ -1441,6 +1203,9 @@ function relevance(n) {
   return s;
 }
 var isRead = (n) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|FREE_BUSY|INSTANCES)/.test(n) && !/(CREATE|UPDATE|INSERT|APPEND|ADD|PATCH|MODIFY|DELETE|REMOVE|WRITE|REPLACE|COPY|MOVE|BATCH_UPDATE|BATCH_MODIFY|SET_)/.test(n);
+function readOnly(t) {
+  return { tools: t.tools.filter((x) => isRead(x.name)), call: t.call, connected: t.connected };
+}
 async function getAgentTools(userId) {
   if (!integrationsReady() || !userId) return EMPTY;
   const hit = cache.get(userId);
@@ -1546,6 +1311,275 @@ async function getAgentToolsWithPermission(userId) {
     }
   };
   return { tools: base.tools, call: permCall, connected: base.connected, selfBrief: base.selfBrief };
+}
+
+// server/tasks.ts
+function applyProfileUpdate(profile, u) {
+  const f = u.fact.trim();
+  if (!f) return;
+  if (u.category === "name") {
+    profile.name = f.slice(0, 60);
+    return;
+  }
+  if (u.category === "about") {
+    profile.about = f.slice(0, 400);
+    return;
+  }
+  const key2 = u.category === "preference" ? "preferences" : u.category === "person" ? "people" : "projects";
+  const fact = f.slice(0, 160);
+  const rest = profile[key2].filter((x) => !sameFact(x, fact));
+  profile[key2] = dedupeFacts([...rest, fact]);
+}
+var URGENT_AT = 0.5;
+var IMPORTANT_AT = 0.5;
+function eisenhower(urgency, importance) {
+  const urgent = urgency >= URGENT_AT, important = importance >= IMPORTANT_AT;
+  const quadrant = important ? urgent ? "do" : "schedule" : urgent ? "delegate" : "later";
+  const rank = important ? urgent ? 3 : 2 : urgent ? 1 : 0;
+  return { quadrant, score: rank + (0.6 * importance + 0.4 * urgency) * 0.99 };
+}
+function normTitle(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+var GENERIC_WORDS = /* @__PURE__ */ new Set([
+  "use",
+  "get",
+  "got",
+  "make",
+  "made",
+  "add",
+  "set",
+  "ask",
+  "the",
+  "for",
+  "your",
+  "you",
+  "and",
+  "with",
+  "from",
+  "before",
+  "after",
+  "this",
+  "that",
+  "need",
+  "needs",
+  "send",
+  "reply",
+  "pay",
+  "book",
+  "buy",
+  "read",
+  "sort",
+  "plan",
+  "prep",
+  "review",
+  "check",
+  "email",
+  "mail",
+  "call",
+  "off",
+  "out",
+  "new",
+  "via",
+  "per",
+  "due",
+  "day",
+  "days",
+  "week",
+  "soon",
+  "now",
+  "all",
+  "any",
+  "into",
+  "onto",
+  "about",
+  "then",
+  "complete",
+  "finish",
+  "update"
+]);
+function distinctiveTokens(s) {
+  const words = normTitle(s).split(" ").filter((w) => w.length > 2);
+  const distinctive = words.filter((w) => !GENERIC_WORDS.has(w));
+  return new Set(distinctive.length ? distinctive : words);
+}
+function nearDup(a, b) {
+  const A = distinctiveTokens(a), B = distinctiveTokens(b);
+  if (!A.size || !B.size) return false;
+  const matches = (w, set) => {
+    if (set.has(w)) return true;
+    for (const x of set) if (w.length >= 3 && x.length >= 3 && (x.startsWith(w) || w.startsWith(x))) return true;
+    return false;
+  };
+  let inter = 0;
+  for (const w of A) if (matches(w, B)) inter++;
+  const jaccard = inter / (A.size + B.size - inter);
+  const containment = inter / Math.min(A.size, B.size);
+  return jaccard >= 0.55 || inter >= 3 && containment >= 0.75 || inter >= 2 && containment >= 0.9;
+}
+function pruneHandled(list, keep) {
+  const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
+  const handled = list.filter((t) => t.status === "done" || t.status === "dismissed").sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, keep);
+  return [...active, ...handled];
+}
+var normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+var linkOf = (t) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
+var rankStatus = (t) => t.status === "done" || t.status === "dismissed" ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
+var betterOf = (a, b) => rankStatus(b) > rankStatus(a) ? b : a;
+var sameTask = (a, b) => nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
+function dedupeTasks(list) {
+  const kept = [];
+  for (const t of list) {
+    const ak = normKey(t.anchorKey), link = linkOf(t);
+    const i = kept.findIndex((k) => !!ak && normKey(k.anchorKey) === ak || !!link && linkOf(k) === link || sameTask(k, t));
+    if (i >= 0) kept[i] = betterOf(kept[i], t);
+    else kept.push(t);
+  }
+  return kept;
+}
+var MAX_NEW_PER_SWEEP = 12;
+async function generate(existing, profile, extras) {
+  const handled = existing.filter((t) => t.status === "done" || t.status === "dismissed").map((t) => ({
+    title: t.title,
+    why: t.why,
+    source: t.source,
+    when: t.when,
+    anchorKey: t.anchorKey,
+    link: t.evidence?.find((e) => e.url)?.url
+  }));
+  const active = existing.filter((t) => t.status !== "done" && t.status !== "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
+  const gen = await generateTasks(profile, extras ? readOnly(extras) : void 0, handled, active);
+  for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
+  return foldGenerated(existing, gen.tasks);
+}
+function foldGenerated(existing, genTasks) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const candidates = [...existing];
+  const freshIds = /* @__PURE__ */ new Set();
+  for (const g of genTasks) {
+    const e = eisenhower(g.urgency, g.importance);
+    const evidence = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : void 0;
+    const id = randomUUID();
+    freshIds.add(id);
+    candidates.push({
+      id,
+      title: g.title,
+      why: g.why,
+      when: g.when,
+      source: g.source,
+      risk: g.risk,
+      urgency: g.urgency,
+      importance: g.importance,
+      quadrant: e.quadrant,
+      score: e.score,
+      status: "ready",
+      createdAt: now,
+      anchorKey: g.anchorKey,
+      evidence
+    });
+  }
+  const deduped = dedupeTasks(candidates);
+  const keepNew = new Set(
+    deduped.filter((t) => freshIds.has(t.id)).sort((a, b) => b.score - a.score).slice(0, MAX_NEW_PER_SWEEP).map((t) => t.id)
+  );
+  const calmed = deduped.filter((t) => !freshIds.has(t.id) || keepNew.has(t.id));
+  return pruneHandled(calmed.sort((a, b) => b.score - a.score), 120);
+}
+function addManual(list, title, refined) {
+  const urgency = refined ? refined.urgency : 0.6;
+  const importance = refined ? refined.importance : 0.75;
+  const e = eisenhower(urgency, importance);
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  list.unshift({
+    id: randomUUID(),
+    title: (refined?.title || title).trim().slice(0, 120),
+    why: refined?.why || "Added by you.",
+    when: refined?.when,
+    source: "manual",
+    risk: "low",
+    urgency,
+    importance,
+    quadrant: e.quadrant,
+    score: e.score,
+    status: "ready",
+    createdAt: now
+  });
+  return list;
+}
+async function runById(list, id, profile, extras, revision) {
+  const task = list.find((t) => t.id === id);
+  if (!task) return void 0;
+  if (task.status === "running") return task;
+  task.status = "running";
+  task.autoRan = true;
+  const focus = revision?.trim() ? `The user reviewed your previous draft/output for this task and wants this CHANGE before they send it: "${revision.trim()}". Redo the task incorporating it \u2014 UPDATE the existing draft/doc (don't create a new copy) and re-offer it as a sendable.` : void 0;
+  try {
+    const out = await runTask({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
+    for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
+    task.context = out.context;
+    task.synthesis = out.synthesis;
+    const prior = (task.steps || []).filter((s) => s.done);
+    task.steps = (out.steps || []).map((s) => {
+      const old = prior.find((o) => nearDup(o.text, s.text));
+      return old ? { ...s, done: true, doneAt: old.doneAt, result: s.result || old.result } : s;
+    });
+    task.links = out.links?.length ? out.links : void 0;
+    task.sendables = out.sendables?.length ? out.sendables : void 0;
+    task.status = "executed";
+    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    return task;
+  } catch (e) {
+    task.status = "ready";
+    task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    throw e;
+  }
+}
+function reject(list, id) {
+  const t = list.find((x) => x.id === id);
+  if (t) {
+    t.status = "ready";
+    t.synthesis = void 0;
+    t.steps = void 0;
+    t.links = void 0;
+    t.autoRan = false;
+    t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  }
+}
+async function runStep(list, id, index, profile, extras, answer) {
+  const task = list.find((t) => t.id === id);
+  const step = task?.steps?.[index];
+  if (!task || !step) return task;
+  const decisions = (task.steps || []).filter((s, idx) => idx !== index && s.done && s.result).map((s) => `- "${s.text}" \u2192 ${s.result}`).join("\n");
+  const qa = answer?.trim() ? step.question ? `
+The user answered your question ("${step.question}"): "${answer.trim()}". That is the missing detail \u2014 use it and complete the step now; do not ask again.` : `
+Info from the user for this step: "${answer.trim()}". Use it.` : "";
+  const focus = (decisions ? `${step.text}
+
+What the user has already decided/done:
+${decisions}` : step.text) + qa;
+  const out = await runTask({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
+  for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
+  step.result = out.synthesis.slice(0, 1200);
+  if ((out.steps || []).some((s) => !s.automatable)) {
+    step.automatable = false;
+    step.done = false;
+  } else {
+    step.done = true;
+    step.doneAt = (/* @__PURE__ */ new Date()).toISOString();
+    step.question = void 0;
+    step.options = void 0;
+  }
+  if (out.links?.length) {
+    const seen = new Set((task.links || []).map((l) => l.url));
+    task.links = [...task.links || [], ...out.links.filter((l) => !seen.has(l.url))].slice(0, 3);
+  }
+  if (out.sendables?.length) {
+    const key2 = (s) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
+    const seen = new Set((task.sendables || []).map(key2));
+    task.sendables = [...task.sendables || [], ...out.sendables.filter((s) => !seen.has(key2(s)))].slice(0, 8);
+  }
+  task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  return task;
 }
 
 // server/index.ts

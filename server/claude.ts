@@ -185,6 +185,8 @@ const GEN_SYSTEM =
   `"ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ` +
   `ONE TASK PER UNDERLYING ITEM: never submit two wordings of the same to-do — one thread/event/commitment = ` +
   `ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task.\n` +
+  `QUALITY OVER QUANTITY — surface the handful (≤ ~12) of items that genuinely matter; skip marginal ` +
+  `"maybes". A short list the user trusts beats a complete list they ignore.\n` +
   `READ ONLY here — do NOT create, modify, draft, or send anything during ` +
   `generation. BUDGET: you have roughly 5 tool calls TOTAL — batch your Gmail searches into ONE round ` +
   `(issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, ` +
@@ -249,11 +251,18 @@ const SELF_BRIEF_TOOL = {
   }, required: ["subject", "body"] },
 };
 
-function parseGenerated(arr: any): GeneratedTask[] {
+// Sources where every item HAS a stable id/link the tools return — a task claiming to come from one of
+// these without either is unverifiable (likely hallucinated or sloppily reported) and gets dropped.
+const ANCHORED_SOURCES = new Set(["gmail", "calendar", "googlecalendar", "slack"]);
+
+export function parseGenerated(arr: any): GeneratedTask[] {
   if (!Array.isArray(arr)) return [];
   return arr
     // Grounding gate: a task needs a real title AND a concrete trigger ("why") — junk without evidence is dropped.
     .filter((t) => t && typeof t.title === "string" && t.title.trim().length >= 4 && String(t.why || "").trim())
+    // Grounding gate 2: an app-sourced task must POINT at its source item (anchorKey or link).
+    .filter((t) => !ANCHORED_SOURCES.has(String(t.source || "").trim().toLowerCase()) ||
+      !!String(t.anchorKey || "").trim() || /^https?:\/\//i.test(String(t.link || "")))
     .map((t): GeneratedTask => ({
       title: String(t.title).slice(0, 90),
       why: String(t.why || "").slice(0, 400),
@@ -265,7 +274,9 @@ function parseGenerated(arr: any): GeneratedTask[] {
       anchorKey: t.anchorKey ? String(t.anchorKey).trim().slice(0, 120) : undefined,
       link: t.link && /^https?:\/\//i.test(String(t.link)) ? String(t.link) : undefined,
     }))
-    .slice(0, 30);
+    // 20 is generous for a DELTA sweep (the model is told what's already on the list) — anything beyond
+    // this is the model rebuilding the world, not reporting what's new.
+    .slice(0, 20);
 }
 
 /**
@@ -275,7 +286,7 @@ function parseGenerated(arr: any): GeneratedTask[] {
  */
 export interface GenerationResult { tasks: GeneratedTask[]; profileUpdates: ProfileUpdate[]; }
 
-export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[]): Promise<GenerationResult> {
+export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[], active?: { title: string; anchorKey?: string }[]): Promise<GenerationResult> {
   const empty: GenerationResult = { tasks: [], profileUpdates: [] };
   if (!extras?.tools?.length) return empty; // nothing connected to read
   const tools = [...extras.tools, WEB_SEARCH_TOOL, SUBMIT_TASKS_TOOL];
@@ -286,13 +297,20 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     ? `\nALREADY HANDLED — I already finished or dismissed these; do NOT create a task for any of them again, even if its source email/event is still around:\n` +
       handled.slice(0, 40).map((h) => `- ${h.title}${h.anchorKey ? ` [${h.anchorKey}]` : ""}`).join("\n") + `\n`
     : "";
+  // The sweep is a DELTA: knowing what's already on the list is what keeps it from re-reporting (and
+  // re-wording) the same items every day — the top source of both duplicates and wasted submit tokens.
+  const activeBlock = active?.length
+    ? `\nALREADY ON THEIR LIST (active) — do NOT re-report these; submit ONLY items that are on NEITHER this ` +
+      `list nor the handled list. If nothing new is waiting, submit an empty list — that is a GOOD answer:\n` +
+      active.slice(0, 30).map((a) => `- ${a.title}${a.anchorKey ? ` [${a.anchorKey}]` : ""}`).join("\n") + `\n`
+    : "";
   const messages: any[] = [{
     role: "user",
-    content: nowBlock() + profileBlock(profile) + handledBlock +
-      `\n${connectedLine}\nSweep across all of them for everything genuinely awaiting me — including what I ` +
-      `promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above — ` +
-      `then call submit_tasks with my full actionable to-do list. Respect my stated preferences above when ` +
-      `choosing, ranking, and phrasing tasks.`,
+    content: nowBlock() + profileBlock(profile) + activeBlock + handledBlock +
+      `\n${connectedLine}\nSweep across all of them for everything genuinely awaiting me that is NOT already ` +
+      `covered above — including what I promised others and haven't done yet (check my sent mail), and loose ` +
+      `ends on my projects/people above — then call submit_tasks with the NEW actionable items. Respect my ` +
+      `stated preferences above when choosing, ranking, and phrasing tasks.`,
   }];
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.
@@ -300,6 +318,8 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   // final round below is the safety net for a straggler.
   const MAX = 6;
   let tokIn = 0, tokOut = 0, rounds = 0;
+  let didRead = false;        // has the model actually called ANY read tool yet?
+  let lazyRejected = false;   // reject an unread empty submit only ONCE, then take whatever comes
   try {
   for (let i = 0; i < MAX; i++) {
     const client = deepseekClient();
@@ -333,9 +353,17 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       const toolName = (tu as any).function?.name;
       let content = "ok";
       try {
-        if (toolName === "submit_tasks") { submitted = { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) }; content = "submitted"; }
-        else if (toolName === "web_search") { content = await runWebSearch(input); }
-        else { const r = await extras.call(toolName, input || {}); content = r ?? `Unknown tool: ${toolName}`; }
+        if (toolName === "submit_tasks") {
+          const parsed: GenerationResult = { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) };
+          // Lazy-submit guard: an EMPTY submit before reading anything isn't an answer, it's giving up.
+          // Reject exactly once so the model goes and sweeps; a legit "nothing new" after real reads passes.
+          if (!parsed.tasks.length && !didRead && !lazyRejected) {
+            lazyRejected = true;
+            content = "Rejected: you submitted before sweeping. Read the connected apps first (batch your searches), then resubmit — an empty list is only acceptable AFTER you have actually looked.";
+          } else { submitted = parsed; content = "submitted"; }
+        }
+        else if (toolName === "web_search") { didRead = true; content = await runWebSearch(input); }
+        else { didRead = true; const r = await extras.call(toolName, input || {}); content = r ?? `Unknown tool: ${toolName}`; }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
       // Capped well below the old 4000 — a fresh result only needs enough to extract the fact/id you asked
       // for; anything you need beyond that, search again. This cap applies to every tool call, every round.

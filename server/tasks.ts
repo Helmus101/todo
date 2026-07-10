@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
 import { dedupeFacts, sameFact } from "../shared/types.ts";
 import { generateTasks, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
-import type { AgentTools } from "./integrations.ts";
+import { readOnly, type AgentTools } from "./integrations.ts";
 
 /** Fold a learned fact into the person-profile. 'name'/'about' replace. List facts REPLACE an existing
  *  same-entity fact (newest wording wins — so a correction actually takes effect; dedupeFacts alone keeps
@@ -115,6 +115,11 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
  * "gmail:<threadId>"), so the same email/meeting never resurfaces just because the model reworded the title
  * — with a near-duplicate-title fallback for tasks that aren't tied to one item.
  */
+// Ceiling on how many genuinely NEW cards one sweep may add — a short list the user trusts beats a
+// complete one they ignore. Anything past the top 12 by score is dropped (it'll resurface tomorrow if
+// it still matters).
+const MAX_NEW_PER_SWEEP = 12;
+
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools): Promise<WebTask[]> {
   // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do.
   const handled = existing
@@ -127,23 +132,45 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
       anchorKey: t.anchorKey,
       link: t.evidence?.find((e) => e.url)?.url,
     }));
-  const gen = await generateTasks(profile, extras, handled);
+  // …and what's currently ACTIVE, so the sweep reports only DELTAS instead of rebuilding the world —
+  // the top source of near-duplicates and wasted submit tokens.
+  const active = existing
+    .filter((t) => t.status !== "done" && t.status !== "dismissed")
+    .map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
+  // The sweep only READS — hand it the read-only tool view (half the schema tokens per round, and the
+  // "no writes during generation" rule becomes structural instead of prompt-enforced).
+  const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
   // The sweep reads the user's whole world — fold anything it learned about WHO THEY ARE into the
   // profile, so preferences/people/projects keep updating continuously (not only during task runs).
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
-  const now = new Date().toISOString();
+  return foldGenerated(existing, gen.tasks);
+}
 
+/** Pure post-processing of a sweep's output: absorb duplicates into the existing list, cap genuinely NEW
+ *  cards at MAX_NEW_PER_SWEEP (top by score), prune old handled records. Split out so it's unit-testable
+ *  without an AI call. */
+export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string }[]): WebTask[] {
+  const now = new Date().toISOString();
   const candidates: WebTask[] = [...existing];
-  for (const g of gen.tasks) {
+  const freshIds = new Set<string>();
+  for (const g of genTasks) {
     const e = eisenhower(g.urgency, g.importance);
     const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : undefined;
+    const id = randomUUID();
+    freshIds.add(id);
     candidates.push({
-      id: randomUUID(), title: g.title, why: g.why, when: g.when, source: g.source, risk: g.risk,
+      id, title: g.title, why: g.why, when: g.when, source: g.source, risk: g.risk,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
     });
   }
-  return pruneHandled(dedupeTasks(candidates).sort((a, b) => b.score - a.score), 120);
+  const deduped = dedupeTasks(candidates);
+  // A fresh id that SURVIVED dedupe is a genuinely new card (duplicates were absorbed into existing
+  // entries, which keep their old ids). Cap those at the top MAX_NEW_PER_SWEEP by score.
+  const keepNew = new Set(
+    deduped.filter((t) => freshIds.has(t.id)).sort((a, b) => b.score - a.score).slice(0, MAX_NEW_PER_SWEEP).map((t) => t.id));
+  const calmed = deduped.filter((t) => !freshIds.has(t.id) || keepNew.has(t.id));
+  return pruneHandled(calmed.sort((a, b) => b.score - a.score), 120);
 }
 
 /** Add a task the user typed; AI-refined when possible (else raw), classified through the same matrix. */
