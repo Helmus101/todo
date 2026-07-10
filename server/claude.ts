@@ -146,6 +146,12 @@ const GEN_SYSTEM =
   `tool available — across ALL their connected apps, not just email — to READ what genuinely needs them right ` +
   `now, then call submit_tasks. Sweep each connected source for actionable items, e.g.:\n` +
   `- Gmail: threads awaiting a reply or asking something (skip newsletters/promos/receipts/no-reply).\n` +
+  `NEWSLETTERS & PROMOTIONAL EMAIL — HARD EXCLUSION: NEVER create a task to reply to, respond to, or otherwise ` +
+  `engage with a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender — a Gmail ` +
+  `"promotions"/"social" category, an unsubscribe footer, or a sender containing "noreply"/"no-reply"/` +
+  `"newsletter"/"marketing"/"updates@"/"news@" are all signals of this. This holds even if the email asks a ` +
+  `question, has a "reply" call-to-action, or looks personalized — it's still mass mail. Skip it entirely; ` +
+  `do not surface it as a to-do of any kind.\n` +
   `- Calendar: meetings in the next ~48h to prepare for or respond to.\n` +
   `- Slack / Discord: DMs & mentions awaiting your reply.\n` +
   `- GitHub / Linear / Jira: issues & PRs assigned to you, review requests, things blocking others.\n` +
@@ -440,6 +446,11 @@ const RUN_SYSTEM =
   `never send/post — instead OFFER the send as a one-click button via "sendables" (see submit), which the user ` +
   `reviews and fires. Never say you "sent", "emailed", "posted", or "messaged" — say you DRAFTED/PREPARED it. ` +
   `Never claim an action you didn't take.\n` +
+  `NEWSLETTERS & PROMOTIONAL EMAIL — NEVER DRAFT A REPLY: before drafting any email reply, check whether the ` +
+  `thread is a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender (unsubscribe ` +
+  `footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ ` +
+  `social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something — ` +
+  `note in "synthesis" that it's mass mail and needs no reply, and stop there.\n` +
   `THE ONE SEND EXCEPTION — send_self_brief goes ONLY to the user's own inbox (the server addresses it; you ` +
   `cannot pick a recipient). When the task involves something UPCOMING they must walk into prepared — a meeting ` +
   `or event in the next ~48h, travel/day-of logistics — ALSO send them a tight brief (who/when/where or link, ` +

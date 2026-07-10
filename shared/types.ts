@@ -21,6 +21,8 @@ export interface Profile {
   preferences: string[];  // e.g. "concise emails", "no meetings before 10am"
   people: string[];       // key people + relationship ("Sarah — my manager")
   projects: string[];     // ongoing projects / goals
+  paused?: boolean;       // "pause all AI usage" — blocks generation, task runs, and chat server-side
+  pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -32,6 +34,8 @@ export function normalizeProfile(p: any): Profile {
     preferences: dedupeFacts(arr(p?.preferences)),
     people: dedupeFacts(arr(p?.people)),
     projects: dedupeFacts(arr(p?.projects)),
+    paused: !!p?.paused,
+    pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
   };
 }
 
@@ -152,6 +156,7 @@ export interface ConnectionStatus {
   aiReady: boolean;           // ANTHROPIC_API_KEY present
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist
+  paused: boolean;            // "pause all AI usage" toggle — client skips auto-run/generate/chat while true
 }
 
 export interface RunResult {

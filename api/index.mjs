@@ -21,7 +21,9 @@ function normalizeProfile(p) {
     // Dedupe each list so reworded facts about the SAME person/project don't pile up (self-heals on every load).
     preferences: dedupeFacts(arr(p?.preferences)),
     people: dedupeFacts(arr(p?.people)),
-    projects: dedupeFacts(arr(p?.projects))
+    projects: dedupeFacts(arr(p?.projects)),
+    paused: !!p?.paused,
+    pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : void 0
   };
 }
 var FACT_STOP = /* @__PURE__ */ new Set(["the", "and", "for", "with", "from", "that", "this", "they", "their", "them", "she", "her", "his", "him", "who", "handles", "handled", "leads", "are", "was", "were", "has", "have", "will", "its", "willem", "also", "both"]);
@@ -388,6 +390,7 @@ function parseToolArgs(raw) {
 }
 var GEN_SYSTEM = `You are a sharp chief-of-staff turning someone's live world into their real, COMPLETE to-do list. Use EVERY tool available \u2014 across ALL their connected apps, not just email \u2014 to READ what genuinely needs them right now, then call submit_tasks. Sweep each connected source for actionable items, e.g.:
 - Gmail: threads awaiting a reply or asking something (skip newsletters/promos/receipts/no-reply).
+NEWSLETTERS & PROMOTIONAL EMAIL \u2014 HARD EXCLUSION: NEVER create a task to reply to, respond to, or otherwise engage with a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender \u2014 a Gmail "promotions"/"social" category, an unsubscribe footer, or a sender containing "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@" are all signals of this. This holds even if the email asks a question, has a "reply" call-to-action, or looks personalized \u2014 it's still mass mail. Skip it entirely; do not surface it as a to-do of any kind.
 - Calendar: meetings in the next ~48h to prepare for or respond to.
 - Slack / Discord: DMs & mentions awaiting your reply.
 - GitHub / Linear / Jira: issues & PRs assigned to you, review requests, things blocking others.
@@ -606,6 +609,7 @@ GATHER CONTEXT AGGRESSIVELY \u2014 BEFORE you act, search EVERYWHERE for relevan
 - Use web_search for external details (addresses, directions, company info)
 Example: if the task is "prep to go somewhere from hotel", search Gmail for the hotel booking confirmation to get the hotel name, address, checkout time; search Calendar for departure details; search Drive for any itinerary. NEVER leave placeholders like "[hotel name]" or "[address]" \u2014 find the real details.
 HARD LIMIT \u2014 you can READ and WRITE, but you can NEVER do an irreversible OUTBOUND or DESTRUCTIVE action: no sending/forwarding email, no sending/posting messages, no publishing, no deleting (those tools are not even available to you). For email you ONLY ever leave a DRAFT; for Slack you only COMPOSE the message. You never send/post \u2014 instead OFFER the send as a one-click button via "sendables" (see submit), which the user reviews and fires. Never say you "sent", "emailed", "posted", or "messaged" \u2014 say you DRAFTED/PREPARED it. Never claim an action you didn't take.
+NEWSLETTERS & PROMOTIONAL EMAIL \u2014 NEVER DRAFT A REPLY: before drafting any email reply, check whether the thread is a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender (unsubscribe footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something \u2014 note in "synthesis" that it's mass mail and needs no reply, and stop there.
 THE ONE SEND EXCEPTION \u2014 send_self_brief goes ONLY to the user's own inbox (the server addresses it; you cannot pick a recipient). When the task involves something UPCOMING they must walk into prepared \u2014 a meeting or event in the next ~48h, travel/day-of logistics \u2014 ALSO send them a tight brief (who/when/where or link, agenda, 2-4 prep points, doc links) so it's waiting in their inbox. Mention it in "synthesis" ("\u2026and emailed you a brief"). At most one per task; never for anything that isn't time-sensitive prep.
 CALENDAR INVITES: create/update the event freely \u2014 but it lands on the user's calendar SILENTLY, with NO emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the user gets a one-click "Send invites" button that SHOWS exactly who will be invited before they confirm. You never send the invite; the user's click does, with the recipient list in plain view.
 VOICE \u2014 SOUND LIKE THE USER, NOT AN AI. For a REPLY, the THREAD is the source of truth: FIRST reread the ENTIRE thread you're replying to and mirror ITS conventions \u2014 the register the user (and the other side) already use there, the greeting/sign-off used IN THAT THREAD (often none mid-thread), its typical message length, its formality. Your draft must read as the natural NEXT message of that exact thread. Only when the thread has no messages from the user (or it's a fresh email) fall back to their broader style: READ 2-3 of their OWN sent emails (search "in:sent", ideally to the same recipient) and copy their ACTUAL writing mechanics:
@@ -1620,12 +1624,16 @@ var mergeTasks = (existing, incoming) => {
   return dedupeTasks(Array.from(map.values()));
 };
 var mergeProfiles = (p1, p2) => {
+  const pausedAt = (p) => Date.parse(p.pausedAt || "") || 0;
+  const pausedSide = pausedAt(p2) >= pausedAt(p1) ? p2 : p1;
   return {
     name: p2.name || p1.name,
     about: p2.about || p1.about,
     preferences: dedupeFacts([...p1.preferences || [], ...p2.preferences || []]),
     people: dedupeFacts([...p1.people || [], ...p2.people || []]),
-    projects: dedupeFacts([...p1.projects || [], ...p2.projects || []])
+    projects: dedupeFacts([...p1.projects || [], ...p2.projects || []]),
+    paused: pausedSide.paused,
+    pausedAt: pausedSide.pausedAt
   };
 };
 var commit = async (req) => {
@@ -1791,9 +1799,18 @@ app.get("/api/status", async (req, res) => {
     aiReady: aiReady(),
     googleConfigured: integrationsReady(),
     // Composio is what powers Google + every integration now
-    cloud: cloudEnabled()
+    cloud: cloudEnabled(),
+    paused: !!req.session.profile?.paused
   };
   res.json(s);
+});
+var isPaused = (req) => !!req.session.profile?.paused;
+app.post("/api/settings/pause", requireAuth, async (req, res) => {
+  const p = req.session.profile ||= emptyProfile();
+  p.paused = req.body?.paused === true;
+  p.pausedAt = (/* @__PURE__ */ new Date()).toISOString();
+  await commit(req);
+  res.json(p);
 });
 app.get("/api/tasks", requireAuth, async (req, res) => {
   try {
@@ -1810,6 +1827,10 @@ var lastGenDate = /* @__PURE__ */ new Map();
 var genInflight = /* @__PURE__ */ new Map();
 var today = () => (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res) => {
+  if (isPaused(req)) {
+    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to sweep for new tasks." });
+    return;
+  }
   try {
     const todayStr = today();
     const force = req.body?.force === true;
@@ -1847,7 +1868,7 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
     res.status(400).json({ error: "title required" });
     return;
   }
-  const refined = aiReady() ? await refineManualTask(title, req.session.profile) : null;
+  const refined = aiReady() && !isPaused(req) ? await refineManualTask(title, req.session.profile) : null;
   req.session.tasks = addManual(req.session.tasks || [], title, refined);
   await commit(req);
   res.json(req.session.tasks);
@@ -1866,6 +1887,10 @@ var withTaskLock = async (id, res, fn) => {
   }
 };
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
+  if (isPaused(req)) {
+    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to run tasks." });
+    return;
+  }
   await withTaskLock(String(req.params.id), res, async () => {
     try {
       const t = await runById(req.session.tasks || [], String(req.params.id), req.session.profile ||= emptyProfile(), await toolsFor(req));
@@ -1881,6 +1906,10 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, r
   const note = String(req.body?.note || "").trim();
   if (!note) {
     res.status(400).json({ error: "note required" });
+    return;
+  }
+  if (isPaused(req)) {
+    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to revise tasks." });
     return;
   }
   await withTaskLock(String(req.params.id), res, async () => {
@@ -1924,6 +1953,10 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
   res.json(req.session.tasks || []);
 });
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
+  if (isPaused(req)) {
+    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to run steps." });
+    return;
+  }
   await withTaskLock(String(req.params.id), res, async () => {
     try {
       const permTools = await getAgentToolsWithPermission(req.session.user).catch(() => void 0);
@@ -1973,6 +2006,10 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
   res.json(t);
 });
 app.post("/api/chat", requireAuth, rateLimit(20, 6e4), async (req, res) => {
+  if (isPaused(req)) {
+    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to chat." });
+    return;
+  }
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages.filter((m) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string").slice(-20) : [];
     if (!messages.length) {

@@ -110,12 +110,18 @@ const mergeTasks = (existing: WebTask[], incoming: WebTask[]): WebTask[] => {
 // Entity-level dedupe (not raw Set union): reworded copies of the same fact from different sessions/devices
 // must collapse, or the cloud profile grows forever — and it's injected into EVERY agent prompt.
 const mergeProfiles = (p1: Profile, p2: Profile): Profile => {
+  // paused is a boolean toggle, not a fact list — `||` would wrongly let a stale `true` from one side
+  // override a deliberate `false` from the other. Take whichever side was toggled MOST RECENTLY instead.
+  const pausedAt = (p: Profile) => Date.parse(p.pausedAt || "") || 0;
+  const pausedSide = pausedAt(p2) >= pausedAt(p1) ? p2 : p1;
   return {
     name: p2.name || p1.name,
     about: p2.about || p1.about,
     preferences: dedupeFacts([...(p1.preferences || []), ...(p2.preferences || [])]),
     people: dedupeFacts([...(p1.people || []), ...(p2.people || [])]),
     projects: dedupeFacts([...(p1.projects || []), ...(p2.projects || [])]),
+    paused: pausedSide.paused,
+    pausedAt: pausedSide.pausedAt,
   };
 };
 
@@ -278,8 +284,20 @@ app.get("/api/status", async (req, res) => {
     aiReady: aiReady(),
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
+    paused: !!req.session.profile?.paused,
   };
   res.json(s);
+});
+
+// "Pause all AI usage" — the ONE toggle that stops generation, task runs, and chat. Enforced server-side
+// (isPaused, used below) so it holds even if a stale client tab tries to call one of those routes anyway.
+const isPaused = (req: express.Request): boolean => !!req.session.profile?.paused;
+app.post("/api/settings/pause", requireAuth, async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  p.paused = req.body?.paused === true;
+  p.pausedAt = new Date().toISOString();
+  await commit(req);
+  res.json(p);
 });
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -303,6 +321,7 @@ const lastGenDate = new Map<string, string>(); // user → "YYYY-MM-DD" (fast pa
 const genInflight = new Map<string, Promise<void>>(); // user → running sweep, so two tabs never double-run the agent
 const today = () => new Date().toISOString().split("T")[0];
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to sweep for new tasks." }); return; }
   try {
     const todayStr = today();
     const force = req.body?.force === true; // the manual Refresh button — always run a REAL sweep
@@ -334,8 +353,9 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
 app.post("/api/tasks", requireAuth, async (req, res) => {
   const title = String(req.body?.title || "").trim();
   if (!title) { res.status(400).json({ error: "title required" }); return; }
-  // AI-refine the user's rough note into a crisp task (falls back to the raw text if refinement fails).
-  const refined = aiReady() ? await refineManualTask(title, req.session.profile) : null;
+  // AI-refine the user's rough note into a crisp task (falls back to the raw text if refinement fails,
+  // or if AI usage is paused — the task still gets added, just unrefined).
+  const refined = aiReady() && !isPaused(req) ? await refineManualTask(title, req.session.profile) : null;
   req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined);
   await commit(req);
   res.json(req.session.tasks);
@@ -353,6 +373,7 @@ const withTaskLock = async (id: string, res: express.Response, fn: () => Promise
 
 // The client drives runs (calls this for each ready task) — synchronous, returns the executed task.
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run tasks." }); return; }
   await withTaskLock(String(req.params.id), res, async () => {
     try {
       const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req));
@@ -370,6 +391,7 @@ app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, r
 app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   const note = String(req.body?.note || "").trim();
   if (!note) { res.status(400).json({ error: "note required" }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to revise tasks." }); return; }
   await withTaskLock(String(req.params.id), res, async () => {
     try {
       const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req), note);
@@ -415,6 +437,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
 });
 // Auto-do ONE automatable step (focused agent run over the connected apps).
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run steps." }); return; }
   await withTaskLock(String(req.params.id), res, async () => {
     try {
       const permTools = await integrations.getAgentToolsWithPermission(req.session.user!).catch(() => undefined);
@@ -462,6 +485,7 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
 
 // ── Chat (DeepSeek + web search, grounded in the user's profile + to-dos) ─────────
 app.post("/api/chat", requireAuth, rateLimit(20, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
   try {
     const messages: ChatTurn[] = Array.isArray(req.body?.messages)
       ? req.body.messages.filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string").slice(-20)

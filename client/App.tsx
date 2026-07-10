@@ -211,6 +211,8 @@ export function App() {
       const retry = (list: WebTask[]) => list.map((x) => (x.status === "ready" && x.autoRan && !x.synthesis ? { ...x, autoRan: false } : x));
       const t = await api.tasks().catch(() => null);
       if (t) { setTasks(retry(t)); setLoaded(true); }
+      // "Pause all AI usage" — skip the sweep entirely (still shows whatever's already on the list).
+      if (status?.paused) return;
       // Silently trigger daily generation in background (doesn't block UI — the saved list above shows
       // immediately). When the scan finishes, fold the fresh list in so today's new tasks actually appear.
       setScanning(true);
@@ -219,7 +221,7 @@ export function App() {
         .catch(() => {})
         .finally(() => setScanning(false));
     })();
-  }, [connected, status?.aiReady]);
+  }, [connected, status?.aiReady, status?.paused]);
 
   // Auto-run, client-driven with BOUNDED CONCURRENCY: keep up to RUN_LIMIT ready tasks running at once.
   // Each run is synchronous server-side (returns the executed task); completion re-renders → this effect
@@ -227,7 +229,8 @@ export function App() {
   useEffect(() => {
     // `loaded` gate: never auto-run off the CACHED list — a task finished on another device could look
     // "ready" here and get pointlessly (and expensively) re-run before server truth arrives.
-    if (!connected || !loaded) return;
+    // `paused` gate: "pause all AI usage" stops auto-run too — tasks just sit ready until resumed.
+    if (!connected || !loaded || status?.paused) return;
     const slots = RUN_LIMIT - inflight.current.size;
     if (slots <= 0) return;
     const next = tasks.filter((t) => t.status === "ready" && !t.autoRan && !inflight.current.has(t.id)).slice(0, slots);
@@ -261,7 +264,7 @@ export function App() {
         })
         .finally(() => { clearTimeout(slotTimer); clearTimeout(stuckTimer); freeSlot(); });
     }
-  }, [tasks, connected, loaded]);
+  }, [tasks, connected, loaded, status?.paused]);
 
   // NO background auto-generate: each sweep is a full multi-tool agent pass (real API credits). Tasks are
   // found on app load (throttled above) and via the ↻ Refresh button — that's it. Leaving the tab open all
@@ -344,6 +347,15 @@ export function App() {
               {scanning && <span className="scan-note"><span className="scan-dot" /> checking for new tasks…</span>}
             </div>
           </div>
+          {status.paused && (
+            <div className="intro paused-banner">
+              <div className="intro-body">
+                <div className="intro-title">AI is paused</div>
+                <p>Otto won't sweep, run tasks, or chat until you resume it in Settings.</p>
+              </div>
+              <button className="btn xs ghost" onClick={() => navigate("settings")}>Settings</button>
+            </div>
+          )}
           {!introSeen && (
             <div className="intro">
               <div className="intro-body">
@@ -454,6 +466,10 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <label className="pref-row">
           <input type="checkbox" defaultChecked={autoOpenDocsOn()} onChange={(e) => { try { localStorage.setItem("otto-autoopen-docs", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
           <span className="pref-text"><b>Open created documents automatically</b><span className="settings-hint">When Otto makes a Doc, Sheet or Slides, open it in a tab so you can review it — needs the Otto Tabs extension, and it's capped so you're never flooded.</span></span>
+        </label>
+        <label className="pref-row">
+          <input type="checkbox" checked={status.paused} onChange={(e) => { void api.setPaused(e.target.checked).then(() => onChanged()); }} />
+          <span className="pref-text"><b>Pause all AI usage</b><span className="settings-hint">Stops the daily sweep, task runs, and chat immediately — nothing calls the AI while this is on. Your existing to-dos stay put; flip it off to resume.</span></span>
         </label>
       </section>
 
