@@ -972,6 +972,24 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const blocked = (s: TaskStep) => s.dependsOn != null && !steps[s.dependsOn]?.done;
   // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
   const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
+  // Name WHAT a link is, not just where it points — "Google Doc" beats "docs.google.com" on the card.
+  const linkKind = (u?: string): string => {
+    const s = u || "";
+    if (/docs\.google\.com\/document/.test(s)) return "Google Doc";
+    if (/docs\.google\.com\/spreadsheets/.test(s)) return "Google Sheet";
+    if (/docs\.google\.com\/presentation/.test(s)) return "Google Slides";
+    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return "Google Form";
+    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? "Gmail draft" : "Gmail thread";
+    if (/calendar\.google\.com/.test(s)) return "Calendar event";
+    if (/drive\.google\.com/.test(s)) return "Drive file";
+    if (/maps\.google\.com|google\.com\/maps/.test(s)) return "Directions";
+    if (/^tel:/.test(s)) return "Call";
+    if (/github\.com\/[^/]+\/[^/]+\/pull/.test(s)) return "Pull request";
+    if (/github\.com\/[^/]+\/[^/]+\/issues/.test(s)) return "GitHub issue";
+    if (/[a-z0-9-]+\.slack\.com/.test(s)) return "Slack";
+    if (/notion\.so/.test(s)) return "Notion page";
+    return urlHost(s);
+  };
   // A step can auto-run if it's automatable, unblocked, not done, not already-failed, doesn't need permission,
   // and (not a tab-open OR the extension is here to open it unattended). Tab-opens without the extension wait for a click.
   const canAuto = (s: TaskStep, i: number) => s.automatable && !s.needsPermission && !s.question && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
@@ -1054,7 +1072,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               ? <Bullets text={task.synthesis} />
               : <p className="muted">{task.status === "running" ? "Working on it now…" : task.status === "executed" ? "Nothing to report." : "Hasn't run yet."}</p>}
             {task.links?.length ? (
-              <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : urlHost(l.url)) || "Open link"} ↗</a></li>)}</ul>
+              <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
             ) : null}
             {/* The agent drafted it — review it right here, then fire it (with a confirm). The only time anything sends. */}
             {task.sendables?.length ? (
@@ -1193,7 +1211,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                         {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
                             stays reachable from the task. Done/blocked: just reopen the tab; otherwise open + mark done. */}
                         {busyHere ? <span className="muted small">Working…</span>
-                          : s.url ? <button className="btn xs ghost" title={s.url} onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open {urlHost(s.url) || "link"} ↗</button>
+                          : s.url ? <button className="btn xs ghost" title={s.url} onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open {linkKind(s.url) || "link"} ↗</button>
                           : s.done || blk ? null
                           : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>Approve & Run</button> : s.question ? null : <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>)
                           : null}

@@ -615,7 +615,7 @@ const RUN_TOOLS = [
       type: "array",
       description: "links to anything you CREATED or DRAFTED this run (Gmail draft, Google Doc/Sheet/Slides, calendar event, issue/PR, task), so the user can open it. Build each URL from the id the tool returned; omit if you made nothing.",
       items: { type: "object", properties: {
-        label: { type: "string", description: "what it is, e.g. 'Draft reply to Sarah', 'Project brief doc'" },
+        label: { type: "string", description: "what it IS in the user's terms, e.g. 'Draft reply to Sarah', 'Q3 budget doc' — never a bare hostname, URL, or 'Open'" },
         url: { type: "string", description: "an https URL that opens it" },
       }, required: ["label", "url"] },
     },
