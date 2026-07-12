@@ -204,24 +204,51 @@ export function App() {
     return () => clearTimeout(id);
   }, [connected]);
 
-  // Once Google is connected: load tasks + trigger daily auto-generate (silent, in background).
+  // Un-stick tasks whose auto-run died mid-flight (marked autoRan but produced nothing) so they retry.
+  const retryFlags = (list: WebTask[]) => list.map((x) => (x.status === "ready" && x.autoRan && !x.synthesis ? { ...x, autoRan: false } : x));
+
+  // Pull the server's task list (cheap GET; also reconciles cross-device state server-side).
+  const syncTasks = useCallback(async () => {
+    const t = await api.tasks().catch(() => null);
+    if (t) { setTasks(retryFlags(t)); setLoaded(true); }
+  }, []);
+
+  // Run the daily background sweep IF it hasn't succeeded today. The server's daily floor is the
+  // authority (a repeat call is a fast no-op); the local day-marker just avoids chatty repeat calls —
+  // and is only set on SUCCESS, so a failed/timed-out sweep is retried on the next trigger instead of
+  // silently burning the whole day (the old behavior: one attempt at page load, swallow the error, done).
+  const sweeping = useRef(false);
+  const sweepIfDue = useCallback(async () => {
+    if (!connected || status?.paused || sweeping.current) return;
+    const today = new Date().toDateString();
+    try { if (localStorage.getItem("otto-lastgen-day") === today) return; } catch { /* sweep anyway */ }
+    sweeping.current = true;
+    setScanning(true);
+    try {
+      const fresh = await api.generate();
+      setTasks(retryFlags(fresh)); setLoaded(true);
+      try { localStorage.setItem("otto-lastgen-day", today); } catch { /* ignore */ }
+    } catch { /* leave the day-marker unset — next focus/interval tick retries */ }
+    finally { sweeping.current = false; setScanning(false); }
+  }, [connected, status?.paused]);
+
+  // Once Google is connected: load tasks + trigger the daily sweep (silent, in background).
   useEffect(() => {
     if (!connected) return;
-    void (async () => {
-      const retry = (list: WebTask[]) => list.map((x) => (x.status === "ready" && x.autoRan && !x.synthesis ? { ...x, autoRan: false } : x));
-      const t = await api.tasks().catch(() => null);
-      if (t) { setTasks(retry(t)); setLoaded(true); }
-      // "Pause all AI usage" — skip the sweep entirely (still shows whatever's already on the list).
-      if (status?.paused) return;
-      // Silently trigger daily generation in background (doesn't block UI — the saved list above shows
-      // immediately). When the scan finishes, fold the fresh list in so today's new tasks actually appear.
-      setScanning(true);
-      void api.generate()
-        .then((fresh) => { setTasks(retry(fresh)); setLoaded(true); })
-        .catch(() => {})
-        .finally(() => setScanning(false));
-    })();
-  }, [connected, status?.aiReady, status?.paused]);
+    void (async () => { await syncTasks(); void sweepIfDue(); })();
+  }, [connected, status?.aiReady, syncTasks, sweepIfDue]);
+
+  // Returning to the tab re-syncs the list (tasks finished elsewhere appear WITHOUT a manual reload) and
+  // retries the daily sweep if it hasn't succeeded yet — so generation happens every day even for a tab
+  // that's been open all week, and the list is never stuck waiting for a tab-switch to show up.
+  useEffect(() => {
+    if (!connected) return;
+    const on = () => { if (!document.hidden) { void syncTasks(); void sweepIfDue(); } };
+    document.addEventListener("visibilitychange", on);
+    window.addEventListener("focus", on);
+    const tick = setInterval(on, 15 * 60_000); // long-lived tab: catch the date rollover without any user action
+    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(tick); };
+  }, [connected, syncTasks, sweepIfDue]);
 
   // Auto-run, client-driven with BOUNDED CONCURRENCY: keep up to RUN_LIMIT ready tasks running at once.
   // Each run is synchronous server-side (returns the executed task); completion re-renders → this effect
@@ -266,17 +293,17 @@ export function App() {
     }
   }, [tasks, connected, loaded, status?.paused]);
 
-  // NO background auto-generate: each sweep is a full multi-tool agent pass (real API credits). Tasks are
-  // found on app load (throttled above) and via the ↻ Refresh button — that's it. Leaving the tab open all
-  // day costs nothing.
+  // Manual ↻ Refresh: an on-demand FORCED sweep (bypasses the daily floor). The automatic daily sweep is
+  // sweepIfDue above — once per day, retried on focus/interval until it succeeds, never more.
 
   const generate = async () => {
     setBusy(true); setNote("");
     try {
       const before = new Set(tasks.map((t) => t.id));
       const t = await api.generate(true);
-      setTasks(t);
-      try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
+      setTasks(t); setLoaded(true);
+      // A manual Refresh IS today's sweep — mark the day so the background trigger doesn't re-run it.
+      try { localStorage.setItem("otto-lastgen", String(Date.now())); localStorage.setItem("otto-lastgen-day", new Date().toDateString()); } catch { /* ignore */ }
       // Honest feedback on what the sweep found — "nothing happened" and "nothing new" look identical otherwise.
       const added = t.filter((x) => !before.has(x.id) && x.status !== "done" && x.status !== "dismissed").length;
       if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now.");
