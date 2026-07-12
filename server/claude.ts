@@ -17,9 +17,11 @@ function profileBlock(p?: Profile): string {
   if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
   if (p.workingHours) parts.push(`Working hours: ${p.workingHours.start}-${p.workingHours.end} (${p.workingHours.timezone})`);
   if (p.responseStyle) parts.push(`Response style: ${p.responseStyle}`);
-  if (p.autoApprove?.length) parts.push(`Auto-approved actions: ${p.autoApprove.join(", ")}`);
+  // Auto-approve entries are the user's PREFERENCE, never permission: the code-enforced action policy
+  // still gates every tool call — a policy-gated action stays gated no matter what this list says.
+  if (p.autoApprove?.length) parts.push(`Prefers automated handling of: ${p.autoApprove.join(", ")} (preference only — the permission system still decides; gated actions still need approval)`);
   if (p.highPriorityPeople?.length) parts.push(`High-priority people: ${p.highPriorityPeople.join(", ")}`);
-  if (p.autoArchivePatterns?.length) parts.push(`Auto-archive patterns: ${p.autoArchivePatterns.join(", ")}`);
+  if (p.autoArchivePatterns?.length) parts.push(`Considers noise (never surface as tasks): ${p.autoArchivePatterns.join(", ")}`);
   return parts.length ? `\nWHO THIS PERSON IS — their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
 }
 
@@ -426,6 +428,73 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   }
 }
 
+/**
+ * Stage-2 of the discovery pipeline: classify PRE-FILTERED, NORMALIZED source items in ONE model call
+ * (no tools, no agent loop). The model only says WHICH items are actionable and how — every anchor, link,
+ * and source on the resulting task is copied from the item itself, so references cannot be hallucinated.
+ */
+export async function classifyCandidates(
+  items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[] }[],
+  profile?: Profile,
+  activeTitles?: string[],
+): Promise<GenerationResult> {
+  if (!items.length) return { tasks: [], profileUpdates: [] };
+  const list = items.slice(0, 30).map((it, i) =>
+    `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
+  const activeBlock = activeTitles?.length ? `\nALREADY ON THEIR LIST (skip anything covering these):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
+  const sys =
+    `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it ` +
+    `GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER ` +
+    `items are commitments THEY made ("I'll send you X") — create a task to FULFILL unfulfilled ones. Events: only ` +
+    `if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if ` +
+    `someone is clearly waiting on their review/input. Skip FYIs, receipts, automated mail, and anything already on ` +
+    `their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank ` +
+    `HIGHER (importance ≥ 0.7); things their preferences deprioritize rank lower or get skipped. Quality over ` +
+    `quantity — the handful that matter.\n` +
+    `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative ≤9 words",` +
+    `"why":"one clause naming the concrete trigger","when":"deadline or ''","urgency":0..1,"importance":0..1,` +
+    `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about",` +
+    `"fact":"one short sentence"}]} — profileUpdates: 0-3 DURABLE facts about who this person is that these ` +
+    `items reveal (a key relationship, an ongoing project) — only lasting identity facts, not task content. ` +
+    `Empty arrays are fine.`;
+  const client = deepseekClient();
+  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  let tokIn = 0, tokOut = 0;
+  try {
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: actualModel,
+      max_tokens: 1800,
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` },
+      ],
+    }));
+    tokIn = res.usage?.prompt_tokens || 0; tokOut = res.usage?.completion_tokens || 0;
+    const out = firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
+    const arr: any[] = Array.isArray(out) ? out : Array.isArray(out?.tasks) ? out.tasks : [];
+    const tasks = arr
+      .filter((r) => Number.isInteger(r?.i) && r.i >= 0 && r.i < items.length && String(r?.title || "").trim().length >= 4 && String(r?.why || "").trim())
+      .map((r): GeneratedTask => {
+        const it = items[r.i];
+        return {
+          title: String(r.title).slice(0, 90),
+          why: String(r.why).slice(0, 400),
+          when: r.when ? String(r.when).slice(0, 40) : undefined,
+          source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : "gmail",
+          risk: r.risk === "high" ? "high" : "low",
+          urgency: clamp01(r.urgency ?? 0.5),
+          importance: clamp01(r.importance ?? 0.6),
+          anchorKey: it.anchorKey,           // from the SOURCE — never the model
+          link: it.url,
+        };
+      })
+      .slice(0, 12);
+    return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates) };
+  } finally {
+    console.log(`${new Date().toISOString()} [ai] classifyCandidates: ${items.length} in → 1 call, ${tokIn} in / ${tokOut} out tokens`);
+  }
+}
+
 export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; }
 
 /**
@@ -821,6 +890,9 @@ function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[
   const links: TaskLink[] = (Array.isArray(out?.links) ? out.links : [])
     .map((l: any) => ({ label: String(l?.label || "Open").slice(0, 80), url: String(l?.url || "").trim() }))
     .filter((l: TaskLink) => /^https?:\/\//i.test(l.url))
+    // Artifact verification: a Google Docs/Sheets/Slides link must carry a REAL document id (25+ chars of
+    // id alphabet) — a made-up or truncated link would render a polished card pointing at a 404.
+    .filter((l: TaskLink) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url))
     .slice(0, 3); // max 3 open links per task — the essentials, not a link dump
   const sendables: Sendable[] = (Array.isArray(out?.sendables) ? out.sendables : [])
     .map((s: any): Sendable => ({
@@ -837,7 +909,14 @@ function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[
       summary: s?.summary ? String(s.summary).slice(0, 300) : undefined,
       when: s?.when ? String(s.when).slice(0, 120) : undefined,
     }))
-    .filter((s: Sendable) => (s.app === "gmail" && !!s.draftId) || (s.app === "slack" && !!s.channel && !!s.text) || (s.app === "gcal" && !!s.eventId && !!s.attendees?.length))
+    // Artifact verification: a sendable must be COMPLETE enough to review — a Gmail send needs the draft
+    // id AND a visible recipient AND reviewable content; a calendar invite needs its event + attendees +
+    // what/when. A half-formed sendable is dropped (the draft still exists in Gmail; the user isn't shown
+    // a Send button whose contents they can't see).
+    .filter((s: Sendable) =>
+      (s.app === "gmail" && !!s.draftId && !!s.to && !!(s.subject || s.body)) ||
+      (s.app === "slack" && !!s.channel && !!s.text) ||
+      (s.app === "gcal" && !!s.eventId && !!s.attendees?.length && !!(s.summary || s.when)))
     .slice(0, 6);
   // Brevity backstop: a few lines + a hard char cap, so even a verbose run can't produce a wall of text.
   const brief = (s: string, lines: number, chars: number) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);

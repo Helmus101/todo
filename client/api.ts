@@ -80,4 +80,7 @@ export const api = {
   clearProfile: (): Promise<Profile> => req("/api/profile", { method: "DELETE" }).then(j).then(normalizeProfile),
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout"),
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
+  taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
+  // Drain one queued job server-side and return the fresh task list + how many jobs remain active.
+  kick: (): Promise<{ processed: number; failed: number; active: number; tasks: WebTask[] }> => post("/api/jobs/kick"),
 };

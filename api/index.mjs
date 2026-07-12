@@ -10,6 +10,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // shared/types.ts
+var canonStatus = (s) => s === "running" ? "executing" : s === "executed" ? "needs_review" : s;
+var isHandled = (s) => s === "done" || s === "dismissed";
 function emptyProfile() {
   return { about: "", preferences: [], people: [], projects: [] };
 }
@@ -287,9 +289,9 @@ function profileBlock(p) {
   if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
   if (p.workingHours) parts.push(`Working hours: ${p.workingHours.start}-${p.workingHours.end} (${p.workingHours.timezone})`);
   if (p.responseStyle) parts.push(`Response style: ${p.responseStyle}`);
-  if (p.autoApprove?.length) parts.push(`Auto-approved actions: ${p.autoApprove.join(", ")}`);
+  if (p.autoApprove?.length) parts.push(`Prefers automated handling of: ${p.autoApprove.join(", ")} (preference only \u2014 the permission system still decides; gated actions still need approval)`);
   if (p.highPriorityPeople?.length) parts.push(`High-priority people: ${p.highPriorityPeople.join(", ")}`);
-  if (p.autoArchivePatterns?.length) parts.push(`Auto-archive patterns: ${p.autoArchivePatterns.join(", ")}`);
+  if (p.autoArchivePatterns?.length) parts.push(`Considers noise (never surface as tasks): ${p.autoArchivePatterns.join(", ")}`);
   return parts.length ? `
 WHO THIS PERSON IS \u2014 their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:
 ${parts.map((x) => `- ${x}`).join("\n")}
@@ -613,6 +615,53 @@ Sweep across all of them for everything genuinely awaiting me that is NOT alread
     console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
 }
+async function classifyCandidates(items, profile, activeTitles) {
+  if (!items.length) return { tasks: [], profileUpdates: [] };
+  const list = items.slice(0, 30).map((it, i) => `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
+  const activeBlock = activeTitles?.length ? `
+ALREADY ON THEIR LIST (skip anything covering these):
+${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}
+` : "";
+  const sys = `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER items are commitments THEY made ("I'll send you X") \u2014 create a task to FULFILL unfulfilled ones. Events: only if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if someone is clearly waiting on their review/input. Skip FYIs, receipts, automated mail, and anything already on their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank HIGHER (importance \u2265 0.7); things their preferences deprioritize rank lower or get skipped. Quality over quantity \u2014 the handful that matter.
+Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative \u22649 words","why":"one clause naming the concrete trigger","when":"deadline or ''","urgency":0..1,"importance":0..1,"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about","fact":"one short sentence"}]} \u2014 profileUpdates: 0-3 DURABLE facts about who this person is that these items reveal (a key relationship, an ongoing project) \u2014 only lasting identity facts, not task content. Empty arrays are fine.`;
+  const client2 = deepseekClient();
+  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  let tokIn = 0, tokOut = 0;
+  try {
+    const res = await retryRequest2(() => client2.chat.completions.create({
+      model: actualModel,
+      max_tokens: 1800,
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `
+CANDIDATES:
+${list}` }
+      ]
+    }));
+    tokIn = res.usage?.prompt_tokens || 0;
+    tokOut = res.usage?.completion_tokens || 0;
+    const out = firstJson(String(res.choices?.[0]?.message?.content || ""));
+    const arr = Array.isArray(out) ? out : Array.isArray(out?.tasks) ? out.tasks : [];
+    const tasks = arr.filter((r) => Number.isInteger(r?.i) && r.i >= 0 && r.i < items.length && String(r?.title || "").trim().length >= 4 && String(r?.why || "").trim()).map((r) => {
+      const it = items[r.i];
+      return {
+        title: String(r.title).slice(0, 90),
+        why: String(r.why).slice(0, 400),
+        when: r.when ? String(r.when).slice(0, 40) : void 0,
+        source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : "gmail",
+        risk: r.risk === "high" ? "high" : "low",
+        urgency: clamp01(r.urgency ?? 0.5),
+        importance: clamp01(r.importance ?? 0.6),
+        anchorKey: it.anchorKey,
+        // from the SOURCE — never the model
+        link: it.url
+      };
+    }).slice(0, 12);
+    return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates) };
+  } finally {
+    console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] classifyCandidates: ${items.length} in \u2192 1 call, ${tokIn} in / ${tokOut} out tokens`);
+  }
+}
 async function refineManualTask(text, profile) {
   const raw = String(text || "").trim();
   if (!raw) return null;
@@ -863,7 +912,7 @@ function finalize(out, fallbackText, profileUpdates) {
     question: s?.question ? String(s.question).trim().slice(0, 200) : void 0,
     options: Array.isArray(s?.options) ? s.options.map((o) => String(o).trim()).filter(Boolean).slice(0, 4) : void 0
   })).filter((s) => s.text).slice(0, 10);
-  const links = (Array.isArray(out?.links) ? out.links : []).map((l) => ({ label: String(l?.label || "Open").slice(0, 80), url: String(l?.url || "").trim() })).filter((l) => /^https?:\/\//i.test(l.url)).slice(0, 3);
+  const links = (Array.isArray(out?.links) ? out.links : []).map((l) => ({ label: String(l?.label || "Open").slice(0, 80), url: String(l?.url || "").trim() })).filter((l) => /^https?:\/\//i.test(l.url)).filter((l) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url)).slice(0, 3);
   const sendables = (Array.isArray(out?.sendables) ? out.sendables : []).map((s) => ({
     app: s?.app === "slack" ? "slack" : s?.app === "gcal" ? "gcal" : "gmail",
     label: String(s?.label || (s?.app === "slack" ? "Send message" : s?.app === "gcal" ? "Send invites" : "Send email")).slice(0, 80),
@@ -877,7 +926,7 @@ function finalize(out, fallbackText, profileUpdates) {
     eventId: s?.eventId ? String(s.eventId).slice(0, 200) : void 0,
     summary: s?.summary ? String(s.summary).slice(0, 300) : void 0,
     when: s?.when ? String(s.when).slice(0, 120) : void 0
-  })).filter((s) => s.app === "gmail" && !!s.draftId || s.app === "slack" && !!s.channel && !!s.text || s.app === "gcal" && !!s.eventId && !!s.attendees?.length).slice(0, 6);
+  })).filter((s) => s.app === "gmail" && !!s.draftId && !!s.to && !!(s.subject || s.body) || s.app === "slack" && !!s.channel && !!s.text || s.app === "gcal" && !!s.eventId && !!s.attendees?.length && !!(s.summary || s.when)).slice(0, 6);
   const brief = (s, lines, chars) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
   let synthesis = brief(String(out?.synthesis || ""), 3, 550);
   if (/\b(let me|i'?ll (?:first|now|then|use|create|draft|check)|i will (?:first|now|then)|now i(?:'?ll)? |first,? i(?:'?ll)? |seems like|my plan is|i need to|i should)\b/i.test(synthesis)) synthesis = "";
@@ -1007,6 +1056,164 @@ async function saveState(email, state) {
     console.warn("[store] save threw:", e?.message || e);
   }
 }
+async function listAccountEmails(limit = 200) {
+  if (!client) return [];
+  try {
+    const { data, error } = await client.from(TABLE).select("email").order("updated_at", { ascending: false }).limit(limit);
+    if (error) {
+      console.warn("[store] listAccountEmails failed:", error.message);
+      return [];
+    }
+    return (data || []).map((r) => String(r.email)).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+var JOBS = "weave_web_jobs";
+var EVENTS = "weave_web_job_events";
+var LOCK_MS = 5 * 6e4;
+var memJobs = [];
+var jobsTableOk = null;
+async function jobsDb() {
+  if (!client) return null;
+  if (jobsTableOk === null) {
+    const { error } = await client.from(JOBS).select("id").limit(1);
+    jobsTableOk = !error;
+    if (error) console.warn(`[store] jobs table unreachable (${error.message}) \u2014 using in-memory queue (fine for one dev process; run supabase.sql + SUPABASE_SERVICE_KEY for durability).`);
+  }
+  return jobsTableOk ? client : null;
+}
+async function enqueueJob(userEmail, type, taskId, input) {
+  const key2 = type === "sweep" ? `${userEmail}:sweep` : `${userEmail}:task:${taskId}`;
+  const db = await jobsDb();
+  if (db) {
+    const { data: existing } = await db.from(JOBS).select("*").eq("idempotency_key", key2).in("status", ["queued", "running"]).limit(1);
+    if (existing?.length) return existing[0];
+    const { data, error } = await db.from(JOBS).insert({ user_email: userEmail, task_id: taskId ?? null, type, idempotency_key: key2, input: input ?? null }).select().single();
+    if (!error && data) return data;
+    const { data: winner } = await db.from(JOBS).select("*").eq("idempotency_key", key2).in("status", ["queued", "running"]).limit(1);
+    if (winner?.length) return winner[0];
+    throw new Error(`enqueue failed: ${error?.message || "unknown"}`);
+  }
+  const active = memJobs.find((j) => j.idempotency_key === key2 && (j.status === "queued" || j.status === "running"));
+  if (active) return active;
+  const job = { id: crypto.randomUUID(), user_email: userEmail, task_id: taskId ?? null, type, status: "queued", attempt_count: 0, max_attempts: 3, idempotency_key: key2, input, created_at: (/* @__PURE__ */ new Date()).toISOString() };
+  memJobs.push(job);
+  if (memJobs.length > 500) memJobs.splice(0, memJobs.length - 500);
+  return job;
+}
+async function claimJob(workerId2) {
+  const db = await jobsDb();
+  const now = /* @__PURE__ */ new Date();
+  const lockUntil = new Date(now.getTime() + LOCK_MS).toISOString();
+  if (db) {
+    for (const pass of ["queued", "expired"]) {
+      const q = db.from(JOBS).select("id,status,attempt_count,max_attempts").order("created_at", { ascending: true }).limit(5);
+      const { data: candidates } = pass === "queued" ? await q.eq("status", "queued") : await q.eq("status", "running").lt("locked_until", now.toISOString());
+      for (const c of candidates || []) {
+        if (c.attempt_count >= c.max_attempts) {
+          await db.from(JOBS).update({ status: "failed_terminal", finished_at: now.toISOString(), last_error: "max attempts exceeded" }).eq("id", c.id).eq("status", c.status);
+          continue;
+        }
+        const { data: won } = await db.from(JOBS).update({ status: "running", locked_by: workerId2, locked_until: lockUntil, started_at: now.toISOString(), attempt_count: c.attempt_count + 1 }).eq("id", c.id).eq("status", c.status).eq("attempt_count", c.attempt_count).select();
+        if (won?.length) return won[0];
+      }
+    }
+    return null;
+  }
+  const job = memJobs.find((j) => j.status === "queued" || j.status === "running" && j.locked_until && j.locked_until < now.toISOString());
+  if (!job) return null;
+  if (job.attempt_count >= job.max_attempts) {
+    job.status = "failed_terminal";
+    job.last_error = "max attempts exceeded";
+    return claimJob(workerId2);
+  }
+  job.status = "running";
+  job.locked_until = lockUntil;
+  job.started_at = now.toISOString();
+  job.attempt_count++;
+  return job;
+}
+async function finishJob(id, outcome, error, output) {
+  const db = await jobsDb();
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  if (db) {
+    if (outcome === "succeeded") {
+      await db.from(JOBS).update({ status: "succeeded", finished_at: now, output: output ?? null, locked_until: null }).eq("id", id);
+    } else {
+      const { data } = await db.from(JOBS).select("attempt_count,max_attempts").eq("id", id).maybeSingle();
+      const terminal = (data?.attempt_count ?? 1) >= (data?.max_attempts ?? 3);
+      await db.from(JOBS).update({
+        status: terminal ? "failed_terminal" : "queued",
+        // retryable → back to queued for the next drain
+        ...terminal ? { finished_at: now } : {},
+        last_error: String(error || "").slice(0, 500),
+        locked_until: null
+      }).eq("id", id);
+    }
+    return;
+  }
+  const job = memJobs.find((j) => j.id === id);
+  if (!job) return;
+  if (outcome === "succeeded") {
+    job.status = "succeeded";
+    job.finished_at = now;
+    job.output = output;
+  } else {
+    const terminal = job.attempt_count >= job.max_attempts;
+    job.status = terminal ? "failed_terminal" : "queued";
+    job.last_error = String(error || "").slice(0, 500);
+    if (terminal) job.finished_at = now;
+  }
+  job.locked_until = null;
+}
+async function getLatestJob(userEmail, type) {
+  const db = await jobsDb();
+  if (db) {
+    const { data } = await db.from(JOBS).select("*").eq("user_email", userEmail).eq("type", type).order("created_at", { ascending: false }).limit(1);
+    return data?.[0] || null;
+  }
+  const mine = memJobs.filter((j) => j.user_email === userEmail && j.type === type);
+  return mine[mine.length - 1] || null;
+}
+async function countActiveJobs(userEmail) {
+  const db = await jobsDb();
+  if (db) {
+    const { count } = await db.from(JOBS).select("id", { count: "exact", head: true }).eq("user_email", userEmail).in("status", ["queued", "running"]);
+    return count || 0;
+  }
+  return memJobs.filter((j) => j.user_email === userEmail && (j.status === "queued" || j.status === "running")).length;
+}
+async function getJob(id, userEmail) {
+  const db = await jobsDb();
+  if (db) {
+    const { data } = await db.from(JOBS).select("*").eq("id", id).eq("user_email", userEmail).maybeSingle();
+    return data || null;
+  }
+  return memJobs.find((j) => j.id === id && j.user_email === userEmail) || null;
+}
+var memEvents = [];
+async function recordEvent(userEmail, kind, opts = {}) {
+  const db = await jobsDb();
+  const row = { user_email: userEmail, task_id: opts.taskId ?? null, job_id: opts.jobId ?? null, kind, message: opts.message ? String(opts.message).slice(0, 300) : null };
+  if (db) {
+    try {
+      await db.from(EVENTS).insert(row);
+    } catch {
+    }
+    return;
+  }
+  memEvents.push({ ...row, at: (/* @__PURE__ */ new Date()).toISOString() });
+  if (memEvents.length > 1e3) memEvents.splice(0, memEvents.length - 1e3);
+}
+async function eventsForTask(userEmail, taskId, limit = 20) {
+  const db = await jobsDb();
+  if (db) {
+    const { data } = await db.from(EVENTS).select("kind,message,at,task_id").eq("user_email", userEmail).eq("task_id", taskId).order("at", { ascending: false }).limit(limit);
+    return data || [];
+  }
+  return memEvents.filter((e) => e.user_email === userEmail && e.task_id === taskId).slice(-limit).reverse();
+}
 
 // server/tasks.ts
 import { randomUUID } from "node:crypto";
@@ -1047,13 +1254,79 @@ var logoFor = (toolkit) => `https://logos.composio.dev/api/${String(toolkit).toL
 function integrationsReady() {
   return !!process.env.COMPOSIO_API_KEY;
 }
+var ACTION_POLICIES = {
+  // Gmail — read + draft are auto; anything that leaves the account or destroys mail is never.
+  GMAIL_FETCH_EMAILS: "auto",
+  GMAIL_FETCH_MESSAGE_BY_THREAD_ID: "auto",
+  GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID: "auto",
+  GMAIL_LIST_THREADS: "auto",
+  GMAIL_GET_ATTACHMENT: "auto",
+  GMAIL_LIST_DRAFTS: "auto",
+  GMAIL_GET_PROFILE: "auto",
+  GMAIL_CREATE_EMAIL_DRAFT: "auto",
+  GMAIL_UPDATE_EMAIL_DRAFT: "auto",
+  GMAIL_SEND_EMAIL: "never",
+  GMAIL_SEND_DRAFT: "never",
+  GMAIL_REPLY_TO_THREAD: "never",
+  GMAIL_FORWARD_MESSAGE: "never",
+  GMAIL_DELETE_MESSAGE: "never",
+  GMAIL_DELETE_DRAFT: "never",
+  GMAIL_TRASH_MESSAGE: "never",
+  GMAIL_ARCHIVE_MESSAGE: "never",
+  // Calendar — reads auto; ANY event write needs approval (it lands on calendars); invites never.
+  GOOGLECALENDAR_EVENTS_LIST: "auto",
+  GOOGLECALENDAR_FIND_EVENT: "auto",
+  GOOGLECALENDAR_GET_EVENT: "auto",
+  GOOGLECALENDAR_FIND_FREE_SLOTS: "auto",
+  GOOGLECALENDAR_GET_CALENDAR: "auto",
+  GOOGLECALENDAR_FREE_BUSY_QUERY: "auto",
+  GOOGLECALENDAR_CREATE_EVENT: "approve",
+  GOOGLECALENDAR_UPDATE_EVENT: "approve",
+  GOOGLECALENDAR_PATCH_EVENT: "approve",
+  GOOGLECALENDAR_QUICK_ADD: "approve",
+  GOOGLECALENDAR_DELETE_EVENT: "never",
+  // Drive/Docs — search/read/create-new auto; editing EXISTING docs needs approval; delete/share never.
+  GOOGLEDRIVE_FIND_FILE: "auto",
+  GOOGLEDRIVE_DOWNLOAD_FILE: "auto",
+  GOOGLEDRIVE_EXPORT_FILE: "auto",
+  GOOGLEDRIVE_LIST_FILES: "auto",
+  GOOGLEDOCS_GET_DOCUMENT_BY_ID: "auto",
+  GOOGLEDOCS_CREATE_DOCUMENT: "auto",
+  GOOGLEDOCS_SEARCH_DOCUMENTS: "auto",
+  GOOGLEDOCS_UPDATE_EXISTING_DOCUMENT: "approve",
+  GOOGLEDOCS_UPDATE_DOCUMENT_MARKDOWN: "approve",
+  GOOGLEDRIVE_DELETE_FILE: "never",
+  GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE: "never",
+  // Sheets — reads + cell writes auto (reversible); structural deletes never.
+  GOOGLESHEETS_BATCH_GET: "auto",
+  GOOGLESHEETS_GET_SPREADSHEET_INFO: "auto",
+  GOOGLESHEETS_LOOKUP_SPREADSHEET_ROW: "auto",
+  GOOGLESHEETS_CREATE_GOOGLE_SHEET1: "auto",
+  GOOGLESHEETS_BATCH_UPDATE: "auto",
+  GOOGLESHEETS_UPDATE_VALUES: "auto",
+  GOOGLESHEETS_APPEND_VALUES: "auto",
+  GOOGLESHEETS_DELETE_SHEET: "never",
+  GOOGLESHEETS_DELETE_DIMENSION: "never",
+  // Slack — read + compose only; posting is the user's click.
+  SLACK_FETCH_CONVERSATION_HISTORY: "auto",
+  SLACK_LIST_ALL_CHANNELS: "auto",
+  SLACK_SEARCH_MESSAGES: "auto",
+  SLACK_FIND_USERS: "auto",
+  SLACK_CHAT_POST_MESSAGE: "never",
+  SLACK_SEND_MESSAGE: "never",
+  SLACK_CHAT_DELETE: "never"
+};
 function isGatedAction(rawName) {
   const n = rawName.toUpperCase();
+  const policy = ACTION_POLICIES[n];
+  if (policy) return policy === "never";
   if (/DRAFT/.test(n) && !/(SEND|DELETE|TRASH)/.test(n)) return false;
   return /(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|DELETE|REMOVE|TRASH|ARCHIVE|CREATE_POST|CREATE_TWEET|CREATE_MESSAGE|SCHEDULE_MESSAGE|CREATE_DM|_POST_|_POST$|SHARE|INVITE)/.test(n);
 }
 function isWriteGatedAction(rawName) {
   const n = rawName.toUpperCase();
+  const policy = ACTION_POLICIES[n];
+  if (policy) return policy === "approve";
   if (/^GOOGLEDOCS_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|APPEND|INSERT|DELETE_CONTENT|BATCH)/.test(n)) return true;
   if (/^GOOGLESHEETS_/.test(n) && /(DELETE_ROW|DELETE_SHEET|DELETE_COLUMN)/.test(n)) return true;
   if (/^GOOGLESLIDES_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|BATCH)/.test(n)) return true;
@@ -1255,6 +1528,14 @@ var isRead = (n) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|FREE_BUSY|
 function readOnly(t) {
   return { tools: t.tools.filter((x) => isRead(x.name)), call: t.call, connected: t.connected };
 }
+async function readAction(userId, action, args) {
+  if (!integrationsReady() || !userId) throw new Error("integrations not configured");
+  const policy = ACTION_POLICIES[action.toUpperCase()];
+  if (policy !== "auto" || !isRead(action.toUpperCase())) throw new Error(`not an allowed read action: ${action}`);
+  const r = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true });
+  if (r && r.successful === false) throw new Error(String(r.error || `read failed: ${action}`));
+  return r?.data ?? r;
+}
 async function getAgentTools(userId) {
   if (!integrationsReady() || !userId) return EMPTY;
   const hit = cache.get(userId);
@@ -1359,6 +1640,127 @@ async function getAgentToolsWithPermission(userId) {
     }
   };
   return { tools: base.tools, call: permCall, connected: base.connected, selfBrief: base.selfBrief };
+}
+
+// server/discover.ts
+var NOISE_SENDER = /no-?reply|donotreply|newsletter|marketing|notifications?@|updates?@|news@|mailer@|bounce|billing@|receipts?@|noreply/i;
+var NOISE_SUBJECT = /unsubscribe|newsletter|weekly digest|daily digest|% off|sale ends|flash sale|your receipt|order confirmation|payment received|has shipped|delivery update|verify your email|security alert/i;
+function isNoise(it) {
+  if (it.labels.includes("sent")) return false;
+  return NOISE_SENDER.test(it.sender || "") || NOISE_SUBJECT.test(it.title || "");
+}
+var normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+function gmailToItems(data, label) {
+  const msgs = data?.messages || data?.data?.messages || data?.response_data?.messages || (Array.isArray(data) ? data : []);
+  return (msgs || []).slice(0, 25).map((m) => {
+    const threadId = String(m?.threadId ?? m?.thread_id ?? m?.id ?? "").trim();
+    if (!threadId) return null;
+    return {
+      sourceApp: "gmail",
+      externalId: threadId,
+      anchorKey: `gmail:${threadId}`,
+      url: `https://mail.google.com/mail/u/0/#inbox/${threadId}`,
+      title: String(m?.subject ?? m?.messageSubject ?? "(no subject)").slice(0, 140),
+      snippet: String(m?.preview?.body ?? m?.snippet ?? m?.messageText ?? m?.preview ?? "").replace(/\s+/g, " ").slice(0, 240),
+      sender: String(m?.sender ?? m?.from ?? m?.fromAddress ?? "").slice(0, 120),
+      timestamp: String(m?.messageTimestamp ?? m?.internalDate ?? m?.date ?? ""),
+      labels: [label]
+    };
+  }).filter((x) => !!x);
+}
+function calendarToItems(data) {
+  const evs = data?.items || data?.events || data?.data?.items || (Array.isArray(data) ? data : []);
+  return (evs || []).slice(0, 25).map((e) => {
+    const id = String(e?.id ?? e?.eventId ?? "").trim();
+    if (!id) return null;
+    const start = e?.start?.dateTime || e?.start?.date || e?.start || "";
+    return {
+      sourceApp: "calendar",
+      externalId: id,
+      anchorKey: `calendar:${id}`,
+      url: e?.htmlLink || void 0,
+      title: String(e?.summary ?? "(untitled event)").slice(0, 140),
+      snippet: `${start}${e?.location ? ` @ ${e.location}` : ""}${e?.description ? ` \u2014 ${String(e.description).replace(/\s+/g, " ").slice(0, 140)}` : ""}`,
+      sender: String(e?.organizer?.email ?? "").slice(0, 120),
+      timestamp: String(start),
+      labels: ["event"]
+    };
+  }).filter((x) => !!x);
+}
+function driveToItems(data) {
+  const files = data?.files || data?.items || data?.data?.files || (Array.isArray(data) ? data : []);
+  return (files || []).slice(0, 15).map((f) => {
+    const id = String(f?.id ?? f?.fileId ?? "").trim();
+    if (!id) return null;
+    const modifiedBy = String(f?.lastModifyingUser?.emailAddress ?? f?.lastModifyingUser?.displayName ?? "");
+    return {
+      sourceApp: "drive",
+      externalId: id,
+      anchorKey: `drive:${id}`,
+      url: f?.webViewLink || void 0,
+      title: String(f?.name ?? f?.title ?? "(untitled file)").slice(0, 140),
+      snippet: `${f?.mimeType ? String(f.mimeType).replace("application/vnd.google-apps.", "") : "file"}${modifiedBy ? ` \u2014 last modified by ${modifiedBy}` : ""}${f?.sharedWithMeTime ? ` \u2014 shared with you ${f.sharedWithMeTime}` : ""}`,
+      sender: modifiedBy.slice(0, 120),
+      timestamp: String(f?.modifiedTime ?? f?.sharedWithMeTime ?? ""),
+      labels: [f?.sharedWithMeTime ? "shared" : "modified"]
+    };
+  }).filter((x) => !!x);
+}
+async function discoverSourceItems(userEmail) {
+  const items = [];
+  let attempted = false;
+  const grab = async (fn) => {
+    try {
+      const got = await fn();
+      attempted = true;
+      items.push(...got);
+    } catch {
+    }
+  };
+  await Promise.all([
+    grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
+      query: "in:inbox newer_than:7d -category:promotions -category:social",
+      max_results: 20
+    }), "inbox")),
+    grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
+      query: "in:sent newer_than:10d",
+      max_results: 15
+    }), "sent")),
+    grab(async () => {
+      const now = /* @__PURE__ */ new Date();
+      const week = new Date(now.getTime() + 7 * 24 * 3600 * 1e3);
+      return calendarToItems(await readAction(userEmail, "GOOGLECALENDAR_EVENTS_LIST", {
+        timeMin: now.toISOString(),
+        timeMax: week.toISOString(),
+        maxResults: 20,
+        singleEvents: true,
+        orderBy: "startTime"
+      }));
+    }),
+    // Drive: recent files OTHERS shared/touched — docs waiting on the user that never arrive by email.
+    grab(async () => {
+      const since = new Date(Date.now() - 7 * 24 * 3600 * 1e3).toISOString().split(".")[0];
+      const files = driveToItems(await readAction(userEmail, "GOOGLEDRIVE_LIST_FILES", {
+        q: `(sharedWithMe = true or modifiedTime > '${since}') and trashed = false`,
+        orderBy: "modifiedTime desc",
+        pageSize: 15,
+        fields: "files(id,name,mimeType,webViewLink,modifiedTime,sharedWithMeTime,lastModifyingUser)"
+      }));
+      return files.filter((f) => f.labels.includes("shared") || f.sender && !f.sender.toLowerCase().includes(userEmail.split("@")[0].toLowerCase()));
+    })
+  ]);
+  const seen = /* @__PURE__ */ new Set();
+  const unique = items.filter((it) => {
+    const k = normKey(it.anchorKey);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return { items: unique, attempted };
+}
+function filterCandidates(items, knownAnchors) {
+  const known = new Set(knownAnchors.map(normKey).filter(Boolean));
+  return items.filter((it) => !isNoise(it) && !known.has(normKey(it.anchorKey)));
 }
 
 // server/tasks.ts
@@ -1476,23 +1878,83 @@ function pruneHandled(list, keep) {
   const handled = list.filter((t) => t.status === "done" || t.status === "dismissed").sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, keep);
   return [...active, ...handled];
 }
-var normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+var normKey2 = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 var linkOf = (t) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
-var rankStatus = (t) => t.status === "done" || t.status === "dismissed" ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
+var rankStatus = (t) => {
+  const c = canonStatus(t.status);
+  return c === "done" || c === "dismissed" ? 6 : c === "needs_review" ? 5 : c === "failed_terminal" ? 4 : c === "failed_retryable" ? 3 : c === "executing" ? 2.5 : c === "queued" ? 2 : 1;
+};
 var betterOf = (a, b) => rankStatus(b) > rankStatus(a) ? b : a;
 var sameTask = (a, b) => nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
 function dedupeTasks(list) {
   const kept = [];
   for (const t of list) {
-    const ak = normKey(t.anchorKey), link = linkOf(t);
-    const i = kept.findIndex((k) => !!ak && normKey(k.anchorKey) === ak || !!link && linkOf(k) === link || sameTask(k, t));
+    const ak = normKey2(t.anchorKey), link = linkOf(t);
+    const i = kept.findIndex((k) => !!ak && normKey2(k.anchorKey) === ak || !!link && linkOf(k) === link || sameTask(k, t));
     if (i >= 0) kept[i] = betterOf(kept[i], t);
     else kept.push(t);
   }
   return kept;
 }
-var MAX_NEW_PER_SWEEP = 12;
-async function generate(existing, profile, extras) {
+function mergeTaskLists(existing, incoming) {
+  const rank = (s) => rankStatus({ status: s });
+  const when = (t) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
+  const map = /* @__PURE__ */ new Map();
+  for (const t of existing) map.set(t.id, t);
+  for (const t of incoming) {
+    const ext = map.get(t.id);
+    if (!ext) {
+      map.set(t.id, t);
+      continue;
+    }
+    const winner = rank(t.status) > rank(ext.status) ? t : rank(t.status) < rank(ext.status) ? ext : when(t) >= when(ext) ? t : ext;
+    const loser = winner === t ? ext : t;
+    const steps = winner.steps?.map((s) => {
+      if (s.done) return s;
+      const other = loser.steps?.find((o) => o.text === s.text);
+      return other?.done ? { ...s, done: true, doneAt: other.doneAt, result: s.result ?? other.result } : s;
+    });
+    map.set(t.id, steps ? { ...winner, steps } : winner);
+  }
+  return dedupeTasks(Array.from(map.values()));
+}
+function mergeProfileStates(p1, p2) {
+  const pausedAt = (p) => Date.parse(p.pausedAt || "") || 0;
+  const pausedSide = pausedAt(p2) >= pausedAt(p1) ? p2 : p1;
+  return {
+    name: p2.name || p1.name,
+    about: p2.about || p1.about,
+    preferences: dedupeFacts([...p1.preferences || [], ...p2.preferences || []]),
+    people: dedupeFacts([...p1.people || [], ...p2.people || []]),
+    projects: dedupeFacts([...p1.projects || [], ...p2.projects || []]),
+    paused: pausedSide.paused,
+    pausedAt: pausedSide.pausedAt,
+    // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
+    // p2's explicit `undefined` keys from normalizeProfile — the bug that silently dropped workingHours).
+    workingHours: p2.workingHours ?? p1.workingHours,
+    responseStyle: p2.responseStyle ?? p1.responseStyle,
+    autoApprove: p2.autoApprove ?? p1.autoApprove,
+    highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
+    autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns
+  };
+}
+var MAX_NEW_PER_SWEEP = 8;
+function applyQualityBar(genTasks, items, vips = []) {
+  const byAnchor = new Map(items.map((i) => [normKey2(i.anchorKey), i]));
+  const vipTokens = vips.flatMap((v) => {
+    const email = v.toLowerCase().match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
+    const name = v.split(/[—\-(,]/)[0].trim().toLowerCase();
+    return [email, name.length >= 3 ? name : void 0].filter((x) => !!x);
+  });
+  const isVip = (sender) => !!sender && vipTokens.some((tok) => sender.toLowerCase().includes(tok));
+  return genTasks.filter((g) => {
+    const it = byAnchor.get(normKey2(g.anchorKey));
+    if (it?.labels?.includes("sent") && g.when) return true;
+    if (isVip(it?.sender)) return true;
+    return g.importance >= 0.55 || g.urgency >= 0.65;
+  });
+}
+async function generate(existing, profile, extras, userEmail) {
   const handled = existing.filter((t) => t.status === "done" || t.status === "dismissed").map((t) => ({
     title: t.title,
     why: t.why,
@@ -1502,6 +1964,21 @@ async function generate(existing, profile, extras) {
     link: t.evidence?.find((e) => e.url)?.url
   }));
   const active = existing.filter((t) => t.status !== "done" && t.status !== "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
+  if (userEmail) {
+    try {
+      const { items, attempted } = await discoverSourceItems(userEmail);
+      if (attempted) {
+        const knownAnchors = existing.map((t) => t.anchorKey);
+        const candidates = filterCandidates(items, knownAnchors);
+        const classified = candidates.length ? await classifyCandidates(candidates, profile, active.map((a) => a.title)) : { tasks: [], profileUpdates: [] };
+        for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
+        const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
+        return foldGenerated(existing, kept);
+      }
+    } catch (e) {
+      console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e);
+    }
+  }
   const gen = await generateTasks(profile, extras ? readOnly(extras) : void 0, handled, active);
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   return foldGenerated(existing, gen.tasks);
@@ -1509,7 +1986,7 @@ async function generate(existing, profile, extras) {
 function foldGenerated(existing, genTasks) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const dismissed = existing.filter((t) => t.status === "dismissed");
-  const resemblesDismissed = (g) => dismissed.some((d) => !!g.anchorKey && !!d.anchorKey && normKey(g.anchorKey) === normKey(d.anchorKey) || !!g.link && linkOf(d) === g.link || looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) || g.source === d.source && looseDup(g.why, d.why));
+  const resemblesDismissed = (g) => dismissed.some((d) => !!g.anchorKey && !!d.anchorKey && normKey2(g.anchorKey) === normKey2(d.anchorKey) || !!g.link && linkOf(d) === g.link || looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) || g.source === d.source && looseDup(g.why, d.why));
   genTasks = genTasks.filter((g) => !resemblesDismissed(g));
   const candidates = [...existing];
   const freshIds = /* @__PURE__ */ new Set();
@@ -1566,8 +2043,8 @@ function addManual(list, title, refined) {
 async function runById(list, id, profile, extras, revision) {
   const task = list.find((t) => t.id === id);
   if (!task) return void 0;
-  if (task.status === "running") return task;
-  task.status = "running";
+  if (canonStatus(task.status) === "executing") return task;
+  task.status = "executing";
   task.autoRan = true;
   const focus = revision?.trim() ? `The user reviewed your previous draft/output for this task and wants this CHANGE before they send it: "${revision.trim()}". Redo the task incorporating it \u2014 UPDATE the existing draft/doc (don't create a new copy) and re-offer it as a sendable.` : void 0;
   try {
@@ -1582,11 +2059,13 @@ async function runById(list, id, profile, extras, revision) {
     });
     task.links = out.links?.length ? out.links : void 0;
     task.sendables = out.sendables?.length ? out.sendables : void 0;
-    task.status = "executed";
+    task.status = "needs_review";
+    task.lastError = void 0;
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     return task;
   } catch (e) {
-    task.status = "ready";
+    task.status = "failed_retryable";
+    task.lastError = String(e?.message || e).slice(0, 300);
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     throw e;
   }
@@ -1637,6 +2116,161 @@ ${decisions}` : step.text) + qa;
   }
   task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   return task;
+}
+
+// server/jobs.ts
+var workerId = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+async function loadUser(email) {
+  const st = await loadState(email);
+  return { profile: st.profile || emptyProfile(), list: st.tasks || [] };
+}
+async function commitUser(email, profile, list) {
+  const current = await loadState(email);
+  const mergedTasks = mergeTaskLists(current.tasks || [], list);
+  const mergedProfile = mergeProfileStates(current.profile || emptyProfile(), profile);
+  await saveState(email, { profile: mergedProfile, tasks: mergedTasks, google: current.google });
+}
+async function processSweep(job) {
+  const email = job.user_email;
+  const { profile, list } = await loadUser(email);
+  if (profile.paused) return "skipped: AI paused";
+  const extras = await getAgentTools(email);
+  if (!extras?.tools?.length) return "skipped: nothing connected";
+  const before = new Set(list.map((t) => t.id));
+  const next = await generate(list, profile, extras, email);
+  const found = next.filter((t) => !before.has(t.id) && !isHandled(t.status));
+  const toRun = found.filter((t) => canonStatus(t.status) === "ready").sort((a, b) => b.score - a.score).slice(0, 3);
+  for (const t of toRun) t.status = "queued";
+  await commitUser(email, profile, next);
+  for (const t of found) void recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
+  for (const t of toRun) {
+    await enqueueJob(email, "execute_task", t.id);
+    void recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" });
+  }
+  return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued`;
+}
+async function markTaskStatus(email, taskId, status) {
+  const { profile, list } = await loadUser(email);
+  const t = list.find((x) => x.id === taskId);
+  if (!t || isHandled(t.status)) return;
+  t.status = status;
+  t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  await commitUser(email, profile, list);
+}
+async function processExecuteTask(job) {
+  const email = job.user_email;
+  const taskId = String(job.task_id || "");
+  const { profile, list } = await loadUser(email);
+  if (profile.paused) return "skipped: AI paused";
+  const t = list.find((x) => x.id === taskId);
+  if (!t) return "skipped: task not found";
+  const c = canonStatus(t.status);
+  if (isHandled(t.status)) return "skipped: already handled";
+  if (c === "needs_review" && !job.input?.note) return "skipped: already executed";
+  if (c === "failed_terminal" && !job.input?.manual) return "skipped: failed terminally \u2014 waiting for the user's Retry";
+  await recordEvent(email, "run_started", { taskId, jobId: job.id, message: job.input?.note ? "Revising per your note" : "Reading context and doing the reversible work" });
+  const extras = await getAgentTools(email);
+  t.autoRan = true;
+  try {
+    const updated = await runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : void 0);
+    await commitUser(email, profile, list);
+    const done = updated?.steps?.length ? `${updated.steps.filter((s) => !s.done).length} step(s) need you` : "fully handled";
+    await recordEvent(email, "run_succeeded", { taskId, jobId: job.id, message: updated?.synthesis?.slice(0, 200) || done });
+    return updated?.synthesis || "executed";
+  } catch (e) {
+    if (t && !isHandled(t.status)) {
+      if (job.attempt_count >= job.max_attempts) t.status = "failed_terminal";
+      t.autoRan = true;
+      t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    }
+    await commitUser(email, profile, list);
+    throw e;
+  }
+}
+async function processExecuteStep(job) {
+  const email = job.user_email;
+  const taskId = String(job.task_id || "");
+  const index = Number(job.input?.index);
+  const { profile, list } = await loadUser(email);
+  if (profile.paused) return "skipped: AI paused";
+  if (!Number.isInteger(index)) return "skipped: bad step index";
+  await recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
+  const permTools = await getAgentToolsWithPermission(email).catch(() => void 0);
+  const updated = await runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : void 0);
+  await commitUser(email, profile, list);
+  await recordEvent(email, "step_done", { taskId, jobId: job.id, message: updated?.steps?.[index]?.text?.slice(0, 200) });
+  return "step executed";
+}
+async function processJob(job) {
+  switch (job.type) {
+    case "sweep":
+      return processSweep(job);
+    case "execute_task":
+      return processExecuteTask(job);
+    case "revise":
+      return processExecuteTask(job);
+    // same processor; input.note carries the revision
+    case "execute_step":
+      return processExecuteStep(job);
+    default:
+      return `skipped: unknown type ${job.type}`;
+  }
+}
+async function drain(limit = 3, budgetMs = 24e4) {
+  const t0 = Date.now();
+  let processed = 0, failed = 0;
+  for (let i = 0; i < limit; i++) {
+    if (Date.now() - t0 > budgetMs) break;
+    const job = await claimJob(workerId);
+    if (!job) break;
+    try {
+      const note = await processJob(job);
+      await finishJob(job.id, "succeeded", void 0, { note });
+      processed++;
+    } catch (e) {
+      console.error(`[jobs] ${job.type} failed for ${job.user_email}${job.task_id ? ` task ${job.task_id}` : ""}:`, e?.message || e);
+      await finishJob(job.id, "failed", e?.message || String(e));
+      if (job.task_id) void recordEvent(job.user_email, "run_failed", { taskId: job.task_id, jobId: job.id, message: String(e?.message || e).slice(0, 200) });
+      failed++;
+    }
+  }
+  return { processed, failed };
+}
+async function enqueueAndDrain(email, type, taskId, input) {
+  const job = await enqueueJob(email, type, taskId, input);
+  if (job.status === "queued") {
+    if (taskId && type !== "sweep") await markTaskStatus(email, taskId, "queued").catch(() => {
+    });
+    await drain(2);
+  }
+  return await getJob(job.id, email) || job;
+}
+async function cronTick() {
+  const SWEEP_WINDOW_MS = 45 * 6e4;
+  const emails = await listAccountEmails(50);
+  let enqueued = 0;
+  for (const email of emails) {
+    try {
+      const { profile, list } = await loadUser(email);
+      if (profile.paused) continue;
+      const last = await getLatestJob(email, "sweep");
+      const lastAt = Date.parse(last?.finished_at || last?.created_at || "") || 0;
+      const active = last && (last.status === "queued" || last.status === "running");
+      if (!active && Date.now() - lastAt > SWEEP_WINDOW_MS) {
+        await enqueueJob(email, "sweep");
+        enqueued++;
+      }
+      const ready = list.filter((t) => canonStatus(t.status) === "ready" && !t.autoRan).slice(0, 2);
+      for (const t of ready) {
+        await enqueueJob(email, "execute_task", t.id);
+        enqueued++;
+      }
+    } catch (e) {
+      console.warn(`[jobs] cron skip ${email}:`, e?.message || e);
+    }
+  }
+  const { processed, failed } = await drain(5);
+  return { users: emails.length, enqueued, processed, failed };
 }
 
 // server/index.ts
@@ -1692,41 +2326,8 @@ var saveSession = (req) => new Promise((r) => req.session.save((err) => {
   if (err) console.warn("[session] save failed:", err?.message || err);
   r();
 }));
-var mergeTasks = (existing, incoming) => {
-  const rank = (s) => s === "done" || s === "dismissed" ? 4 : s === "executed" ? 3 : s === "running" ? 2 : 1;
-  const when = (t) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
-  const map = /* @__PURE__ */ new Map();
-  for (const t of existing) map.set(t.id, t);
-  for (const t of incoming) {
-    const ext = map.get(t.id);
-    if (!ext) {
-      map.set(t.id, t);
-      continue;
-    }
-    const winner = rank(t.status) > rank(ext.status) ? t : rank(t.status) < rank(ext.status) ? ext : when(t) >= when(ext) ? t : ext;
-    const loser = winner === t ? ext : t;
-    const steps = winner.steps?.map((s) => {
-      if (s.done) return s;
-      const other = loser.steps?.find((o) => o.text === s.text);
-      return other?.done ? { ...s, done: true, doneAt: other.doneAt, result: s.result ?? other.result } : s;
-    });
-    map.set(t.id, steps ? { ...winner, steps } : winner);
-  }
-  return dedupeTasks(Array.from(map.values()));
-};
-var mergeProfiles = (p1, p2) => {
-  const pausedAt = (p) => Date.parse(p.pausedAt || "") || 0;
-  const pausedSide = pausedAt(p2) >= pausedAt(p1) ? p2 : p1;
-  return {
-    name: p2.name || p1.name,
-    about: p2.about || p1.about,
-    preferences: dedupeFacts([...p1.preferences || [], ...p2.preferences || []]),
-    people: dedupeFacts([...p1.people || [], ...p2.people || []]),
-    projects: dedupeFacts([...p1.projects || [], ...p2.projects || []]),
-    paused: pausedSide.paused,
-    pausedAt: pausedSide.pausedAt
-  };
-};
+var mergeTasks = mergeTaskLists;
+var mergeProfiles = mergeProfileStates;
 var commit = async (req) => {
   await saveSession(req);
   if (req.session.user) {
@@ -1914,27 +2515,17 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
   }
   res.json(req.session.tasks || []);
 });
-var lastGenDate = /* @__PURE__ */ new Map();
-var genInflight = /* @__PURE__ */ new Map();
-var today = () => (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
 var CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1e3;
-var shouldRefreshContinuous = (lastGenTime) => {
-  if (!lastGenTime) return true;
-  const elapsed = Date.now() - new Date(lastGenTime).getTime();
-  return elapsed > CONTINUOUS_MONITOR_INTERVAL_MS;
-};
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to sweep for new tasks." });
     return;
   }
   try {
-    const todayStr = today();
+    const user = req.session.user;
     const force = req.body?.force === true;
-    const lastGen = lastGenDate.get(req.session.user) || req.session.lastGenDay;
-    const lastGenTime = req.session.lastGenTime;
-    const continuousRefresh = !force && shouldRefreshContinuous(lastGenTime);
-    if (!force && !continuousRefresh && lastGen === todayStr && (req.session.tasks || []).length) {
+    const lastGenTime = Date.parse(req.session.lastGenTime || "") || 0;
+    if (!force && Date.now() - lastGenTime < CONTINUOUS_MONITOR_INTERVAL_MS && (req.session.tasks || []).length) {
       res.json(req.session.tasks);
       return;
     }
@@ -1943,19 +2534,12 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
       res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." });
       return;
     }
-    const user = req.session.user;
-    let sweep = genInflight.get(user);
-    if (!sweep) {
-      sweep = (async () => {
-        req.session.tasks = await generate(req.session.tasks || [], req.session.profile ||= emptyProfile(), extras);
-        lastGenDate.set(user, todayStr);
-        req.session.lastGenDay = todayStr;
-        req.session.lastGenTime = (/* @__PURE__ */ new Date()).toISOString();
-        await commit(req);
-      })().finally(() => genInflight.delete(user));
-      genInflight.set(user, sweep);
-    }
-    await sweep;
+    const job = await enqueueAndDrain(user, "sweep");
+    if (job.status === "succeeded") req.session.lastGenTime = (/* @__PURE__ */ new Date()).toISOString();
+    const cloud = await loadState(user);
+    req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
+    await saveSession(req);
     res.json(req.session.tasks);
   } catch (e) {
     console.error("[tasks] generate error:", e);
@@ -1973,17 +2557,28 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   await commit(req);
   res.json(req.session.tasks);
 });
-var runningTasks = /* @__PURE__ */ new Set();
-var withTaskLock = async (id, res, fn) => {
-  if (runningTasks.has(id)) {
-    res.status(409).json({ error: "already running" });
-    return;
-  }
-  runningTasks.add(id);
+var runViaJob = async (req, res, type, input) => {
+  const user = req.session.user;
+  const id = String(req.params.id);
   try {
-    await fn();
-  } finally {
-    runningTasks.delete(id);
+    const job = await enqueueAndDrain(user, type, id, input);
+    const cloud = await loadState(user);
+    req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
+    await saveSession(req);
+    const t = (req.session.tasks || []).find((x) => x.id === id);
+    if (!t) {
+      res.status(404).json({ error: "not found" });
+      return;
+    }
+    if (job.status === "failed_terminal") {
+      res.status(500).json({ error: job.last_error || t.lastError || "run failed" });
+      return;
+    }
+    res.json(t);
+  } catch (e) {
+    console.error(`[tasks] ${type} error for task`, id, ":", e);
+    res.status(500).json({ error: e?.message || "run failed" });
   }
 };
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
@@ -1991,16 +2586,7 @@ app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res)
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to run tasks." });
     return;
   }
-  await withTaskLock(String(req.params.id), res, async () => {
-    try {
-      const t = await runById(req.session.tasks || [], String(req.params.id), req.session.profile ||= emptyProfile(), await toolsFor(req));
-      await commit(req);
-      res.json(t || { error: "not found" });
-    } catch (e) {
-      console.error("[tasks] run error for task", req.params.id, ":", e);
-      res.status(500).json({ error: e?.message || "run failed" });
-    }
-  });
+  await runViaJob(req, res, "execute_task", { manual: true });
 });
 app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, res) => {
   const note = String(req.body?.note || "").trim();
@@ -2012,16 +2598,7 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, r
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to revise tasks." });
     return;
   }
-  await withTaskLock(String(req.params.id), res, async () => {
-    try {
-      const t = await runById(req.session.tasks || [], String(req.params.id), req.session.profile ||= emptyProfile(), await toolsFor(req), note);
-      await commit(req);
-      res.json(t || { error: "not found" });
-    } catch (e) {
-      console.error("[tasks] revise error for task", req.params.id, ":", e);
-      res.status(500).json({ error: e?.message || "revise failed" });
-    }
-  });
+  await runViaJob(req, res, "revise", { note });
 });
 app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
   const id = String(req.params.id);
@@ -2030,6 +2607,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
     task.status = "done";
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await commit(req);
+    void recordEvent(req.session.user, "confirmed", { taskId: id, message: "You marked it done" });
   }
   res.json(req.session.tasks || []);
 });
@@ -2049,6 +2627,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
     task.status = "dismissed";
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await commit(req);
+    void recordEvent(req.session.user, "dismissed", { taskId: id, message: "You dismissed it \u2014 similar tasks won't come back" });
   }
   res.json(req.session.tasks || []);
 });
@@ -2057,18 +2636,8 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 6e4), asyn
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to run steps." });
     return;
   }
-  await withTaskLock(String(req.params.id), res, async () => {
-    try {
-      const permTools = await getAgentToolsWithPermission(req.session.user).catch(() => void 0);
-      const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : void 0;
-      const t = await runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), req.session.profile ||= emptyProfile(), permTools, answer);
-      await commit(req);
-      res.json(t || { error: "not found" });
-    } catch (e) {
-      console.error("[tasks] step run error for task", req.params.id, "step", req.params.index, ":", e);
-      res.status(500).json({ error: e?.message || "step run failed" });
-    }
-  });
+  const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : void 0;
+  await runViaJob(req, res, "execute_step", { index: Number(req.params.index), ...answer ? { answer } : {} });
 });
 app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
   const id = String(req.params.id);
@@ -2102,8 +2671,54 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
     s.sent = true;
     t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await commit(req);
+    void recordEvent(req.session.user, "sent", { taskId: t.id, message: `${s.label}${s.to ? ` \u2192 ${s.to}` : ""}` });
   }
   res.json(t);
+});
+app.get("/api/jobs/:id", requireAuth, async (req, res) => {
+  const job = await getJob(String(req.params.id), req.session.user);
+  if (!job) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  res.json({ id: job.id, type: job.type, status: job.status, taskId: job.task_id, attempts: job.attempt_count, error: job.last_error, createdAt: job.created_at, finishedAt: job.finished_at });
+});
+app.get("/api/tasks/:id/events", requireAuth, async (req, res) => {
+  res.json(await eventsForTask(req.session.user, String(req.params.id)));
+});
+app.post("/api/jobs/kick", requireAuth, rateLimit(60, 6e4), async (req, res) => {
+  try {
+    const out = await drain(1);
+    const active = await countActiveJobs(req.session.user);
+    if (out.processed || out.failed) {
+      const cloud = await loadState(req.session.user);
+      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+      await saveSession(req);
+    }
+    res.json({ ...out, active, tasks: req.session.tasks || [] });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || "kick failed" });
+  }
+});
+app.get("/api/cron/drain", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  const auth = String(req.headers.authorization || "");
+  if (secret && auth !== `Bearer ${secret}`) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  if (!secret && PROD) {
+    res.status(503).json({ error: "CRON_SECRET not configured" });
+    return;
+  }
+  try {
+    const out = await cronTick();
+    console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [cron] drain: ${JSON.stringify(out)}`);
+    res.json(out);
+  } catch (e) {
+    console.error("[cron] drain failed:", e);
+    res.status(500).json({ error: e?.message || "drain failed" });
+  }
 });
 app.post("/api/chat", requireAuth, rateLimit(20, 6e4), async (req, res) => {
   if (isPaused(req)) {

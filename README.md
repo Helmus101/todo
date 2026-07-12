@@ -5,14 +5,14 @@ A standalone web app that reads your Gmail, Calendar, and connected apps (Slack,
 - **Backend:** Node + Express
 - **Frontend:** Vite + React
 - **Integrations:** Composio (Gmail, Calendar, Slack, GitHub, Notion, Linear, Todoist, and more)
-- **AI:** Anthropic Claude for task generation and execution
+- **AI:** DeepSeek (OpenAI-compatible API) for task generation and execution
 
 ## Quick Start
 
 ```bash
 cd web
 cp .env.example .env
-# Set ANTHROPIC_API_KEY and COMPOSIO_API_KEY (get from https://composio.dev)
+# Set DEEPSEEK_API_KEY and COMPOSIO_API_KEY (get from https://composio.dev)
 # Set SESSION_SECRET to a long random string
 npm install
 npm run dev      # Open http://localhost:5273
@@ -20,7 +20,7 @@ npm run dev      # Open http://localhost:5273
 
 ## Required Environment Variables
 
-- `ANTHROPIC_API_KEY` - For Claude AI (task generation + execution)
+- `DEEPSEEK_API_KEY` - For the AI agent (task generation + execution)
 - `COMPOSIO_API_KEY` - For app integrations (get from https://composio.dev)
 - `SESSION_SECRET` - Long random string for session signing
 - `PUBLIC_URL` - Your app's URL (http://localhost:5273 locally, https://your-domain in production)
@@ -29,7 +29,8 @@ npm run dev      # Open http://localhost:5273
 
 - `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` - For cloud persistence (tasks/profile survive restarts)
 - `SUPABASE_SERVICE_KEY` - More secure than anon key (bypasses RLS)
-- `CLAUDE_MODEL` - Default: claude-opus-4-8
+- `DEEPSEEK_MODEL` - Default: deepseek-chat
+- `CRON_SECRET` - Protects the background job runner endpoint (required on Vercel)
 - `PORT` - Default: 8788
 
 ## Cloud Persistence (Recommended)

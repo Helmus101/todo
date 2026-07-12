@@ -10,7 +10,8 @@
     "dev:client": "wait-on -t 60000 tcp:127.0.0.1:8788 && vite",
     "build": "vite build",
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx tests/run.mjs"
   },
   "dependencies": {
     "@composio/core": "^0.11.0",

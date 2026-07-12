@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts } from "../shared/types.ts";
 import { aiReady, refineManualTask } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, eventsForTask, recordEvent, countActiveJobs } from "./store.ts";
 import * as tasks from "./tasks.ts";
+import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
 import { chat, type ChatTurn } from "./chat.ts";
 
@@ -80,51 +81,10 @@ app.use(async (req, _res, next) => {
 });
 
 const saveSession = (req: express.Request) => new Promise<void>((r) => req.session.save((err) => { if (err) console.warn("[session] save failed:", (err as any)?.message || err); r(); }));
-// Cross-device/tab merge. The more-PROGRESSED copy of a task wins (done can never regress to executed/ready);
-// equal progress → the most recently UPDATED copy wins (so a stale session can't overwrite fresh work, which
-// used to wipe step ticks). Step done-state is unioned across both copies: ticked anywhere = ticked.
-const mergeTasks = (existing: WebTask[], incoming: WebTask[]): WebTask[] => {
-  const rank = (s: WebTask["status"]) => (s === "done" || s === "dismissed") ? 4 : s === "executed" ? 3 : s === "running" ? 2 : 1;
-  const when = (t: WebTask) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
-  const map = new Map<string, WebTask>();
-  for (const t of existing) map.set(t.id, t);
-  for (const t of incoming) {
-    const ext = map.get(t.id);
-    if (!ext) { map.set(t.id, t); continue; }
-    const winner = rank(t.status) > rank(ext.status) ? t
-      : rank(t.status) < rank(ext.status) ? ext
-      : when(t) >= when(ext) ? t : ext;
-    const loser = winner === t ? ext : t;
-    const steps = winner.steps?.map((s) => {
-      if (s.done) return s;
-      const other = loser.steps?.find((o) => o.text === s.text);
-      return other?.done ? { ...s, done: true, doneAt: other.doneAt, result: s.result ?? other.result } : s;
-    });
-    map.set(t.id, steps ? { ...winner, steps } : winner);
-  }
-  // The id-union above can still leave TWO entries for the same real-world item: two sessions/tabs each
-  // mint a fresh random id when they independently discover the same Gmail thread/event. dedupeTasks
-  // collapses those by anchor/link/near-title, same as a single generate() sweep already does.
-  return tasks.dedupeTasks(Array.from(map.values()));
-};
-
-// Entity-level dedupe (not raw Set union): reworded copies of the same fact from different sessions/devices
-// must collapse, or the cloud profile grows forever — and it's injected into EVERY agent prompt.
-const mergeProfiles = (p1: Profile, p2: Profile): Profile => {
-  // paused is a boolean toggle, not a fact list — `||` would wrongly let a stale `true` from one side
-  // override a deliberate `false` from the other. Take whichever side was toggled MOST RECENTLY instead.
-  const pausedAt = (p: Profile) => Date.parse(p.pausedAt || "") || 0;
-  const pausedSide = pausedAt(p2) >= pausedAt(p1) ? p2 : p1;
-  return {
-    name: p2.name || p1.name,
-    about: p2.about || p1.about,
-    preferences: dedupeFacts([...(p1.preferences || []), ...(p2.preferences || [])]),
-    people: dedupeFacts([...(p1.people || []), ...(p2.people || [])]),
-    projects: dedupeFacts([...(p1.projects || []), ...(p2.projects || [])]),
-    paused: pausedSide.paused,
-    pausedAt: pausedSide.pausedAt,
-  };
-};
+// Cross-device/tab merges live in tasks.ts so the session-free job runner shares the EXACT same
+// semantics (progressed copy wins, step ticks union, entity dedupe, structured settings preserved).
+const mergeTasks = tasks.mergeTaskLists;
+const mergeProfiles = tasks.mergeProfileStates;
 
 // Persist the session AND this ACCOUNT's durable state (profile + tasks) to the cloud, keyed by the
 // account email — so it follows the account across devices and survives restarts. (Integration
@@ -315,45 +275,29 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
   res.json(req.session.tasks || []);
 });
 
-// Daily auto-generate: the dashboard silently POSTs here on load; this floor makes it a no-op unless it's
-// the first call of the calendar day (per account). So generation is AUTOMATIC (no button) yet runs the
-// expensive multi-tool agent at most once a day.
-const lastGenDate = new Map<string, string>(); // user → "YYYY-MM-DD" (fast path; session is the durable copy)
-const genInflight = new Map<string, Promise<void>>(); // user → running sweep, so two tabs never double-run the agent
-const today = () => new Date().toISOString().split("T")[0];
-const CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes between continuous checks
-const shouldRefreshContinuous = (lastGenTime?: string): boolean => {
-  if (!lastGenTime) return true;
-  const elapsed = Date.now() - new Date(lastGenTime).getTime();
-  return elapsed > CONTINUOUS_MONITOR_INTERVAL_MS;
-};
+// Sweeps run through the DURABLE JOB QUEUE (jobs.ts): this route enqueues + drains inline so the
+// interactive path stays synchronous for the client, while the exact same queue is drained by
+// /api/cron/drain when the browser is closed. Idempotency (one active sweep job per user) replaces
+// the old in-memory inflight map — it holds across serverless instances.
+const CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1000; // min gap between background sweeps
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to sweep for new tasks." }); return; }
   try {
-    const todayStr = today();
+    const user = req.session.user!;
     const force = req.body?.force === true; // the manual Refresh button — always run a REAL sweep
-    const lastGen = lastGenDate.get(req.session.user!) || req.session.lastGenDay;
-    const lastGenTime = req.session.lastGenTime;
-    // Continuous monitoring: if enough time has passed (30min), refresh even if same day
-    const continuousRefresh = !force && shouldRefreshContinuous(lastGenTime);
-    if (!force && !continuousRefresh && lastGen === todayStr && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
+    const lastGenTime = Date.parse(req.session.lastGenTime || "") || 0;
+    if (!force && Date.now() - lastGenTime < CONTINUOUS_MONITOR_INTERVAL_MS && (req.session.tasks || []).length) {
+      res.json(req.session.tasks); return; // watched recently — serve the current list
+    }
     const extras = await toolsFor(req);
     if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
-    // Mark the day done ONLY after generation succeeds — a failed/timed-out run must not burn the
-    // whole day's one attempt (that left users with no new tasks until tomorrow).
-    const user = req.session.user!;
-    let sweep = genInflight.get(user);
-    if (!sweep) {
-      sweep = (async () => {
-        req.session.tasks = await tasks.generate(req.session.tasks || [], (req.session.profile ||= emptyProfile()), extras);
-        lastGenDate.set(user, todayStr);
-        req.session.lastGenDay = todayStr;
-        req.session.lastGenTime = new Date().toISOString();
-        await commit(req);
-      })().finally(() => genInflight.delete(user));
-      genInflight.set(user, sweep);
-    }
-    await sweep;
+    const job = await jobs.enqueueAndDrain(user, "sweep");
+    if (job.status === "succeeded") req.session.lastGenTime = new Date().toISOString();
+    // The job committed to the CLOUD copy — fold it into this session so the response reflects it.
+    const cloud = await loadState(user);
+    req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
+    await saveSession(req);
     res.json(req.session.tasks);
   } catch (e: any) {
     console.error("[tasks] generate error:", e);
@@ -372,29 +316,37 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   res.json(req.session.tasks);
 });
 
-// Per-task run lock: a second run/revise/step call for the SAME task while one is in flight would burn a
-// full duplicate agent run (real credits) and race its writes. In-memory is fine — concurrent requests in
-// one process are the case that matters; cross-instance overlap is already softened by runById's status guard.
-const runningTasks = new Set<string>();
-const withTaskLock = async (id: string, res: express.Response, fn: () => Promise<void>): Promise<void> => {
-  if (runningTasks.has(id)) { res.status(409).json({ error: "already running" }); return; }
-  runningTasks.add(id);
-  try { await fn(); } finally { runningTasks.delete(id); }
+// Execution flows through the durable job queue: enqueue + drain inline (synchronous response for the
+// client), with job idempotency as the cross-instance lock — one ACTIVE job per task, held in the DB.
+// A second call while one is in flight gets a 409 (the client treats that as "the other run wins").
+const runViaJob = async (req: express.Request, res: express.Response, type: "execute_task" | "revise" | "execute_step", input?: any) => {
+  const user = req.session.user!;
+  const id = String(req.params.id);
+  try {
+    const job = await jobs.enqueueAndDrain(user, type, id, input);
+    // ALWAYS fold the cloud copy in and answer with the task's REAL state — a requeued-after-failure or
+    // another-worker-owns-it job is not an error; the task's own status (queued/executing/failed_retryable)
+    // tells the truth on the card and the client's kick loop keeps it moving.
+    const cloud = await loadState(user);
+    req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
+    await saveSession(req);
+    const t = (req.session.tasks || []).find((x) => x.id === id);
+    if (!t) { res.status(404).json({ error: "not found" }); return; }
+    // Only a TERMINAL job failure is an error response — the user needs the message + Retry.
+    if (job.status === "failed_terminal") { res.status(500).json({ error: job.last_error || t.lastError || "run failed" }); return; }
+    res.json(t);
+  } catch (e: any) {
+    console.error(`[tasks] ${type} error for task`, id, ":", e);
+    res.status(500).json({ error: e?.message || "run failed" });
+  }
 };
 
-// The client drives runs (calls this for each ready task) — synchronous, returns the executed task.
+// The client requests runs; the SERVER executes them (via the queue) — same queue the cron drains offline.
+// `manual: true` marks a deliberate user click, which is allowed to retry a terminally-failed task.
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run tasks." }); return; }
-  await withTaskLock(String(req.params.id), res, async () => {
-    try {
-      const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req));
-      await commit(req);
-      res.json(t || { error: "not found" });
-    } catch (e: any) {
-      console.error("[tasks] run error for task", req.params.id, ":", e);
-      res.status(500).json({ error: e?.message || "run failed" });
-    }
-  });
+  await runViaJob(req, res, "execute_task", { manual: true });
 });
 
 // Revise: the user declined to send and said what to change → re-run the task with that instruction so Otto
@@ -403,16 +355,7 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
   const note = String(req.body?.note || "").trim();
   if (!note) { res.status(400).json({ error: "note required" }); return; }
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to revise tasks." }); return; }
-  await withTaskLock(String(req.params.id), res, async () => {
-    try {
-      const t = await tasks.runById(req.session.tasks || [], String(req.params.id), (req.session.profile ||= emptyProfile()), await toolsFor(req), note);
-      await commit(req);
-      res.json(t || { error: "not found" });
-    } catch (e: any) {
-      console.error("[tasks] revise error for task", req.params.id, ":", e);
-      res.status(500).json({ error: e?.message || "revise failed" });
-    }
-  });
+  await runViaJob(req, res, "revise", { note });
 });
 
 // These return the FULL task list (client filters out done/dismissed for display) — so the dashboard's
@@ -424,6 +367,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
     task.status = "done";
     task.updatedAt = new Date().toISOString();
     await commit(req);
+    void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
   }
   res.json(req.session.tasks || []);
 });
@@ -443,24 +387,16 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
     task.status = "dismissed";
     task.updatedAt = new Date().toISOString();
     await commit(req);
+    void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
   }
   res.json(req.session.tasks || []);
 });
-// Auto-do ONE automatable step (focused agent run over the connected apps).
+// Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue,
+// same as full runs, so it's durably locked and audited.
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run steps." }); return; }
-  await withTaskLock(String(req.params.id), res, async () => {
-    try {
-      const permTools = await integrations.getAgentToolsWithPermission(req.session.user!).catch(() => undefined);
-      const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
-      const t = await tasks.runStep(req.session.tasks || [], String(req.params.id), Number(req.params.index), (req.session.profile ||= emptyProfile()), permTools, answer);
-      await commit(req);
-      res.json(t || { error: "not found" });
-    } catch (e: any) {
-      console.error("[tasks] step run error for task", req.params.id, "step", req.params.index, ":", e);
-      res.status(500).json({ error: e?.message || "step run failed" });
-    }
-  });
+  const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
+  await runViaJob(req, res, "execute_step", { index: Number(req.params.index), ...(answer ? { answer } : {}) });
 });
 // Mark a step done/undone (a manual step the user did, or after the client opened a URL step).
 app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
@@ -490,8 +426,53 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
     s.sent = true;
     t!.updatedAt = new Date().toISOString();
     await commit(req);
+    void recordEvent(req.session.user!, "sent", { taskId: t!.id, message: `${s.label}${s.to ? ` → ${s.to}` : ""}` });
   }
   res.json(t);
+});
+
+// ── Jobs + timeline (the durable execution layer's public surface) ────────────
+app.get("/api/jobs/:id", requireAuth, async (req, res) => {
+  const job = await getJob(String(req.params.id), req.session.user!);
+  if (!job) { res.status(404).json({ error: "not found" }); return; }
+  res.json({ id: job.id, type: job.type, status: job.status, taskId: job.task_id, attempts: job.attempt_count, error: job.last_error, createdAt: job.created_at, finishedAt: job.finished_at });
+});
+app.get("/api/tasks/:id/events", requireAuth, async (req, res) => {
+  res.json(await eventsForTask(req.session.user!, String(req.params.id)));
+});
+// Client-driven drain "kick": while any of the user's jobs are queued (e.g. execution queued by a sweep),
+// the OPEN client kicks one job at a time so online users see work happen within seconds, not at the next
+// cron tick. Each kick is one bounded function invocation — serverless-friendly.
+app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) => {
+  try {
+    const out = await jobs.drain(1);
+    const active = await countActiveJobs(req.session.user!);
+    // Refresh this session's view of the cloud copy the job just wrote.
+    if (out.processed || out.failed) {
+      const cloud = await loadState(req.session.user!);
+      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+      await saveSession(req);
+    }
+    res.json({ ...out, active, tasks: req.session.tasks || [] });
+  } catch (e: any) { res.status(500).json({ error: e?.message || "kick failed" }); }
+});
+
+// Background drain — called by Vercel Cron (Authorization: Bearer $CRON_SECRET) every few minutes.
+// This is what makes Otto work with every browser closed: sweeps due accounts, executes ready tasks,
+// retries failed jobs, all through the same durable queue the interactive routes use.
+app.get("/api/cron/drain", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  const auth = String(req.headers.authorization || "");
+  if (secret && auth !== `Bearer ${secret}`) { res.status(401).json({ error: "unauthorized" }); return; }
+  if (!secret && PROD) { res.status(503).json({ error: "CRON_SECRET not configured" }); return; }
+  try {
+    const out = await jobs.cronTick();
+    console.log(`${new Date().toISOString()} [cron] drain: ${JSON.stringify(out)}`);
+    res.json(out);
+  } catch (e: any) {
+    console.error("[cron] drain failed:", e);
+    res.status(500).json({ error: e?.message || "drain failed" });
+  }
 });
 
 // ── Chat (DeepSeek + web search, grounded in the user's profile + to-dos) ─────────

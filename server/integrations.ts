@@ -62,13 +62,50 @@ export const logoFor = (toolkit: string) => `https://logos.composio.dev/api/${St
 
 export function integrationsReady(): boolean { return !!process.env.COMPOSIO_API_KEY; }
 
+// ── Action policy registry ────────────────────────────────────────────────────
+// EXPLICIT per-action permissions for the core (Google-first) toolkits — the source of truth the code
+// enforces before every tool call. Three modes:
+//   auto     — the agent may run it unattended (reads, drafts, Otto-owned artifacts)
+//   approve  — stays in the toolset but returns PERMISSION_REQUIRED unless the user clicked Approve & Run
+//   never    — irreversible/outbound/destructive: stripped from the toolset entirely
+// Actions NOT listed here fall back to the regex classifiers below (isGatedAction/isWriteGatedAction),
+// so a new/unknown Composio action is still risk-classified rather than silently allowed.
+export type ActionMode = "auto" | "approve" | "never";
+export const ACTION_POLICIES: Record<string, ActionMode> = {
+  // Gmail — read + draft are auto; anything that leaves the account or destroys mail is never.
+  GMAIL_FETCH_EMAILS: "auto", GMAIL_FETCH_MESSAGE_BY_THREAD_ID: "auto", GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID: "auto",
+  GMAIL_LIST_THREADS: "auto", GMAIL_GET_ATTACHMENT: "auto", GMAIL_LIST_DRAFTS: "auto", GMAIL_GET_PROFILE: "auto",
+  GMAIL_CREATE_EMAIL_DRAFT: "auto", GMAIL_UPDATE_EMAIL_DRAFT: "auto",
+  GMAIL_SEND_EMAIL: "never", GMAIL_SEND_DRAFT: "never", GMAIL_REPLY_TO_THREAD: "never", GMAIL_FORWARD_MESSAGE: "never",
+  GMAIL_DELETE_MESSAGE: "never", GMAIL_DELETE_DRAFT: "never", GMAIL_TRASH_MESSAGE: "never", GMAIL_ARCHIVE_MESSAGE: "never",
+  // Calendar — reads auto; ANY event write needs approval (it lands on calendars); invites never.
+  GOOGLECALENDAR_EVENTS_LIST: "auto", GOOGLECALENDAR_FIND_EVENT: "auto", GOOGLECALENDAR_GET_EVENT: "auto",
+  GOOGLECALENDAR_FIND_FREE_SLOTS: "auto", GOOGLECALENDAR_GET_CALENDAR: "auto", GOOGLECALENDAR_FREE_BUSY_QUERY: "auto",
+  GOOGLECALENDAR_CREATE_EVENT: "approve", GOOGLECALENDAR_UPDATE_EVENT: "approve", GOOGLECALENDAR_PATCH_EVENT: "approve", GOOGLECALENDAR_QUICK_ADD: "approve",
+  GOOGLECALENDAR_DELETE_EVENT: "never",
+  // Drive/Docs — search/read/create-new auto; editing EXISTING docs needs approval; delete/share never.
+  GOOGLEDRIVE_FIND_FILE: "auto", GOOGLEDRIVE_DOWNLOAD_FILE: "auto", GOOGLEDRIVE_EXPORT_FILE: "auto", GOOGLEDRIVE_LIST_FILES: "auto",
+  GOOGLEDOCS_GET_DOCUMENT_BY_ID: "auto", GOOGLEDOCS_CREATE_DOCUMENT: "auto", GOOGLEDOCS_SEARCH_DOCUMENTS: "auto",
+  GOOGLEDOCS_UPDATE_EXISTING_DOCUMENT: "approve", GOOGLEDOCS_UPDATE_DOCUMENT_MARKDOWN: "approve",
+  GOOGLEDRIVE_DELETE_FILE: "never", GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE: "never",
+  // Sheets — reads + cell writes auto (reversible); structural deletes never.
+  GOOGLESHEETS_BATCH_GET: "auto", GOOGLESHEETS_GET_SPREADSHEET_INFO: "auto", GOOGLESHEETS_LOOKUP_SPREADSHEET_ROW: "auto",
+  GOOGLESHEETS_CREATE_GOOGLE_SHEET1: "auto", GOOGLESHEETS_BATCH_UPDATE: "auto", GOOGLESHEETS_UPDATE_VALUES: "auto", GOOGLESHEETS_APPEND_VALUES: "auto",
+  GOOGLESHEETS_DELETE_SHEET: "never", GOOGLESHEETS_DELETE_DIMENSION: "never",
+  // Slack — read + compose only; posting is the user's click.
+  SLACK_FETCH_CONVERSATION_HISTORY: "auto", SLACK_LIST_ALL_CHANNELS: "auto", SLACK_SEARCH_MESSAGES: "auto", SLACK_FIND_USERS: "auto",
+  SLACK_CHAT_POST_MESSAGE: "never", SLACK_SEND_MESSAGE: "never", SLACK_CHAT_DELETE: "never",
+};
+
 /**
  * Is this action one the agent must NEVER run unattended — an irreversible OUTBOUND send or a DESTRUCTIVE
- * op? Those are kept out of the toolset; the agent leaves them as steps for the user. Reversible writes
- * (create draft/doc/task/event, update, comment) are allowed. A draft is explicitly NOT gated (safe).
+ * op? Policy registry first (explicit, code-enforced), regex classifier as the fallback for actions the
+ * registry doesn't list. A draft is explicitly NOT gated (safe).
  */
 function isGatedAction(rawName: string): boolean {
   const n = rawName.toUpperCase();
+  const policy = ACTION_POLICIES[n];
+  if (policy) return policy === "never";
   if (/DRAFT/.test(n) && !/(SEND|DELETE|TRASH)/.test(n)) return false; // creating/updating a draft is safe
   return /(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|DELETE|REMOVE|TRASH|ARCHIVE|CREATE_POST|CREATE_TWEET|CREATE_MESSAGE|SCHEDULE_MESSAGE|CREATE_DM|_POST_|_POST$|SHARE|INVITE)/.test(n);
 }
@@ -87,6 +124,9 @@ function isGatedAction(rawName: string): boolean {
  */
 export function isWriteGatedAction(rawName: string): boolean {
   const n = rawName.toUpperCase();
+  // Policy registry first — explicit beats inferred.
+  const policy = ACTION_POLICIES[n];
+  if (policy) return policy === "approve";
   // Google Docs — edits to existing documents. Creating a NEW doc is allowed (no UPDATE/PATCH keyword).
   if (/^GOOGLEDOCS_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|APPEND|INSERT|DELETE_CONTENT|BATCH)/.test(n)) return true;
   // Google Sheets — cell writes are REVERSIBLE (cells can be cleared/rewritten), so the agent may update
@@ -347,6 +387,17 @@ const isRead = (n: string) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|
  *  the sweep must not send anything. */
 export function readOnly(t: AgentTools): AgentTools {
   return { tools: t.tools.filter((x) => isRead(x.name)), call: t.call, connected: t.connected };
+}
+
+/** Execute ONE explicitly-named READ action directly (the deterministic discovery pipeline) — refuses
+ *  anything that isn't a pure read, so this path can never write, send, or delete regardless of caller. */
+export async function readAction(userId: string, action: string, args: Record<string, unknown>): Promise<any> {
+  if (!integrationsReady() || !userId) throw new Error("integrations not configured");
+  const policy = ACTION_POLICIES[action.toUpperCase()];
+  if (policy !== "auto" || !isRead(action.toUpperCase())) throw new Error(`not an allowed read action: ${action}`);
+  const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+  if (r && r.successful === false) throw new Error(String(r.error || `read failed: ${action}`));
+  return r?.data ?? r;
 }
 
 /**

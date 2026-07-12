@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
 import { api, type IntegrationItem } from "./api.ts";
 
 /** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
@@ -14,12 +15,31 @@ const relTime = (iso: string): string => {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
-function subtitle(t: WebTask): string {
-  if (t.status === "running") return "Working on it…";
-  if (t.status === "executed") {
+// Explicit card status: what state is this task ACTUALLY in, in user terms. Derived from the canonical
+// lifecycle + the task's contents (a sendable → "Draft ready"; an open question → "Needs your answer").
+function statusChip(t: WebTask): { label: string; tone: "muted" | "busy" | "attention" | "bad" | "good" } | null {
+  const c = canonStatus(t.status);
+  if (c === "queued") return { label: "Queued", tone: "muted" };
+  if (c === "executing") return { label: "Working", tone: "busy" };
+  if (c === "failed_retryable") return { label: "Failed — will retry", tone: "bad" };
+  if (c === "failed_terminal") return { label: "Failed", tone: "bad" };
+  if (c === "needs_review") {
+    if (t.steps?.some((s) => !s.done && s.question)) return { label: "Needs your answer", tone: "attention" };
+    if (t.steps?.some((s) => !s.done && s.needsPermission)) return { label: "Needs approval", tone: "attention" };
+    if (t.sendables?.some((s) => !s.sent)) return { label: "Draft ready", tone: "attention" };
     const n = (t.steps || []).filter((s) => !s.done && !s.automatable).length;
-    return n ? `${n} thing${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} you` : "Done for you";
+    return n ? { label: `${n} need${n > 1 ? "" : "s"} you`, tone: "attention" } : { label: "Done for you", tone: "good" };
   }
+  return null;
+}
+
+function subtitle(t: WebTask): string {
+  const c = canonStatus(t.status);
+  if (c === "queued") return "Queued — starting shortly…";
+  if (c === "executing") return "Working on it…";
+  if (c === "failed_retryable") return `Run failed — retrying. ${t.lastError || ""}`.trim();
+  if (c === "failed_terminal") return `Run failed — tap Run to retry. ${t.lastError || ""}`.trim();
+  if (c === "needs_review") return statusChip(t)?.label === "Done for you" ? "Done for you" : (statusChip(t)?.label || t.why);
   return t.why;
 }
 
@@ -155,17 +175,6 @@ export function App() {
   // sweep folding in) must not replay the whole cascade — that's what made loads feel janky.
   const [settled, setSettled] = useState(false);
   const generatedOnce = useRef(false);
-  const inflight = useRef<Set<string>>(new Set()); // ids currently auto-running (bounded concurrency)
-  const attempts = useRef<Map<string, number>>(new Map()); // per-task auto-run attempts (capped retry)
-  const RUN_LIMIT = 3;            // run a few at once so the list clears faster (cheap now that tools are cached)
-  // Frees a CONCURRENCY SLOT so one slow run can't block the rest of the list — it does NOT cancel the
-  // request or mark the task failed; the real fetch keeps going server-side and its own outcome still lands
-  // whenever it arrives. (Server's round budget keeps real runs well under this.)
-  const SLOT_FREE_MS = 90_000;
-  // True dead-man's switch: only fires if the request NEVER comes back at all (a genuinely hung connection,
-  // not just a slow-but-working run). Flips to ready for a manual retry — no auto-loop, since a fault that
-  // survives this long needs a human look, not another silent attempt.
-  const STUCK_MS = 600_000;
 
   const loadStatus = useCallback(async () => { try { setStatus(await api.status()); } catch { /* keep last */ } }, []);
 
@@ -205,7 +214,8 @@ export function App() {
   }, [connected]);
 
   // Un-stick tasks whose auto-run died mid-flight (marked autoRan but produced nothing) so they retry.
-  const retryFlags = (list: WebTask[]) => list.map((x) => (x.status === "ready" && x.autoRan && !x.synthesis ? { ...x, autoRan: false } : x));
+  // Server truth passes through as-is — the job layer owns execution state now; the client just displays it.
+  const retryFlags = (list: WebTask[]) => list;
 
   // Pull the server's task list (cheap GET; also reconciles cross-device state server-side).
   const syncTasks = useCallback(async () => {
@@ -251,48 +261,36 @@ export function App() {
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(tick); };
   }, [connected, syncTasks, sweepIfDue]);
 
-  // Auto-run, client-driven with BOUNDED CONCURRENCY: keep up to RUN_LIMIT ready tasks running at once.
-  // Each run is synchronous server-side (returns the executed task); completion re-renders → this effect
-  // picks the next. A slow run frees its concurrency slot without being declared failed (see SLOT_FREE_MS).
+  // THE SERVER OWNS EXECUTION. The browser no longer decides what runs — sweeps queue execution jobs
+  // server-side, cron drains them offline. While anything is queued/executing, the OPEN client "kicks"
+  // the drain (one bounded job per kick) so online users see work complete within seconds instead of at
+  // the next cron tick, and folds each kick's fresh task state straight into the list.
+  const kicking = useRef(false);
+  // Kicks continue through failed_retryable too — the failed attempt's job is REQUEUED server-side, so
+  // "Failed — will retry" actually retries within seconds while the tab is open (not at the next cron).
+  const hasActiveWork = (list: WebTask[]) => list.some((t) => isInFlight(t.status) || canonStatus(t.status) === "failed_retryable");
   useEffect(() => {
-    // `loaded` gate: never auto-run off the CACHED list — a task finished on another device could look
-    // "ready" here and get pointlessly (and expensively) re-run before server truth arrives.
-    // `paused` gate: "pause all AI usage" stops auto-run too — tasks just sit ready until resumed.
     if (!connected || !loaded || status?.paused) return;
-    const slots = RUN_LIMIT - inflight.current.size;
-    if (slots <= 0) return;
-    const next = tasks.filter((t) => t.status === "ready" && !t.autoRan && !inflight.current.has(t.id)).slice(0, slots);
-    if (!next.length) return;
-    for (const task of next) {
-      inflight.current.add(task.id);
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "running" } : t)));
-      let slotFreed = false;
-      const freeSlot = () => { if (!slotFreed) { slotFreed = true; inflight.current.delete(task.id); } };
-      const slotTimer = setTimeout(freeSlot, SLOT_FREE_MS);
-      const stuckTimer = setTimeout(() => {
-        // The request truly never came back — not just slow. Let the user retry by hand instead of
-        // leaving the card stuck on "running" forever.
-        setTasks((prev) => prev.map((t) => (t.id === task.id && t.status === "running" ? { ...t, status: "ready", autoRan: true } : t)));
-      }, STUCK_MS);
-      api.run(task.id)
-        // If the user dismissed/confirmed the task while it was running, keep THEIR state — never resurrect it.
-        .then((u) => { if (u && u.id) { attempts.current.delete(u.id); setTasks((prev) => prev.map((t) => (t.id === u.id ? (t.status === "dismissed" || t.status === "done" ? t : u) : t))); } })
-        .catch((e: any) => {
-          // A 409 means another in-flight run — this same task's own request via another tab/device, or a
-          // stale attempt still holding the server-side lock — will deliver the real result on its own.
-          // Retrying here can never succeed while the lock is held, so back off quietly: no status flip,
-          // no attempt charged, no misleading "will retry" flicker for a task that's actually fine.
-          if (e?.status === 409) return;
-          // A real failure. Retry a couple of times with a short delay; only give up (stay paused, user can
-          // hit Run again) after that, so a persistent fault doesn't loop forever.
-          const n = (attempts.current.get(task.id) || 0) + 1;
-          attempts.current.set(task.id, n);
-          setTasks((prev) => prev.map((t) => (t.id === task.id ? (t.status === "dismissed" || t.status === "done" ? t : { ...t, status: "ready", autoRan: true }) : t)));
-          if (n < 3) setTimeout(() => setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, autoRan: false } : t))), 5000);
-        })
-        .finally(() => { clearTimeout(slotTimer); clearTimeout(stuckTimer); freeSlot(); });
-    }
-  }, [tasks, connected, loaded, status?.paused]);
+    if (!hasActiveWork(tasks)) return;
+    const tick = async () => {
+      if (kicking.current) return;
+      kicking.current = true;
+      try {
+        const out = await api.kick();
+        if (Array.isArray(out.tasks) && out.tasks.length) {
+          // Keep the user's local done/dismiss decisions — never resurrect a card they closed.
+          setTasks((prev) => out.tasks.map((u) => {
+            const cur = prev.find((p) => p.id === u.id);
+            return cur && isHandled(cur.status) && !isHandled(u.status) ? cur : u;
+          }));
+        }
+      } catch { /* next tick retries */ }
+      finally { kicking.current = false; }
+    };
+    void tick();
+    const id = setInterval(tick, 4000);
+    return () => clearInterval(id);
+  }, [connected, loaded, status?.paused, hasActiveWork(tasks)]);
 
   // Manual ↻ Refresh: an on-demand FORCED sweep (bypasses the daily floor). The automatic daily sweep is
   // sweepIfDue above — once per day, retried on focus/interval until it succeeds, never more.
@@ -305,11 +303,13 @@ export function App() {
       setTasks(t); setLoaded(true);
       // A manual Refresh counts as a sweep — reset the watch interval so the background one doesn't repeat it.
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
-      // Honest feedback on what the sweep found — "nothing happened" and "nothing new" look identical otherwise.
-      const added = t.filter((x) => !before.has(x.id) && x.status !== "done" && x.status !== "dismissed").length;
+      // Run summary — honest, specific feedback on what the sweep did (the trust-building layer).
+      const fresh = t.filter((x) => !before.has(x.id) && !isHandled(x.status));
+      const queuedN = fresh.filter((x) => isInFlight(x.status)).length;
+      const needsYou = t.filter((x) => canonStatus(x.status) === "needs_review" && (x.steps?.some((s) => !s.done && !s.automatable) || x.sendables?.some((s) => !s.sent))).length;
       if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now.");
-      else if (!added) setNote("Swept your apps — no new tasks; everything actionable is already on your list.");
-      else setNote(`Found ${added} new task${added === 1 ? "" : "s"}.`);
+      else if (!fresh.length) setNote(`Swept your apps — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything actionable is already on your list"}.`);
+      else setNote(`Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} queued to run` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`);
     }
     catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
     finally { setBusy(false); }
@@ -339,7 +339,7 @@ export function App() {
 
   const live = tasks.filter((t) => t.status !== "done" && t.status !== "dismissed").sort((a, b) => b.score - a.score);
   const completed = tasks.filter((t) => t.status === "done").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const working = tasks.filter((t) => t.status === "running").length;
+  const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const openId = route.startsWith("task/") ? route.slice(5) : null; // the deep-linked task, if any
 
@@ -1009,6 +1009,32 @@ function AddTask({ onAdded }: { onAdded: (t: WebTask[]) => void }) {
   );
 }
 
+/** Per-task activity timeline (from the durable job-event log): what happened, when — found, run started,
+ *  succeeded/failed, sent, confirmed. Makes "is Otto working / what did it actually do" transparent. */
+function Timeline({ taskId, limit = 8, refreshKey }: { taskId: string; limit?: number; refreshKey?: string }) {
+  const [events, setEvents] = useState<{ kind: string; message?: string; at: string }[] | null>(null);
+  useEffect(() => { void api.taskEvents(taskId).then(setEvents).catch(() => setEvents([])); }, [taskId, refreshKey]);
+  const LABELS: Record<string, string> = {
+    found: "Found", queued: "Queued", run_started: "Started working", run_succeeded: "Finished",
+    run_failed: "Run failed", step_started: "Step started", step_done: "Step completed",
+    sent: "Sent", confirmed: "Marked done", dismissed: "Dismissed",
+  };
+  const when = (at: string) => { try { return new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+  if (!events?.length) return null;
+  return (
+    <div className="timeline">
+      <div className="timeline-head">Activity</div>
+      {events.slice(0, limit).map((e, i) => (
+        <div className="timeline-row" key={i}>
+          <span className={`timeline-dot ${e.kind === "run_failed" ? "bad" : ""}`} />
+          <span className="timeline-what">{LABELS[e.kind] || e.kind}{e.message ? ` — ${e.message}` : ""}</span>
+          <span className="timeline-when">{when(e.at)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void }) {
   const [running, setRunning] = useState(false);
   const [stepBusy, setStepBusy] = useState<number | null>(null);
@@ -1100,10 +1126,12 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   };
   const openableCount = steps.filter((s) => s.url && !s.done && !blocked(s)).length;
 
+  const cStatus = canonStatus(task.status);
+
   // Auto-do: silently run the next automatable, unblocked step (one at a time). Manual steps + tab-opens
   // (without the extension) wait for you; completing a manual prerequisite unblocks its dependents.
   useEffect(() => {
-    if (task.status !== "executed" || stepBusy != null) return;
+    if (cStatus !== "needs_review" || stepBusy != null) return;
     const i = steps.findIndex((s, idx) => canAuto(s, idx));
     if (i >= 0) void doStep(i);
   }, [task, stepBusy, failed]);
@@ -1111,7 +1139,7 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   // Auto-open documents Otto created (Doc/Sheet/Slides) once the task is done — capped per task + per
   // session, once per URL, and only with the extension (so it isn't popup-blocked). Off if the user toggled it.
   useEffect(() => {
-    if (task.status !== "executed" || !autoOpenDocsOn() || !extPresent()) return;
+    if (cStatus !== "needs_review" || !autoOpenDocsOn() || !extPresent()) return;
     const room = SESSION_DOC_CAP - sessionDocsOpened;
     if (room <= 0) return;
     // Only docs we've NEVER auto-opened (persisted across reloads) — so the same tabs never reopen.
@@ -1129,18 +1157,20 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
 
   // State classes drive the visual language: pulsing node while thinking, soft amber glow when a step
   // is waiting on the user, dormant/desaturated once handled — readable at a glance, without reading.
-  const isDone = task.status === "done" || task.status === "dismissed";
-  const needsYou = !isDone && task.status === "executed" &&
+  const isDone = isHandled(task.status);
+  const needsYou = !isDone && cStatus === "needs_review" &&
     (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
+  const chip = !isDone ? statusChip(task) : null;
   return (
-    <div ref={cardRef} className={`card ${open ? "open" : ""} ${task.status === "running" ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
+    <div ref={cardRef} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
       <div className="card-main" onClick={onToggle}>
         <div className="card-text">
           <div className="card-title">{task.title}</div>
           <div className="card-sub">{task.when && <span className="when">{task.when}</span>}{subtitle(task)}</div>
         </div>
-        {task.status === "running" ? <span className="card-spin" title="Working…" />
-          : task.status === "executed" && (task.steps?.length ?? 0) > 0
+        {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
+        {cStatus === "executing" ? <span className="card-spin" title="Working…" />
+          : cStatus === "needs_review" && (task.steps?.length ?? 0) > 0
             ? <span className="card-prog" title="Steps done">{(task.steps || []).filter((s) => s.done).length}/{task.steps!.length}</span>
             : null}
         <span className="caret">›</span>
@@ -1148,16 +1178,11 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
 
       {open && (
         <div className="detail">
+          {/* The agent drafted it — review it right here, then fire it (with a confirm). The only time
+              anything sends. FIRST on the card: your next action is the first thing you see. */}
+          {task.sendables?.length ? (
           <section>
-            <h4>What Otto did</h4>
-            {task.synthesis
-              ? <Bullets text={task.synthesis} />
-              : <p className="muted">{task.status === "running" ? "Working on it now…" : task.status === "executed" ? "Nothing to report." : "Hasn't run yet."}</p>}
-            {task.links?.length ? (
-              <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
-            ) : null}
-            {/* The agent drafted it — review it right here, then fire it (with a confirm). The only time anything sends. */}
-            {task.sendables?.length ? (
+            {(
               <div className="sendables">
                 {task.sendables.map((s, i) => {
                   // Who this goes to — ALWAYS shown before the user sends (a calendar invite lists every attendee).
@@ -1227,8 +1252,9 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
                   );
                 })}
               </div>
-            ) : null}
+            )}
           </section>
+          ) : null}
           {steps.length > 0 && (
           <section>
             <h4>What's left{openableCount >= 2 && <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>Open all {openableCount} ↗</button>}</h4>
@@ -1304,6 +1330,17 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               </ul>
           </section>
           )}
+          <section>
+            <h4>What Otto did</h4>
+            {task.synthesis
+              ? <Bullets text={task.synthesis} />
+              : <p className="muted">{cStatus === "queued" ? "Queued — starting shortly…" : cStatus === "executing" ? "Working on it now…" : cStatus === "needs_review" ? "Nothing to report." : cStatus === "failed_retryable" || cStatus === "failed_terminal" ? (task.lastError || "The run failed.") : "Hasn't run yet."}</p>}
+            {task.links?.length ? (
+              <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
+            ) : null}
+          </section>
+          {/* Activity is PRIMARY, not hidden — the latest few timeline events sit right on the card. */}
+          <Timeline taskId={task.id} limit={3} refreshKey={task.updatedAt} />
           <button className="ctx-toggle" onClick={() => setShowContext((v) => !v)}>{showContext ? "Hide context" : "Show context"}</button>
           {showContext && (
             <section className="ctx">
@@ -1312,10 +1349,11 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               {task.evidence?.length ? (
                 <ul className="links src-links">{task.evidence.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
               ) : null}
+              <Timeline taskId={task.id} refreshKey={task.updatedAt} />
             </section>
           )}
           <div className="actions">
-            {task.status === "executed" ? (
+            {cStatus === "needs_review" ? (
               <>
                 <button className="btn primary" title="Looks good — mark this handled" onClick={() => void leave(() => api.confirm(task.id))}>Looks good</button>
                 <div className="actions-rest">
@@ -1324,10 +1362,12 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               </>
             ) : (
               <>
-                {task.autoRan ? (
+                {cStatus === "failed_terminal" || cStatus === "failed_retryable" ? (
                   <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Retry"}</button>
+                ) : isInFlight(task.status) ? (
+                  <button className="btn primary" disabled>{cStatus === "queued" ? "Queued…" : "Working…"}</button>
                 ) : (
-                  <button className="btn primary" disabled>{running ? "Working…" : "Preparing…"}</button>
+                  <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Run now"}</button>
                 )}
                 <div className="actions-rest"><button className="btn xs ghost" title="Remove this task" onClick={() => void leave(() => api.dismiss(task.id))}>Dismiss</button></div>
               </>

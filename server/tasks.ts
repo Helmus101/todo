@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
-import { dedupeFacts, sameFact } from "../shared/types.ts";
-import { generateTasks, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
+import { dedupeFacts, sameFact, canonStatus } from "../shared/types.ts";
+import { generateTasks, classifyCandidates, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
 import { readOnly, type AgentTools } from "./integrations.ts";
+import { discoverSourceItems, filterCandidates } from "./discover.ts";
 
 /** Fold a learned fact into the person-profile. 'name'/'about' replace. List facts REPLACE an existing
  *  same-entity fact (newest wording wins — so a correction actually takes effect; dedupeFacts alone keeps
@@ -90,7 +91,16 @@ const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]
 const linkOf = (t: { evidence?: TaskLink[] }) => (t.evidence || []).map((e) => e.url).find(Boolean) || "";
 // When two candidates are the SAME to-do, keep the more-progressed one: a finished/in-flight task must never
 // be dropped for a fresh duplicate, and a handled (done/dismissed) one suppresses a new copy → no resurfacing.
-const rankStatus = (t: WebTask) => (t.status === "done" || t.status === "dismissed") ? 4 : t.status === "executed" ? 3 : t.status === "running" ? 2 : 1;
+// Progression order for merges: a MORE progressed copy always beats a less progressed one.
+const rankStatus = (t: WebTask) => {
+  const c = canonStatus(t.status);
+  return c === "done" || c === "dismissed" ? 6
+    : c === "needs_review" ? 5
+    : c === "failed_terminal" ? 4
+    : c === "failed_retryable" ? 3
+    : c === "executing" ? 2.5
+    : c === "queued" ? 2 : 1;
+};
 const betterOf = (a: WebTask, b: WebTask) => rankStatus(b) > rankStatus(a) ? b : a; // ties keep `a` (added first)
 // Titles must near-match, or (same source AND same trigger). The old cross-field checks (title vs why)
 // were loose enough to swallow genuinely NEW tasks into old done ones — "Refresh finds nothing".
@@ -118,6 +128,53 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
   return kept;
 }
 
+/** Cross-device/instance task merge (used by session commits AND the session-free job runner). The
+ *  more-PROGRESSED copy wins (done never regresses); equal progress → most recently UPDATED wins; step
+ *  done-state is unioned. Then entity-dedupe, since two sessions can mint different ids for one item. */
+export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTask[] {
+  const rank = (s: WebTask["status"]) => rankStatus({ status: s } as WebTask);
+  const when = (t: WebTask) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
+  const map = new Map<string, WebTask>();
+  for (const t of existing) map.set(t.id, t);
+  for (const t of incoming) {
+    const ext = map.get(t.id);
+    if (!ext) { map.set(t.id, t); continue; }
+    const winner = rank(t.status) > rank(ext.status) ? t
+      : rank(t.status) < rank(ext.status) ? ext
+      : when(t) >= when(ext) ? t : ext;
+    const loser = winner === t ? ext : t;
+    const steps = winner.steps?.map((s) => {
+      if (s.done) return s;
+      const other = loser.steps?.find((o) => o.text === s.text);
+      return other?.done ? { ...s, done: true, doneAt: other.doneAt, result: s.result ?? other.result } : s;
+    });
+    map.set(t.id, steps ? { ...winner, steps } : winner);
+  }
+  return dedupeTasks(Array.from(map.values()));
+}
+
+/** Cross-device profile merge: entity-level fact dedupe; `paused` follows the most RECENT toggle. */
+export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
+  const pausedAt = (p: Profile) => Date.parse(p.pausedAt || "") || 0;
+  const pausedSide = pausedAt(p2) >= pausedAt(p1) ? p2 : p1;
+  return {
+    name: p2.name || p1.name,
+    about: p2.about || p1.about,
+    preferences: dedupeFacts([...(p1.preferences || []), ...(p2.preferences || [])]),
+    people: dedupeFacts([...(p1.people || []), ...(p2.people || [])]),
+    projects: dedupeFacts([...(p1.projects || []), ...(p2.projects || [])]),
+    paused: pausedSide.paused,
+    pausedAt: pausedSide.pausedAt,
+    // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
+    // p2's explicit `undefined` keys from normalizeProfile — the bug that silently dropped workingHours).
+    workingHours: p2.workingHours ?? p1.workingHours,
+    responseStyle: p2.responseStyle ?? p1.responseStyle,
+    autoApprove: p2.autoApprove ?? p1.autoApprove,
+    highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
+    autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
+  };
+}
+
 /**
  * Regenerate from the user's connected apps (the agent reads Gmail + Calendar via Composio), preserving
  * manual tasks and anything already run. Dedupe is ANCHOR-based (the agent returns a stable anchorKey like
@@ -125,11 +182,33 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
  * — with a near-duplicate-title fallback for tasks that aren't tied to one item.
  */
 // Ceiling on how many genuinely NEW cards one sweep may add — a short list the user trusts beats a
-// complete one they ignore. Anything past the top 12 by score is dropped (it'll resurface tomorrow if
+// complete one they ignore. Anything past the top 8 by score is dropped (it'll resurface tomorrow if
 // it still matters).
-const MAX_NEW_PER_SWEEP = 12;
+const MAX_NEW_PER_SWEEP = 8;
 
-export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools): Promise<WebTask[]> {
+/** Deterministic post-classification quality bar — the model SUGGESTS urgency/importance, code DECIDES
+ *  what's worth a card: real scores, a VIP's ask, or a deadline'd commitment. "Maybe useful" dies here. */
+export function applyQualityBar<T extends { anchorKey?: string; when?: string; urgency: number; importance: number }>(
+  genTasks: T[],
+  items: { anchorKey: string; labels: string[]; sender?: string }[],
+  vips: string[] = [],
+): T[] {
+  const byAnchor = new Map(items.map((i) => [normKey(i.anchorKey), i]));
+  const vipTokens = vips.flatMap((v) => {
+    const email = v.toLowerCase().match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
+    const name = v.split(/[—\-(,]/)[0].trim().toLowerCase();
+    return [email, name.length >= 3 ? name : undefined].filter((x): x is string => !!x);
+  });
+  const isVip = (sender?: string) => !!sender && vipTokens.some((tok) => sender.toLowerCase().includes(tok));
+  return genTasks.filter((g) => {
+    const it = byAnchor.get(normKey(g.anchorKey));
+    if (it?.labels?.includes("sent") && g.when) return true;  // a commitment THEY made, with a deadline: always keep
+    if (isVip(it?.sender)) return true;                        // high-priority person's ask: always keep
+    return g.importance >= 0.55 || g.urgency >= 0.65;          // otherwise: real stakes or real time pressure only
+  });
+}
+
+export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
   // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do.
   const handled = existing
     .filter((t) => t.status === "done" || t.status === "dismissed")
@@ -146,11 +225,32 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   const active = existing
     .filter((t) => t.status !== "done" && t.status !== "dismissed")
     .map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
-  // The sweep only READS — hand it the read-only tool view (half the schema tokens per round, and the
-  // "no writes during generation" rule becomes structural instead of prompt-enforced).
+
+  // PREFERRED PATH — the deterministic discovery pipeline: fixed read calls → normalize → filter noise +
+  // known anchors → ONE classification call. Cheaper, grounded (anchors come from the source, never the
+  // model), and deterministic about noise. Falls back to the open agent sweep only when the pipeline's
+  // sources are unreachable (e.g. Gmail not connected).
+  if (userEmail) {
+    try {
+      const { items, attempted } = await discoverSourceItems(userEmail);
+      if (attempted) {
+        const knownAnchors = existing.map((t) => t.anchorKey);
+        const candidates = filterCandidates(items, knownAnchors);
+        const classified = candidates.length
+          ? await classifyCandidates(candidates, profile, active.map((a) => a.title))
+          : { tasks: [], profileUpdates: [] };
+        // The classification pass also LEARNS: durable facts these items revealed (a key person, an
+        // ongoing project) fold straight into the profile — memory keeps growing on every sweep.
+        for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
+        // Model suggests scores; CODE decides what clears the bar (VIPs + deadline'd commitments always do).
+        const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
+        return foldGenerated(existing, kept);
+      }
+    } catch (e: any) { console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e); }
+  }
+
+  // FALLBACK — open-ended agent sweep over the read-only tool view (covers non-Google sources too).
   const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
-  // The sweep reads the user's whole world — fold anything it learned about WHO THEY ARE into the
-  // profile, so preferences/people/projects keep updating continuously (not only during task runs).
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   return foldGenerated(existing, gen.tasks);
 }
@@ -221,8 +321,8 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
 export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   if (!task) return undefined;
-  if (task.status === "running") return task; // already in flight (second tab/device) — never double-run
-  task.status = "running";
+  if (canonStatus(task.status) === "executing") return task; // already in flight — never double-run
+  task.status = "executing";
   task.autoRan = true; // set before the await so concurrent auto-runs skip it (pendingAutoRun checks !autoRan)
   // A user revision: they reviewed a draft and asked for a change before sending → re-run with that instruction.
   const focus = revision?.trim()
@@ -243,13 +343,15 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     });
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
-    task.status = "executed";
+    task.status = "needs_review";
+    task.lastError = undefined;
     task.updatedAt = new Date().toISOString();
     return task;
-  } catch (e) {
-    // Failure (Claude/Composio error) → never leave it stuck on "running". Back to ready so the user can
-    // retry manually; keep autoRan=true so it doesn't auto-retry in a loop on a persistent fault.
-    task.status = "ready";
+  } catch (e: any) {
+    // Failure (AI/Composio error) → never leave it stuck on "executing". The JOB layer decides
+    // retryable-vs-terminal from its attempt count; record the failure on the task for display.
+    task.status = "failed_retryable";
+    task.lastError = String(e?.message || e).slice(0, 300);
     task.updatedAt = new Date().toISOString();
     throw e;
   }

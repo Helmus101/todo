@@ -2,12 +2,26 @@
 
 export type Quadrant = "do" | "schedule" | "delegate" | "later";
 
-// ready      → generated, not yet run
-// running    → auto/manual execution in flight
-// executed   → ran; shows what was done + a checklist; awaits your Confirm
-// done        → you confirmed it
-// dismissed  → you dropped it
-export type TaskStatus = "ready" | "running" | "executed" | "done" | "dismissed";
+// The task lifecycle. Newer, more precise states + the two legacy aliases still readable from old data:
+//   ready            → discovered/added, not yet queued for execution
+//   queued           → an execution job exists; a worker will pick it up
+//   executing        → a worker is acting right now              (legacy alias: "running")
+//   needs_review     → Otto did the work; you review/send/confirm (legacy alias: "executed")
+//   failed_retryable → last run failed; will retry automatically
+//   failed_terminal  → retries exhausted; needs your explicit Retry
+//   done             → you confirmed it handled
+//   dismissed        → you dropped it (similar tasks won't come back)
+export type TaskStatus =
+  | "ready" | "queued" | "executing" | "needs_review"
+  | "failed_retryable" | "failed_terminal" | "done" | "dismissed"
+  | "running" | "executed"; // legacy aliases (old saved data) — treated as executing / needs_review
+
+/** Collapse legacy aliases so ALL comparisons happen on the new lifecycle. */
+export const canonStatus = (s: TaskStatus): TaskStatus => (s === "running" ? "executing" : s === "executed" ? "needs_review" : s);
+/** Is the task in a state where Otto's work is finished or the user closed it? */
+export const isHandled = (s: TaskStatus): boolean => s === "done" || s === "dismissed";
+/** Is an execution currently owned by the job system (don't enqueue another)? */
+export const isInFlight = (s: TaskStatus): boolean => { const c = canonStatus(s); return c === "queued" || c === "executing"; };
 
 export interface TaskLink {
   label: string;
@@ -162,6 +176,8 @@ export interface WebTask {
   /** Bumped on every mutation (status change, step tick, run result) — breaks cross-device merge ties so a
    *  STALE copy can never overwrite a newer one. */
   updatedAt?: string;
+  /** Why the last run failed (shown on failed_* cards with the Retry button). */
+  lastError?: string;
 }
 
 export interface ConnectionStatus {

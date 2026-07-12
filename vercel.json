@@ -6,6 +6,9 @@
       "maxDuration": 300
     }
   },
+  "crons": [
+    { "path": "/api/cron/drain", "schedule": "*/10 * * * *" }
+  ],
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api" },
     { "source": "/auth/:path*", "destination": "/api" },
