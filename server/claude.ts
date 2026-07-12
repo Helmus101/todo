@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { Profile, TaskStep, TaskLink, Sendable } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
-import { webSearch } from "./chat.ts";
+import { webSearch } from "./chat";
 
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
 function profileBlock(p?: Profile): string {
@@ -15,6 +15,11 @@ function profileBlock(p?: Profile): string {
   if (recent(p.preferences).length) parts.push(`Preferences: ${recent(p.preferences).join("; ")}`);
   if (recent(p.people).length) parts.push(`Key people: ${recent(p.people).join("; ")}`);
   if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
+  if (p.workingHours) parts.push(`Working hours: ${p.workingHours.start}-${p.workingHours.end} (${p.workingHours.timezone})`);
+  if (p.responseStyle) parts.push(`Response style: ${p.responseStyle}`);
+  if (p.autoApprove?.length) parts.push(`Auto-approved actions: ${p.autoApprove.join(", ")}`);
+  if (p.highPriorityPeople?.length) parts.push(`High-priority people: ${p.highPriorityPeople.join(", ")}`);
+  if (p.autoArchivePatterns?.length) parts.push(`Auto-archive patterns: ${p.autoArchivePatterns.join(", ")}`);
   return parts.length ? `\nWHO THIS PERSON IS — their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
 }
 
@@ -65,6 +70,17 @@ function deepseekClient(): OpenAI {
   });
 }
 
+/** Is this a TRANSIENT failure worth retrying (connection dropped / gateway / rate limit)? Checks the
+ *  error's own code, the undici CAUSE chain ("TypeError: terminated" wraps an ECONNRESET cause — the exact
+ *  shape that was killing whole sweeps un-retried), the message, and the HTTP status. */
+function isTransient(e: any): boolean {
+  const code = String(e?.code || e?.cause?.code || "");
+  if (["ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(code)) return true;
+  const msg = `${e?.message || ""} ${e?.cause?.message || ""}`;
+  if (/fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed/i.test(msg)) return true;
+  return [429, 500, 502, 503, 504].includes(Number(e?.status));
+}
+
 async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000): Promise<T> {
   let lastErr: any;
   for (let i = 0; i < retries; i++) {
@@ -72,8 +88,7 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000
       return await fn();
     } catch (e: any) {
       lastErr = e;
-      const isNetworkError = e?.code === "ENOTFOUND" || e?.message?.includes("fetch failed") || e?.message?.includes("socket hang up") || e?.status === 502 || e?.status === 503 || e?.status === 504 || e?.status === 429;
-      if (!isNetworkError || i === retries - 1) throw e;
+      if (!isTransient(e) || i === retries - 1) throw e;
       console.warn(`[ai] request failed (${e?.message || e}), retrying in ${delayMs}ms... (attempt ${i + 1}/${retries})`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       delayMs *= 2;
@@ -142,9 +157,10 @@ export interface GeneratedTask {
 }
 
 const GEN_SYSTEM =
-  `You are a sharp chief-of-staff turning someone's live world into their real, COMPLETE to-do list. Use EVERY ` +
+  `You are an autonomous operations assistant — a sharp chief-of-staff turning someone's live world into their ` +
+  `real, COMPLETE to-do list. Your job is to FIND, PRIORITIZE, and EXECUTE work — not just record it. Use EVERY ` +
   `tool available — across ALL their connected apps, not just email — to READ what genuinely needs them right ` +
-  `now, then call submit_tasks. Sweep each connected source for actionable items, e.g.:\n` +
+  `now, then call submit_tasks. Sweep each connected source AGGRESSIVELY for actionable items, e.g.:\n` +
   `- Gmail: threads awaiting a reply or asking something (skip newsletters/promos/receipts/no-reply).\n` +
   `NEWSLETTERS & PROMOTIONAL EMAIL — HARD EXCLUSION: NEVER create a task to reply to, respond to, or otherwise ` +
   `engage with a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender — a Gmail ` +
@@ -152,16 +168,19 @@ const GEN_SYSTEM =
   `"newsletter"/"marketing"/"updates@"/"news@" are all signals of this. This holds even if the email asks a ` +
   `question, has a "reply" call-to-action, or looks personalized — it's still mass mail. Skip it entirely; ` +
   `do not surface it as a to-do of any kind.\n` +
-  `- Calendar: meetings in the next ~48h to prepare for or respond to.\n` +
+  `- Calendar: meetings in the next ~48h to prepare for or respond to, conflicts to resolve.\n` +
   `- Slack / Discord: DMs & mentions awaiting your reply.\n` +
   `- GitHub / Linear / Jira: issues & PRs assigned to you, review requests, things blocking others.\n` +
   `- Notion / Todoist / Asana / Trello / ClickUp: tasks assigned or due soon.\n` +
+  `- CRM (HubSpot, Salesforce): deals needing follow-up, tasks due, opportunities at risk.\n` +
   `- Any other connected app: whatever is genuinely waiting on this person.\n` +
   `- COMMITMENTS THEY MADE: also check their recently SENT mail/messages (e.g. Gmail search "in:sent newer_than:7d") ` +
   `for promises THEY made to others — "I'll send you X", "I'll get back to you by Friday", "let me check and ` +
   `follow up" — and create a task to FULFILL each one that looks unfulfilled (no later reply/attachment in the ` +
   `thread). Title it as the commitment ("Send Sarah the budget deck"), set "when" from the promised deadline, ` +
   `and anchor it to the sent thread ('gmail:<threadId>'). A broken promise is worse than a missed email.\n` +
+  `- CONTEXT GATHERING: For every actionable item, GATHER FULL CONTEXT — search related threads, check calendar ` +
+  `for conflicts, find relevant docs, pull in CRM data. A task without context is half-baked.\n` +
   `Surface a clear, actionable to-do for EVERYTHING that needs them (one per item). Skip true non-actionable ` +
   `noise. Rank by urgency/importance rather than dropping. Ground every task STRICTLY in what the tools return; ` +
   `never invent people, dates, or facts. You may also use web_search for quick external context (e.g. who a ` +
@@ -169,8 +188,8 @@ const GEN_SYSTEM =
   `GMAIL — SEARCH IT SEVERAL WAYS, not one generic fetch: (1) recent inbox needing action ` +
   `("in:inbox newer_than:7d -category:promotions -category:social"), (2) unread ("is:unread in:inbox"), ` +
   `(3) their SENT mail for open loops ("in:sent newer_than:10d") — read what THEY promised and check whether ` +
-  `they delivered, and (4) threads where someone asked them something and the last message is NOT theirs ` +
-  `(they owe a reply).\n` +
+  `they delivered, (4) threads where someone asked them something and the last message is NOT theirs ` +
+  `(they owe a reply), (5) search for key people/projects from their profile to find loose ends.\n` +
   `USE THEIR PROFILE AS SEARCH LEADS: pick the 2-3 most active projects/people listed below and run ONE ` +
   `targeted search each (the name in Gmail or the relevant app) to find loose ends — an unanswered thread, ` +
   `an upcoming deadline, a doc waiting on them. What did they say they'd do but haven't?\n` +
@@ -181,6 +200,11 @@ const GEN_SYSTEM =
   `lower it for what they've deprioritized. Two equal emails ≠ two equal tasks if a preference separates them.\n` +
   `- SHAPE: phrase titles/whys in line with how they work (e.g. "batch admin on Fridays" → set "when" accordingly; ` +
   `"prefers calls over email" → the task suggests a call). When a preference influenced a task, reflect it in "why".\n` +
+  `- WORKING HOURS: if they have working hours set, consider whether tasks can be done within those hours.\n` +
+  `- RESPONSE STYLE: if they prefer concise/detailed/casual/formal, this should influence how you phrase tasks.\n` +
+  `- AUTO-APPROVE: if they've approved certain categories (e.g., "schedule_meetings_under_30min"), mark those as low risk.\n` +
+  `- HIGH PRIORITY PEOPLE: if someone is in their high-priority list, their requests get higher urgency.\n` +
+  `- AUTO-ARCHIVE: if they've set patterns to auto-archive (e.g., newsletters), filter those out.\n` +
   `NEVER resurface a to-do the user already finished or DISMISSED — if an ` +
   `"ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ` +
   `ONE TASK PER UNDERLYING ITEM: never submit two wordings of the same to-do — one thread/event/commitment = ` +
@@ -188,7 +212,7 @@ const GEN_SYSTEM =
   `QUALITY OVER QUANTITY — surface the handful (≤ ~12) of items that genuinely matter; skip marginal ` +
   `"maybes". A short list the user trusts beats a complete list they ignore.\n` +
   `READ ONLY here — do NOT create, modify, draft, or send anything during ` +
-  `generation. BUDGET: you have roughly 5 tool calls TOTAL — batch your Gmail searches into ONE round ` +
+  `generation. BUDGET: you have roughly 6-8 tool calls TOTAL — batch your Gmail searches into ONE round ` +
   `(issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, ` +
   `and submit as soon as you have the picture. Thorough ≠ exhaustive.`;
 
@@ -294,7 +318,10 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     ? `My connected apps you can read: ${extras.connected.join(", ")}. Check EACH of them, not just email.`
     : `Use whatever tools you have to read what needs me.`;
   const handledBlock = handled?.length
-    ? `\nALREADY HANDLED — I already finished or dismissed these; do NOT create a task for any of them again, even if its source email/event is still around:\n` +
+    ? `\nALREADY HANDLED — I already finished or dismissed these; do NOT create a task for any of them again, ` +
+      `even if its source email/event is still around. A dismissal is a PREFERENCE SIGNAL: I looked at that ` +
+      `task and said no — so also skip anything SIMILAR to a dismissed item (same thread, same kind of ask, ` +
+      `same sender's request reworded):\n` +
       handled.slice(0, 40).map((h) => `- ${h.title}${h.anchorKey ? ` [${h.anchorKey}]` : ""}`).join("\n") + `\n`
     : "";
   // The sweep is a DELTA: knowing what's already on the list is what keeps it from re-reporting (and
@@ -468,6 +495,10 @@ const RUN_SYSTEM =
   `- Check the user's profile memory for known preferences, people, and projects\n` +
   `- Use web_search for external details (addresses, directions, company info)\n` +
   `Example: if the task is "prep to go somewhere from hotel", search Gmail for the hotel booking confirmation to get the hotel name, address, checkout time; search Calendar for departure details; search Drive for any itinerary. NEVER leave placeholders like "[hotel name]" or "[address]" — find the real details.\n` +
+  `AUTO-EXECUTION — If the user has auto-approved certain actions (e.g., "schedule_meetings_under_30min"), you can ` +
+  `execute those WITHOUT adding them to sendables for approval. Check their profile for autoApprove patterns. ` +
+  `For example, if they've approved scheduling meetings under 30min, you can create the calendar event directly ` +
+  `without asking. Otherwise, follow the normal approval flow.\n` +
   `HARD LIMIT — you can READ and WRITE, but you can NEVER do an irreversible OUTBOUND or DESTRUCTIVE action: ` +
   `no sending/forwarding email, no sending/posting messages, no publishing, no deleting (those tools are not ` +
   `even available to you). For email you ONLY ever leave a DRAFT; for Slack you only COMPOSE the message. You ` +
@@ -557,7 +588,7 @@ const RUN_SYSTEM =
   `facts they'd otherwise look up (address, confirmation #, time, phone, amount) into the step text or "context". ` +
   `If no link applies, the step text itself must carry everything needed.\n` +
   `ASK ONLY WHEN TRULY STUCK: if a step is automatable EXCEPT for one detail you could not find or infer ` +
-  `(a choice between real options, a preference, a date only they know), keep automatable=true and set ` +
+  `(a choice between real options, a preference, a date only the user knows), keep automatable=true and set ` +
   `"question" — ONE short, specific question — plus "options": 2-4 LIKELY answers with your best inference ` +
   `FIRST (they tap one and you run). Search EVERYTHING first (inbox, Drive, calendar, their profile, the web); ` +
   `a question you could have answered yourself is a failure. Prep everything around it so their answer is the ` +
@@ -810,7 +841,13 @@ function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[
     .slice(0, 6);
   // Brevity backstop: a few lines + a hard char cap, so even a verbose run can't produce a wall of text.
   const brief = (s: string, lines: number, chars: number) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
-  const synthesis = brief(String(out?.synthesis || fallbackText || ""), 3, 550);
+  // Synthesis is ONLY the structured field the model submitted — NEVER its raw reply text. Falling back
+  // to the transcript is how the user ended up reading the model's THINKING ("Seems like… Let me first…
+  // Now I'll create…") on the card instead of a result. And planning-tense text is not a result even when
+  // it arrives in the right field — a run that only says what it WOULD do gets the honest-failure retry.
+  let synthesis = brief(String(out?.synthesis || ""), 3, 550);
+  if (/\b(let me|i'?ll (?:first|now|then|use|create|draft|check)|i will (?:first|now|then)|now i(?:'?ll)? |first,? i(?:'?ll)? |seems like|my plan is|i need to|i should)\b/i.test(synthesis)) synthesis = "";
+  void fallbackText; // kept in the signature for call-site compatibility; intentionally unused as content
   // A completely empty result (no report, no steps, no artifacts) is a FAILED run, not a quiet success —
   // throwing routes it to the honest-failure path (task returns to ready + client auto-retries).
   if (!synthesis && !steps.length && !links.length && !sendables.length) {

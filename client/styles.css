@@ -430,6 +430,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .onboard-skip { position: absolute; top: 16px; right: 16px; background: none; border: none; color: var(--ink-3); font-size: 12.5px; }
 .onboard-skip:hover { color: var(--ink-2); }
 
+.pref-group { margin-top: 16px; }
+.band-head {
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-3); margin: 18px 2px 8px;
+}
+.list .band-head:first-child { margin-top: 2px; }
+.pref-inputs { display: flex; align-items: center; gap: 8px; }
+.pref-input { height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 14px; }
+.pref-select { height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 14px; background: var(--bg); color: var(--ink); }
+
 /* ─── Chat ─────────────────────────────────────────────────────────────────── */
 .chat-page { width: 100%; max-width: 640px; margin: 0 auto; padding: 24px 20px 32px; flex: 1; display: flex; flex-direction: column; }
 .chat-scroll { flex: 1; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; padding-bottom: 16px; }

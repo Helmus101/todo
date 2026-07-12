@@ -16,7 +16,13 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000
       return await fn();
     } catch (e: any) {
       lastErr = e;
-      const isNetworkError = e?.code === "ENOTFOUND" || e?.message?.includes("fetch failed") || e?.message?.includes("socket hang up") || e?.status === 502 || e?.status === 503 || e?.status === 504 || e?.status === 429;
+      // Match claude.ts's isTransient: include undici's "TypeError: terminated" (ECONNRESET in the cause
+      // chain), connection codes, and 5xx/429 — anything transient deserves the retry.
+      const code = String(e?.code || e?.cause?.code || "");
+      const msg = `${e?.message || ""} ${e?.cause?.message || ""}`;
+      const isNetworkError = ["ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(code)
+        || /fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed/i.test(msg)
+        || [429, 500, 502, 503, 504].includes(Number(e?.status));
       if (!isNetworkError || i === retries - 1) throw e;
       console.warn(`[ai-chat] request failed (${e?.message || e}), retrying in ${delayMs}ms... (attempt ${i + 1}/${retries})`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));

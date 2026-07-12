@@ -20,6 +20,7 @@ declare module "express-session" {
     profile?: Profile;
     integrations?: Record<string, string>; // app key → Composio connectionId hint (status is live from Composio)
     lastGenDay?: string;  // "YYYY-MM-DD" of the last full generate sweep — the once-a-day floor (survives serverless cold starts)
+    lastGenTime?: string; // ISO timestamp of the last generation (for continuous monitoring)
   }
 }
 
@@ -320,13 +321,22 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
 const lastGenDate = new Map<string, string>(); // user → "YYYY-MM-DD" (fast path; session is the durable copy)
 const genInflight = new Map<string, Promise<void>>(); // user → running sweep, so two tabs never double-run the agent
 const today = () => new Date().toISOString().split("T")[0];
+const CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes between continuous checks
+const shouldRefreshContinuous = (lastGenTime?: string): boolean => {
+  if (!lastGenTime) return true;
+  const elapsed = Date.now() - new Date(lastGenTime).getTime();
+  return elapsed > CONTINUOUS_MONITOR_INTERVAL_MS;
+};
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to sweep for new tasks." }); return; }
   try {
     const todayStr = today();
     const force = req.body?.force === true; // the manual Refresh button — always run a REAL sweep
     const lastGen = lastGenDate.get(req.session.user!) || req.session.lastGenDay;
-    if (!force && lastGen === todayStr && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
+    const lastGenTime = req.session.lastGenTime;
+    // Continuous monitoring: if enough time has passed (30min), refresh even if same day
+    const continuousRefresh = !force && shouldRefreshContinuous(lastGenTime);
+    if (!force && !continuousRefresh && lastGen === todayStr && (req.session.tasks || []).length) { res.json(req.session.tasks); return; }
     const extras = await toolsFor(req);
     if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
     // Mark the day done ONLY after generation succeeds — a failed/timed-out run must not burn the
@@ -338,6 +348,7 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
         req.session.tasks = await tasks.generate(req.session.tasks || [], (req.session.profile ||= emptyProfile()), extras);
         lastGenDate.set(user, todayStr);
         req.session.lastGenDay = todayStr;
+        req.session.lastGenTime = new Date().toISOString();
         await commit(req);
       })().finally(() => genInflight.delete(user));
       genInflight.set(user, sweep);
@@ -515,6 +526,28 @@ app.post("/api/profile", requireAuth, async (req, res) => {
   if (category === "name") { p.name = value.slice(0, 60) || undefined; }
   else if (category === "about") { p.about = value.slice(0, 400); }
   else { const k = listKey(category); if (k && value && !(p as any)[k].some((x: string) => x.toLowerCase() === value.toLowerCase())) (p as any)[k].push(value.slice(0, 160)); }
+  await commit(req);
+  res.json(p);
+});
+app.post("/api/profile/preference", requireAuth, async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const key = String(req.body?.key || "");
+  const value = req.body?.value;
+  if (key === "workingHours" && typeof value === "object") {
+    p.workingHours = {
+      start: String(value.start || "09:00"),
+      end: String(value.end || "18:00"),
+      timezone: String(value.timezone || "UTC"),
+    };
+  } else if (key === "responseStyle" && ["concise", "detailed", "casual", "formal"].includes(value)) {
+    p.responseStyle = value;
+  } else if (key === "autoApprove" && Array.isArray(value)) {
+    p.autoApprove = value.map(String);
+  } else if (key === "highPriorityPeople" && Array.isArray(value)) {
+    p.highPriorityPeople = value.map(String);
+  } else if (key === "autoArchivePatterns" && Array.isArray(value)) {
+    p.autoArchivePatterns = value.map(String);
+  }
   await commit(req);
   res.json(p);
 });

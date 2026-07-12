@@ -75,6 +75,7 @@ export const api = {
   // editor never receives a non-Profile object and crashes.
   profile: (): Promise<Profile> => req("/api/profile").then(j).then(normalizeProfile).catch(() => emptyProfile()),
   setProfile: (category: string, value: string): Promise<Profile> => post("/api/profile", { category, value }).then(normalizeProfile),
+  setProfilePreference: (key: string, value: any): Promise<Profile> => post("/api/profile/preference", { key, value }).then(normalizeProfile),
   delProfile: (category: string, index: number): Promise<Profile> => req(`/api/profile/${category}/${index}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   clearProfile: (): Promise<Profile> => req("/api/profile", { method: "DELETE" }).then(j).then(normalizeProfile),
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout"),

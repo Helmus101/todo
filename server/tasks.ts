@@ -49,20 +49,29 @@ function distinctiveTokens(s: string): Set<string> {
  *  before Jun 30 in Boston" / "Use $100 Amex Resy dining credit in Boston" / "Use Amex Resy $100 dining credit
  *  before Jun 30" all collapse — while keeping genuinely different tasks (e.g. "Book flights to NYC" vs "Book
  *  hotel in NYC", where the key noun differs) apart. */
-function nearDup(a: string, b: string): boolean {
+// Stem-ish matching: "sun"/"sunday", "jul"/"july", "reply"/"replying" count as the same word — catches
+// the model re-abbreviating dates/verbs, the most common "same task, slightly different wording" case.
+const tokenMatches = (w: string, set: Set<string>) => {
+  if (set.has(w)) return true;
+  for (const x of set) if (w.length >= 3 && x.length >= 3 && (x.startsWith(w) || w.startsWith(x))) return true;
+  return false;
+};
+function tokenOverlap(a: string, b: string): { jaccard: number; containment: number; inter: number } {
   const A = distinctiveTokens(a), B = distinctiveTokens(b);
-  if (!A.size || !B.size) return false;
-  // Stem-ish matching: "sun"/"sunday", "jul"/"july", "reply"/"replying" count as the same word — catches
-  // the model re-abbreviating dates/verbs, the most common "same task, slightly different wording" case.
-  const matches = (w: string, set: Set<string>) => {
-    if (set.has(w)) return true;
-    for (const x of set) if (w.length >= 3 && x.length >= 3 && (x.startsWith(w) || w.startsWith(x))) return true;
-    return false;
-  };
-  let inter = 0; for (const w of A) if (matches(w, B)) inter++;
-  const jaccard = inter / (A.size + B.size - inter);
-  const containment = inter / Math.min(A.size, B.size);
+  if (!A.size || !B.size) return { jaccard: 0, containment: 0, inter: 0 };
+  let inter = 0; for (const w of A) if (tokenMatches(w, B)) inter++;
+  return { jaccard: inter / (A.size + B.size - inter), containment: inter / Math.min(A.size, B.size), inter };
+}
+function nearDup(a: string, b: string): boolean {
+  const { jaccard, containment, inter } = tokenOverlap(a, b);
   return jaccard >= 0.55 || (inter >= 3 && containment >= 0.75) || (inter >= 2 && containment >= 0.9);
+}
+/** LOOSER similarity, used ONLY to suppress new tasks that resemble a DISMISSED one — a dismissal is a
+ *  signal ("I don't want this kind of task"), so we'd rather over-suppress near a dismissed item than
+ *  resurface it reworded. Never used to merge two live tasks (that needs the stricter nearDup). */
+function looseDup(a: string, b: string): boolean {
+  const { jaccard, containment, inter } = tokenOverlap(a, b);
+  return jaccard >= 0.4 || (inter >= 2 && containment >= 0.6);
 }
 
 /** Keep at most `keep` done/dismissed records (most recent) — enough to still block regeneration of handled
@@ -151,6 +160,20 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
  *  without an AI call. */
 export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string }[]): WebTask[] {
   const now = new Date().toISOString();
+  // DISMISSED = "I don't want this" — suppress not just the exact item but anything SIMILAR to it, with a
+  // deliberately looser match (incl. cross-field title↔why) than the live-task dedupe. A false positive
+  // here only hides a card resembling one the user already rejected; a false negative resurfaces it.
+  // (Done tasks keep the stricter matching — a NEW similar task after a finished one is often legit,
+  // e.g. this week's edition of a recurring report.)
+  const dismissed = existing.filter((t) => t.status === "dismissed");
+  const resemblesDismissed = (g: { title: string; why: string; source: string; anchorKey?: string; link?: string }) =>
+    dismissed.some((d) =>
+      (!!g.anchorKey && !!d.anchorKey && normKey(g.anchorKey) === normKey(d.anchorKey)) ||
+      (!!g.link && linkOf(d) === g.link) ||
+      looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) ||
+      (g.source === d.source && looseDup(g.why, d.why)));
+  genTasks = genTasks.filter((g) => !resemblesDismissed(g));
+
   const candidates: WebTask[] = [...existing];
   const freshIds = new Set<string>();
   for (const g of genTasks) {

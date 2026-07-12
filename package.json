@@ -13,7 +13,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
     "@composio/core": "^0.11.0",
     "@supabase/supabase-js": "^2.43.2",
     "bcryptjs": "^2.4.3",

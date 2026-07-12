@@ -23,7 +23,17 @@ function normalizeProfile(p) {
     people: dedupeFacts(arr(p?.people)),
     projects: dedupeFacts(arr(p?.projects)),
     paused: !!p?.paused,
-    pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : void 0
+    pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : void 0,
+    // Structured preferences
+    workingHours: p?.workingHours && typeof p.workingHours === "object" ? {
+      start: String(p.workingHours.start || "09:00"),
+      end: String(p.workingHours.end || "18:00"),
+      timezone: String(p.workingHours.timezone || "UTC")
+    } : void 0,
+    responseStyle: ["concise", "detailed", "casual", "formal"].includes(p?.responseStyle) ? p.responseStyle : void 0,
+    autoApprove: Array.isArray(p?.autoApprove) ? p.autoApprove.map(String) : void 0,
+    highPriorityPeople: Array.isArray(p?.highPriorityPeople) ? p.highPriorityPeople.map(String) : void 0,
+    autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : void 0
   };
 }
 var FACT_STOP = /* @__PURE__ */ new Set(["the", "and", "for", "with", "from", "that", "this", "they", "their", "them", "she", "her", "his", "him", "who", "handles", "handled", "leads", "are", "was", "were", "has", "have", "will", "its", "willem", "also", "both"]);
@@ -72,7 +82,9 @@ async function retryRequest(fn, retries = 3, delayMs = 1e3) {
       return await fn();
     } catch (e) {
       lastErr = e;
-      const isNetworkError = e?.code === "ENOTFOUND" || e?.message?.includes("fetch failed") || e?.message?.includes("socket hang up") || e?.status === 502 || e?.status === 503 || e?.status === 504 || e?.status === 429;
+      const code = String(e?.code || e?.cause?.code || "");
+      const msg = `${e?.message || ""} ${e?.cause?.message || ""}`;
+      const isNetworkError = ["ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(code) || /fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed/i.test(msg) || [429, 500, 502, 503, 504].includes(Number(e?.status));
       if (!isNetworkError || i === retries - 1) throw e;
       console.warn(`[ai-chat] request failed (${e?.message || e}), retrying in ${delayMs}ms... (attempt ${i + 1}/${retries})`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -273,6 +285,11 @@ function profileBlock(p) {
   if (recent(p.preferences).length) parts.push(`Preferences: ${recent(p.preferences).join("; ")}`);
   if (recent(p.people).length) parts.push(`Key people: ${recent(p.people).join("; ")}`);
   if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
+  if (p.workingHours) parts.push(`Working hours: ${p.workingHours.start}-${p.workingHours.end} (${p.workingHours.timezone})`);
+  if (p.responseStyle) parts.push(`Response style: ${p.responseStyle}`);
+  if (p.autoApprove?.length) parts.push(`Auto-approved actions: ${p.autoApprove.join(", ")}`);
+  if (p.highPriorityPeople?.length) parts.push(`High-priority people: ${p.highPriorityPeople.join(", ")}`);
+  if (p.autoArchivePatterns?.length) parts.push(`Auto-archive patterns: ${p.autoArchivePatterns.join(", ")}`);
   return parts.length ? `
 WHO THIS PERSON IS \u2014 their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:
 ${parts.map((x) => `- ${x}`).join("\n")}
@@ -322,6 +339,13 @@ function deepseekClient() {
     baseURL: "https://api.deepseek.com"
   });
 }
+function isTransient(e) {
+  const code = String(e?.code || e?.cause?.code || "");
+  if (["ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(code)) return true;
+  const msg = `${e?.message || ""} ${e?.cause?.message || ""}`;
+  if (/fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed/i.test(msg)) return true;
+  return [429, 500, 502, 503, 504].includes(Number(e?.status));
+}
 async function retryRequest2(fn, retries = 3, delayMs = 1e3) {
   let lastErr;
   for (let i = 0; i < retries; i++) {
@@ -329,8 +353,7 @@ async function retryRequest2(fn, retries = 3, delayMs = 1e3) {
       return await fn();
     } catch (e) {
       lastErr = e;
-      const isNetworkError = e?.code === "ENOTFOUND" || e?.message?.includes("fetch failed") || e?.message?.includes("socket hang up") || e?.status === 502 || e?.status === 503 || e?.status === 504 || e?.status === 429;
-      if (!isNetworkError || i === retries - 1) throw e;
+      if (!isTransient(e) || i === retries - 1) throw e;
       console.warn(`[ai] request failed (${e?.message || e}), retrying in ${delayMs}ms... (attempt ${i + 1}/${retries})`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
       delayMs *= 2;
@@ -388,25 +411,32 @@ function parseToolArgs(raw) {
     return repaired && typeof repaired === "object" ? repaired : {};
   }
 }
-var GEN_SYSTEM = `You are a sharp chief-of-staff turning someone's live world into their real, COMPLETE to-do list. Use EVERY tool available \u2014 across ALL their connected apps, not just email \u2014 to READ what genuinely needs them right now, then call submit_tasks. Sweep each connected source for actionable items, e.g.:
+var GEN_SYSTEM = `You are an autonomous operations assistant \u2014 a sharp chief-of-staff turning someone's live world into their real, COMPLETE to-do list. Your job is to FIND, PRIORITIZE, and EXECUTE work \u2014 not just record it. Use EVERY tool available \u2014 across ALL their connected apps, not just email \u2014 to READ what genuinely needs them right now, then call submit_tasks. Sweep each connected source AGGRESSIVELY for actionable items, e.g.:
 - Gmail: threads awaiting a reply or asking something (skip newsletters/promos/receipts/no-reply).
 NEWSLETTERS & PROMOTIONAL EMAIL \u2014 HARD EXCLUSION: NEVER create a task to reply to, respond to, or otherwise engage with a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender \u2014 a Gmail "promotions"/"social" category, an unsubscribe footer, or a sender containing "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@" are all signals of this. This holds even if the email asks a question, has a "reply" call-to-action, or looks personalized \u2014 it's still mass mail. Skip it entirely; do not surface it as a to-do of any kind.
-- Calendar: meetings in the next ~48h to prepare for or respond to.
+- Calendar: meetings in the next ~48h to prepare for or respond to, conflicts to resolve.
 - Slack / Discord: DMs & mentions awaiting your reply.
 - GitHub / Linear / Jira: issues & PRs assigned to you, review requests, things blocking others.
 - Notion / Todoist / Asana / Trello / ClickUp: tasks assigned or due soon.
+- CRM (HubSpot, Salesforce): deals needing follow-up, tasks due, opportunities at risk.
 - Any other connected app: whatever is genuinely waiting on this person.
 - COMMITMENTS THEY MADE: also check their recently SENT mail/messages (e.g. Gmail search "in:sent newer_than:7d") for promises THEY made to others \u2014 "I'll send you X", "I'll get back to you by Friday", "let me check and follow up" \u2014 and create a task to FULFILL each one that looks unfulfilled (no later reply/attachment in the thread). Title it as the commitment ("Send Sarah the budget deck"), set "when" from the promised deadline, and anchor it to the sent thread ('gmail:<threadId>'). A broken promise is worse than a missed email.
+- CONTEXT GATHERING: For every actionable item, GATHER FULL CONTEXT \u2014 search related threads, check calendar for conflicts, find relevant docs, pull in CRM data. A task without context is half-baked.
 Surface a clear, actionable to-do for EVERYTHING that needs them (one per item). Skip true non-actionable noise. Rank by urgency/importance rather than dropping. Ground every task STRICTLY in what the tools return; never invent people, dates, or facts. You may also use web_search for quick external context (e.g. who a sender is, a public deadline).
-GMAIL \u2014 SEARCH IT SEVERAL WAYS, not one generic fetch: (1) recent inbox needing action ("in:inbox newer_than:7d -category:promotions -category:social"), (2) unread ("is:unread in:inbox"), (3) their SENT mail for open loops ("in:sent newer_than:10d") \u2014 read what THEY promised and check whether they delivered, and (4) threads where someone asked them something and the last message is NOT theirs (they owe a reply).
+GMAIL \u2014 SEARCH IT SEVERAL WAYS, not one generic fetch: (1) recent inbox needing action ("in:inbox newer_than:7d -category:promotions -category:social"), (2) unread ("is:unread in:inbox"), (3) their SENT mail for open loops ("in:sent newer_than:10d") \u2014 read what THEY promised and check whether they delivered, (4) threads where someone asked them something and the last message is NOT theirs (they owe a reply), (5) search for key people/projects from their profile to find loose ends.
 USE THEIR PROFILE AS SEARCH LEADS: pick the 2-3 most active projects/people listed below and run ONE targeted search each (the name in Gmail or the relevant app) to find loose ends \u2014 an unanswered thread, an upcoming deadline, a doc waiting on them. What did they say they'd do but haven't?
 PREFERENCES ARE BINDING, not decoration \u2014 the "Preferences" lines in their profile MUST shape the list:
 - FILTER: if a preference says they don't care about something (a topic, a sender, a kind of work), do NOT create tasks for it, even if it looks actionable.
 - RANK: raise importance for tasks matching what they've said matters (their priorities, projects, people); lower it for what they've deprioritized. Two equal emails \u2260 two equal tasks if a preference separates them.
 - SHAPE: phrase titles/whys in line with how they work (e.g. "batch admin on Fridays" \u2192 set "when" accordingly; "prefers calls over email" \u2192 the task suggests a call). When a preference influenced a task, reflect it in "why".
+- WORKING HOURS: if they have working hours set, consider whether tasks can be done within those hours.
+- RESPONSE STYLE: if they prefer concise/detailed/casual/formal, this should influence how you phrase tasks.
+- AUTO-APPROVE: if they've approved certain categories (e.g., "schedule_meetings_under_30min"), mark those as low risk.
+- HIGH PRIORITY PEOPLE: if someone is in their high-priority list, their requests get higher urgency.
+- AUTO-ARCHIVE: if they've set patterns to auto-archive (e.g., newsletters), filter those out.
 NEVER resurface a to-do the user already finished or DISMISSED \u2014 if an "ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ONE TASK PER UNDERLYING ITEM: never submit two wordings of the same to-do \u2014 one thread/event/commitment = ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task.
 QUALITY OVER QUANTITY \u2014 surface the handful (\u2264 ~12) of items that genuinely matter; skip marginal "maybes". A short list the user trusts beats a complete list they ignore.
-READ ONLY here \u2014 do NOT create, modify, draft, or send anything during generation. BUDGET: you have roughly 5 tool calls TOTAL \u2014 batch your Gmail searches into ONE round (issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, and submit as soon as you have the picture. Thorough \u2260 exhaustive.`;
+READ ONLY here \u2014 do NOT create, modify, draft, or send anything during generation. BUDGET: you have roughly 6-8 tool calls TOTAL \u2014 batch your Gmail searches into ONE round (issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, and submit as soon as you have the picture. Thorough \u2260 exhaustive.`;
 var SUBMIT_TASKS_TOOL = {
   name: "submit_tasks",
   description: "Submit the full actionable to-do list you found.",
@@ -474,7 +504,7 @@ async function generateTasks(profile, extras, handled, active) {
   const tools = [...extras.tools, WEB_SEARCH_TOOL, SUBMIT_TASKS_TOOL];
   const connectedLine = extras.connected?.length ? `My connected apps you can read: ${extras.connected.join(", ")}. Check EACH of them, not just email.` : `Use whatever tools you have to read what needs me.`;
   const handledBlock = handled?.length ? `
-ALREADY HANDLED \u2014 I already finished or dismissed these; do NOT create a task for any of them again, even if its source email/event is still around:
+ALREADY HANDLED \u2014 I already finished or dismissed these; do NOT create a task for any of them again, even if its source email/event is still around. A dismissal is a PREFERENCE SIGNAL: I looked at that task and said no \u2014 so also skip anything SIMILAR to a dismissed item (same thread, same kind of ask, same sender's request reworded):
 ` + handled.slice(0, 40).map((h) => `- ${h.title}${h.anchorKey ? ` [${h.anchorKey}]` : ""}`).join("\n") + `
 ` : "";
   const activeBlock = active?.length ? `
@@ -624,6 +654,7 @@ GATHER CONTEXT AGGRESSIVELY \u2014 BEFORE you act, search EVERYWHERE for relevan
 - Check the user's profile memory for known preferences, people, and projects
 - Use web_search for external details (addresses, directions, company info)
 Example: if the task is "prep to go somewhere from hotel", search Gmail for the hotel booking confirmation to get the hotel name, address, checkout time; search Calendar for departure details; search Drive for any itinerary. NEVER leave placeholders like "[hotel name]" or "[address]" \u2014 find the real details.
+AUTO-EXECUTION \u2014 If the user has auto-approved certain actions (e.g., "schedule_meetings_under_30min"), you can execute those WITHOUT adding them to sendables for approval. Check their profile for autoApprove patterns. For example, if they've approved scheduling meetings under 30min, you can create the calendar event directly without asking. Otherwise, follow the normal approval flow.
 HARD LIMIT \u2014 you can READ and WRITE, but you can NEVER do an irreversible OUTBOUND or DESTRUCTIVE action: no sending/forwarding email, no sending/posting messages, no publishing, no deleting (those tools are not even available to you). For email you ONLY ever leave a DRAFT; for Slack you only COMPOSE the message. You never send/post \u2014 instead OFFER the send as a one-click button via "sendables" (see submit), which the user reviews and fires. Never say you "sent", "emailed", "posted", or "messaged" \u2014 say you DRAFTED/PREPARED it. Never claim an action you didn't take.
 NEWSLETTERS & PROMOTIONAL EMAIL \u2014 NEVER DRAFT A REPLY: before drafting any email reply, check whether the thread is a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender (unsubscribe footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something \u2014 note in "synthesis" that it's mass mail and needs no reply, and stop there.
 THE ONE SEND EXCEPTION \u2014 send_self_brief goes ONLY to the user's own inbox (the server addresses it; you cannot pick a recipient). When the task involves something UPCOMING they must walk into prepared \u2014 a meeting or event in the next ~48h, travel/day-of logistics \u2014 ALSO send them a tight brief (who/when/where or link, agenda, 2-4 prep points, doc links) so it's waiting in their inbox. Mention it in "synthesis" ("\u2026and emailed you a brief"). At most one per task; never for anything that isn't time-sensitive prep.
@@ -646,7 +677,7 @@ OTTO vs YOU \u2014 classify EVERY step by ONE test: can you do it with your tool
 \u2022 NO \u2192 it's the USER's (automatable=false), and ONLY for one of: (1) a judgment/decision/approval only they can make; (2) a credential/login/access you don't have; (3) a payment or moving money; (4) a real-world / physical action. Reviewing-then-SENDING a message is NOT a step \u2014 offer it as a one-click send (sendables).
 When UNSURE, it's OTTO's \u2014 attempt it. "Tedious", "specific", "numeric", or "I'd have to look it up" are NEVER reasons to hand a step to the user. When a user step unblocks one of yours, say so \u2014 "Pick the date \u2014 I'll then book it".
 PREP EVERY USER STEP TO THE MAX (universal rule): a user step must arrive READY-TO-DO, never bare. Attach a "url" that lands them ONE click from done whenever such a link exists or can be constructed \u2014 driving/transit \u2192 a Google Maps directions link (https://www.google.com/maps/dir/?api=1&origin=<from>&destination=<to>), a call \u2192 tel:<number>, a payment/booking/return/check-in \u2192 the exact page for it, a form \u2192 the form itself. Fold the key facts they'd otherwise look up (address, confirmation #, time, phone, amount) into the step text or "context". If no link applies, the step text itself must carry everything needed.
-ASK ONLY WHEN TRULY STUCK: if a step is automatable EXCEPT for one detail you could not find or infer (a choice between real options, a preference, a date only they know), keep automatable=true and set "question" \u2014 ONE short, specific question \u2014 plus "options": 2-4 LIKELY answers with your best inference FIRST (they tap one and you run). Search EVERYTHING first (inbox, Drive, calendar, their profile, the web); a question you could have answered yourself is a failure. Prep everything around it so their answer is the only missing piece. Never ask more than 2 questions per task.
+ASK ONLY WHEN TRULY STUCK: if a step is automatable EXCEPT for one detail you could not find or infer (a choice between real options, a preference, a date only the user knows), keep automatable=true and set "question" \u2014 ONE short, specific question \u2014 plus "options": 2-4 LIKELY answers with your best inference FIRST (they tap one and you run). Search EVERYTHING first (inbox, Drive, calendar, their profile, the web); a question you could have answered yourself is a failure. Prep everything around it so their answer is the only missing piece. Never ask more than 2 questions per task.
 BRIEF, DON'T JUST DEFER: even when the final action is the USER's (a decision, or a booking/login/payment you can't do), do ALL the research around it FIRST \u2014 find the real options + facts, put each as a "links" entry they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or click \u2014 NEVER "go figure it out". E.g. "book a Boston restaurant" \u2192 research a few fitting spots, link each (Resy/the restaurant site), recommend one with a one-line why; the step is just "Pick one & book".
 ALWAYS SURFACE WHAT YOU MADE: whenever you create or draft something (a Gmail draft, a Google Doc/Sheet/Slides deck, a calendar event, a task, an issue/PR or comment), put a LINK to it in submit's "links" so the user can open and review it. Build the URL from the id the tool returned \u2014 Doc: https://docs.google.com/document/d/<id>/edit, Sheet: https://docs.google.com/spreadsheets/d/<id>/edit, Slides: https://docs.google.com/presentation/d/<id>/edit, Gmail draft: https://mail.google.com/mail/u/0/#drafts, calendar event: the htmlLink it returned. If a result already includes a URL / webViewLink, use that. Never invent a link \u2014 only include one you actually got back.
 ONE-CLICK SEND (the ONLY way anything goes out \u2014 always with the recipient shown): for every email you DRAFTED, add a "sendables" entry {app:"gmail", label, to (the recipient, ALWAYS set it), subject, body, draftId} \u2014 include the EXACT subject + body you wrote (so the user can review the draft IN THE APP) plus the draft_id the create-draft tool returned. For every Slack message you COMPOSED, add {app:"slack", label, channel, text} \u2014 do NOT post it. For a calendar event that should invite people, add {app:"gcal", label, eventId, attendees:[the invitees' emails], summary, when} \u2014 do NOT notify them. Each gives the user a Send button that names the recipient(s) first; you still never send. Don't ALSO add a "send it" step \u2014 the button is the send.
@@ -848,7 +879,9 @@ function finalize(out, fallbackText, profileUpdates) {
     when: s?.when ? String(s.when).slice(0, 120) : void 0
   })).filter((s) => s.app === "gmail" && !!s.draftId || s.app === "slack" && !!s.channel && !!s.text || s.app === "gcal" && !!s.eventId && !!s.attendees?.length).slice(0, 6);
   const brief = (s, lines, chars) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
-  const synthesis = brief(String(out?.synthesis || fallbackText || ""), 3, 550);
+  let synthesis = brief(String(out?.synthesis || ""), 3, 550);
+  if (/\b(let me|i'?ll (?:first|now|then|use|create|draft|check)|i will (?:first|now|then)|now i(?:'?ll)? |first,? i(?:'?ll)? |seems like|my plan is|i need to|i should)\b/i.test(synthesis)) synthesis = "";
+  void fallbackText;
   if (!synthesis && !steps.length && !links.length && !sendables.length) {
     throw new Error("The run produced no output \u2014 it will retry.");
   }
@@ -1195,6 +1228,22 @@ async function sendSelfBrief(userId, subject, body) {
 var cache = /* @__PURE__ */ new Map();
 var CACHE_MS = 12e4;
 var sanitize = (s) => s.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+function slimSchema(params) {
+  const props = params && typeof params === "object" && params.properties && typeof params.properties === "object" ? params.properties : {};
+  const required = Array.isArray(params?.required) ? params.required.filter((k) => typeof k === "string" && props[k]) : [];
+  const keys = Object.keys(props);
+  const keep = [...required, ...keys.filter((k) => !required.includes(k))].slice(0, 10);
+  const out = {};
+  for (const k of keep) {
+    const p = props[k] ?? {};
+    const slim = { type: p.type || "string" };
+    if (p.description) slim.description = String(p.description).slice(0, 120);
+    if (Array.isArray(p.enum)) slim.enum = p.enum.slice(0, 12);
+    if (p.type === "array") slim.items = { type: p.items?.type || "string" };
+    out[k] = slim;
+  }
+  return { type: "object", properties: out, ...required.length ? { required } : {} };
+}
 function relevance(n) {
   let s = 0;
   if (/(EVENT|MESSAGE|EMAIL|THREAD|DRAFT|FILE|DOCUMENT|FOLDER|SHEET|SPREADSHEET|ROW|CELL|SLIDE|PRESENTATION|ISSUE|PULL|COMMENT|TASK|REPO|CONTACT|PEOPLE|FREE.?SLOT|FREEBUSY)/.test(n)) s += 3;
@@ -1218,8 +1267,8 @@ async function getAgentTools(userId) {
   }
   const tools = [];
   const map = /* @__PURE__ */ new Map();
-  const MAX = 110;
-  const perToolkit = Math.min(12, Math.max(6, Math.floor(MAX / connected.length)));
+  const MAX = 90;
+  const perToolkit = Math.min(10, Math.max(6, Math.floor(MAX / connected.length)));
   const PRIORITY = ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "googleslides", "slack", "notion", "linear", "todoist"];
   const rank = (a) => {
     const i = PRIORITY.indexOf(a);
@@ -1251,8 +1300,7 @@ async function getAgentTools(userId) {
       map.set(name, rawName);
       const fn = t?.function ?? t;
       const params = fn?.parameters ?? t?.parameters ?? t?.input_parameters ?? t?.inputSchema ?? {};
-      const input_schema = params && typeof params === "object" ? { type: "object", properties: params.properties ?? {}, ...Array.isArray(params.required) ? { required: params.required } : {} } : { type: "object", properties: {} };
-      tools.push({ name, description: `[${app2}] ${String(fn?.description ?? rawName).slice(0, 220)}`, input_schema });
+      tools.push({ name, description: `[${app2}] ${String(fn?.description ?? rawName).slice(0, 140)}`, input_schema: slimSchema(params) });
       added++;
     }
   }
@@ -1403,19 +1451,25 @@ function distinctiveTokens(s) {
   const distinctive = words.filter((w) => !GENERIC_WORDS.has(w));
   return new Set(distinctive.length ? distinctive : words);
 }
-function nearDup(a, b) {
+var tokenMatches = (w, set) => {
+  if (set.has(w)) return true;
+  for (const x of set) if (w.length >= 3 && x.length >= 3 && (x.startsWith(w) || w.startsWith(x))) return true;
+  return false;
+};
+function tokenOverlap(a, b) {
   const A = distinctiveTokens(a), B = distinctiveTokens(b);
-  if (!A.size || !B.size) return false;
-  const matches = (w, set) => {
-    if (set.has(w)) return true;
-    for (const x of set) if (w.length >= 3 && x.length >= 3 && (x.startsWith(w) || w.startsWith(x))) return true;
-    return false;
-  };
+  if (!A.size || !B.size) return { jaccard: 0, containment: 0, inter: 0 };
   let inter = 0;
-  for (const w of A) if (matches(w, B)) inter++;
-  const jaccard = inter / (A.size + B.size - inter);
-  const containment = inter / Math.min(A.size, B.size);
+  for (const w of A) if (tokenMatches(w, B)) inter++;
+  return { jaccard: inter / (A.size + B.size - inter), containment: inter / Math.min(A.size, B.size), inter };
+}
+function nearDup(a, b) {
+  const { jaccard, containment, inter } = tokenOverlap(a, b);
   return jaccard >= 0.55 || inter >= 3 && containment >= 0.75 || inter >= 2 && containment >= 0.9;
+}
+function looseDup(a, b) {
+  const { jaccard, containment, inter } = tokenOverlap(a, b);
+  return jaccard >= 0.4 || inter >= 2 && containment >= 0.6;
 }
 function pruneHandled(list, keep) {
   const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
@@ -1454,6 +1508,9 @@ async function generate(existing, profile, extras) {
 }
 function foldGenerated(existing, genTasks) {
   const now = (/* @__PURE__ */ new Date()).toISOString();
+  const dismissed = existing.filter((t) => t.status === "dismissed");
+  const resemblesDismissed = (g) => dismissed.some((d) => !!g.anchorKey && !!d.anchorKey && normKey(g.anchorKey) === normKey(d.anchorKey) || !!g.link && linkOf(d) === g.link || looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) || g.source === d.source && looseDup(g.why, d.why));
+  genTasks = genTasks.filter((g) => !resemblesDismissed(g));
   const candidates = [...existing];
   const freshIds = /* @__PURE__ */ new Set();
   for (const g of genTasks) {
@@ -1860,6 +1917,12 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
 var lastGenDate = /* @__PURE__ */ new Map();
 var genInflight = /* @__PURE__ */ new Map();
 var today = () => (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+var CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1e3;
+var shouldRefreshContinuous = (lastGenTime) => {
+  if (!lastGenTime) return true;
+  const elapsed = Date.now() - new Date(lastGenTime).getTime();
+  return elapsed > CONTINUOUS_MONITOR_INTERVAL_MS;
+};
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to sweep for new tasks." });
@@ -1869,7 +1932,9 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
     const todayStr = today();
     const force = req.body?.force === true;
     const lastGen = lastGenDate.get(req.session.user) || req.session.lastGenDay;
-    if (!force && lastGen === todayStr && (req.session.tasks || []).length) {
+    const lastGenTime = req.session.lastGenTime;
+    const continuousRefresh = !force && shouldRefreshContinuous(lastGenTime);
+    if (!force && !continuousRefresh && lastGen === todayStr && (req.session.tasks || []).length) {
       res.json(req.session.tasks);
       return;
     }
@@ -1885,6 +1950,7 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
         req.session.tasks = await generate(req.session.tasks || [], req.session.profile ||= emptyProfile(), extras);
         lastGenDate.set(user, todayStr);
         req.session.lastGenDay = todayStr;
+        req.session.lastGenTime = (/* @__PURE__ */ new Date()).toISOString();
         await commit(req);
       })().finally(() => genInflight.delete(user));
       genInflight.set(user, sweep);
@@ -2078,6 +2144,28 @@ app.post("/api/profile", requireAuth, async (req, res) => {
   } else {
     const k = listKey(category);
     if (k && value && !p[k].some((x) => x.toLowerCase() === value.toLowerCase())) p[k].push(value.slice(0, 160));
+  }
+  await commit(req);
+  res.json(p);
+});
+app.post("/api/profile/preference", requireAuth, async (req, res) => {
+  const p = req.session.profile ||= emptyProfile();
+  const key2 = String(req.body?.key || "");
+  const value = req.body?.value;
+  if (key2 === "workingHours" && typeof value === "object") {
+    p.workingHours = {
+      start: String(value.start || "09:00"),
+      end: String(value.end || "18:00"),
+      timezone: String(value.timezone || "UTC")
+    };
+  } else if (key2 === "responseStyle" && ["concise", "detailed", "casual", "formal"].includes(value)) {
+    p.responseStyle = value;
+  } else if (key2 === "autoApprove" && Array.isArray(value)) {
+    p.autoApprove = value.map(String);
+  } else if (key2 === "highPriorityPeople" && Array.isArray(value)) {
+    p.highPriorityPeople = value.map(String);
+  } else if (key2 === "autoArchivePatterns" && Array.isArray(value)) {
+    p.autoArchivePatterns = value.map(String);
   }
   await commit(req);
   res.json(p);

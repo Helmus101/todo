@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { Fragment, useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
 import { api, type IntegrationItem } from "./api.ts";
 
@@ -213,22 +213,23 @@ export function App() {
     if (t) { setTasks(retryFlags(t)); setLoaded(true); }
   }, []);
 
-  // Run the daily background sweep IF it hasn't succeeded today. The server's daily floor is the
-  // authority (a repeat call is a fast no-op); the local day-marker just avoids chatty repeat calls —
-  // and is only set on SUCCESS, so a failed/timed-out sweep is retried on the next trigger instead of
-  // silently burning the whole day (the old behavior: one attempt at page load, swallow the error, done).
+  // Continuous monitoring: run a background sweep when the last SUCCESSFUL one is older than the watch
+  // interval (the server gates too — a too-soon call is a fast no-op). The marker is only set on SUCCESS,
+  // so a failed/timed-out sweep retries on the next trigger instead of silently losing its slot. Each
+  // sweep is a cheap read-only DELTA ("what's new since the list was built"), which is what makes
+  // watching all day affordable.
+  const SWEEP_EVERY_MS = 45 * 60_000;
   const sweeping = useRef(false);
   const sweepIfDue = useCallback(async () => {
     if (!connected || status?.paused || sweeping.current) return;
-    const today = new Date().toDateString();
-    try { if (localStorage.getItem("otto-lastgen-day") === today) return; } catch { /* sweep anyway */ }
+    try { if (Date.now() - Number(localStorage.getItem("otto-lastgen") || 0) < SWEEP_EVERY_MS) return; } catch { /* sweep anyway */ }
     sweeping.current = true;
     setScanning(true);
     try {
       const fresh = await api.generate();
       setTasks(retryFlags(fresh)); setLoaded(true);
-      try { localStorage.setItem("otto-lastgen-day", today); } catch { /* ignore */ }
-    } catch { /* leave the day-marker unset — next focus/interval tick retries */ }
+      try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
+    } catch { /* marker stays unset — next focus/interval tick retries */ }
     finally { sweeping.current = false; setScanning(false); }
   }, [connected, status?.paused]);
 
@@ -239,14 +240,14 @@ export function App() {
   }, [connected, status?.aiReady, syncTasks, sweepIfDue]);
 
   // Returning to the tab re-syncs the list (tasks finished elsewhere appear WITHOUT a manual reload) and
-  // retries the daily sweep if it hasn't succeeded yet — so generation happens every day even for a tab
-  // that's been open all week, and the list is never stuck waiting for a tab-switch to show up.
+  // sweeps again if the watch interval has passed — so Otto keeps watching throughout the day, and the
+  // list is never stuck waiting for a tab-switch to show up.
   useEffect(() => {
     if (!connected) return;
     const on = () => { if (!document.hidden) { void syncTasks(); void sweepIfDue(); } };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
-    const tick = setInterval(on, 15 * 60_000); // long-lived tab: catch the date rollover without any user action
+    const tick = setInterval(on, 15 * 60_000); // long-lived tab: keep watching without any user action
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(tick); };
   }, [connected, syncTasks, sweepIfDue]);
 
@@ -302,8 +303,8 @@ export function App() {
       const before = new Set(tasks.map((t) => t.id));
       const t = await api.generate(true);
       setTasks(t); setLoaded(true);
-      // A manual Refresh IS today's sweep — mark the day so the background trigger doesn't re-run it.
-      try { localStorage.setItem("otto-lastgen", String(Date.now())); localStorage.setItem("otto-lastgen-day", new Date().toDateString()); } catch { /* ignore */ }
+      // A manual Refresh counts as a sweep — reset the watch interval so the background one doesn't repeat it.
+      try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
       // Honest feedback on what the sweep found — "nothing happened" and "nothing new" look identical otherwise.
       const added = t.filter((x) => !before.has(x.id) && x.status !== "done" && x.status !== "dismissed").length;
       if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now.");
@@ -401,18 +402,29 @@ export function App() {
             // Until the first server response, an empty list means "still loading", not "all clear" —
             // show the skeleton instead of flashing the empty state.
             if (shown.length === 0 && (busy || !loaded)) return <TaskSkeleton />;
-            return shown.length === 0
-              ? <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}. New mail or meetings show up here.`}</div>
-              : <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => (
-                  <Card
-                    key={t.id}
-                    task={t}
-                    open={t.id === openId}
-                    onToggle={() => navigate(t.id === openId ? "" : `task/${t.id}`)}
-                    onChange={setTasks}
-                    onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
-                  />
-                ))}</div>;
+            if (shown.length === 0)
+              return <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}. New mail or meetings show up here.`}</div>;
+            // Execution-plan view: the list (already score-sorted) renders under High / Medium / Low
+            // priority bands so a glance answers "what actually matters right now".
+            const band = (t: WebTask) => t.quadrant === "do" ? "High priority" : t.quadrant === "later" ? "Low priority" : "Medium";
+            let prevBand = "";
+            return <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => {
+                  const b = band(t);
+                  const head = b !== prevBand ? <div className="band-head" key={`band-${b}`}>{b}</div> : null;
+                  prevBand = b;
+                  return (
+                    <Fragment key={t.id}>
+                      {head}
+                      <Card
+                        task={t}
+                        open={t.id === openId}
+                        onToggle={() => navigate(t.id === openId ? "" : `task/${t.id}`)}
+                        onChange={setTasks}
+                        onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                      />
+                    </Fragment>
+                  );
+                })}</div>;
           })()}
           {showCompleted && completed.length > 0 && (
             <div className="completed-section">
@@ -472,6 +484,9 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
 function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void }) {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  useEffect(() => { void api.profile().then(setProfile); }, []);
+
   return (
     <main className="settings-page">
       <h1 className="settings-title">Settings</h1>
@@ -498,6 +513,46 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
           <input type="checkbox" checked={status.paused} onChange={(e) => { void api.setPaused(e.target.checked).then(() => onChanged()); }} />
           <span className="pref-text"><b>Pause all AI usage</b><span className="settings-hint">Stops the daily sweep, task runs, and chat immediately — nothing calls the AI while this is on. Your existing to-dos stay put; flip it off to resume.</span></span>
         </label>
+        <div className="pref-group">
+          <label className="pref-row">
+            <span className="pref-text"><b>Working hours</b><span className="settings-hint">When Otto should be active (e.g., 9am-6pm)</span></span>
+          </label>
+          <div className="pref-inputs">
+            <input type="time" className="pref-input" value={profile?.workingHours?.start || "09:00"} onChange={(e) => { void api.setProfilePreference("workingHours", { ...profile?.workingHours, start: e.target.value }).then(setProfile); }} />
+            <span>to</span>
+            <input type="time" className="pref-input" value={profile?.workingHours?.end || "18:00"} onChange={(e) => { void api.setProfilePreference("workingHours", { ...profile?.workingHours, end: e.target.value }).then(setProfile); }} />
+          </div>
+        </div>
+        <div className="pref-group">
+          <label className="pref-row">
+            <span className="pref-text"><b>Response style</b><span className="settings-hint">How Otto should draft your replies</span></span>
+          </label>
+          <select className="pref-select" value={profile?.responseStyle || "concise"} onChange={(e) => { void api.setProfilePreference("responseStyle", e.target.value).then(setProfile); }}>
+            <option value="concise">Concise</option>
+            <option value="detailed">Detailed</option>
+            <option value="casual">Casual</option>
+            <option value="formal">Formal</option>
+          </select>
+        </div>
+        <div className="pref-group">
+          <label className="pref-row">
+            <span className="pref-text"><b>Auto-approve actions</b><span className="settings-hint">Actions Otto can do without asking (e.g., schedule meetings under 30min)</span></span>
+          </label>
+          {([["schedule_meetings_under_30min", "Schedule meetings under 30 minutes"], ["archive_newsletters", "Archive newsletters automatically"]] as const).map(([key, label]) => (
+            <label className="pref-row" key={key}>
+              <input
+                type="checkbox"
+                checked={!!profile?.autoApprove?.includes(key)}
+                onChange={(e) => {
+                  const cur = profile?.autoApprove || [];
+                  const next = e.target.checked ? [...cur, key] : cur.filter((x) => x !== key);
+                  void api.setProfilePreference("autoApprove", next).then(setProfile);
+                }}
+              />
+              <span className="pref-text">{label}</span>
+            </label>
+          ))}
+        </div>
       </section>
 
       <section className="settings-sec">

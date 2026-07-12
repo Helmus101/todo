@@ -10,7 +10,8 @@
  * into firing one; they surface as "needs you" steps. (Email keeps the rule you set: draft only, you send.)
  */
 import { Composio } from "@composio/core";
-import type Anthropic from "@anthropic-ai/sdk";
+/** Tool shape in the (Anthropic-style) format the agent loop converts for the OpenAI-compatible API. */
+export interface AgentTool { name: string; description?: string; input_schema: { type: "object"; properties: Record<string, unknown>; required?: string[] }; }
 
 export interface Integration { key: string; name: string; toolkit: string; blurb: string; category: string; }
 
@@ -266,7 +267,7 @@ export async function sendSendable(userId: string, s: { app: string; draftId?: s
 }
 
 export interface AgentTools {
-  tools: Anthropic.Tool[];
+  tools: AgentTool[];
   call: (name: string, args: Record<string, unknown>) => Promise<string | null>;
   connected: string[];
   /** Send a brief TO THE USER'S OWN INBOX — the recipient is resolved server-side (never model-supplied),
@@ -301,6 +302,29 @@ export async function sendSelfBrief(userId: string, subject: string, body: strin
 const cache = new Map<string, { at: number; data: AgentTools }>();
 const CACHE_MS = 120_000;
 const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+
+/** Composio's raw parameter schemas are ENORMOUS — long prop descriptions, examples, defaults, titles,
+ *  deeply nested object trees. Every tool's schema is resent on EVERY round of every agent call, and at
+ *  ~110 tools the raw schemas alone were ~80k tokens per round (the "664k tokens for one task" logs).
+ *  Slim each schema to what the model needs to CALL the tool: required params + a few optionals, each
+ *  reduced to {type, short description, enum/items}. Nested objects flatten to type + description —
+ *  Composio tolerates loosely-shaped args, and the run agent can retry off the error message if needed. */
+function slimSchema(params: any): { type: "object"; properties: Record<string, unknown>; required?: string[] } {
+  const props = (params && typeof params === "object" && params.properties && typeof params.properties === "object") ? params.properties : {};
+  const required: string[] = Array.isArray(params?.required) ? params.required.filter((k: any) => typeof k === "string" && props[k]) : [];
+  const keys = Object.keys(props);
+  const keep = [...required, ...keys.filter((k) => !required.includes(k))].slice(0, 10);
+  const out: Record<string, unknown> = {};
+  for (const k of keep) {
+    const p = props[k] ?? {};
+    const slim: Record<string, unknown> = { type: p.type || "string" };
+    if (p.description) slim.description = String(p.description).slice(0, 120);
+    if (Array.isArray(p.enum)) slim.enum = p.enum.slice(0, 12);
+    if (p.type === "array") slim.items = { type: p.items?.type || "string" };
+    out[k] = slim;
+  }
+  return { type: "object", properties: out, ...(required.length ? { required } : {}) };
+}
 
 // Rank a toolkit's actions by usefulness to an assistant, so the per-toolkit cap keeps the RIGHT ones
 // (read/create/update on the core nouns) rather than the alphabetically-first plumbing (ACL, channels,
@@ -340,13 +364,13 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
   const connected = await listConnectedToolkits(userId);
   if (!connected.length) { const data = { ...EMPTY, connected }; cache.set(userId, { at: Date.now(), data }); return data; }
 
-  const tools: Anthropic.Tool[] = [];
+  const tools: AgentTool[] = [];
   const map = new Map<string, string>(); // sanitized tool name → raw Composio action slug
   // Every tool schema here is resent on EVERY round of every agent call — the single biggest fixed cost
   // multiplier in the whole system (schemas × rounds). Kept lean: still enough slots per app for real
   // read+write coverage (guaranteed by the 60/40 split below), just not the old alphabet-soup ceiling.
-  const MAX = 110;
-  const perToolkit = Math.min(12, Math.max(6, Math.floor(MAX / connected.length)));
+  const MAX = 90;
+  const perToolkit = Math.min(10, Math.max(6, Math.floor(MAX / connected.length)));
   // Task-critical apps first (the to-do list is built from Gmail + Calendar), so they ALWAYS get their share
   // before a big toolkit can crowd them out; anything else keeps its connected order behind these.
   const PRIORITY = ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "googleslides", "slack", "notion", "linear", "todoist"];
@@ -381,12 +405,9 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
       map.set(name, rawName);
       const fn = (t as any)?.function ?? t;
       const params = fn?.parameters ?? (t as any)?.parameters ?? (t as any)?.input_parameters ?? (t as any)?.inputSchema ?? {};
-      const input_schema = (params && typeof params === "object")
-        ? { type: "object" as const, properties: params.properties ?? {}, ...(Array.isArray(params.required) ? { required: params.required } : {}) }
-        : { type: "object" as const, properties: {} };
-      // Trimmed from 600 chars — this text is resent every round for every tool; the name + a short
-      // gist is enough for the model to pick the right action, the input_schema explains the params.
-      tools.push({ name, description: `[${app}] ${String(fn?.description ?? rawName).slice(0, 220)}`, input_schema });
+      // Kept SHORT — this text is resent every round for every tool; the (self-describing Composio) name
+      // plus a one-line gist is enough to pick the right action, the slim input_schema explains the params.
+      tools.push({ name, description: `[${app}] ${String(fn?.description ?? rawName).slice(0, 140)}`, input_schema: slimSchema(params) });
       added++;
     }
   }

@@ -23,6 +23,12 @@ export interface Profile {
   projects: string[];     // ongoing projects / goals
   paused?: boolean;       // "pause all AI usage" — blocks generation, task runs, and chat server-side
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
+  // Structured preferences for autonomous behavior
+  workingHours?: { start: string; end: string; timezone: string }; // e.g. { start: "09:00", end: "18:00", timezone: "America/New_York" }
+  responseStyle?: "concise" | "detailed" | "casual" | "formal"; // how AI should draft responses
+  autoApprove?: string[]; // categories of actions AI can do without approval (e.g., ["schedule_meetings_under_30min", "archive_newsletters"])
+  highPriorityPeople?: string[]; // people whose messages get higher priority
+  autoArchivePatterns?: string[]; // email patterns to auto-archive (e.g., ["newsletter", "promotions"])
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -36,6 +42,16 @@ export function normalizeProfile(p: any): Profile {
     projects: dedupeFacts(arr(p?.projects)),
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
+    // Structured preferences
+    workingHours: p?.workingHours && typeof p.workingHours === "object" ? {
+      start: String(p.workingHours.start || "09:00"),
+      end: String(p.workingHours.end || "18:00"),
+      timezone: String(p.workingHours.timezone || "UTC"),
+    } : undefined,
+    responseStyle: ["concise", "detailed", "casual", "formal"].includes(p?.responseStyle) ? p.responseStyle : undefined,
+    autoApprove: Array.isArray(p?.autoApprove) ? p.autoApprove.map(String) : undefined,
+    highPriorityPeople: Array.isArray(p?.highPriorityPeople) ? p.highPriorityPeople.map(String) : undefined,
+    autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : undefined,
   };
 }
 
