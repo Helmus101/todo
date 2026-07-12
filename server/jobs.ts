@@ -177,6 +177,8 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       for (const t of ready) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
     } catch (e: any) { console.warn(`[jobs] cron skip ${email}:`, e?.message || e); }
   }
-  const { processed, failed } = await drain(5);
+  // Hobby-plan cron fires once daily, so this tick is the only guaranteed background turn:
+  // drain a bigger batch within the function's 300s ceiling.
+  const { processed, failed } = await drain(10, 270_000);
   return { users: emails.length, enqueued, processed, failed };
 }
