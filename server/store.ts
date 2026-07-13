@@ -170,6 +170,14 @@ async function jobsDb(): Promise<SupabaseClient | null> {
   }
   return jobsTableOk ? client : null;
 }
+// RLS lets the anon key SELECT (zero rows) but rejects INSERT/UPDATE, so the read probe above passes
+// and the first write is where a locked-down table actually reveals itself — demote to memory there.
+function demoteIfRls(error: { code?: string; message?: string } | null): boolean {
+  if (!error || !(error.code === "42501" || /row-level security/i.test(error.message || ""))) return false;
+  jobsTableOk = false;
+  console.warn(`[store] jobs table not writable (${error.message}) — using in-memory queue (fine for one dev process; set SUPABASE_SERVICE_KEY for durability).`);
+  return true;
+}
 
 /** Enqueue a job. Idempotent: if an ACTIVE (queued/running) job already exists for the same key, returns it
  *  instead of creating a duplicate — this is what makes double-clicks/two tabs/cron overlap safe. */
@@ -186,7 +194,8 @@ export async function enqueueJob(userEmail: string, type: JobType, taskId?: stri
     // Unique-index race (another instance inserted first) → fetch the winner.
     const { data: winner } = await db.from(JOBS).select("*").eq("idempotency_key", key).in("status", ["queued", "running"]).limit(1);
     if (winner?.length) return winner[0] as Job;
-    throw new Error(`enqueue failed: ${error?.message || "unknown"}`);
+    if (!demoteIfRls(error)) throw new Error(`enqueue failed: ${error?.message || "unknown"}`);
+    // fall through to the in-memory queue below
   }
   const active = memJobs.find((j) => j.idempotency_key === key && (j.status === "queued" || j.status === "running"));
   if (active) return active;
@@ -297,7 +306,13 @@ const memEvents: (JobEvent & { user_email: string; job_id?: string })[] = [];
 export async function recordEvent(userEmail: string, kind: string, opts: { taskId?: string; jobId?: string; message?: string } = {}): Promise<void> {
   const db = await jobsDb();
   const row = { user_email: userEmail, task_id: opts.taskId ?? null, job_id: opts.jobId ?? null, kind, message: opts.message ? String(opts.message).slice(0, 300) : null };
-  if (db) { try { await db.from(EVENTS).insert(row); } catch { /* best-effort */ } return; }
+  if (db) {
+    try {
+      const { error } = await db.from(EVENTS).insert(row);
+      if (!error) return;
+      demoteIfRls(error); // fall through to memory either way — best-effort
+    } catch { return; }
+  }
   memEvents.push({ ...row, at: new Date().toISOString() } as any);
   if (memEvents.length > 1000) memEvents.splice(0, memEvents.length - 1000);
 }
