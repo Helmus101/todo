@@ -43,6 +43,9 @@ export interface Profile {
   autoApprove?: string[]; // categories of actions AI can do without approval (e.g., ["schedule_meetings_under_30min", "archive_newsletters"])
   highPriorityPeople?: string[]; // people whose messages get higher priority
   autoArchivePatterns?: string[]; // email patterns to auto-archive (e.g., ["newsletter", "promotions"])
+  // Trust/confidence system for gradual automation
+  confidence?: Record<string, number>; // action category → confidence score (0-1), e.g., { "draft_email": 0.85, "create_calendar": 0.6 }
+  confidenceHistory?: Array<{ action: string; approved: boolean; at: string }>; // track approval/rejection history
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -66,6 +69,9 @@ export function normalizeProfile(p: any): Profile {
     autoApprove: Array.isArray(p?.autoApprove) ? p.autoApprove.map(String) : undefined,
     highPriorityPeople: Array.isArray(p?.highPriorityPeople) ? p.highPriorityPeople.map(String) : undefined,
     autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : undefined,
+    // Trust/confidence system
+    confidence: p?.confidence && typeof p.confidence === "object" ? p.confidence : undefined,
+    confidenceHistory: Array.isArray(p?.confidenceHistory) ? p.confidenceHistory.slice(-100) : undefined,
   };
 }
 
@@ -178,6 +184,9 @@ export interface WebTask {
   updatedAt?: string;
   /** Why the last run failed (shown on failed_* cards with the Retry button). */
   lastError?: string;
+  /** A manual task added while AI was paused/unavailable — raw text, not yet refined. The card offers a
+   *  "Refine" action to clean it up once AI is back. */
+  unrefined?: boolean;
 }
 
 export interface ConnectionStatus {

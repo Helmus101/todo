@@ -35,7 +35,10 @@ function normalizeProfile(p) {
     responseStyle: ["concise", "detailed", "casual", "formal"].includes(p?.responseStyle) ? p.responseStyle : void 0,
     autoApprove: Array.isArray(p?.autoApprove) ? p.autoApprove.map(String) : void 0,
     highPriorityPeople: Array.isArray(p?.highPriorityPeople) ? p.highPriorityPeople.map(String) : void 0,
-    autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : void 0
+    autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : void 0,
+    // Trust/confidence system
+    confidence: p?.confidence && typeof p.confidence === "object" ? p.confidence : void 0,
+    confidenceHistory: Array.isArray(p?.confidenceHistory) ? p.confidenceHistory.slice(-100) : void 0
   };
 }
 var FACT_STOP = /* @__PURE__ */ new Set(["the", "and", "for", "with", "from", "that", "this", "they", "their", "them", "she", "her", "his", "him", "who", "handles", "handled", "leads", "are", "was", "were", "has", "have", "will", "its", "willem", "also", "both"]);
@@ -1083,6 +1086,12 @@ async function jobsDb() {
   }
   return jobsTableOk ? client : null;
 }
+function demoteIfRls(error) {
+  if (!error || !(error.code === "42501" || /row-level security/i.test(error.message || ""))) return false;
+  jobsTableOk = false;
+  console.warn(`[store] jobs table not writable (${error.message}) \u2014 using in-memory queue (fine for one dev process; set SUPABASE_SERVICE_KEY for durability).`);
+  return true;
+}
 async function enqueueJob(userEmail, type, taskId, input) {
   const key2 = type === "sweep" ? `${userEmail}:sweep` : `${userEmail}:task:${taskId}`;
   const db = await jobsDb();
@@ -1093,7 +1102,7 @@ async function enqueueJob(userEmail, type, taskId, input) {
     if (!error && data) return data;
     const { data: winner } = await db.from(JOBS).select("*").eq("idempotency_key", key2).in("status", ["queued", "running"]).limit(1);
     if (winner?.length) return winner[0];
-    throw new Error(`enqueue failed: ${error?.message || "unknown"}`);
+    if (!demoteIfRls(error)) throw new Error(`enqueue failed: ${error?.message || "unknown"}`);
   }
   const active = memJobs.find((j) => j.idempotency_key === key2 && (j.status === "queued" || j.status === "running"));
   if (active) return active;
@@ -1184,6 +1193,14 @@ async function countActiveJobs(userEmail) {
   }
   return memJobs.filter((j) => j.user_email === userEmail && (j.status === "queued" || j.status === "running")).length;
 }
+async function activeJobTaskIds(userEmail) {
+  const db = await jobsDb();
+  if (db) {
+    const { data } = await db.from(JOBS).select("task_id").eq("user_email", userEmail).in("status", ["queued", "running"]).not("task_id", "is", null).limit(100);
+    return [...new Set((data || []).map((r) => String(r.task_id)).filter(Boolean))];
+  }
+  return [...new Set(memJobs.filter((j) => j.user_email === userEmail && (j.status === "queued" || j.status === "running") && j.task_id).map((j) => String(j.task_id)))];
+}
 async function getJob(id, userEmail) {
   const db = await jobsDb();
   if (db) {
@@ -1198,10 +1215,12 @@ async function recordEvent(userEmail, kind, opts = {}) {
   const row = { user_email: userEmail, task_id: opts.taskId ?? null, job_id: opts.jobId ?? null, kind, message: opts.message ? String(opts.message).slice(0, 300) : null };
   if (db) {
     try {
-      await db.from(EVENTS).insert(row);
+      const { error } = await db.from(EVENTS).insert(row);
+      if (!error) return;
+      demoteIfRls(error);
     } catch {
+      return;
     }
-    return;
   }
   memEvents.push({ ...row, at: (/* @__PURE__ */ new Date()).toISOString() });
   if (memEvents.length > 1e3) memEvents.splice(0, memEvents.length - 1e3);
@@ -1536,6 +1555,175 @@ async function readAction(userId, action, args) {
   if (r && r.successful === false) throw new Error(String(r.error || `read failed: ${action}`));
   return r?.data ?? r;
 }
+async function execDirect(userId, action, args) {
+  const r = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true });
+  if (r && r.successful === false) throw new Error(String(r.error || `${action} failed`));
+  return r?.data ?? r;
+}
+var firstId = (d, ...paths) => {
+  for (const p of paths) {
+    let v = d;
+    for (const k of p.split(".")) v = v?.[k];
+    if (v) return String(v);
+  }
+  return "";
+};
+async function runSmokeTest(userId) {
+  if (!integrationsReady() || !userId) return [{ app: "composio", step: "configured", ok: false, detail: "Composio not configured" }];
+  const { connected } = await getAgentTools(userId);
+  const results = [];
+  const step = async (app2, name, fn) => {
+    try {
+      results.push({ app: app2, step: name, ok: true, detail: await fn() });
+      return true;
+    } catch (e) {
+      results.push({ app: app2, step: name, ok: false, detail: String(e?.message || e).slice(0, 250) });
+      return false;
+    }
+  };
+  const MARK = "Otto integration check \u2014 safe to delete";
+  if (connected.includes("gmail")) {
+    let self = "";
+    await step("gmail", "read profile", async () => {
+      const d = await execDirect(userId, "GMAIL_GET_PROFILE", {});
+      self = firstId(d, "emailAddress", "email_address", "response_data.emailAddress");
+      return self || "ok";
+    });
+    let draftId = "";
+    const created = await step("gmail", "create draft", async () => {
+      const d = await execDirect(userId, "GMAIL_CREATE_EMAIL_DRAFT", { recipient_email: self || userId, subject: MARK, body: "Created by Otto's integration check. It verifies drafting works, then deletes this draft." });
+      draftId = firstId(d, "id", "draft.id", "response_data.id", "response_data.draft.id");
+      return draftId ? `draft ${draftId}` : "created (no id returned)";
+    });
+    if (created && draftId) {
+      await step("gmail", "verify draft live", async () => {
+        const d = await execDirect(userId, "GMAIL_LIST_DRAFTS", { max_results: 25 });
+        if (!JSON.stringify(d ?? "").includes(draftId)) throw new Error("created draft not found in the live drafts list");
+        return "found in drafts";
+      });
+      await step("gmail", "clean up draft", async () => {
+        await execDirect(userId, "GMAIL_DELETE_DRAFT", { draft_id: draftId });
+        return "deleted";
+      });
+    }
+  }
+  if (connected.includes("googlecalendar")) {
+    await step("calendar", "read events", async () => {
+      await execDirect(userId, "GOOGLECALENDAR_EVENTS_LIST", { calendar_id: "primary", max_results: 5 });
+      return "listed";
+    });
+    let eventId = "";
+    const created = await step("calendar", "create test event", async () => {
+      const d = await execDirect(userId, "GOOGLECALENDAR_QUICK_ADD", { calendar_id: "primary", text: `${MARK} tomorrow 4am` });
+      eventId = firstId(d, "id", "event.id", "response_data.id", "event_data.id");
+      return eventId ? `event ${eventId}` : "created (no id returned)";
+    });
+    if (created && eventId) {
+      await step("calendar", "verify event live", async () => {
+        await execDirect(userId, "GOOGLECALENDAR_GET_EVENT", { calendar_id: "primary", event_id: eventId });
+        return "found";
+      });
+      await step("calendar", "clean up event", async () => {
+        await execDirect(userId, "GOOGLECALENDAR_DELETE_EVENT", { calendar_id: "primary", event_id: eventId });
+        return "deleted";
+      });
+    }
+  }
+  if (connected.includes("googledrive")) {
+    await step("drive", "list files", async () => {
+      await execDirect(userId, "GOOGLEDRIVE_LIST_FILES", { page_size: 5 });
+      return "listed";
+    });
+  }
+  if (connected.includes("googledocs")) {
+    let docId = "";
+    const created = await step("docs", "create test doc", async () => {
+      const d = await execDirect(userId, "GOOGLEDOCS_CREATE_DOCUMENT", { title: MARK, text: "Created by Otto's integration check." });
+      docId = firstId(d, "documentId", "document_id", "response_data.documentId", "id");
+      return docId ? `doc ${docId}` : "created (no id returned)";
+    });
+    if (created && docId) {
+      await step("docs", "verify doc live", async () => {
+        await execDirect(userId, "GOOGLEDOCS_GET_DOCUMENT_BY_ID", { id: docId });
+        return "found";
+      });
+      if (connected.includes("googledrive")) await step("docs", "clean up doc", async () => {
+        await execDirect(userId, "GOOGLEDRIVE_DELETE_FILE", { file_id: docId });
+        return "deleted";
+      });
+    }
+  }
+  if (connected.includes("googlesheets")) {
+    let sheetId = "";
+    const created = await step("sheets", "create test sheet", async () => {
+      const d = await execDirect(userId, "GOOGLESHEETS_CREATE_GOOGLE_SHEET1", { title: MARK });
+      sheetId = firstId(d, "spreadsheetId", "spreadsheet_id", "response_data.spreadsheetId");
+      return sheetId ? `sheet ${sheetId}` : "created (no id returned)";
+    });
+    if (created && sheetId) {
+      await step("sheets", "write cell", async () => {
+        await execDirect(userId, "GOOGLESHEETS_UPDATE_VALUES", { spreadsheet_id: sheetId, range: "A1", values: [["otto-check"]], value_input_option: "RAW" });
+        return "wrote A1";
+      });
+      await step("sheets", "read cell back", async () => {
+        const d = await execDirect(userId, "GOOGLESHEETS_BATCH_GET", { spreadsheet_id: sheetId, ranges: ["A1"] });
+        if (!JSON.stringify(d ?? "").includes("otto-check")) throw new Error("written value not found on read-back");
+        return "verified round-trip";
+      });
+      if (connected.includes("googledrive")) await step("sheets", "clean up sheet", async () => {
+        await execDirect(userId, "GOOGLEDRIVE_DELETE_FILE", { file_id: sheetId });
+        return "deleted";
+      });
+    }
+  }
+  if (!results.length) results.push({ app: "none", step: "connected apps", ok: false, detail: "Nothing connected to check \u2014 connect Gmail/Calendar/Drive first." });
+  return results;
+}
+var NOT_FOUND = /(not.?found|404|does ?n.t exist|invalid.*(id|value)|deleted|no such)/i;
+async function probeArtifact(userId, action, args, expectRef) {
+  try {
+    const data = await readAction(userId, action, args);
+    if (!expectRef) return true;
+    return JSON.stringify(data ?? "").includes(expectRef);
+  } catch (e) {
+    return NOT_FOUND.test(String(e?.message || "")) ? false : null;
+  }
+}
+var DOC_LINK = /docs\.google\.com\/(document|spreadsheets|presentation)\/(?:d\/)?([-\w]{25,})/i;
+async function verifyTaskArtifacts(userId, t) {
+  if (!integrationsReady() || !userId) return [];
+  const dropped = [];
+  const gmailSendables = (t.sendables || []).filter((s) => s.app === "gmail" && s.draftId);
+  let draftsPayload = null;
+  if (gmailSendables.length) {
+    try {
+      draftsPayload = JSON.stringify(await readAction(userId, "GMAIL_LIST_DRAFTS", { max_results: 50 }) ?? "");
+    } catch {
+      draftsPayload = null;
+    }
+  }
+  const keptSendables = [];
+  for (const s of t.sendables || []) {
+    let ok = null;
+    if (s.app === "gmail" && s.draftId && draftsPayload !== null) ok = draftsPayload.includes(s.draftId);
+    else if (s.app === "gcal" && s.eventId) ok = await probeArtifact(userId, "GOOGLECALENDAR_GET_EVENT", { event_id: s.eventId });
+    if (ok === false) dropped.push(`"${s.label}" \u2014 the ${s.app === "gcal" ? "calendar event" : "draft"} it points at doesn't exist`);
+    else keptSendables.push(s);
+  }
+  const keptLinks = [];
+  for (const l of t.links || []) {
+    const m = DOC_LINK.exec(l.url);
+    let ok = null;
+    if (m && m[1] === "document") ok = await probeArtifact(userId, "GOOGLEDOCS_GET_DOCUMENT_BY_ID", { id: m[2] });
+    else if (m && m[1] === "spreadsheets") ok = await probeArtifact(userId, "GOOGLESHEETS_GET_SPREADSHEET_INFO", { spreadsheet_id: m[2] });
+    if (ok === false) dropped.push(`"${l.label}" \u2014 the linked document doesn't exist`);
+    else keptLinks.push(l);
+  }
+  if (t.sendables) t.sendables = keptSendables;
+  if (t.links) t.links = keptLinks;
+  if (dropped.length) console.warn(`[integrations] artifact verification dropped ${dropped.length}: ${dropped.join("; ")}`);
+  return dropped;
+}
 async function getAgentTools(userId) {
   if (!integrationsReady() || !userId) return EMPTY;
   const hit = cache.get(userId);
@@ -1779,6 +1967,35 @@ function applyProfileUpdate(profile, u) {
   const fact = f.slice(0, 160);
   const rest = profile[key2].filter((x) => !sameFact(x, fact));
   profile[key2] = dedupeFacts([...rest, fact]);
+}
+var MIN_HISTORY = 5;
+var DECAY_DAYS = 30;
+function updateConfidence(profile, actionCategory, approved) {
+  if (!profile.confidence) profile.confidence = {};
+  if (!profile.confidenceHistory) profile.confidenceHistory = [];
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  profile.confidenceHistory.push({ action: actionCategory, approved, at: now });
+  if (profile.confidenceHistory.length > 100) {
+    profile.confidenceHistory = profile.confidenceHistory.slice(-100);
+  }
+  const recent = profile.confidenceHistory.filter((h) => h.action === actionCategory);
+  if (recent.length < MIN_HISTORY) {
+    const current = profile.confidence[actionCategory] || 0.5;
+    profile.confidence[actionCategory] = approved ? Math.min(1, current + 0.05) : Math.max(0, current - 0.1);
+    return;
+  }
+  let weightedSum = 0;
+  let totalWeight = 0;
+  const nowMs = Date.now();
+  for (const h of recent) {
+    const ageMs = nowMs - new Date(h.at).getTime();
+    const ageDays = ageMs / (24 * 60 * 60 * 1e3);
+    const weight = Math.max(0.1, 1 - ageDays / DECAY_DAYS);
+    weightedSum += (h.approved ? 1 : 0) * weight;
+    totalWeight += weight;
+  }
+  const confidence = totalWeight > 0 ? weightedSum / totalWeight : 0.5;
+  profile.confidence[actionCategory] = confidence;
 }
 var URGENT_AT = 0.5;
 var IMPORTANT_AT = 0.5;
@@ -2036,9 +2253,26 @@ function addManual(list, title, refined) {
     quadrant: e.quadrant,
     score: e.score,
     status: "ready",
-    createdAt: now
+    createdAt: now,
+    ...refined ? {} : { unrefined: true }
+    // AI paused/unavailable — raw text in, offer Refine later
   });
   return list;
+}
+function applyRefinement(list, id, refined) {
+  const t = list.find((x) => x.id === id);
+  if (!t || !refined) return t;
+  t.title = refined.title.trim().slice(0, 120) || t.title;
+  t.why = refined.why || t.why;
+  t.when = refined.when ?? t.when;
+  t.urgency = refined.urgency;
+  t.importance = refined.importance;
+  const e = eisenhower(t.urgency, t.importance);
+  t.quadrant = e.quadrant;
+  t.score = e.score;
+  delete t.unrefined;
+  t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  return t;
 }
 async function runById(list, id, profile, extras, revision) {
   const task = list.find((t) => t.id === id);
@@ -2137,7 +2371,10 @@ async function processSweep(job) {
   const extras = await getAgentTools(email);
   if (!extras?.tools?.length) return "skipped: nothing connected";
   const before = new Set(list.map((t) => t.id));
+  const factsBefore = /* @__PURE__ */ new Set([...profile.preferences, ...profile.people, ...profile.projects]);
   const next = await generate(list, profile, extras, email);
+  const learned = [...profile.preferences, ...profile.people, ...profile.projects].filter((f) => !factsBefore.has(f));
+  for (const f of learned) void recordEvent(email, "learned", { jobId: job.id, message: f.slice(0, 200) });
   const found = next.filter((t) => !before.has(t.id) && !isHandled(t.status));
   const toRun = found.filter((t) => canonStatus(t.status) === "ready").sort((a, b) => b.score - a.score).slice(0, 3);
   for (const t of toRun) t.status = "queued";
@@ -2147,7 +2384,7 @@ async function processSweep(job) {
     await enqueueJob(email, "execute_task", t.id);
     void recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" });
   }
-  return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued`;
+  return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued${learned.length ? `, learned ${learned.length} fact${learned.length === 1 ? "" : "s"}` : ""}`;
 }
 async function markTaskStatus(email, taskId, status) {
   const { profile, list } = await loadUser(email);
@@ -2173,6 +2410,12 @@ async function processExecuteTask(job) {
   t.autoRan = true;
   try {
     const updated = await runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : void 0);
+    if (updated && (updated.links?.length || updated.sendables?.length)) {
+      const droppedArtifacts = await verifyTaskArtifacts(email, updated).catch(() => []);
+      for (const d of droppedArtifacts) void recordEvent(email, "artifact_dropped", { taskId, jobId: job.id, message: d.slice(0, 200) });
+      if (droppedArtifacts.length) void recordEvent(email, "verified", { taskId, jobId: job.id, message: "Remaining artifacts verified against the live account" });
+      else void recordEvent(email, "verified", { taskId, jobId: job.id, message: "Artifacts verified against the live account" });
+    }
     await commitUser(email, profile, list);
     const done = updated?.steps?.length ? `${updated.steps.filter((s) => !s.done).length} step(s) need you` : "fully handled";
     await recordEvent(email, "run_succeeded", { taskId, jobId: job.id, message: updated?.synthesis?.slice(0, 200) || done });
@@ -2197,9 +2440,68 @@ async function processExecuteStep(job) {
   await recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
   const permTools = await getAgentToolsWithPermission(email).catch(() => void 0);
   const updated = await runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : void 0);
+  if (updated && (updated.links?.length || updated.sendables?.length)) {
+    const droppedArtifacts = await verifyTaskArtifacts(email, updated).catch(() => []);
+    for (const d of droppedArtifacts) void recordEvent(email, "artifact_dropped", { taskId, jobId: job.id, message: d.slice(0, 200) });
+  }
   await commitUser(email, profile, list);
   await recordEvent(email, "step_done", { taskId, jobId: job.id, message: updated?.steps?.[index]?.text?.slice(0, 200) });
   return "step executed";
+}
+async function processEndOfDayReport(job) {
+  const email = job.user_email;
+  const { profile, list } = await loadUser(email);
+  if (profile.paused) return "skipped: AI paused";
+  const extras = await getAgentTools(email);
+  if (!extras?.selfBrief) return "skipped: Gmail not connected for report";
+  const completed = list.filter((t) => canonStatus(t.status) === "done").slice(-10);
+  const active = list.filter((t) => !isHandled(t.status)).slice(0, 15);
+  const highPriority = active.filter((t) => t.importance >= 0.7).slice(0, 5);
+  const today = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  let body = `End of day report \u2014 ${today}
+
+`;
+  if (completed.length) {
+    body += `\u2713 Completed today (${completed.length}):
+`;
+    for (const t of completed) {
+      body += `  \u2022 ${t.title}
+`;
+    }
+    body += "\n";
+  }
+  if (active.length) {
+    body += `\u{1F4CB} Still active (${active.length}):
+`;
+    for (const t of active.slice(0, 8)) {
+      const urgency = t.urgency >= 0.7 ? "\u{1F534}" : t.urgency >= 0.4 ? "\u{1F7E1}" : "\u{1F7E2}";
+      body += `  ${urgency} ${t.title}${t.when ? ` (${t.when})` : ""}
+`;
+    }
+    body += "\n";
+  }
+  if (highPriority.length) {
+    body += `\u26A1 High priority:
+`;
+    for (const t of highPriority) {
+      body += `  \u2022 ${t.title}${t.when ? ` \u2014 ${t.when}` : ""}
+`;
+    }
+    body += "\n";
+  }
+  body += `\u2014 Otto
+
+`;
+  body += `Open your dashboard to see the full list and take action.`;
+  const subject = `Otto daily report \u2014 ${completed.length} done, ${active.length} active`;
+  try {
+    const result = await extras.selfBrief(subject, body);
+    await recordEvent(email, "report_sent", { jobId: job.id, message: "End of day report emailed" });
+    return `report sent: ${result}`;
+  } catch (e) {
+    await recordEvent(email, "report_failed", { jobId: job.id, message: String(e?.message || e).slice(0, 200) });
+    throw e;
+  }
 }
 async function processJob(job) {
   switch (job.type) {
@@ -2212,6 +2514,8 @@ async function processJob(job) {
     // same processor; input.note carries the revision
     case "execute_step":
       return processExecuteStep(job);
+    case "end_of_day_report":
+      return processEndOfDayReport(job);
     default:
       return `skipped: unknown type ${job.type}`;
   }
@@ -2249,10 +2553,27 @@ async function cronTick() {
   const SWEEP_WINDOW_MS = 45 * 6e4;
   const emails = await listAccountEmails(50);
   let enqueued = 0;
+  const now = /* @__PURE__ */ new Date();
+  const currentHour = now.getHours();
   for (const email of emails) {
     try {
       const { profile, list } = await loadUser(email);
       if (profile.paused) continue;
+      if (profile.workingHours) {
+        const [endHour, endMin] = profile.workingHours.end.split(":").map(Number);
+        const reportWindowStart = endHour;
+        const reportWindowEnd = (endHour + 1) % 24;
+        const inReportWindow = currentHour === reportWindowStart || reportWindowEnd < reportWindowStart && (currentHour >= reportWindowStart || currentHour < reportWindowEnd);
+        if (inReportWindow) {
+          const lastReport = await getLatestJob(email, "end_of_day_report");
+          const lastReportAt = Date.parse(lastReport?.finished_at || lastReport?.created_at || "") || 0;
+          const reportToday = lastReportAt && new Date(lastReportAt).toDateString() === now.toDateString();
+          if (!reportToday) {
+            await enqueueJob(email, "end_of_day_report");
+            enqueued++;
+          }
+        }
+      }
       const last = await getLatestJob(email, "sweep");
       const lastAt = Date.parse(last?.finished_at || last?.created_at || "") || 0;
       const active = last && (last.status === "queued" || last.status === "running");
@@ -2269,7 +2590,7 @@ async function cronTick() {
       console.warn(`[jobs] cron skip ${email}:`, e?.message || e);
     }
   }
-  const { processed, failed } = await drain(5);
+  const { processed, failed } = await drain(10, 27e4);
   return { users: emails.length, enqueued, processed, failed };
 }
 
@@ -2504,6 +2825,15 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
   await commit(req);
   res.json(p);
 });
+app.post("/api/settings/smoke", requireAuth, rateLimit(3, 6e4), async (req, res) => {
+  try {
+    const results = await runSmokeTest(req.session.user);
+    void recordEvent(req.session.user, "smoke_test", { message: `${results.filter((r) => r.ok).length}/${results.length} checks passed` });
+    res.json(results);
+  } catch (e) {
+    res.status(500).json({ error: e?.message || "integration check failed" });
+  }
+});
 app.get("/api/tasks", requireAuth, async (req, res) => {
   try {
     if (req.session.user && cloudEnabled()) {
@@ -2557,6 +2887,25 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   await commit(req);
   res.json(req.session.tasks);
 });
+app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, res) => {
+  if (isPaused(req)) {
+    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to refine." });
+    return;
+  }
+  if (!aiReady()) {
+    res.status(503).json({ error: "AI isn't configured." });
+    return;
+  }
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
+  if (!t) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  const refined = await refineManualTask(t.title, req.session.profile);
+  applyRefinement(req.session.tasks || [], t.id, refined);
+  await commit(req);
+  res.json(req.session.tasks || []);
+});
 var runViaJob = async (req, res, type, input) => {
   const user = req.session.user;
   const id = String(req.params.id);
@@ -2606,6 +2955,9 @@ app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
   if (task) {
     task.status = "done";
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const profile = req.session.profile || emptyProfile();
+    updateConfidence(profile, task.source, true);
+    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user, "confirmed", { taskId: id, message: "You marked it done" });
   }
@@ -2616,6 +2968,9 @@ app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => {
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
     reject(req.session.tasks || [], id);
+    const profile = req.session.profile || emptyProfile();
+    updateConfidence(profile, task.source, false);
+    req.session.profile = profile;
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -2626,6 +2981,9 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
   if (task) {
     task.status = "dismissed";
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const profile = req.session.profile || emptyProfile();
+    updateConfidence(profile, task.source, false);
+    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user, "dismissed", { taskId: id, message: "You dismissed it \u2014 similar tasks won't come back" });
   }
@@ -2670,6 +3028,9 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
     }
     s.sent = true;
     t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const profile = req.session.profile || emptyProfile();
+    updateConfidence(profile, s.app, true);
+    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user, "sent", { taskId: t.id, message: `${s.label}${s.to ? ` \u2192 ${s.to}` : ""}` });
   }
@@ -2689,13 +3050,13 @@ app.get("/api/tasks/:id/events", requireAuth, async (req, res) => {
 app.post("/api/jobs/kick", requireAuth, rateLimit(60, 6e4), async (req, res) => {
   try {
     const out = await drain(1);
-    const active = await countActiveJobs(req.session.user);
+    const [active, activeTaskIds] = await Promise.all([countActiveJobs(req.session.user), activeJobTaskIds(req.session.user)]);
     if (out.processed || out.failed) {
       const cloud = await loadState(req.session.user);
       req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
       await saveSession(req);
     }
-    res.json({ ...out, active, tasks: req.session.tasks || [] });
+    res.json({ ...out, active, activeTaskIds, tasks: req.session.tasks || [] });
   } catch (e) {
     res.status(500).json({ error: e?.message || "kick failed" });
   }

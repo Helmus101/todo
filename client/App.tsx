@@ -17,11 +17,13 @@ const relTime = (iso: string): string => {
 
 // Explicit card status: what state is this task ACTUALLY in, in user terms. Derived from the canonical
 // lifecycle + the task's contents (a sendable → "Draft ready"; an open question → "Needs your answer").
-function statusChip(t: WebTask): { label: string; tone: "muted" | "busy" | "attention" | "bad" | "good" } | null {
+function statusChip(t: WebTask, retrying?: boolean): { label: string; tone: "muted" | "busy" | "attention" | "bad" | "good" } | null {
   const c = canonStatus(t.status);
   if (c === "queued") return { label: "Queued", tone: "muted" };
   if (c === "executing") return { label: "Working", tone: "busy" };
-  if (c === "failed_retryable") return { label: "Failed — will retry", tone: "bad" };
+  // "Retrying" is only claimed when a REAL queued/running job exists for this task (activeTaskIds from
+  // the kick response) — otherwise the honest state is "Failed" with a Retry button.
+  if (c === "failed_retryable") return retrying ? { label: "Failed — retrying…", tone: "busy" } : { label: "Failed", tone: "bad" };
   if (c === "failed_terminal") return { label: "Failed", tone: "bad" };
   if (c === "needs_review") {
     if (t.steps?.some((s) => !s.done && s.question)) return { label: "Needs your answer", tone: "attention" };
@@ -33,11 +35,11 @@ function statusChip(t: WebTask): { label: string; tone: "muted" | "busy" | "atte
   return null;
 }
 
-function subtitle(t: WebTask): string {
+function subtitle(t: WebTask, retrying?: boolean): string {
   const c = canonStatus(t.status);
   if (c === "queued") return "Queued — starting shortly…";
   if (c === "executing") return "Working on it…";
-  if (c === "failed_retryable") return `Run failed — retrying. ${t.lastError || ""}`.trim();
+  if (c === "failed_retryable") return `${retrying ? "Run failed — retrying automatically." : "Run failed — tap Retry."} ${t.lastError || ""}`.trim();
   if (c === "failed_terminal") return `Run failed — tap Run to retry. ${t.lastError || ""}`.trim();
   if (c === "needs_review") return statusChip(t)?.label === "Done for you" ? "Done for you" : (statusChip(t)?.label || t.why);
   return t.why;
@@ -266,6 +268,8 @@ export function App() {
   // the drain (one bounded job per kick) so online users see work complete within seconds instead of at
   // the next cron tick, and folds each kick's fresh task state straight into the list.
   const kicking = useRef(false);
+  // Task ids with a genuinely active (queued/running) job — the only honest basis for "retrying…".
+  const [retryingIds, setRetryingIds] = useState<string[]>([]);
   // Kicks continue through failed_retryable too — the failed attempt's job is REQUEUED server-side, so
   // "Failed — will retry" actually retries within seconds while the tab is open (not at the next cron).
   const hasActiveWork = (list: WebTask[]) => list.some((t) => isInFlight(t.status) || canonStatus(t.status) === "failed_retryable");
@@ -277,6 +281,7 @@ export function App() {
       kicking.current = true;
       try {
         const out = await api.kick();
+        setRetryingIds(Array.isArray(out.activeTaskIds) ? out.activeTaskIds : []);
         if (Array.isArray(out.tasks) && out.tasks.length) {
           // Keep the user's local done/dismiss decisions — never resurrect a card they closed.
           setTasks((prev) => out.tasks.map((u) => {
@@ -417,6 +422,7 @@ export function App() {
                       {head}
                       <Card
                         task={t}
+                        retrying={retryingIds.includes(t.id)}
                         open={t.id === openId}
                         onToggle={() => navigate(t.id === openId ? "" : `task/${t.id}`)}
                         onChange={setTasks}
@@ -501,6 +507,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <h3>Integrations</h3>
         <p className="settings-hint">Connect the apps you live in — start with <b>Gmail</b> and <b>Google Calendar</b> (that's what your to-dos are built from). Otto can read them and do the reversible work (draft a reply, create a doc, add a task). It can <b>never send, post, publish, or delete</b> on its own — those stay your call.</p>
         <Integrations onChanged={onChanged} />
+        <SmokeCheck />
       </section>
 
       <section className="settings-sec">
@@ -566,6 +573,44 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <p className="settings-hint">Through your connected apps it can read your world and do the <b>reversible</b> work — draft replies, create docs/decks/sheets, add tasks, update issues. It can <b>never</b> do something irreversible on its own: no sending or forwarding email, no posting messages, no publishing, no deleting. Those always stay with you.</p>
       </section>
     </main>
+  );
+}
+
+/** Live integration check: create → verify → clean up against the real connected account, per app.
+ *  This is the proof that action names, payloads, and OAuth scopes actually work — run it after
+ *  connecting apps and before trusting autonomous execution. */
+function SmokeCheck() {
+  const [running, setRunning] = useState(false);
+  const [results, setResults] = useState<{ app: string; step: string; ok: boolean; detail?: string }[] | null>(null);
+  const [error, setError] = useState("");
+  const run = async () => {
+    setRunning(true); setError(""); setResults(null);
+    try { setResults(await api.smokeTest()); }
+    catch (e: any) { setError(e?.message || "Integration check failed."); }
+    finally { setRunning(false); }
+  };
+  const passed = results?.filter((r) => r.ok).length ?? 0;
+  return (
+    <div className="smoke-check">
+      <div className="pref-row">
+        <button className="btn xs" disabled={running} onClick={() => void run()}>{running ? "Checking… (up to a minute)" : "Run integration check"}</button>
+        <span className="settings-hint">Creates a labeled test draft/event/doc in each connected app, verifies it exists, then deletes it — proves everything works end to end. Nothing is sent to anyone.</span>
+      </div>
+      {error && <div className="warn">{error}</div>}
+      {results && (
+        <div className="smoke-results">
+          <div className={`muted small ${passed === results.length ? "" : "warn-text"}`}><b>{passed}/{results.length}</b> checks passed{passed === results.length ? " — integrations are ready." : " — the failures below need attention before trusting autonomous runs."}</div>
+          {results.map((r, i) => (
+            <div key={i} className="smoke-row">
+              <span>{r.ok ? "✓" : "✗"}</span>
+              <span className="smoke-app">{r.app}</span>
+              <span>{r.step}</span>
+              {r.detail && <span className="muted small">{r.detail}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1035,7 +1080,7 @@ function Timeline({ taskId, limit = 8, refreshKey }: { taskId: string; limit?: n
   );
 }
 
-function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void }) {
+function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean }) {
   const [running, setRunning] = useState(false);
   const [stepBusy, setStepBusy] = useState<number | null>(null);
   const [failed, setFailed] = useState<number[]>([]); // steps whose auto-do errored — don't auto-retry
@@ -1048,6 +1093,12 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const [changeText, setChangeText] = useState("");
   const [revising, setRevising] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const refine = async () => {
+    setRefining(true);
+    try { onChange(await api.refine(task.id)); } catch { /* stays unrefined; can retry */ }
+    finally { setRefining(false); }
+  };
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
   // Confirm ("Looks good") / Dismiss: play the quick exit animation WHILE the API call runs, then remove
   // the card — so it visibly slides away instead of blinking out (or lingering).
@@ -1160,14 +1211,15 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
   const isDone = isHandled(task.status);
   const needsYou = !isDone && cStatus === "needs_review" &&
     (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
-  const chip = !isDone ? statusChip(task) : null;
+  const chip = !isDone ? statusChip(task, retrying) : null;
   return (
     <div ref={cardRef} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
       <div className="card-main" onClick={onToggle}>
         <div className="card-text">
           <div className="card-title">{task.title}</div>
-          <div className="card-sub">{task.when && <span className="when">{task.when}</span>}{subtitle(task)}</div>
+          <div className="card-sub">{task.when && <span className="when">{task.when}</span>}{subtitle(task, retrying)}</div>
         </div>
+        {!isDone && task.unrefined ? <span className="chip chip-muted" title="Added while AI was off — tap Refine to clean it up">Unrefined</span> : null}
         {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
         {cStatus === "executing" ? <span className="card-spin" title="Working…" />
           : cStatus === "needs_review" && (task.steps?.length ?? 0) > 0
@@ -1362,14 +1414,21 @@ function Card({ task, open, onToggle, onChange, onTask }: { task: WebTask; open:
               </>
             ) : (
               <>
-                {cStatus === "failed_terminal" || cStatus === "failed_retryable" ? (
+                {cStatus === "failed_retryable" && retrying ? (
+                  <button className="btn primary" disabled>Retrying…</button>
+                ) : cStatus === "failed_terminal" || cStatus === "failed_retryable" ? (
                   <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Retry"}</button>
                 ) : isInFlight(task.status) ? (
                   <button className="btn primary" disabled>{cStatus === "queued" ? "Queued…" : "Working…"}</button>
                 ) : (
                   <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Run now"}</button>
                 )}
-                <div className="actions-rest"><button className="btn xs ghost" title="Remove this task" onClick={() => void leave(() => api.dismiss(task.id))}>Dismiss</button></div>
+                <div className="actions-rest">
+                  {task.unrefined && !isInFlight(task.status) ? (
+                    <button className="btn xs" title="Have Otto clean up this task's title and priority" disabled={refining} onClick={() => void refine()}>{refining ? "Refining…" : "Refine"}</button>
+                  ) : null}
+                  <button className="btn xs ghost" title="Remove this task" onClick={() => void leave(() => api.dismiss(task.id))}>Dismiss</button>
+                </div>
               </>
             )}
           </div>

@@ -134,7 +134,7 @@ export async function listAccountEmails(limit = 200): Promise<string[]> {
 // only the anon key + locked-down RLS, or no Supabase at all), an in-memory queue keeps a single dev
 // process fully working — same interface, no durability.
 
-export type JobType = "sweep" | "execute_task" | "execute_step" | "revise";
+export type JobType = "sweep" | "execute_task" | "execute_step" | "revise" | "end_of_day_report";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed_retryable" | "failed_terminal" | "cancelled";
 export interface Job {
   id: string;
@@ -287,6 +287,17 @@ export async function countActiveJobs(userEmail: string): Promise<number> {
     return count || 0;
   }
   return memJobs.filter((j) => j.user_email === userEmail && (j.status === "queued" || j.status === "running")).length;
+}
+
+/** Task ids that have a genuinely ACTIVE (queued/running) job — the honest source for "retrying
+ *  automatically" in the UI: no active job means the only path forward is the user's Retry click. */
+export async function activeJobTaskIds(userEmail: string): Promise<string[]> {
+  const db = await jobsDb();
+  if (db) {
+    const { data } = await db.from(JOBS).select("task_id").eq("user_email", userEmail).in("status", ["queued", "running"]).not("task_id", "is", null).limit(100);
+    return [...new Set((data || []).map((r: any) => String(r.task_id)).filter(Boolean))];
+  }
+  return [...new Set(memJobs.filter((j) => j.user_email === userEmail && (j.status === "queued" || j.status === "running") && j.task_id).map((j) => String(j.task_id)))];
 }
 
 export async function getJob(id: string, userEmail: string): Promise<Job | null> {

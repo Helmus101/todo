@@ -587,3 +587,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   .hero-cta .btn { width: 100%; }
   .landing-sec { padding: 40px 20px; }
 }
+
+/* Integration check (Settings) */
+.smoke-check { margin-top: 10px; }
+.smoke-results { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.smoke-row { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.smoke-row > span:first-child { width: 14px; }
+.smoke-app { font-weight: 600; min-width: 64px; }
+.warn-text { color: #b45309; }

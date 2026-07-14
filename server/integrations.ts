@@ -400,6 +400,174 @@ export async function readAction(userId: string, action: string, args: Record<st
   return r?.data ?? r;
 }
 
+// ── Integration smoke test ────────────────────────────────────────────────────
+// Live create → verify → clean-up per connected app, run ONLY on the user's explicit click in Settings.
+// This is the "does every action name, payload, and OAuth scope actually work against the real account"
+// check that unit tests can't provide. It executes directly (its own hardcoded steps, not the agent), so
+// the agent policy registry doesn't apply — the user's click IS the approval, and every artifact it
+// creates is labeled and removed at the end.
+export interface SmokeResult { app: string; step: string; ok: boolean; detail?: string }
+
+async function execDirect(userId: string, action: string, args: Record<string, unknown>): Promise<any> {
+  const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+  if (r && r.successful === false) throw new Error(String(r.error || `${action} failed`));
+  return r?.data ?? r;
+}
+const firstId = (d: any, ...paths: string[]): string => {
+  for (const p of paths) {
+    let v: any = d;
+    for (const k of p.split(".")) v = v?.[k];
+    if (v) return String(v);
+  }
+  return "";
+};
+
+export async function runSmokeTest(userId: string): Promise<SmokeResult[]> {
+  if (!integrationsReady() || !userId) return [{ app: "composio", step: "configured", ok: false, detail: "Composio not configured" }];
+  const { connected } = await getAgentTools(userId);
+  const results: SmokeResult[] = [];
+  const step = async (app: string, name: string, fn: () => Promise<string>): Promise<boolean> => {
+    try { results.push({ app, step: name, ok: true, detail: await fn() }); return true; }
+    catch (e: any) { results.push({ app, step: name, ok: false, detail: String(e?.message || e).slice(0, 250) }); return false; }
+  };
+  const MARK = "Otto integration check — safe to delete";
+
+  if (connected.includes("gmail")) {
+    let self = "";
+    await step("gmail", "read profile", async () => {
+      const d = await execDirect(userId, "GMAIL_GET_PROFILE", {});
+      self = firstId(d, "emailAddress", "email_address", "response_data.emailAddress");
+      return self || "ok";
+    });
+    let draftId = "";
+    const created = await step("gmail", "create draft", async () => {
+      const d = await execDirect(userId, "GMAIL_CREATE_EMAIL_DRAFT", { recipient_email: self || userId, subject: MARK, body: "Created by Otto's integration check. It verifies drafting works, then deletes this draft." });
+      draftId = firstId(d, "id", "draft.id", "response_data.id", "response_data.draft.id");
+      return draftId ? `draft ${draftId}` : "created (no id returned)";
+    });
+    if (created && draftId) {
+      await step("gmail", "verify draft live", async () => {
+        const d = await execDirect(userId, "GMAIL_LIST_DRAFTS", { max_results: 25 });
+        if (!JSON.stringify(d ?? "").includes(draftId)) throw new Error("created draft not found in the live drafts list");
+        return "found in drafts";
+      });
+      await step("gmail", "clean up draft", async () => { await execDirect(userId, "GMAIL_DELETE_DRAFT", { draft_id: draftId }); return "deleted"; });
+    }
+  }
+
+  if (connected.includes("googlecalendar")) {
+    await step("calendar", "read events", async () => { await execDirect(userId, "GOOGLECALENDAR_EVENTS_LIST", { calendar_id: "primary", max_results: 5 }); return "listed"; });
+    let eventId = "";
+    const created = await step("calendar", "create test event", async () => {
+      const d = await execDirect(userId, "GOOGLECALENDAR_QUICK_ADD", { calendar_id: "primary", text: `${MARK} tomorrow 4am` });
+      eventId = firstId(d, "id", "event.id", "response_data.id", "event_data.id");
+      return eventId ? `event ${eventId}` : "created (no id returned)";
+    });
+    if (created && eventId) {
+      await step("calendar", "verify event live", async () => { await execDirect(userId, "GOOGLECALENDAR_GET_EVENT", { calendar_id: "primary", event_id: eventId }); return "found"; });
+      await step("calendar", "clean up event", async () => { await execDirect(userId, "GOOGLECALENDAR_DELETE_EVENT", { calendar_id: "primary", event_id: eventId }); return "deleted"; });
+    }
+  }
+
+  if (connected.includes("googledrive")) {
+    await step("drive", "list files", async () => { await execDirect(userId, "GOOGLEDRIVE_LIST_FILES", { page_size: 5 }); return "listed"; });
+  }
+
+  if (connected.includes("googledocs")) {
+    let docId = "";
+    const created = await step("docs", "create test doc", async () => {
+      const d = await execDirect(userId, "GOOGLEDOCS_CREATE_DOCUMENT", { title: MARK, text: "Created by Otto's integration check." });
+      docId = firstId(d, "documentId", "document_id", "response_data.documentId", "id");
+      return docId ? `doc ${docId}` : "created (no id returned)";
+    });
+    if (created && docId) {
+      await step("docs", "verify doc live", async () => { await execDirect(userId, "GOOGLEDOCS_GET_DOCUMENT_BY_ID", { id: docId }); return "found"; });
+      if (connected.includes("googledrive")) await step("docs", "clean up doc", async () => { await execDirect(userId, "GOOGLEDRIVE_DELETE_FILE", { file_id: docId }); return "deleted"; });
+    }
+  }
+
+  if (connected.includes("googlesheets")) {
+    let sheetId = "";
+    const created = await step("sheets", "create test sheet", async () => {
+      const d = await execDirect(userId, "GOOGLESHEETS_CREATE_GOOGLE_SHEET1", { title: MARK });
+      sheetId = firstId(d, "spreadsheetId", "spreadsheet_id", "response_data.spreadsheetId");
+      return sheetId ? `sheet ${sheetId}` : "created (no id returned)";
+    });
+    if (created && sheetId) {
+      await step("sheets", "write cell", async () => { await execDirect(userId, "GOOGLESHEETS_UPDATE_VALUES", { spreadsheet_id: sheetId, range: "A1", values: [["otto-check"]], value_input_option: "RAW" }); return "wrote A1"; });
+      await step("sheets", "read cell back", async () => {
+        const d = await execDirect(userId, "GOOGLESHEETS_BATCH_GET", { spreadsheet_id: sheetId, ranges: ["A1"] });
+        if (!JSON.stringify(d ?? "").includes("otto-check")) throw new Error("written value not found on read-back");
+        return "verified round-trip";
+      });
+      if (connected.includes("googledrive")) await step("sheets", "clean up sheet", async () => { await execDirect(userId, "GOOGLEDRIVE_DELETE_FILE", { file_id: sheetId }); return "deleted"; });
+    }
+  }
+
+  if (!results.length) results.push({ app: "none", step: "connected apps", ok: false, detail: "Nothing connected to check — connect Gmail/Calendar/Drive first." });
+  return results;
+}
+
+// ── Live artifact verification ────────────────────────────────────────────────
+// After a run claims it created something, read it back through the read-only path and prove it exists.
+// Drop ONLY on an explicit not-found from a successful API round-trip — a transient error (network, quota)
+// keeps the artifact, so verification can never destroy a valid result it merely failed to check.
+const NOT_FOUND = /(not.?found|404|does ?n.t exist|invalid.*(id|value)|deleted|no such)/i;
+
+/** true = confirmed live, false = confirmed missing, null = couldn't verify (keep). */
+async function probeArtifact(userId: string, action: string, args: Record<string, unknown>, expectRef?: string): Promise<boolean | null> {
+  try {
+    const data = await readAction(userId, action, args);
+    if (!expectRef) return true; // a direct GET succeeding is the proof
+    return JSON.stringify(data ?? "").includes(expectRef); // list-style probe: the ref must appear in the payload
+  } catch (e: any) {
+    return NOT_FOUND.test(String(e?.message || "")) ? false : null;
+  }
+}
+
+const DOC_LINK = /docs\.google\.com\/(document|spreadsheets|presentation)\/(?:d\/)?([-\w]{25,})/i;
+
+/**
+ * Verify a finished run's claimed artifacts against the LIVE account: Gmail draft ids via the drafts list,
+ * calendar events via a direct GET, Google Docs/Sheets links via a direct GET on the document id.
+ * Prunes anything confirmed missing IN PLACE and returns human-readable notes about what was dropped.
+ */
+export async function verifyTaskArtifacts(
+  userId: string,
+  t: { links?: { label: string; url: string }[]; sendables?: { app: string; label: string; draftId?: string; eventId?: string }[] },
+): Promise<string[]> {
+  if (!integrationsReady() || !userId) return [];
+  const dropped: string[] = [];
+  // Gmail drafts: one list call covers every gmail sendable on the task.
+  const gmailSendables = (t.sendables || []).filter((s) => s.app === "gmail" && s.draftId);
+  let draftsPayload: string | null = null;
+  if (gmailSendables.length) {
+    try { draftsPayload = JSON.stringify(await readAction(userId, "GMAIL_LIST_DRAFTS", { max_results: 50 }) ?? ""); }
+    catch { draftsPayload = null; } // couldn't list → verify nothing, keep everything
+  }
+  const keptSendables: NonNullable<typeof t.sendables> = [];
+  for (const s of t.sendables || []) {
+    let ok: boolean | null = null;
+    if (s.app === "gmail" && s.draftId && draftsPayload !== null) ok = draftsPayload.includes(s.draftId);
+    else if (s.app === "gcal" && s.eventId) ok = await probeArtifact(userId, "GOOGLECALENDAR_GET_EVENT", { event_id: s.eventId });
+    if (ok === false) dropped.push(`"${s.label}" — the ${s.app === "gcal" ? "calendar event" : "draft"} it points at doesn't exist`);
+    else keptSendables.push(s);
+  }
+  const keptLinks: NonNullable<typeof t.links> = [];
+  for (const l of t.links || []) {
+    const m = DOC_LINK.exec(l.url);
+    let ok: boolean | null = null;
+    if (m && m[1] === "document") ok = await probeArtifact(userId, "GOOGLEDOCS_GET_DOCUMENT_BY_ID", { id: m[2] });
+    else if (m && m[1] === "spreadsheets") ok = await probeArtifact(userId, "GOOGLESHEETS_GET_SPREADSHEET_INFO", { spreadsheet_id: m[2] });
+    if (ok === false) dropped.push(`"${l.label}" — the linked document doesn't exist`);
+    else keptLinks.push(l);
+  }
+  if (t.sendables) t.sendables = keptSendables as any;
+  if (t.links) t.links = keptLinks as any;
+  if (dropped.length) console.warn(`[integrations] artifact verification dropped ${dropped.length}: ${dropped.join("; ")}`);
+  return dropped;
+}
+
 /**
  * Composio tools for the apps the user connected, in Anthropic tool shape — READ + reversible WRITES, so
  * the run/generation agent can both gather facts AND do the work (draft a reply, create a doc, add a task,

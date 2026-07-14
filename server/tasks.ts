@@ -20,6 +20,68 @@ export function applyProfileUpdate(profile: Profile, u: ProfileUpdate): void {
   profile[key] = dedupeFacts([...rest, fact]);
 }
 
+// ── Trust/confidence system for gradual automation ─────────────────────────────
+const CONFIDENCE_THRESHOLD = 0.75; // Auto-approve when confidence reaches this level
+const MIN_HISTORY = 5; // Need at least this many decisions before trusting
+const DECAY_DAYS = 30; // History older than this gets less weight
+
+/** Update confidence score based on user approval/rejection of an action category. */
+export function updateConfidence(profile: Profile, actionCategory: string, approved: boolean): void {
+  if (!profile.confidence) profile.confidence = {};
+  if (!profile.confidenceHistory) profile.confidenceHistory = [];
+  
+  const now = new Date().toISOString();
+  profile.confidenceHistory.push({ action: actionCategory, approved, at: now });
+  
+  // Keep only recent history (last 100 entries)
+  if (profile.confidenceHistory.length > 100) {
+    profile.confidenceHistory = profile.confidenceHistory.slice(-100);
+  }
+  
+  // Calculate confidence from recent history
+  const recent = profile.confidenceHistory.filter(h => h.action === actionCategory);
+  if (recent.length < MIN_HISTORY) {
+    // Not enough data yet, start at 0.5 and move slowly
+    const current = profile.confidence[actionCategory] || 0.5;
+    profile.confidence[actionCategory] = approved 
+      ? Math.min(1, current + 0.05) 
+      : Math.max(0, current - 0.1);
+    return;
+  }
+  
+  // Weight recent decisions more heavily
+  let weightedSum = 0;
+  let totalWeight = 0;
+  const nowMs = Date.now();
+  
+  for (const h of recent) {
+    const ageMs = nowMs - new Date(h.at).getTime();
+    const ageDays = ageMs / (24 * 60 * 60 * 1000);
+    const weight = Math.max(0.1, 1 - (ageDays / DECAY_DAYS)); // Decay over time
+    weightedSum += (h.approved ? 1 : 0) * weight;
+    totalWeight += weight;
+  }
+  
+  const confidence = totalWeight > 0 ? weightedSum / totalWeight : 0.5;
+  profile.confidence[actionCategory] = confidence;
+}
+
+/** Check if an action should be auto-approved based on confidence score. */
+export function shouldAutoApprove(profile: Profile, actionCategory: string): boolean {
+  const confidence = profile.confidence?.[actionCategory];
+  if (confidence === undefined) return false;
+  
+  const history = profile.confidenceHistory?.filter(h => h.action === actionCategory) || [];
+  if (history.length < MIN_HISTORY) return false;
+  
+  return confidence >= CONFIDENCE_THRESHOLD;
+}
+
+/** Get confidence score for an action category (0-1). */
+export function getConfidence(profile: Profile, actionCategory: string): number {
+  return profile.confidence?.[actionCategory] || 0.5;
+}
+
 const URGENT_AT = 0.5, IMPORTANT_AT = 0.5;
 
 /** Eisenhower: two axes → quadrant + a ranking score (Do > Schedule > Delegate > Later). */
@@ -309,8 +371,26 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
     when: refined?.when,
     source: "manual", risk: "low", urgency, importance, quadrant: e.quadrant, score: e.score,
     status: "ready", createdAt: now,
+    ...(refined ? {} : { unrefined: true }), // AI paused/unavailable — raw text in, offer Refine later
   });
   return list;
+}
+
+/** Refine an existing unrefined manual task in place (the "Refine" action once AI is back). */
+export function applyRefinement(list: WebTask[], id: string, refined: RefinedTask | null): WebTask | undefined {
+  const t = list.find((x) => x.id === id);
+  if (!t || !refined) return t;
+  t.title = refined.title.trim().slice(0, 120) || t.title;
+  t.why = refined.why || t.why;
+  t.when = refined.when ?? t.when;
+  t.urgency = refined.urgency;
+  t.importance = refined.importance;
+  const e = eisenhower(t.urgency, t.importance);
+  t.quadrant = e.quadrant;
+  t.score = e.score;
+  delete t.unrefined;
+  t.updatedAt = new Date().toISOString();
+  return t;
 }
 
 /**

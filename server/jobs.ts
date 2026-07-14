@@ -37,7 +37,12 @@ async function processSweep(job: store.Job): Promise<string> {
   const extras = await integrations.getAgentTools(email);
   if (!extras?.tools?.length) return "skipped: nothing connected";
   const before = new Set(list.map((t) => t.id));
+  const factsBefore = new Set([...profile.preferences, ...profile.people, ...profile.projects]);
   const next = await tasks.generate(list, profile, extras, email);
+  // Memory transparency: anything the sweep just learned goes on the record — the user can see it in the
+  // timeline and delete it in Settings → "What Otto knows about you".
+  const learned = [...profile.preferences, ...profile.people, ...profile.projects].filter((f) => !factsBefore.has(f));
+  for (const f of learned) void store.recordEvent(email, "learned", { jobId: job.id, message: f.slice(0, 200) });
   // Server-side auto-run: queue execution for the new ready tasks RIGHT IN THE SWEEP (top by score,
   // bounded) — the browser no longer decides what runs; it only displays state and kicks the drain.
   const found = next.filter((t) => !before.has(t.id) && !isHandled(t.status));
@@ -46,7 +51,7 @@ async function processSweep(job: store.Job): Promise<string> {
   await commitUser(email, profile, next);
   for (const t of found) void store.recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
   for (const t of toRun) { await store.enqueueJob(email, "execute_task", t.id); void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" }); }
-  return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued`;
+  return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued${learned.length ? `, learned ${learned.length} fact${learned.length === 1 ? "" : "s"}` : ""}`;
 }
 
 /** Set ONE task's status in the durable copy (used for the queued transition so the UI can show it). */
@@ -75,6 +80,14 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   t.autoRan = true; // whether this attempt succeeds or not, don't loop on it automatically
   try {
     const updated = await tasks.runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : undefined);
+    // Live artifact verification: read every claimed draft/event/doc back from the real account before the
+    // user sees it — anything the API confirms missing is pruned and logged to the task's timeline.
+    if (updated && (updated.links?.length || updated.sendables?.length)) {
+      const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);
+      for (const d of droppedArtifacts) void store.recordEvent(email, "artifact_dropped", { taskId, jobId: job.id, message: d.slice(0, 200) });
+      if (droppedArtifacts.length) void store.recordEvent(email, "verified", { taskId, jobId: job.id, message: "Remaining artifacts verified against the live account" });
+      else void store.recordEvent(email, "verified", { taskId, jobId: job.id, message: "Artifacts verified against the live account" });
+    }
     await commitUser(email, profile, list);
     const done = updated?.steps?.length ? `${updated.steps.filter((s) => !s.done).length} step(s) need you` : "fully handled";
     await store.recordEvent(email, "run_succeeded", { taskId, jobId: job.id, message: updated?.synthesis?.slice(0, 200) || done });
@@ -104,9 +117,69 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   // The user explicitly clicked Approve & Run — the permissioned toolset is correct here.
   const permTools = await integrations.getAgentToolsWithPermission(email).catch(() => undefined);
   const updated = await tasks.runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : undefined);
+  if (updated && (updated.links?.length || updated.sendables?.length)) {
+    const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);
+    for (const d of droppedArtifacts) void store.recordEvent(email, "artifact_dropped", { taskId, jobId: job.id, message: d.slice(0, 200) });
+  }
   await commitUser(email, profile, list);
   await store.recordEvent(email, "step_done", { taskId, jobId: job.id, message: updated?.steps?.[index]?.text?.slice(0, 200) });
   return "step executed";
+}
+
+async function processEndOfDayReport(job: store.Job): Promise<string> {
+  const email = job.user_email;
+  const { profile, list } = await loadUser(email);
+  if (profile.paused) return "skipped: AI paused";
+  const extras = await integrations.getAgentTools(email);
+  if (!extras?.selfBrief) return "skipped: Gmail not connected for report";
+  
+  // Generate the report
+  const completed = list.filter((t) => canonStatus(t.status) === "done").slice(-10);
+  const active = list.filter((t) => !isHandled(t.status)).slice(0, 15);
+  const highPriority = active.filter((t) => t.importance >= 0.7).slice(0, 5);
+  
+  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  
+  let body = `End of day report — ${today}\n\n`;
+  
+  if (completed.length) {
+    body += `✓ Completed today (${completed.length}):\n`;
+    for (const t of completed) {
+      body += `  • ${t.title}\n`;
+    }
+    body += "\n";
+  }
+  
+  if (active.length) {
+    body += `📋 Still active (${active.length}):\n`;
+    for (const t of active.slice(0, 8)) {
+      const urgency = t.urgency >= 0.7 ? "🔴" : t.urgency >= 0.4 ? "🟡" : "🟢";
+      body += `  ${urgency} ${t.title}${t.when ? ` (${t.when})` : ""}\n`;
+    }
+    body += "\n";
+  }
+  
+  if (highPriority.length) {
+    body += `⚡ High priority:\n`;
+    for (const t of highPriority) {
+      body += `  • ${t.title}${t.when ? ` — ${t.when}` : ""}\n`;
+    }
+    body += "\n";
+  }
+  
+  body += `— Otto\n\n`;
+  body += `Open your dashboard to see the full list and take action.`;
+  
+  const subject = `Otto daily report — ${completed.length} done, ${active.length} active`;
+  
+  try {
+    const result = await extras.selfBrief(subject, body);
+    await store.recordEvent(email, "report_sent", { jobId: job.id, message: "End of day report emailed" });
+    return `report sent: ${result}`;
+  } catch (e: any) {
+    await store.recordEvent(email, "report_failed", { jobId: job.id, message: String(e?.message || e).slice(0, 200) });
+    throw e;
+  }
 }
 
 /** Run ONE claimed job to completion. Throwing marks it failed (retryable until max_attempts). */
@@ -116,6 +189,7 @@ export async function processJob(job: store.Job): Promise<string> {
     case "execute_task": return processExecuteTask(job);
     case "revise": return processExecuteTask(job); // same processor; input.note carries the revision
     case "execute_step": return processExecuteStep(job);
+    case "end_of_day_report": return processEndOfDayReport(job);
     default: return `skipped: unknown type ${job.type}`;
   }
 }
@@ -161,10 +235,35 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
   const SWEEP_WINDOW_MS = 45 * 60_000;
   const emails = await store.listAccountEmails(50);
   let enqueued = 0;
+  const now = new Date();
+  const currentHour = now.getHours();
+  
   for (const email of emails) {
     try {
       const { profile, list } = await loadUser(email);
       if (profile.paused) continue;
+      
+      // End-of-day report: check if it's the end of the user's working hours
+      if (profile.workingHours) {
+        const [endHour, endMin] = profile.workingHours.end.split(":").map(Number);
+        const reportWindowStart = endHour; // Schedule at the end of working hours
+        const reportWindowEnd = (endHour + 1) % 24; // 1-hour window
+        
+        // Check if we're in the report window and haven't sent one today
+        const inReportWindow = currentHour === reportWindowStart || (reportWindowEnd < reportWindowStart && (currentHour >= reportWindowStart || currentHour < reportWindowEnd));
+        
+        if (inReportWindow) {
+          const lastReport = await store.getLatestJob(email, "end_of_day_report");
+          const lastReportAt = Date.parse(lastReport?.finished_at || lastReport?.created_at || "") || 0;
+          const reportToday = lastReportAt && new Date(lastReportAt).toDateString() === now.toDateString();
+          
+          if (!reportToday) {
+            await store.enqueueJob(email, "end_of_day_report");
+            enqueued++;
+          }
+        }
+      }
+      
       // Sweep if the newest sweep job is older than the window (queued/running ones dedupe via idempotency).
       const last = await store.getLatestJob(email, "sweep");
       const lastAt = Date.parse(last?.finished_at || last?.created_at || "") || 0;

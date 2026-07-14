@@ -8,11 +8,12 @@ import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts } from "../shared/types.ts";
 import { aiReady, refineManualTask } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, eventsForTask, recordEvent, countActiveJobs } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
 import { chat, type ChatTurn } from "./chat.ts";
+import { updateConfidence } from "./tasks.ts";
 
 declare module "express-session" {
   interface SessionData {
@@ -261,6 +262,16 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
   res.json(p);
 });
 
+// Live integration check — create → verify → clean up against the REAL connected account, on the user's
+// explicit click. No AI involved (direct hardcoded steps), so it works even while AI is paused.
+app.post("/api/settings/smoke", requireAuth, rateLimit(3, 60_000), async (req, res) => {
+  try {
+    const results = await integrations.runSmokeTest(req.session.user!);
+    void recordEvent(req.session.user!, "smoke_test", { message: `${results.filter((r) => r.ok).length}/${results.length} checks passed` });
+    res.json(results);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "integration check failed" }); }
+});
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 // Reconcile with the cloud copy on every load, so a task finished on ANOTHER device/tab never shows
 // undone here (and never gets pointlessly re-run by this device's auto-run).
@@ -316,6 +327,18 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   res.json(req.session.tasks);
 });
 
+// Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
+app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to refine." }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
+  if (!t) { res.status(404).json({ error: "not found" }); return; }
+  const refined = await refineManualTask(t.title, req.session.profile);
+  tasks.applyRefinement(req.session.tasks || [], t.id, refined);
+  await commit(req);
+  res.json(req.session.tasks || []);
+});
+
 // Execution flows through the durable job queue: enqueue + drain inline (synchronous response for the
 // client), with job idempotency as the cross-instance lock — one ACTIVE job per task, held in the DB.
 // A second call while one is in flight gets a 409 (the client treats that as "the other run wins").
@@ -366,6 +389,10 @@ app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
   if (task) {
     task.status = "done";
     task.updatedAt = new Date().toISOString();
+    // Track confidence: user approved the task's work
+    const profile = req.session.profile || emptyProfile();
+    updateConfidence(profile, task.source, true);
+    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
   }
@@ -376,6 +403,10 @@ app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => {
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
     tasks.reject(req.session.tasks || [], id);
+    // Track confidence: user rejected the task's work
+    const profile = req.session.profile || emptyProfile();
+    updateConfidence(profile, task.source, false);
+    req.session.profile = profile;
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -386,6 +417,10 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
   if (task) {
     task.status = "dismissed";
     task.updatedAt = new Date().toISOString();
+    // Track confidence: user dismissed (rejected) this type of task
+    const profile = req.session.profile || emptyProfile();
+    updateConfidence(profile, task.source, false);
+    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
   }
@@ -425,6 +460,10 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
     if (!r.ok) { res.status(500).json({ error: r.error || "send failed" }); return; }
     s.sent = true;
     t!.updatedAt = new Date().toISOString();
+    // Track confidence: user approved and sent the draft
+    const profile = req.session.profile || emptyProfile();
+    updateConfidence(profile, s.app, true);
+    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user!, "sent", { taskId: t!.id, message: `${s.label}${s.to ? ` → ${s.to}` : ""}` });
   }
@@ -446,14 +485,14 @@ app.get("/api/tasks/:id/events", requireAuth, async (req, res) => {
 app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   try {
     const out = await jobs.drain(1);
-    const active = await countActiveJobs(req.session.user!);
+    const [active, activeTaskIds] = await Promise.all([countActiveJobs(req.session.user!), activeJobTaskIds(req.session.user!)]);
     // Refresh this session's view of the cloud copy the job just wrote.
     if (out.processed || out.failed) {
       const cloud = await loadState(req.session.user!);
       req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
       await saveSession(req);
     }
-    res.json({ ...out, active, tasks: req.session.tasks || [] });
+    res.json({ ...out, active, activeTaskIds, tasks: req.session.tasks || [] });
   } catch (e: any) { res.status(500).json({ error: e?.message || "kick failed" }); }
 });
 
