@@ -588,13 +588,14 @@ const RUN_SYSTEM =
   `write the data into the cells — do NOT just produce a plan or list in synthesis. Read the sheet first to ` +
   `find the exact cells/ranges that need filling, then call the write tool with real content. Sheet cell writes ` +
   `are FULLY PERMITTED and reversible — you do NOT need user approval to write cells. Do it now.\n` +
-  `GATHER CONTEXT AGGRESSIVELY — BEFORE you act, search EVERYWHERE for relevant information:\n` +
-  `- Search Gmail for related threads (e.g., hotel bookings, flight confirmations, restaurant reservations, addresses, phone numbers)\n` +
-  `- Search Calendar for related events (e.g., travel dates, meeting times, deadlines)\n` +
-  `- Search Drive for related documents (e.g., itineraries, proposals, notes, spreadsheets with details)\n` +
-  `- Check the user's profile memory for known preferences, people, and projects\n` +
-  `- Use web_search for external details (addresses, directions, company info)\n` +
-  `Example: if the task is "prep to go somewhere from hotel", search Gmail for the hotel booking confirmation to get the hotel name, address, checkout time; search Calendar for departure details; search Drive for any itinerary. NEVER leave placeholders like "[hotel name]" or "[address]" — find the real details.\n` +
+  `GATHER WHAT THE TASK NEEDS — TARGETED, NOT EXHAUSTIVE: typically 1-3 reads (the Gmail thread behind the ` +
+  `task, the relevant Calendar event or Drive doc, a web_search for external facts). NEVER leave placeholders ` +
+  `like "[hotel name]" — find the real detail with ONE targeted search. But your round budget is TIGHT and ` +
+  `reading is not the work: DO NOT survey the user's whole world before acting.\n` +
+  `CREATE EARLY — if the task produces an artifact (a doc, sheet, deck, draft reply, event, research summary), ` +
+  `CREATE it within your FIRST THREE tool calls, then refine/fill it with what you learn. For research tasks: ` +
+  `web_search for the facts, then CREATE A GOOGLE DOC with the findings — a research task without a produced ` +
+  `artifact is NOT done. An imperfect created artifact beats a perfect plan every time.\n` +
   `AUTO-EXECUTION — If the user has auto-approved certain actions (e.g., "schedule_meetings_under_30min"), you can ` +
   `execute those WITHOUT adding them to sendables for approval. Check their profile for autoApprove patterns. ` +
   `For example, if they've approved scheduling meetings under 30min, you can create the calendar event directly ` +
@@ -808,8 +809,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
   for (let i = 0; i < MAX; i++) {
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
+    if (i === 2 && !focus) {
+      messages.push({ role: "user", content: "CHECKPOINT: if this task produces an artifact (doc/sheet/deck/draft/event) and you haven't CREATED it yet, create it with your NEXT tool call and fill it from what you already know. Stop reading — reading is not the work." });
+    }
     if (i === 4 && !focus) {
-      messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. If this task involves writing to a spreadsheet or document, START WRITING NOW — call the write tool (e.g. GOOGLESHEETS_BATCH_UPDATE_VALUES or GOOGLESHEETS_APPEND_VALUES) with the real data. Do not keep reading without writing. Complete the work and call submit when done." });
+      messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. WRITE NOW — create/update the actual artifact (doc, sheet cells, draft, event) with the real data. Do not make another read call. Complete the work and call submit." });
     }
     const client = deepseekClient();
     const lastRoundHint = i === MAX - 1 ? "You must call submit now with the final result. Do not answer with prose." : "";
@@ -883,7 +887,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
           role: "system",
           content:
             "You must output STRICT JSON only: {context:string,synthesis:string,steps:array,links:array,sendables:array}. " +
-            "Use the transcript to produce the best possible final result. Keep synthesis to one short sentence.",
+            "Report ONLY what the transcript shows was ACTUALLY DONE with tools. synthesis = one short past-tense " +
+            "sentence of performed actions ('Created X', 'Drafted Y'); if nothing was created or written, say " +
+            "plainly what was found and put ALL remaining work in steps (each {text, automatable}) — do NOT " +
+            "describe the user or summarize their life. links = ONLY artifacts CREATED this run (URLs from " +
+            "create-tool results in the transcript, each with a label saying what it IS); NEVER list pre-existing " +
+            "files that were merely read. Fabricating a result is worse than admitting the run fell short.",
         },
         { role: "user", content: transcript },
       ],
@@ -918,8 +927,21 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     }))
     .filter((s: TaskStep) => s.text)
     .slice(0, 10);
+  // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.
+  const kindLabel = (url: string): string =>
+    /docs\.google\.com\/document/i.test(url) ? "the Google Doc Otto created"
+    : /docs\.google\.com\/spreadsheets/i.test(url) ? "the Google Sheet Otto created"
+    : /docs\.google\.com\/presentation/i.test(url) ? "the slides Otto created"
+    : /mail\.google\.com/i.test(url) ? "the email thread"
+    : /calendar\.google\.com/i.test(url) ? "the calendar event"
+    : "the linked page";
+  const isJunkLabel = (s: string) => !s || /^(open|link|url|click here|view|here|document|doc)$/i.test(s.trim()) || /^https?:\/\//i.test(s.trim());
   const links: TaskLink[] = (Array.isArray(out?.links) ? out.links : [])
-    .map((l: any) => ({ label: String(l?.label || "Open").slice(0, 80), url: String(l?.url || "").trim() }))
+    .map((l: any) => {
+      const url = String(l?.url || "").trim();
+      const raw = String(l?.label || "").slice(0, 80);
+      return { label: isJunkLabel(raw) ? kindLabel(url) : raw, url };
+    })
     .filter((l: TaskLink) => /^https?:\/\//i.test(l.url))
     // Artifact verification: a Google Docs/Sheets/Slides link must carry a REAL document id (25+ chars of
     // id alphabet) — a made-up or truncated link would render a polished card pointing at a 404.

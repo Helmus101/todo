@@ -723,13 +723,8 @@ var RUN_SYSTEM = `You execute ONE task for the user, end to end, using the tools
 WORK IN THREE PHASES: (1) PLAN silently \u2014 from the task and the context you gather, decide which tools you'll use and what artifacts (draft/doc/event/cells) you'll produce; never show this plan to the user. (2) DO \u2014 execute the reversible work through the tools. (3) REPORT via submit \u2014 "synthesis" = what you actually DID (past tense), "links" = EVERY artifact you produced, "steps" = EVERYTHING that still needs the user, as a complete checklist. Leave steps empty ONLY when a sendable covers the remaining action or truly nothing is left.
 You can also use web_search for any external fact or context you need (a person, company, deadline, how-to, or a reference link) \u2014 look it up rather than guess.
 GOOGLE SHEETS \u2014 YOU MUST ACTUALLY WRITE: if the task involves updating a spreadsheet (e.g. filling in restaurant names, meal ideas, trip data, any cells), you MUST call the Sheets write tools (GOOGLESHEETS_BATCH_UPDATE_VALUES, GOOGLESHEETS_UPDATE_VALUES, GOOGLESHEETS_APPEND_VALUES, etc.) to ACTUALLY write the data into the cells \u2014 do NOT just produce a plan or list in synthesis. Read the sheet first to find the exact cells/ranges that need filling, then call the write tool with real content. Sheet cell writes are FULLY PERMITTED and reversible \u2014 you do NOT need user approval to write cells. Do it now.
-GATHER CONTEXT AGGRESSIVELY \u2014 BEFORE you act, search EVERYWHERE for relevant information:
-- Search Gmail for related threads (e.g., hotel bookings, flight confirmations, restaurant reservations, addresses, phone numbers)
-- Search Calendar for related events (e.g., travel dates, meeting times, deadlines)
-- Search Drive for related documents (e.g., itineraries, proposals, notes, spreadsheets with details)
-- Check the user's profile memory for known preferences, people, and projects
-- Use web_search for external details (addresses, directions, company info)
-Example: if the task is "prep to go somewhere from hotel", search Gmail for the hotel booking confirmation to get the hotel name, address, checkout time; search Calendar for departure details; search Drive for any itinerary. NEVER leave placeholders like "[hotel name]" or "[address]" \u2014 find the real details.
+GATHER WHAT THE TASK NEEDS \u2014 TARGETED, NOT EXHAUSTIVE: typically 1-3 reads (the Gmail thread behind the task, the relevant Calendar event or Drive doc, a web_search for external facts). NEVER leave placeholders like "[hotel name]" \u2014 find the real detail with ONE targeted search. But your round budget is TIGHT and reading is not the work: DO NOT survey the user's whole world before acting.
+CREATE EARLY \u2014 if the task produces an artifact (a doc, sheet, deck, draft reply, event, research summary), CREATE it within your FIRST THREE tool calls, then refine/fill it with what you learn. For research tasks: web_search for the facts, then CREATE A GOOGLE DOC with the findings \u2014 a research task without a produced artifact is NOT done. An imperfect created artifact beats a perfect plan every time.
 AUTO-EXECUTION \u2014 If the user has auto-approved certain actions (e.g., "schedule_meetings_under_30min"), you can execute those WITHOUT adding them to sendables for approval. Check their profile for autoApprove patterns. For example, if they've approved scheduling meetings under 30min, you can create the calendar event directly without asking. Otherwise, follow the normal approval flow.
 HARD LIMIT \u2014 you can READ and WRITE, but you can NEVER do an irreversible OUTBOUND or DESTRUCTIVE action: no sending/forwarding email, no sending/posting messages, no publishing, no deleting (those tools are not even available to you). For email you ONLY ever leave a DRAFT; for Slack you only COMPOSE the message. You never send/post \u2014 instead OFFER the send as a one-click button via "sendables" (see submit), which the user reviews and fires. Never say you "sent", "emailed", "posted", or "messaged" \u2014 say you DRAFTED/PREPARED it. Never claim an action you didn't take.
 NEWSLETTERS & PROMOTIONAL EMAIL \u2014 NEVER DRAFT A REPLY: before drafting any email reply, check whether the thread is a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender (unsubscribe footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something \u2014 note in "synthesis" that it's mass mail and needs no reply, and stop there.
@@ -837,8 +832,11 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
   let tokIn = 0, tokOut = 0, rounds = 0;
   try {
     for (let i = 0; i < MAX; i++) {
+      if (i === 2 && !focus) {
+        messages.push({ role: "user", content: "CHECKPOINT: if this task produces an artifact (doc/sheet/deck/draft/event) and you haven't CREATED it yet, create it with your NEXT tool call and fill it from what you already know. Stop reading \u2014 reading is not the work." });
+      }
       if (i === 4 && !focus) {
-        messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. If this task involves writing to a spreadsheet or document, START WRITING NOW \u2014 call the write tool (e.g. GOOGLESHEETS_BATCH_UPDATE_VALUES or GOOGLESHEETS_APPEND_VALUES) with the real data. Do not keep reading without writing. Complete the work and call submit when done." });
+        messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. WRITE NOW \u2014 create/update the actual artifact (doc, sheet cells, draft, event) with the real data. Do not make another read call. Complete the work and call submit." });
       }
       const client2 = deepseekClient();
       const lastRoundHint = i === MAX - 1 ? "You must call submit now with the final result. Do not answer with prose." : "";
@@ -911,7 +909,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
         messages: [
           {
             role: "system",
-            content: "You must output STRICT JSON only: {context:string,synthesis:string,steps:array,links:array,sendables:array}. Use the transcript to produce the best possible final result. Keep synthesis to one short sentence."
+            content: "You must output STRICT JSON only: {context:string,synthesis:string,steps:array,links:array,sendables:array}. Report ONLY what the transcript shows was ACTUALLY DONE with tools. synthesis = one short past-tense sentence of performed actions ('Created X', 'Drafted Y'); if nothing was created or written, say plainly what was found and put ALL remaining work in steps (each {text, automatable}) \u2014 do NOT describe the user or summarize their life. links = ONLY artifacts CREATED this run (URLs from create-tool results in the transcript, each with a label saying what it IS); NEVER list pre-existing files that were merely read. Fabricating a result is worse than admitting the run fell short."
           },
           { role: "user", content: transcript }
         ]
@@ -939,7 +937,13 @@ function finalize(out, fallbackText, profileUpdates) {
     question: s?.question ? String(s.question).trim().slice(0, 200) : void 0,
     options: Array.isArray(s?.options) ? s.options.map((o) => String(o).trim()).filter(Boolean).slice(0, 4) : void 0
   })).filter((s) => s.text).slice(0, 10);
-  const links = (Array.isArray(out?.links) ? out.links : []).map((l) => ({ label: String(l?.label || "Open").slice(0, 80), url: String(l?.url || "").trim() })).filter((l) => /^https?:\/\//i.test(l.url)).filter((l) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url)).slice(0, 3);
+  const kindLabel = (url2) => /docs\.google\.com\/document/i.test(url2) ? "the Google Doc Otto created" : /docs\.google\.com\/spreadsheets/i.test(url2) ? "the Google Sheet Otto created" : /docs\.google\.com\/presentation/i.test(url2) ? "the slides Otto created" : /mail\.google\.com/i.test(url2) ? "the email thread" : /calendar\.google\.com/i.test(url2) ? "the calendar event" : "the linked page";
+  const isJunkLabel = (s) => !s || /^(open|link|url|click here|view|here|document|doc)$/i.test(s.trim()) || /^https?:\/\//i.test(s.trim());
+  const links = (Array.isArray(out?.links) ? out.links : []).map((l) => {
+    const url2 = String(l?.url || "").trim();
+    const raw = String(l?.label || "").slice(0, 80);
+    return { label: isJunkLabel(raw) ? kindLabel(url2) : raw, url: url2 };
+  }).filter((l) => /^https?:\/\//i.test(l.url)).filter((l) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url)).slice(0, 3);
   const sendables = (Array.isArray(out?.sendables) ? out.sendables : []).map((s) => ({
     app: s?.app === "slack" ? "slack" : s?.app === "gcal" ? "gcal" : "gmail",
     label: String(s?.label || (s?.app === "slack" ? "Send message" : s?.app === "gcal" ? "Send invites" : "Send email")).slice(0, 80),
