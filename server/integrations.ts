@@ -92,6 +92,9 @@ export const ACTION_POLICIES: Record<string, ActionMode> = {
   GOOGLESHEETS_BATCH_GET: "auto", GOOGLESHEETS_GET_SPREADSHEET_INFO: "auto", GOOGLESHEETS_LOOKUP_SPREADSHEET_ROW: "auto",
   GOOGLESHEETS_CREATE_GOOGLE_SHEET1: "auto", GOOGLESHEETS_BATCH_UPDATE: "auto", GOOGLESHEETS_UPDATE_VALUES: "auto", GOOGLESHEETS_APPEND_VALUES: "auto",
   GOOGLESHEETS_DELETE_SHEET: "never", GOOGLESHEETS_DELETE_DIMENSION: "never",
+  // GitHub — the two discovery reads (assigned issues, review-requested PRs). Other GitHub actions fall
+  // through to the regex classifiers.
+  GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER: "auto", GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS: "auto",
   // Slack — read + compose only; posting is the user's click.
   SLACK_FETCH_CONVERSATION_HISTORY: "auto", SLACK_LIST_ALL_CHANNELS: "auto", SLACK_SEARCH_MESSAGES: "auto", SLACK_FIND_USERS: "auto",
   SLACK_CHAT_POST_MESSAGE: "never", SLACK_SEND_MESSAGE: "never", SLACK_CHAT_DELETE: "never",

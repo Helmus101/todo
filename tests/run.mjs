@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar } from "../server/tasks.ts";
-import { parseGenerated } from "../server/claude.ts";
+import { parseGenerated, finalize } from "../server/claude.ts";
 import { isWriteGatedAction, ACTION_POLICIES } from "../server/integrations.ts";
 import { isNoise, filterCandidates } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight } from "../shared/types.ts";
@@ -112,6 +112,21 @@ check("marginal maybe dropped", !keptAnchors.includes("gmail:low1"));
 check("deadline'd commitment kept", keptAnchors.includes("gmail:sent1"));
 check("vague commitment dropped", !keptAnchors.includes("gmail:sent2"));
 check("high-urgency kept", keptAnchors.includes("gmail:hi1"));
+
+// ── Run report guarantees (finalize) ──────────────────────────────────────────
+section("finalize run report");
+const docLink = { label: "Q3 budget doc", url: "https://docs.google.com/document/d/1xVdKvq8GjwskuuAmuAbCdEfGhIjKlMnOp/edit" };
+const fin1 = finalize({ context: "c", synthesis: "Created the budget doc.", steps: [], links: [docLink], sendables: [] }, "", []);
+check("links with no steps/sendables get a Review checklist", fin1.steps.length === 1 && fin1.steps[0].text.startsWith("Review") && fin1.steps[0].url === docLink.url);
+const fin2 = finalize({ context: "c", synthesis: "Drafted a reply to Sarah.", steps: [], links: [],
+  sendables: [{ app: "gmail", label: "Send reply", to: "s@a.com", subject: "Re", body: "hi", draftId: "r-1234567890" }] }, "", []);
+check("sendable needs no backstop step", fin2.steps.length === 0 && fin2.sendables.length === 1);
+const fin3 = finalize({ context: "c", synthesis: "Booked nothing.", steps: [{ text: "Pick a date", automatable: false }], links: [docLink], sendables: [] }, "", []);
+check("real steps are never overwritten", fin3.steps.length === 1 && fin3.steps[0].text === "Pick a date");
+let finThrew = false;
+try { finalize({ context: "", synthesis: "Let me first check the calendar and then I'll draft it.", steps: [], links: [], sendables: [] }, "", []); }
+catch { finThrew = true; }
+check("planning-tense-only result still fails honestly", finThrew);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

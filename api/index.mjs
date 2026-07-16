@@ -620,38 +620,47 @@ Sweep across all of them for everything genuinely awaiting me that is NOT alread
 }
 async function classifyCandidates(items, profile, activeTitles) {
   if (!items.length) return { tasks: [], profileUpdates: [] };
-  const list = items.slice(0, 30).map((it, i) => `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
+  const list = items.slice(0, 30).map((it, i) => `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}${it.labels.includes("assigned") ? "/ASSIGNED-TO-USER" : ""}${it.labels.includes("review-requested") ? "/REVIEW-REQUESTED" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `
 ALREADY ON THEIR LIST (skip anything covering these):
 ${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}
 ` : "";
-  const sys = `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER items are commitments THEY made ("I'll send you X") \u2014 create a task to FULFILL unfulfilled ones. Events: only if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if someone is clearly waiting on their review/input. Skip FYIs, receipts, automated mail, and anything already on their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank HIGHER (importance \u2265 0.7); things their preferences deprioritize rank lower or get skipped. Quality over quantity \u2014 the handful that matter.
+  const sys = `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER items are commitments THEY made ("I'll send you X") \u2014 create a task to FULFILL unfulfilled ones. Events: only if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs are actionable while open. Skip FYIs, receipts, automated mail, and anything already on their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank HIGHER (importance \u2265 0.7); things their preferences deprioritize rank lower or get skipped. Quality over quantity \u2014 the handful that matter. ALWAYS include: a direct question or request from a real person awaiting their reply; a SENT-BY-USER commitment ("I'll send/do/call\u2026") with no later fulfilment visible; an event in the next 48h that plainly needs prep. When such an item exists, an empty tasks list is WRONG.
 Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative \u22649 words","why":"one clause naming the concrete trigger","when":"deadline or ''","urgency":0..1,"importance":0..1,"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about","fact":"one short sentence"}]} \u2014 profileUpdates: 0-3 DURABLE facts about who this person is that these items reveal (a key relationship, an ongoing project) \u2014 only lasting identity facts, not task content. Empty arrays are fine.`;
   const client2 = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
-  let tokIn = 0, tokOut = 0;
-  try {
+  let tokIn = 0, tokOut = 0, calls = 0;
+  const ask = async (extra) => {
+    calls++;
     const res = await retryRequest2(() => client2.chat.completions.create({
       model: actualModel,
       max_tokens: 1800,
+      // Determinism guards: JSON mode + near-zero temperature. Without them the same candidate list
+      // sometimes classified to ZERO tasks (the "swept — no new tasks over a full inbox" bug).
+      temperature: 0.1,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: sys },
         { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `
 CANDIDATES:
-${list}` }
+${list}` + (extra ? `
+
+${extra}` : "") }
       ]
     }));
-    tokIn = res.usage?.prompt_tokens || 0;
-    tokOut = res.usage?.completion_tokens || 0;
-    const out = firstJson(String(res.choices?.[0]?.message?.content || ""));
+    tokIn += res.usage?.prompt_tokens || 0;
+    tokOut += res.usage?.completion_tokens || 0;
+    return firstJson(String(res.choices?.[0]?.message?.content || ""));
+  };
+  const parse = (out) => {
     const arr = Array.isArray(out) ? out : Array.isArray(out?.tasks) ? out.tasks : [];
-    const tasks = arr.filter((r) => Number.isInteger(r?.i) && r.i >= 0 && r.i < items.length && String(r?.title || "").trim().length >= 4 && String(r?.why || "").trim()).map((r) => {
+    return arr.map((r) => ({ ...r, i: Number(r?.i) })).filter((r) => Number.isInteger(r.i) && r.i >= 0 && r.i < items.length && String(r?.title || "").trim().length >= 4 && String(r?.why || "").trim()).map((r) => {
       const it = items[r.i];
       return {
         title: String(r.title).slice(0, 90),
         why: String(r.why).slice(0, 400),
         when: r.when ? String(r.when).slice(0, 40) : void 0,
-        source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : "gmail",
+        source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : "gmail",
         risk: r.risk === "high" ? "high" : "low",
         urgency: clamp01(r.urgency ?? 0.5),
         importance: clamp01(r.importance ?? 0.6),
@@ -660,9 +669,23 @@ ${list}` }
         link: it.url
       };
     }).slice(0, 12);
+  };
+  try {
+    let out = await ask();
+    let tasks = parse(out);
+    if (!tasks.length && items.length >= 6) {
+      const retry = await ask(
+        `You returned no tasks from ${items.length} candidates. Re-examine them: direct questions from real people and the user's own SENT commitments are almost always actionable. Return an empty tasks list ONLY if truly nothing needs them.`
+      );
+      const retried = parse(retry);
+      if (retried.length) {
+        out = retry;
+        tasks = retried;
+      }
+    }
     return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates) };
   } finally {
-    console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] classifyCandidates: ${items.length} in \u2192 1 call, ${tokIn} in / ${tokOut} out tokens`);
+    console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] classifyCandidates: ${items.length} in \u2192 ${calls} call${calls === 1 ? "" : "s"}, ${tokIn} in / ${tokOut} out tokens`);
   }
 }
 async function refineManualTask(text, profile) {
@@ -697,6 +720,7 @@ Return JSON: {"title": short imperative <= 9 words, "why": one concise clause ca
   }
 }
 var RUN_SYSTEM = `You execute ONE task for the user, end to end, using the tools available \u2014 their CONNECTED apps via Composio (Gmail, Google Calendar, Docs, Slides, Drive, Sheets, and any others: Slack, GitHub, Notion, Linear, Todoist, \u2026). USE them to gather the real facts AND to DO the reversible work: draft a reply, create a doc/deck/sheet, add a task or calendar event, update an issue. Use WHATEVER connected apps the task touches (Slack, Notion, Linear, Sheets, GitHub, \u2026), not just email, and do as MUCH as your tools allow. Do NOT ask the user for anything you could find or do yourself. Be rigorously honest and grounded; never invent specifics.
+WORK IN THREE PHASES: (1) PLAN silently \u2014 from the task and the context you gather, decide which tools you'll use and what artifacts (draft/doc/event/cells) you'll produce; never show this plan to the user. (2) DO \u2014 execute the reversible work through the tools. (3) REPORT via submit \u2014 "synthesis" = what you actually DID (past tense), "links" = EVERY artifact you produced, "steps" = EVERYTHING that still needs the user, as a complete checklist. Leave steps empty ONLY when a sendable covers the remaining action or truly nothing is left.
 You can also use web_search for any external fact or context you need (a person, company, deadline, how-to, or a reference link) \u2014 look it up rather than guess.
 GOOGLE SHEETS \u2014 YOU MUST ACTUALLY WRITE: if the task involves updating a spreadsheet (e.g. filling in restaurant names, meal ideas, trip data, any cells), you MUST call the Sheets write tools (GOOGLESHEETS_BATCH_UPDATE_VALUES, GOOGLESHEETS_UPDATE_VALUES, GOOGLESHEETS_APPEND_VALUES, etc.) to ACTUALLY write the data into the cells \u2014 do NOT just produce a plan or list in synthesis. Read the sheet first to find the exact cells/ranges that need filling, then call the write tool with real content. Sheet cell writes are FULLY PERMITTED and reversible \u2014 you do NOT need user approval to write cells. Do it now.
 GATHER CONTEXT AGGRESSIVELY \u2014 BEFORE you act, search EVERYWHERE for relevant information:
@@ -936,6 +960,9 @@ function finalize(out, fallbackText, profileUpdates) {
   void fallbackText;
   if (!synthesis && !steps.length && !links.length && !sendables.length) {
     throw new Error("The run produced no output \u2014 it will retry.");
+  }
+  if (!steps.length && !sendables.length && links.length) {
+    for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url });
   }
   return {
     context: brief(String(out?.context || ""), 3, 600),
@@ -1326,6 +1353,10 @@ var ACTION_POLICIES = {
   GOOGLESHEETS_APPEND_VALUES: "auto",
   GOOGLESHEETS_DELETE_SHEET: "never",
   GOOGLESHEETS_DELETE_DIMENSION: "never",
+  // GitHub — the two discovery reads (assigned issues, review-requested PRs). Other GitHub actions fall
+  // through to the regex classifiers.
+  GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER: "auto",
+  GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS: "auto",
   // Slack — read + compose only; posting is the user's click.
   SLACK_FETCH_CONVERSATION_HISTORY: "auto",
   SLACK_LIST_ALL_CHANNELS: "auto",
@@ -1894,6 +1925,26 @@ function driveToItems(data) {
     };
   }).filter((x) => !!x);
 }
+function githubToItems(data, label) {
+  const rows = data?.issues || data?.items || (Array.isArray(data) ? data : []);
+  return (rows || []).slice(0, 15).map((r) => {
+    const url2 = String(r?.html_url ?? r?.htmlUrl ?? "").trim();
+    const num = r?.number;
+    const repo = /github\.com\/([^/]+\/[^/]+)\//.exec(url2)?.[1] || "";
+    if (!url2 || !Number.isInteger(num)) return null;
+    return {
+      sourceApp: "github",
+      externalId: `${repo}#${num}`,
+      anchorKey: `github:${repo}#${num}`,
+      url: url2,
+      title: String(r?.title ?? "(untitled)").slice(0, 140),
+      snippet: `${r?.pull_request || /\/pull\//.test(url2) ? "PR" : "issue"} in ${repo}${r?.user?.login ? ` \u2014 opened by ${r.user.login}` : ""}`,
+      sender: String(r?.user?.login ?? "").slice(0, 120),
+      timestamp: String(r?.updated_at ?? r?.created_at ?? ""),
+      labels: [label]
+    };
+  }).filter((x) => !!x);
+}
 async function discoverSourceItems(userEmail) {
   const items = [];
   let attempted = false;
@@ -1935,7 +1986,18 @@ async function discoverSourceItems(userEmail) {
         fields: "files(id,name,mimeType,webViewLink,modifiedTime,sharedWithMeTime,lastModifyingUser)"
       }));
       return files.filter((f) => f.labels.includes("shared") || f.sender && !f.sender.toLowerCase().includes(userEmail.split("@")[0].toLowerCase()));
-    })
+    }),
+    // GitHub (if connected): things waiting on the user — open issues assigned to them, PRs where their
+    // review was requested. Both fail silently for accounts without GitHub.
+    grab(async () => githubToItems(await readAction(userEmail, "GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER", {
+      filter: "assigned",
+      state: "open",
+      per_page: 10
+    }), "assigned")),
+    grab(async () => githubToItems(await readAction(userEmail, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS", {
+      q: "is:open is:pr review-requested:@me",
+      per_page: 10
+    }), "review-requested"))
   ]);
   const seen = /* @__PURE__ */ new Set();
   const unique = items.filter((it) => {
@@ -2209,7 +2271,7 @@ function foldGenerated(existing, genTasks) {
   const freshIds = /* @__PURE__ */ new Set();
   for (const g of genTasks) {
     const e = eisenhower(g.urgency, g.importance);
-    const evidence = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : void 0;
+    const evidence = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : g.source === "github" ? "Open on GitHub" : "Open source", url: g.link }] : void 0;
     const id = randomUUID();
     freshIds.add(id);
     candidates.push({
@@ -2856,7 +2918,7 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
     const force = req.body?.force === true;
     const lastGenTime = Date.parse(req.session.lastGenTime || "") || 0;
     if (!force && Date.now() - lastGenTime < CONTINUOUS_MONITOR_INTERVAL_MS && (req.session.tasks || []).length) {
-      res.json(req.session.tasks);
+      res.json({ tasks: req.session.tasks, note: "" });
       return;
     }
     const extras = await toolsFor(req);
@@ -2870,7 +2932,8 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
     req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
     await saveSession(req);
-    res.json(req.session.tasks);
+    const note = job.status === "succeeded" ? String(job.output?.note || "") : `sweep ${job.status}: ${job.last_error || "still running"}`;
+    res.json({ tasks: req.session.tasks, note });
   } catch (e) {
     console.error("[tasks] generate error:", e);
     res.status(500).json({ error: e?.message || "generate failed" });

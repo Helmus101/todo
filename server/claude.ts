@@ -440,17 +440,20 @@ export async function classifyCandidates(
 ): Promise<GenerationResult> {
   if (!items.length) return { tasks: [], profileUpdates: [] };
   const list = items.slice(0, 30).map((it, i) =>
-    `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
+    `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}${it.labels.includes("assigned") ? "/ASSIGNED-TO-USER" : ""}${it.labels.includes("review-requested") ? "/REVIEW-REQUESTED" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `\nALREADY ON THEIR LIST (skip anything covering these):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
   const sys =
     `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it ` +
     `GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER ` +
     `items are commitments THEY made ("I'll send you X") — create a task to FULFILL unfulfilled ones. Events: only ` +
     `if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if ` +
-    `someone is clearly waiting on their review/input. Skip FYIs, receipts, automated mail, and anything already on ` +
+    `someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs ` +
+    `are actionable while open. Skip FYIs, receipts, automated mail, and anything already on ` +
     `their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank ` +
     `HIGHER (importance ≥ 0.7); things their preferences deprioritize rank lower or get skipped. Quality over ` +
-    `quantity — the handful that matter.\n` +
+    `quantity — the handful that matter. ALWAYS include: a direct question or request from a real person awaiting ` +
+    `their reply; a SENT-BY-USER commitment ("I'll send/do/call…") with no later fulfilment visible; an event in ` +
+    `the next 48h that plainly needs prep. When such an item exists, an empty tasks list is WRONG.\n` +
     `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative ≤9 words",` +
     `"why":"one clause naming the concrete trigger","when":"deadline or ''","urgency":0..1,"importance":0..1,` +
     `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about",` +
@@ -459,28 +462,36 @@ export async function classifyCandidates(
     `Empty arrays are fine.`;
   const client = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
-  let tokIn = 0, tokOut = 0;
-  try {
+  let tokIn = 0, tokOut = 0, calls = 0;
+  const ask = async (extra?: string) => {
+    calls++;
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
       max_tokens: 1800,
+      // Determinism guards: JSON mode + near-zero temperature. Without them the same candidate list
+      // sometimes classified to ZERO tasks (the "swept — no new tasks over a full inbox" bug).
+      temperature: 0.1,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: sys },
-        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` },
+        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` + (extra ? `\n\n${extra}` : "") },
       ],
     }));
-    tokIn = res.usage?.prompt_tokens || 0; tokOut = res.usage?.completion_tokens || 0;
-    const out = firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
+    tokIn += res.usage?.prompt_tokens || 0; tokOut += res.usage?.completion_tokens || 0;
+    return firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
+  };
+  const parse = (out: any) => {
     const arr: any[] = Array.isArray(out) ? out : Array.isArray(out?.tasks) ? out.tasks : [];
-    const tasks = arr
-      .filter((r) => Number.isInteger(r?.i) && r.i >= 0 && r.i < items.length && String(r?.title || "").trim().length >= 4 && String(r?.why || "").trim())
+    return arr
+      .map((r) => ({ ...r, i: Number(r?.i) })) // tolerate "i":"3" strings
+      .filter((r) => Number.isInteger(r.i) && r.i >= 0 && r.i < items.length && String(r?.title || "").trim().length >= 4 && String(r?.why || "").trim())
       .map((r): GeneratedTask => {
         const it = items[r.i];
         return {
           title: String(r.title).slice(0, 90),
           why: String(r.why).slice(0, 400),
           when: r.when ? String(r.when).slice(0, 40) : undefined,
-          source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : "gmail",
+          source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : "gmail",
           risk: r.risk === "high" ? "high" : "low",
           urgency: clamp01(r.urgency ?? 0.5),
           importance: clamp01(r.importance ?? 0.6),
@@ -489,9 +500,23 @@ export async function classifyCandidates(
         };
       })
       .slice(0, 12);
+  };
+  try {
+    let out = await ask();
+    let tasks = parse(out);
+    // Empty-result guard: zero tasks from a healthy candidate pool is usually the model giving up, not an
+    // empty world. ONE retry with a pointed nudge; a second empty is accepted as honest.
+    if (!tasks.length && items.length >= 6) {
+      const retry = await ask(
+        `You returned no tasks from ${items.length} candidates. Re-examine them: direct questions from real ` +
+        `people and the user's own SENT commitments are almost always actionable. Return an empty tasks list ` +
+        `ONLY if truly nothing needs them.`);
+      const retried = parse(retry);
+      if (retried.length) { out = retry; tasks = retried; }
+    }
     return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates) };
   } finally {
-    console.log(`${new Date().toISOString()} [ai] classifyCandidates: ${items.length} in → 1 call, ${tokIn} in / ${tokOut} out tokens`);
+    console.log(`${new Date().toISOString()} [ai] classifyCandidates: ${items.length} in → ${calls} call${calls === 1 ? "" : "s"}, ${tokIn} in / ${tokOut} out tokens`);
   }
 }
 
@@ -549,6 +574,12 @@ const RUN_SYSTEM =
   `create a doc/deck/sheet, add a task or calendar event, update an issue. Use WHATEVER connected apps the task ` +
   `touches (Slack, Notion, Linear, Sheets, GitHub, …), not just email, and do as MUCH as your tools allow. Do ` +
   `NOT ask the user for anything you could find or do yourself. Be rigorously honest and grounded; never invent specifics.\n` +
+  `WORK IN THREE PHASES: (1) PLAN silently — from the task and the context you gather, decide which tools ` +
+  `you'll use and what artifacts (draft/doc/event/cells) you'll produce; never show this plan to the user. ` +
+  `(2) DO — execute the reversible work through the tools. (3) REPORT via submit — "synthesis" = what you ` +
+  `actually DID (past tense), "links" = EVERY artifact you produced, "steps" = EVERYTHING that still needs ` +
+  `the user, as a complete checklist. Leave steps empty ONLY when a sendable covers the remaining action or ` +
+  `truly nothing is left.\n` +
   `You can also use web_search for any external fact or context you need (a person, company, deadline, how-to, ` +
   `or a reference link) — look it up rather than guess.\n` +
   `GOOGLE SHEETS — YOU MUST ACTUALLY WRITE: if the task involves updating a spreadsheet (e.g. filling in ` +
@@ -871,7 +902,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   }
 }
 
-function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[]): RunOutput {
+export function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[]): RunOutput {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
   const steps: TaskStep[] = rawSteps
     .map((s: any, idx: number) => ({
@@ -931,6 +962,12 @@ function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[
   // throwing routes it to the honest-failure path (task returns to ready + client auto-retries).
   if (!synthesis && !steps.length && !links.length && !sendables.length) {
     throw new Error("The run produced no output — it will retry.");
+  }
+  // Checklist backstop: artifacts with NO steps and NO sendable leave the user without a "what's left"
+  // list — the report the card promises. Deterministically add "Review <artifact>" so the checklist can
+  // never be absent when something was produced. (Sendables don't need it: the send button IS the next action.)
+  if (!steps.length && !sendables.length && links.length) {
+    for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url });
   }
   return {
     context: brief(String(out?.context || ""), 3, 600),

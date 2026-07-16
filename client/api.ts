@@ -60,7 +60,12 @@ export const api = {
   disconnectIntegration: (app: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect`),
   disconnectAccount: (app: string, accountId: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect/${accountId}`),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
-  generate: (force = false): Promise<WebTask[]> => post("/api/tasks/generate", force ? { force: true } : undefined),
+  // Returns the fresh list + the sweep's own result line ("swept: 3 new tasks…" / "skipped: nothing
+  // connected") so the UI reports what actually happened rather than inferring it.
+  generate: async (force = false): Promise<{ tasks: WebTask[]; note: string }> => {
+    const out: any = await post("/api/tasks/generate", force ? { force: true } : undefined);
+    return Array.isArray(out) ? { tasks: out, note: "" } : { tasks: out?.tasks || [], note: String(out?.note || "") };
+  },
   add: (title: string): Promise<WebTask[]> => post("/api/tasks", { title }),
   run: (id: string): Promise<WebTask> => post(`/api/tasks/${id}/run`),
   revise: (id: string, note: string): Promise<WebTask> => post(`/api/tasks/${id}/revise`, { note }),

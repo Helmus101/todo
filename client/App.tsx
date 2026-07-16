@@ -35,6 +35,13 @@ function statusChip(t: WebTask, retrying?: boolean): { label: string; tone: "mut
   return null;
 }
 
+// Translate a sweep job's skip/failure line into user terms — an honest reason, never a fake all-clear.
+function sweepSkipMessage(note: string): string {
+  if (/nothing connected/i.test(note)) return "No apps are connected for this account — connect Gmail in Settings so Otto has something to read.";
+  if (/paused/i.test(note)) return "AI is paused — resume it in Settings to sweep for new tasks.";
+  return `Sweep didn't finish: ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}`;
+}
+
 function subtitle(t: WebTask, retrying?: boolean): string {
   const c = canonStatus(t.status);
   if (c === "queued") return "Queued — starting shortly…";
@@ -238,8 +245,10 @@ export function App() {
     sweeping.current = true;
     setScanning(true);
     try {
-      const fresh = await api.generate();
+      const { tasks: fresh, note: serverNote } = await api.generate();
       setTasks(retryFlags(fresh)); setLoaded(true);
+      // A skipped sweep must say WHY (e.g. "nothing connected") — never look like a quiet all-clear.
+      if (/^(skipped:|sweep )/.test(serverNote)) setNote(sweepSkipMessage(serverNote));
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
     } catch { /* marker stays unset — next focus/interval tick retries */ }
     finally { sweeping.current = false; setScanning(false); }
@@ -304,15 +313,17 @@ export function App() {
     setBusy(true); setNote("");
     try {
       const before = new Set(tasks.map((t) => t.id));
-      const t = await api.generate(true);
+      const { tasks: t, note: serverNote } = await api.generate(true);
       setTasks(t); setLoaded(true);
       // A manual Refresh counts as a sweep — reset the watch interval so the background one doesn't repeat it.
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
       // Run summary — honest, specific feedback on what the sweep did (the trust-building layer).
+      // A SKIPPED sweep says why (nothing connected / paused) instead of masquerading as "no new tasks".
       const fresh = t.filter((x) => !before.has(x.id) && !isHandled(x.status));
       const queuedN = fresh.filter((x) => isInFlight(x.status)).length;
       const needsYou = t.filter((x) => canonStatus(x.status) === "needs_review" && (x.steps?.some((s) => !s.done && !s.automatable) || x.sendables?.some((s) => !s.sent))).length;
-      if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now.");
+      if (/^(skipped:|sweep )/.test(serverNote)) setNote(sweepSkipMessage(serverNote));
+      else if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now.");
       else if (!fresh.length) setNote(`Swept your apps — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything actionable is already on your list"}.`);
       else setNote(`Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} queued to run` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`);
     }

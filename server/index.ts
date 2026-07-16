@@ -298,7 +298,7 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     const force = req.body?.force === true; // the manual Refresh button — always run a REAL sweep
     const lastGenTime = Date.parse(req.session.lastGenTime || "") || 0;
     if (!force && Date.now() - lastGenTime < CONTINUOUS_MONITOR_INTERVAL_MS && (req.session.tasks || []).length) {
-      res.json(req.session.tasks); return; // watched recently — serve the current list
+      res.json({ tasks: req.session.tasks, note: "" }); return; // watched recently — serve the current list
     }
     const extras = await toolsFor(req);
     if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
@@ -309,7 +309,10 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
     await saveSession(req);
-    res.json(req.session.tasks);
+    // The sweep's own result line ("swept: 3 new tasks, 2 queued" / "skipped: nothing connected") — the
+    // client shows THIS instead of guessing, so a skipped sweep can never masquerade as "no new tasks".
+    const note = job.status === "succeeded" ? String(job.output?.note || "") : `sweep ${job.status}: ${job.last_error || "still running"}`;
+    res.json({ tasks: req.session.tasks, note });
   } catch (e: any) {
     console.error("[tasks] generate error:", e);
     res.status(500).json({ error: e?.message || "generate failed" });

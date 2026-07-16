@@ -340,7 +340,7 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
   const freshIds = new Set<string>();
   for (const g of genTasks) {
     const e = eisenhower(g.urgency, g.importance);
-    const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : undefined;
+    const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : g.source === "github" ? "Open on GitHub" : "Open source", url: g.link }] : undefined;
     const id = randomUUID();
     freshIds.add(id);
     candidates.push({

@@ -12,7 +12,7 @@
 import { readAction } from "./integrations.ts";
 
 export interface SourceItem {
-  sourceApp: "gmail" | "calendar" | "drive";
+  sourceApp: "gmail" | "calendar" | "drive" | "github";
   externalId: string;
   anchorKey: string;      // "gmail:<threadId>" / "calendar:<eventId>" / "drive:<fileId>" — the dedupe identity
   url?: string;
@@ -93,6 +93,28 @@ function driveToItems(data: any): SourceItem[] {
   }).filter((x): x is SourceItem => !!x);
 }
 
+function githubToItems(data: any, label: string): SourceItem[] {
+  const rows: any[] = data?.issues || data?.items || (Array.isArray(data) ? data : []);
+  return (rows || []).slice(0, 15).map((r: any): SourceItem | null => {
+    const url = String(r?.html_url ?? r?.htmlUrl ?? "").trim();
+    const num = r?.number;
+    // repo from html_url ("…github.com/owner/repo/issues/12") — the repository field shape varies more.
+    const repo = /github\.com\/([^/]+\/[^/]+)\//.exec(url)?.[1] || "";
+    if (!url || !Number.isInteger(num)) return null;
+    return {
+      sourceApp: "github",
+      externalId: `${repo}#${num}`,
+      anchorKey: `github:${repo}#${num}`,
+      url,
+      title: String(r?.title ?? "(untitled)").slice(0, 140),
+      snippet: `${r?.pull_request || /\/pull\//.test(url) ? "PR" : "issue"} in ${repo}${r?.user?.login ? ` — opened by ${r.user.login}` : ""}`,
+      sender: String(r?.user?.login ?? "").slice(0, 120),
+      timestamp: String(r?.updated_at ?? r?.created_at ?? ""),
+      labels: [label],
+    };
+  }).filter((x): x is SourceItem => !!x);
+}
+
 /**
  * Pull candidates from the fixed Google sources. Per-source failures are tolerated (one bad call must
  * not kill the sweep); `attempted` reports whether ANY source responded, so the caller can fall back
@@ -129,6 +151,14 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
       // Only files where ANOTHER person is the actor — the user's own edits aren't a to-do trigger.
       return files.filter((f) => f.labels.includes("shared") || (f.sender && !f.sender.toLowerCase().includes(userEmail.split("@")[0].toLowerCase())));
     }),
+    // GitHub (if connected): things waiting on the user — open issues assigned to them, PRs where their
+    // review was requested. Both fail silently for accounts without GitHub.
+    grab(async () => githubToItems(await readAction(userEmail, "GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER", {
+      filter: "assigned", state: "open", per_page: 10,
+    }), "assigned")),
+    grab(async () => githubToItems(await readAction(userEmail, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS", {
+      q: "is:open is:pr review-requested:@me", per_page: 10,
+    }), "review-requested")),
   ]);
   // Dedupe by anchor (a sent reply and an inbox thread can share a threadId — keep the inbox copy first).
   const seen = new Set<string>();
