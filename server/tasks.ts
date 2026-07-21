@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
-import { dedupeFacts, sameFact, canonStatus } from "../shared/types.ts";
+import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
-import { readOnly, type AgentTools } from "./integrations.ts";
+import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates } from "./discover.ts";
 
 /** Fold a learned fact into the person-profile. 'name'/'about' replace. List facts REPLACE an existing
@@ -227,6 +227,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     projects: dedupeFacts([...(p1.projects || []), ...(p2.projects || [])]),
     paused: pausedSide.paused,
     pausedAt: pausedSide.pausedAt,
+    // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
+    lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
     // p2's explicit `undefined` keys from normalizeProfile — the bug that silently dropped workingHours).
     workingHours: p2.workingHours ?? p1.workingHours,
@@ -306,7 +308,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
         // Model suggests scores; CODE decides what clears the bar (VIPs + deadline'd commitments always do).
         const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
-        return foldGenerated(existing, kept);
+        return foldGenerated(existing, kept, profile.highPriorityPeople || []);
       }
     } catch (e: any) { console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e); }
   }
@@ -314,13 +316,13 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   // FALLBACK — open-ended agent sweep over the read-only tool view (covers non-Google sources too).
   const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
-  return foldGenerated(existing, gen.tasks);
+  return foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
 }
 
 /** Pure post-processing of a sweep's output: absorb duplicates into the existing list, cap genuinely NEW
  *  cards at MAX_NEW_PER_SWEEP (top by score), prune old handled records. Split out so it's unit-testable
  *  without an AI call. */
-export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string }[]): WebTask[] {
+export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string }[], highPriorityPeople: string[] = []): WebTask[] {
   const now = new Date().toISOString();
   // DISMISSED = "I don't want this" — suppress not just the exact item but anything SIMILAR to it, with a
   // deliberately looser match (incl. cross-field title↔why) than the live-task dedupe. A false positive
@@ -355,7 +357,8 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
   const keepNew = new Set(
     deduped.filter((t) => freshIds.has(t.id)).sort((a, b) => b.score - a.score).slice(0, MAX_NEW_PER_SWEEP).map((t) => t.id));
   const calmed = deduped.filter((t) => !freshIds.has(t.id) || keepNew.has(t.id));
-  return pruneHandled(calmed.sort((a, b) => b.score - a.score), 120);
+  // Eisenhower ranking with deadline/VIP/freshness tie-breaks (was: bare score sort).
+  return pruneHandled(sortWithinQuadrant(calmed, highPriorityPeople), 120);
 }
 
 /** Add a task the user typed; AI-refined when possible (else raw), classified through the same matrix. */
@@ -398,6 +401,28 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
  * (drafts a reply, creates a doc/deck/sheet, adds a task/event, updates an issue — never an irreversible
  * send/delete), then the task shows its context, a synthesis of what it did, and a checklist of what's left.
  */
+type Artifact = NonNullable<WebTask["artifacts"]>[number];
+/** Pull artifact ids out of a run's output: doc/sheet/slides links + gmail draft / calendar event sendables. */
+export function extractArtifacts(out: { links?: TaskLink[]; sendables?: Sendable[] }): Artifact[] {
+  const found: Artifact[] = [];
+  for (const l of out.links || []) {
+    const m = DOC_LINK.exec(l.url);
+    if (m) found.push({ kind: m[1] === "spreadsheets" ? "sheet" : m[1] === "presentation" ? "slides" : "doc", id: m[2], url: l.url, label: l.label });
+  }
+  for (const s of out.sendables || []) {
+    if (s.app === "gmail" && s.draftId) found.push({ kind: "draft", id: s.draftId, label: s.label });
+    if (s.app === "gcal" && s.eventId) found.push({ kind: "event", id: s.eventId, label: s.label });
+  }
+  return found;
+}
+/** Union by id — a rerun keeps knowing about the artifacts earlier runs made. */
+export function unionArtifacts(prior: Artifact[] | undefined, fresh: Artifact[]): Artifact[] | undefined {
+  const map = new Map<string, Artifact>();
+  for (const a of [...(prior || []), ...fresh]) if (a?.id) map.set(a.id, { ...map.get(a.id), ...a });
+  const all = [...map.values()].slice(-12); // bounded — a task never accumulates unbounded artifact history
+  return all.length ? all : undefined;
+}
+
 export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   if (!task) return undefined;
@@ -409,11 +434,21 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     ? `The user reviewed your previous draft/output for this task and wants this CHANGE before they send it: "${revision.trim()}". Redo the task incorporating it — UPDATE the existing draft/doc (don't create a new copy) and re-offer it as a sendable.`
     : undefined;
   try {
-    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
+    // Rerun/revision: Otto may UPDATE the artifacts it made for this task (never the user's own docs) —
+    // that's what turns "redo" into an edit instead of a duplicate. MUST happen BEFORE scopeTools: the
+    // carve-out view's call() closes over the full toolset; scoping narrows `.tools` while preserving
+    // whatever `.call` it's given, so scoping-after-carve-out keeps both properties. The reverse order
+    // silently discards the scoping (its closure reopens the full toolset) — do not reorder this.
+    const priorArtifactIds = (task.artifacts || []).map((a) => a.id);
+    const withArtifacts = extras?.withAllowedArtifacts && priorArtifactIds.length ? extras.withAllowedArtifacts(priorArtifactIds) : extras;
+    const scoped = withArtifacts ? scopeTools(withArtifacts, task) : undefined;
+    if (extras && scoped) console.log(`[tasks] run "${task.title.slice(0, 40)}": ${scoped.tools.length}/${extras.tools.length} tools after scoping`);
+    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts }, profile, focus, scoped);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     task.context = out.context;
     task.synthesis = out.synthesis;
+    task.did = out.did?.length ? out.did : undefined;
     // A re-run (Redo / revision) must NOT forget which steps the user already completed: carry each
     // prior step's done/doneAt/result onto the matching new step (matched by near-duplicate text).
     const prior = (task.steps || []).filter((s) => s.done);
@@ -423,6 +458,8 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     });
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
+    task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out));
+    task.lastRunTokens = out.tokens;
     task.status = "needs_review";
     task.lastError = undefined;
     task.updatedAt = new Date().toISOString();
@@ -480,7 +517,9 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   step.result = out.synthesis.slice(0, 1200);
   // If the focused run still needs the user (it returned a needs-you step), it couldn't finish — flip this step
   // to needs-you so it shows honestly (not a false ✓) and won't auto-retry; otherwise mark it done.
-  if ((out.steps || []).some((s) => !s.automatable)) { step.automatable = false; step.done = false; }
+  // EXCLUDE synthetic backstop steps (finalize's deterministic "Review <artifact>" nudge) — those exist to
+  // give the TOP-level task a checklist entry, not to say this focused step run failed to finish.
+  if ((out.steps || []).some((s) => !s.automatable && !s.synthetic)) { step.automatable = false; step.done = false; }
   else { step.done = true; step.doneAt = new Date().toISOString(); step.question = undefined; step.options = undefined; } // answered + done → no stale question
   // Surface anything this step produced (a draft/doc/…) alongside the task's other artifacts, deduped by URL.
   if (out.links?.length) {

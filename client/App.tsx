@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem } from "./api.ts";
 
 /** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
@@ -353,7 +353,8 @@ export function App() {
       : <Landing />;
   }
 
-  const live = tasks.filter((t) => t.status !== "done" && t.status !== "dismissed").sort((a, b) => b.score - a.score);
+  // Eisenhower ranking with deadline/VIP/freshness tie-breaks — same bands/cards, just a better order.
+  const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed"), status?.highPriorityPeople || []);
   const completed = tasks.filter((t) => t.status === "done").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
@@ -387,7 +388,7 @@ export function App() {
             <div className="list-status">
               <span><b>{live.length}</b> active</span>
               {working ? <span> · <b>{working}</b> running</span> : null}
-              {handled ? <span className="dash-stat-link" onClick={() => setShowCompleted((v) => !v)}> · <b>{handled}</b> completed {showCompleted ? "−" : "+"}</span> : null}
+              {handled ? <span> · <b>{handled}</b> completed</span> : null}
               {scanning && <span className="scan-note"><span className="scan-dot" /> checking for new tasks…</span>}
             </div>
           </div>
@@ -443,19 +444,26 @@ export function App() {
                   );
                 })}</div>;
           })()}
-          {showCompleted && completed.length > 0 && (
+          {completed.length > 0 && (
             <div className="completed-section">
               <h3 className="completed-head">Completed</h3>
-              <div className="list">{completed.map((t) => (
-                <Card
-                  key={t.id}
-                  task={t}
-                  open={false}
-                  onToggle={() => {}}
-                  onChange={setTasks}
-                  onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
-                />
+              {/* Minimalist done-list: checked rows like a to-do app, not full cards. Click to expand details. */}
+              <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
+                <Fragment key={t.id}>
+                  <div className="done-row" onClick={() => navigate(t.id === openId ? "" : `task/${t.id}`)} title={t.synthesis || t.why}>
+                    <span className="done-check">✓</span>
+                    <span className="done-title">{t.title}</span>
+                    <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
+                  </div>
+                  {t.id === openId && (
+                    <Card task={t} open onToggle={() => navigate("")} onChange={setTasks}
+                      onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
+                  )}
+                </Fragment>
               ))}</div>
+              {completed.length > 8 && !showCompleted && (
+                <button className="btn xs ghost" onClick={() => setShowCompleted(true)}>Show all {completed.length}</button>
+              )}
             </div>
           )}
         </main>
@@ -1199,9 +1207,11 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
   }, [task, stepBusy, failed]);
 
   // Auto-open documents Otto created (Doc/Sheet/Slides) once the task is done — capped per task + per
-  // session, once per URL, and only with the extension (so it isn't popup-blocked). Off if the user toggled it.
+  // session, once per URL EVER (persisted), so the same doc never reopens. Works without the extension too:
+  // window.open outside a click may be popup-blocked in some browsers, but when allowed the doc just appears
+  // — best-effort beats waiting for a click. Off if the user toggled it in Settings.
   useEffect(() => {
-    if (cStatus !== "needs_review" || !autoOpenDocsOn() || !extPresent()) return;
+    if (cStatus !== "needs_review" || !autoOpenDocsOn()) return;
     const room = SESSION_DOC_CAP - sessionDocsOpened;
     if (room <= 0) return;
     // Only docs we've NEVER auto-opened (persisted across reloads) — so the same tabs never reopen.
@@ -1395,9 +1405,11 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
           )}
           <section>
             <h4>What Otto did</h4>
-            {task.synthesis
-              ? <Bullets text={task.synthesis} />
-              : <p className="muted">{cStatus === "queued" ? "Queued — starting shortly…" : cStatus === "executing" ? "Working on it now…" : cStatus === "needs_review" ? "Nothing to report." : cStatus === "failed_retryable" || cStatus === "failed_terminal" ? (task.lastError || "The run failed.") : "Hasn't run yet."}</p>}
+            {task.did?.length
+              ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{d}</li>)}</ul>
+              : task.synthesis
+                ? <Bullets text={task.synthesis} />
+                : <p className="muted">{cStatus === "queued" ? "Queued — starting shortly…" : cStatus === "executing" ? "Working on it now…" : cStatus === "needs_review" ? "Nothing to report." : cStatus === "failed_retryable" || cStatus === "failed_terminal" ? (task.lastError || "The run failed.") : "Hasn't run yet."}</p>}
             {task.links?.length ? (
               <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
             ) : null}

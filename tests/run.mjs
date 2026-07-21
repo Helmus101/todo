@@ -1,9 +1,10 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts } from "../server/tasks.ts";
 import { parseGenerated, finalize } from "../server/claude.ts";
-import { isWriteGatedAction, ACTION_POLICIES } from "../server/integrations.ts";
-import { isNoise, filterCandidates } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight } from "../shared/types.ts";
+import { isWriteGatedAction, ACTION_POLICIES, scopeTools } from "../server/integrations.ts";
+import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch } from "../shared/types.ts";
+import { sweepDueForDay, localDay } from "../server/jobs.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -127,6 +128,83 @@ let finThrew = false;
 try { finalize({ context: "", synthesis: "Let me first check the calendar and then I'll draft it.", steps: [], links: [], sendables: [] }, "", []); }
 catch { finThrew = true; }
 check("planning-tense-only result still fails honestly", finThrew);
+const fin4 = finalize({ context: "c", synthesis: "Created the doc.", did: ["Created the Q3 doc with the table", "Let me now check the calendar", "- Drafted a reply to Sam"], steps: [{ text: "Pick a date", automatable: false }], links: [], sendables: [] }, "", []);
+check("did bullets kept, planning prose dropped, dashes stripped", fin4.did.length === 2 && fin4.did[1] === "Drafted a reply to Sam");
+const fin5 = finalize({ context: "c", synthesis: "Made a doc.", steps: [], links: [{ label: "Open", url: docLink.url }], sendables: [] }, "", []);
+check("junk link label relabeled by kind", /Google Doc/i.test(fin5.links[0].label));
+
+// ── Task-scoped toolset ───────────────────────────────────────────────────────
+section("scopeTools");
+const mkTool = (kit, n) => ({ name: `${kit.toUpperCase()}_ACTION_${n}`, description: `[${kit}] does thing ${n}`, input_schema: { type: "object", properties: {} } });
+const bigSet = { tools: ["gmail", "googledocs", "googledrive", "googlecalendar", "googlesheets", "googleslides", "github", "notion"].flatMap((k) => Array.from({ length: 8 }, (_, i) => mkTool(k, i))), call: async () => null, connected: [] };
+const scopedMail = scopeTools(bigSet, { title: "Reply to Sarah about the offsite venue", why: "she asked yesterday", source: "gmail" });
+check("email task drops calendar/sheets/github/notion kits", scopedMail.tools.length === 24 && !scopedMail.tools.some((t) => /^\[(googlecalendar|googlesheets|github|notion)\]/.test(t.description)));
+const scopedCal = scopeTools(bigSet, { title: "Schedule a call with the vendor", why: "meeting needed", source: "gmail" });
+check("meeting keywords pull calendar back in", scopedCal.tools.some((t) => /^\[googlecalendar\]/.test(t.description)));
+const small = { ...bigSet, tools: bigSet.tools.slice(0, 20) };
+check("small toolsets pass through untouched", scopeTools(small, { title: "x", why: "y" }).tools.length === 20);
+
+// ── Artifact registry ─────────────────────────────────────────────────────────
+section("artifact registry");
+const arts = extractArtifacts({
+  links: [{ label: "Trip doc", url: "https://docs.google.com/document/d/1xVdKvq8GjwskuuAmuAbCdEfGhIjKlMnOp/edit" }],
+  sendables: [{ app: "gmail", label: "Send reply", draftId: "r777777777" }, { app: "gcal", label: "Invites", eventId: "evt123456" }],
+});
+check("doc + draft + event extracted", arts.length === 3 && arts[0].kind === "doc" && arts[1].kind === "draft" && arts[2].kind === "event");
+const merged = unionArtifacts(arts, [{ kind: "doc", id: "1xVdKvq8GjwskuuAmuAbCdEfGhIjKlMnOp", label: "Trip doc v2" }]);
+check("union dedupes by id, keeps latest label", merged.length === 3 && merged.find((a) => a.kind === "doc")?.label === "Trip doc v2");
+
+// ── Discovery: past events + replied threads ──────────────────────────────────
+section("discovery time filters");
+const NOW = Date.parse("2026-07-19T12:00:00Z");
+const evs = calendarToItems({ items: [
+  { id: "past1", summary: "Old standup", start: { dateTime: "2026-07-19T09:00:00Z" } },
+  { id: "soon1", summary: "Client call", start: { dateTime: "2026-07-19T15:00:00Z" } },
+] }, NOW);
+check("started events dropped, upcoming kept", evs.length === 1 && evs[0].externalId === "soon1");
+const thread = (labels, ts) => ({ sourceApp: "gmail", externalId: "t1", anchorKey: "gmail:t1", title: "Budget question", snippet: "…", sender: "a@b.com", timestamp: ts, labels });
+const replied = dedupeByThread([thread(["inbox"], "2026-07-18T10:00:00Z"), thread(["sent"], "2026-07-18T14:00:00Z")]);
+check("user's newer reply wins (thread handled)", replied.length === 1 && replied[0].labels.includes("sent"));
+const reopened = dedupeByThread([thread(["sent"], "2026-07-18T10:00:00Z"), thread(["inbox"], "2026-07-18T14:00:00Z")]);
+check("their newer message wins (thread live again)", reopened.length === 1 && reopened[0].labels.includes("inbox"));
+
+// ── Report guarantees: step flip + stale-step drop ────────────────────────────
+section("step quality");
+const fin6 = finalize({ context: "c", synthesis: "Gathered the trip details.", did: [], steps: [
+  { text: "Create a packing checklist doc with all sections", automatable: false },
+  { text: "Decide which hotel you prefer", automatable: false },
+], links: [], sendables: [] }, "", []);
+check("doable step flipped to automatable, judgment step stays", fin6.steps[0].automatable === true && fin6.steps[1].automatable === false);
+const fin7 = finalize({ context: "c", synthesis: "Created the checklist doc.", did: ["Created the packing checklist doc with all sections"], steps: [
+  { text: "Create the packing checklist doc with all sections", automatable: false },
+  { text: "Print the checklist for the trip", automatable: false },
+], links: [], sendables: [] }, "", []);
+check("step duplicating a did-bullet dropped", fin7.steps.length === 1 && /Print/.test(fin7.steps[0].text));
+
+// ── Durable daily sweep (WS1) ─────────────────────────────────────────────────
+section("daily sweep timing");
+const utcProfile = { ...emptyProfile() };
+const nyProfile = { ...emptyProfile(), workingHours: { start: "09:00", end: "18:00", timezone: "America/New_York" } };
+check("no prior sweep is due", sweepDueForDay(undefined, utcProfile, new Date("2026-07-20T08:00:00Z")));
+check("swept earlier same UTC day is NOT due", !sweepDueForDay("2026-07-20T06:00:00Z", utcProfile, new Date("2026-07-20T08:00:00Z")));
+check("swept yesterday IS due", sweepDueForDay("2026-07-19T23:00:00Z", utcProfile, new Date("2026-07-20T08:00:00Z")));
+// 2026-07-20T02:00Z is still Jul 19 in New York (22:00 EDT) — a "morning" sweep the next NY day is due.
+check("timezone day boundary respected", sweepDueForDay("2026-07-20T02:00:00Z", nyProfile, new Date("2026-07-20T13:00:00Z")));
+check("localDay in NY vs UTC differ across midnight", localDay("2026-07-20T02:00:00Z", "America/New_York") === "2026-07-19" && localDay("2026-07-20T02:00:00Z", "UTC") === "2026-07-20");
+
+// ── Eisenhower ranking (WS2) ──────────────────────────────────────────────────
+section("sortWithinQuadrant");
+const RANK_NOW = new Date("2026-07-20T12:00:00Z");
+const rt = (over) => ({ score: 2, when: "", source: "gmail", why: "", title: "", updatedAt: "2026-07-20T00:00:00Z", createdAt: "2026-07-20T00:00:00Z", ...over });
+const byScore = sortWithinQuadrant([rt({ title: "low", score: 1 }), rt({ title: "high", score: 3 })], [], RANK_NOW);
+check("higher Eisenhower score first", byScore[0].title === "high");
+const byDeadline = sortWithinQuadrant([rt({ title: "later", when: "July 30" }), rt({ title: "sooner", when: "today" })], [], RANK_NOW);
+check("same score → sooner deadline first", byDeadline[0].title === "sooner");
+const noWhenLast = sortWithinQuadrant([rt({ title: "none" }), rt({ title: "dated", when: "tomorrow" })], [], RANK_NOW);
+check("a real deadline beats no deadline", noWhenLast[0].title === "dated");
+const byVip = sortWithinQuadrant([rt({ title: "random", why: "someone asked" }), rt({ title: "boss", why: "Sarah needs the numbers" })], ["Sarah — my manager (sarah@acme.com)"], RANK_NOW);
+check("high-priority person breaks a tie", byVip[0].title === "boss");
+check("deadlineEpoch: empty sorts last", deadlineEpoch("") === Infinity && deadlineEpoch("today", RANK_NOW) === RANK_NOW.getTime());
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

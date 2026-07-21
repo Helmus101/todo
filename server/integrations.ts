@@ -316,6 +316,9 @@ export interface AgentTools {
   /** Send a brief TO THE USER'S OWN INBOX — the recipient is resolved server-side (never model-supplied),
    *  so this is the one send the agent may make autonomously without breaking the "never sends" guarantee. */
   selfBrief?: (subject: string, body: string) => Promise<string>;
+  /** A view whose call() may run write-gated actions targeting these artifact ids — the "Otto may edit
+   *  what Otto made" carve-out for reruns/revisions. Everything else stays gated. */
+  withAllowedArtifacts?: (ids: string[]) => AgentTools;
 }
 const EMPTY: AgentTools = { tools: [], call: async () => null, connected: [] };
 
@@ -378,7 +381,36 @@ function relevance(n: string): number {
   if (/(EVENT|MESSAGE|EMAIL|THREAD|DRAFT|FILE|DOCUMENT|FOLDER|SHEET|SPREADSHEET|ROW|CELL|SLIDE|PRESENTATION|ISSUE|PULL|COMMENT|TASK|REPO|CONTACT|PEOPLE|FREE.?SLOT|FREEBUSY)/.test(n)) s += 3;
   if (/(FIND|SEARCH|LIST|GET|FETCH|READ|CREATE|UPDATE|PATCH|ADD|INSERT|MODIFY|APPEND|MOVE|COPY)/.test(n)) s += 2;
   if (/(ACL|CHANNEL|WATCH|STOP|QUOTA|SETTING|COLOR|DUPLICATE|PERMISSION|SCOPE|SUBSCRIPTION|WEBHOOK|CALENDAR_LIST|CALENDARS_|CREATE_CALENDAR)/.test(n)) s -= 4;
+  // UPDATE beats secondary CREATE/COPY/EXPORT variants on relevance ties — without this, the per-toolkit
+  // write quota (tight: ~4 slots) filled with COPY_DOCUMENT/EXPORT_DOCUMENT_AS_PDF/CREATE_DOCUMENT2 and
+  // silently dropped the ONLY tool that can edit an existing record (observed live: a revision task had
+  // no update tool in its toolset at all, so it could never do anything but read or make a duplicate).
+  if (/UPDATE/.test(n)) s += 1; // NOT \bUPDATE — "_" counts as a word char in regex, so \b never matched after GOOGLEDOCS_UPDATE_…
+  if (/MARKDOWN/.test(n)) s += 1; // markdown-text tools need no structural/index inspection first — easiest to use correctly
   return s;
+}
+
+// Some toolkits ship several near-duplicate actions for the SAME verb+noun (Composio's GOOGLEDOCS has
+// CREATE_DOCUMENT / CREATE_DOCUMENT2 / CREATE_DOCUMENT_MARKDOWN, and four different UPDATE_DOCUMENT_*
+// variants) — left alone, relevance ties let ONE verb family (e.g. all the UPDATE_DOCUMENT_* forms) eat
+// the entire per-toolkit write quota, silently crowding CREATE out (or vice versa). Collapse to the
+// best-scored action per (verb, noun) family BEFORE capping, so create and update both survive.
+const CANON_VERBS = ["CREATE", "UPDATE", "DELETE", "INSERT", "GET", "LIST", "FIND", "SEARCH"];
+function actionFamily(rawName: string): string {
+  const parts = rawName.split("_");
+  const verbIdx = parts.findIndex((p) => CANON_VERBS.includes(p));
+  if (verbIdx === -1) return rawName;
+  const noun = (parts[verbIdx + 1] || "").replace(/\d+$/, ""); // strip a trailing digit (…_DOCUMENT2 → …_DOCUMENT)
+  return `${parts[verbIdx]}:${noun}`;
+}
+function dedupeFamilies<T extends { rawName: string }>(items: T[]): T[] {
+  const best = new Map<string, T>();
+  for (const x of items) {
+    const key = actionFamily(x.rawName);
+    const cur = best.get(key);
+    if (!cur || relevance(x.rawName) > relevance(cur.rawName)) best.set(key, x);
+  }
+  return [...best.values()];
 }
 // Is this action a pure READ (gather context) vs a write? Used to guarantee BOTH kinds survive the per-toolkit cap.
 const isRead = (n: string) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|FREE_BUSY|INSTANCES)/.test(n)
@@ -390,6 +422,39 @@ const isRead = (n: string) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|
  *  the sweep must not send anything. */
 export function readOnly(t: AgentTools): AgentTools {
   return { tools: t.tools.filter((x) => isRead(x.name)), call: t.call, connected: t.connected };
+}
+
+/**
+ * Task-scoped toolset: every tool schema is resent on EVERY round, so shipping all ~78 tools to a task
+ * that touches one app is the single biggest token cost (observed ~230k in/run) AND a focus problem
+ * (more tools → more read-drift). Keep the always-useful core plus only the toolkits the task's text
+ * actually implicates; fall back to the full set when scoping would leave too little.
+ */
+const TOOLKIT_HINTS: [RegExp, string][] = [
+  [/\b(meet|meeting|call|schedule|calendar|invite|event|appointment|book)\w*/i, "googlecalendar"],
+  [/\b(sheet|spreadsheet|cells?|rows?|columns?|track|budget|expense|tabular)\w*/i, "googlesheets"],
+  [/\b(deck|slides?|presentation|pitch)\w*/i, "googleslides"],
+  [/\b(repo|pull request|\bpr\b|issue|github|merge|commit)\w*/i, "github"],
+  [/\b(notion|wiki|knowledge base)\w*/i, "notion"],
+  [/\b(slack|channel|dm)\b/i, "slack"],
+  [/\b(linear|ticket)\b/i, "linear"],
+  [/\b(todoist)\b/i, "todoist"],
+];
+const CORE_TOOLKITS = ["gmail", "googledocs", "googledrive"]; // read the world, make docs, find files — every task
+export function scopeTools(t: AgentTools, task: { title: string; why?: string; source?: string }): AgentTools {
+  if (t.tools.length <= 30) return t; // already small — nothing to win
+  const text = `${task.title} ${task.why || ""}`;
+  const keep = new Set<string>(CORE_TOOLKITS);
+  if (task.source === "calendar") keep.add("googlecalendar");
+  if (task.source && task.source !== "manual" && task.source !== "web") keep.add(task.source);
+  for (const [re, kit] of TOOLKIT_HINTS) if (re.test(text)) keep.add(kit);
+  const scoped = t.tools.filter((x) => {
+    const m = /^\[(\w+)\]/.exec(x.description || "");
+    return !m || keep.has(m[1].toLowerCase());
+  });
+  // Floor: a mis-scoped run is worse than an expensive one — if scoping stripped too much, keep everything.
+  if (scoped.length < 15) return t;
+  return { ...t, tools: scoped };
 }
 
 /** Execute ONE explicitly-named READ action directly (the deterministic discovery pipeline) — refuses
@@ -528,7 +593,7 @@ async function probeArtifact(userId: string, action: string, args: Record<string
   }
 }
 
-const DOC_LINK = /docs\.google\.com\/(document|spreadsheets|presentation)\/(?:d\/)?([-\w]{25,})/i;
+export const DOC_LINK = /docs\.google\.com\/(document|spreadsheets|presentation)\/(?:d\/)?([-\w]{25,})/i;
 
 /**
  * Verify a finished run's claimed artifacts against the LIVE account: Gmail draft ids via the drafts list,
@@ -615,7 +680,7 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
     // every slot (GitHub's CREATE_*/ADD_* sort before LIST_*/GET_* → no way to READ issues/PRs). Reserve ~60%
     // for reads (the agent must gather context first), the rest for writes, then top up from whatever's left.
     const reads = ranked.filter((x) => isRead(x.rawName));
-    const writes = ranked.filter((x) => !isRead(x.rawName));
+    const writes = dedupeFamilies(ranked.filter((x) => !isRead(x.rawName))).sort((a, b) => relevance(b.rawName) - relevance(a.rawName));
     const readQuota = Math.ceil(perToolkit * 0.6);
     const chosen = [...reads.slice(0, readQuota), ...writes.slice(0, perToolkit - Math.min(readQuota, reads.length))];
     for (const x of ranked) { if (chosen.length >= perToolkit) break; if (!chosen.includes(x)) chosen.push(x); }
@@ -633,16 +698,20 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
       added++;
     }
   }
-  const call = async (name: string, args: Record<string, unknown>): Promise<string | null> => {
+  const makeCall = (allowIds?: Set<string>) => async (name: string, args: Record<string, unknown>): Promise<string | null> => {
     const action = map.get(name);
     if (!action) return null;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete — leave it as a step for the user instead.`;
     // HARDCODED PERMISSION GATE: editing existing documents and creating/updating calendar events require
-    // the user's explicit "Approve & Run" click. Return PERMISSION_REQUIRED so the agent surfaces this as
-    // a user-approval step instead of executing it autonomously.
+    // the user's explicit "Approve & Run" click — EXCEPT artifacts OTTO ITSELF created for this task
+    // (allowIds): Otto may edit what Otto made, never the user's own documents.
     if (isWriteGatedAction(action)) {
-      return `PERMISSION_REQUIRED: "${action}" requires explicit user approval before it can run. ` +
-        `Add it as an automatable step in submit() so the user can approve it with one click.`;
+      const argStr = JSON.stringify(args || {});
+      const targetsOwnArtifact = !!allowIds && [...allowIds].some((id) => id.length >= 8 && argStr.includes(id));
+      if (!targetsOwnArtifact) {
+        return `PERMISSION_REQUIRED: "${action}" requires explicit user approval before it can run. ` +
+          `Add it as an automatable step in submit() so the user can approve it with one click.`;
+      }
     }
     // Hard guard: a calendar event with attendees/notifications EMAILS invites. Force send_updates="none" so the
     // agent can NEVER send a calendar invite — the event lands on the user's calendar silently; they invite people.
@@ -653,10 +722,11 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };
   const data: AgentTools = {
-    tools, call, connected,
+    tools, call: makeCall(), connected,
     // Only offered when Gmail is connected — that's both the send channel and the recipient source.
     selfBrief: connected.includes("gmail") ? (subject, body) => sendSelfBrief(userId, subject, body) : undefined,
   };
+  data.withAllowedArtifacts = (ids: string[]) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts });
   cache.set(userId, { at: Date.now(), data });
   return data;
 }

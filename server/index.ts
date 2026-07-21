@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts } from "../shared/types.ts";
 import { aiReady, refineManualTask } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -247,6 +247,7 @@ app.get("/api/status", async (req, res) => {
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
     paused: !!req.session.profile?.paused,
+    highPriorityPeople: req.session.profile?.highPriorityPeople,
   };
   res.json(s);
 });
@@ -517,6 +518,28 @@ app.get("/api/cron/drain", async (req, res) => {
   }
 });
 
+// Generation health for the signed-in user — makes a missing/failing daily cron DIAGNOSABLE (via API,
+// no UI). Answers "did Otto actually check my apps today, and is anything stuck?".
+app.get("/api/cron/status", requireAuth, async (req, res) => {
+  const user = req.session.user!;
+  try {
+    const [state, lastSweepJob, activeJobs] = await Promise.all([
+      loadState(user), getLatestJob(user, "sweep"), countActiveJobs(user),
+    ]);
+    const profile = state.profile || emptyProfile();
+    const tz = profile.workingHours?.timezone;
+    res.json({
+      lastSweepAt: profile.lastSweepAt || null,
+      lastSweepDay: profile.lastSweepAt ? jobs.localDay(profile.lastSweepAt, tz) : null,
+      today: jobs.localDay(new Date(), tz),
+      sweptToday: !jobs.sweepDueForDay(profile.lastSweepAt, profile),
+      lastSweepJob: lastSweepJob ? { status: lastSweepJob.status, at: lastSweepJob.finished_at || lastSweepJob.created_at, error: lastSweepJob.last_error || null } : null,
+      queued: activeJobs,
+      cronConfigured: !!process.env.CRON_SECRET,
+    });
+  } catch (e: any) { res.status(500).json({ error: e?.message || "status failed" }); }
+});
+
 // ── Chat (DeepSeek + web search, grounded in the user's profile + to-dos) ─────────
 app.post("/api/chat", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
@@ -601,6 +624,16 @@ if (PROD && !process.env.VERCEL) {
     res.sendFile(path.join(dist, "index.html"));
   });
 }
+
+// Catch-all error handler — MUST be last. Body-parser rejects (malformed JSON, payload > 1mb limit) throw
+// into Express's error channel, and without this the default handler returns an HTML page from a JSON API.
+// Give every API consumer a consistent JSON error and a right-sized status; never leak a stack in prod.
+app.use(((err, _req, res, _next) => {
+  const status = err?.status || err?.statusCode || (err?.type === "entity.too.large" ? 413 : err?.type === "entity.parse.failed" ? 400 : 500);
+  if (status >= 500) console.error("[weave-web] request error:", err?.message || err);
+  if (res.headersSent) return;
+  res.status(status).json({ error: status === 413 ? "Request body too large." : status === 400 ? "Malformed request body." : "Internal error." });
+}) as express.ErrorRequestHandler);
 
 // A single failing run must NEVER take down the server. An unhandled rejection/exception from a
 // concurrent AI run (DeepSeek, googleapis, a tool reject) would otherwise crash the whole

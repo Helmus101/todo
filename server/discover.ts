@@ -45,7 +45,7 @@ function gmailToItems(data: any, label: string): SourceItem[] {
       anchorKey: `gmail:${threadId}`,
       url: `https://mail.google.com/mail/u/0/#inbox/${threadId}`,
       title: String(m?.subject ?? m?.messageSubject ?? "(no subject)").slice(0, 140),
-      snippet: String(m?.preview?.body ?? m?.snippet ?? m?.messageText ?? m?.preview ?? "").replace(/\s+/g, " ").slice(0, 240),
+      snippet: String(m?.preview?.body ?? m?.snippet ?? m?.messageText ?? m?.preview ?? "").replace(/\s+/g, " ").slice(0, 400),
       sender: String(m?.sender ?? m?.from ?? m?.fromAddress ?? "").slice(0, 120),
       timestamp: String(m?.messageTimestamp ?? m?.internalDate ?? m?.date ?? ""),
       labels: [label],
@@ -53,12 +53,15 @@ function gmailToItems(data: any, label: string): SourceItem[] {
   }).filter((x): x is SourceItem => !!x);
 }
 
-function calendarToItems(data: any): SourceItem[] {
+export function calendarToItems(data: any, now: number = Date.now()): SourceItem[] {
   const evs: any[] = data?.items || data?.events || data?.data?.items || (Array.isArray(data) ? data : []);
   return (evs || []).slice(0, 25).map((e: any): SourceItem | null => {
     const id = String(e?.id ?? e?.eventId ?? "").trim();
     if (!id) return null;
     const start = e?.start?.dateTime || e?.start?.date || e?.start || "";
+    // An event that already started can't be prepped for — it must never become a "prep" task.
+    const startMs = Date.parse(String(start)) || 0;
+    if (startMs && startMs < now - 60 * 60_000) return null;
     return {
       sourceApp: "calendar",
       externalId: id,
@@ -160,10 +163,27 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
       q: "is:open is:pr review-requested:@me", per_page: 10,
     }), "review-requested")),
   ]);
-  // Dedupe by anchor (a sent reply and an inbox thread can share a threadId — keep the inbox copy first).
-  const seen = new Set<string>();
-  const unique = items.filter((it) => { const k = normKey(it.anchorKey); if (seen.has(k)) return false; seen.add(k); return true; });
-  return { items: unique, attempted };
+  return { items: dedupeByThread(items), attempted };
+}
+
+/** Collapse items sharing one anchor (a sent reply + its inbox thread share a threadId). When both an
+ *  inbox and a sent copy exist, the TIMESTAMPS decide: the user's reply being NEWER means they already
+ *  answered — keep the sent copy (commitment detection) and drop the inbox one, so "reply to X" tasks
+ *  never surface for threads the user has handled. An inbox message newer than the sent copy means the
+ *  other person wrote back — that's live again, keep the inbox copy. */
+export function dedupeByThread(items: SourceItem[]): SourceItem[] {
+  const byAnchor = new Map<string, SourceItem>();
+  const ts = (it: SourceItem) => Date.parse(it.timestamp || "") || Number(it.timestamp) || 0;
+  for (const it of items) {
+    const k = normKey(it.anchorKey);
+    const cur = byAnchor.get(k);
+    if (!cur) { byAnchor.set(k, it); continue; }
+    const inbox = cur.labels.includes("inbox") ? cur : it.labels.includes("inbox") ? it : null;
+    const sent = cur.labels.includes("sent") ? cur : it.labels.includes("sent") ? it : null;
+    if (inbox && sent) byAnchor.set(k, ts(sent) >= ts(inbox) ? sent : inbox);
+    // otherwise: same-source duplicate — first wins
+  }
+  return [...byAnchor.values()];
 }
 
 /** Deterministic pre-model filter: drop noise and anything whose anchor is already known (active OR handled —

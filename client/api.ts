@@ -86,6 +86,7 @@ export const api = {
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout"),
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
+  cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
   refine: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/refine`),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
   // Drain one queued job server-side and return the fresh task list + how many jobs remain active.

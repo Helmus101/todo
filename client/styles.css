@@ -595,3 +595,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .smoke-row > span:first-child { width: 14px; }
 .smoke-app { font-weight: 600; min-width: 64px; }
 .warn-text { color: #b45309; }
+
+/* Minimalist completed list — checked to-do rows, not cards */
+.done-list { display: flex; flex-direction: column; }
+.done-row { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; cursor: pointer; border-bottom: 1px solid rgba(127,127,127,.12); }
+.done-row:hover { background: rgba(127,127,127,.06); border-radius: 6px; }
+.done-check { color: #16a34a; font-weight: 700; }
+.done-title { flex: 1; text-decoration: line-through; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.done-when { font-size: 12px; opacity: .5; flex-shrink: 0; }

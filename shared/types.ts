@@ -37,6 +37,8 @@ export interface Profile {
   projects: string[];     // ongoing projects / goals
   paused?: boolean;       // "pause all AI usage" — blocks generation, task runs, and chat server-side
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
+  lastSweepAt?: string;   // ISO stamp of the last SUCCESSFUL generation sweep — durable "did we check today"
+                          // marker (survives restarts; source of truth for the once-per-local-day guarantee)
   // Structured preferences for autonomous behavior
   workingHours?: { start: string; end: string; timezone: string }; // e.g. { start: "09:00", end: "18:00", timezone: "America/New_York" }
   responseStyle?: "concise" | "detailed" | "casual" | "formal"; // how AI should draft responses
@@ -59,6 +61,7 @@ export function normalizeProfile(p: any): Profile {
     projects: dedupeFacts(arr(p?.projects)),
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
+    lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
     // Structured preferences
     workingHours: p?.workingHours && typeof p.workingHours === "object" ? {
       start: String(p.workingHours.start || "09:00"),
@@ -110,6 +113,56 @@ export function dedupeFacts(list: string[]): string[] {
   return out.slice(0, 40);
 }
 
+// Parse a task's free-text `when` ("today", "by Fri", "June 30", "2026-07-24") into a sortable epoch —
+// soonest first. Unparseable / empty → +Infinity (sorts last). Deliberately simple: only needs relative
+// ORDER, and the model already emits real dates from the source item (never invented). Shared so the
+// server ordering and the client list sort identically.
+const RANK_MONTHS: Record<string, number> = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+export function deadlineEpoch(when: string | undefined, now: Date = new Date()): number {
+  const s = String(when || "").trim().toLowerCase();
+  if (!s) return Infinity;
+  if (/\btoday\b|\btonight\b|\bnow\b/.test(s)) return now.getTime();
+  if (/\btomorrow\b/.test(s)) return now.getTime() + 864e5;
+  // A string with an explicit 4-digit year is unambiguous → trust Date.parse ("2026-07-24", "June 30 2026").
+  if (/\b20\d{2}\b/.test(s)) { const iso = Date.parse(s); if (!isNaN(iso)) return iso; }
+  // Month + day WITHOUT a year → current year (or next if already well past). Must run BEFORE a bare
+  // Date.parse — Node parses "july 30" to year 2001, which would sort a summer deadline into the past.
+  const md = s.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})/);
+  if (md && RANK_MONTHS[md[1]] !== undefined) {
+    const d = new Date(now.getFullYear(), RANK_MONTHS[md[1]], Number(md[2]));
+    if (d.getTime() < now.getTime() - 180 * 864e5) d.setFullYear(now.getFullYear() + 1); // next occurrence
+    return d.getTime();
+  }
+  return Infinity;
+}
+
+/**
+ * Rank a task list by the Eisenhower matrix with meaningful tie-breaks, so order within a priority level
+ * isn't arbitrary. Precedence: (1) Eisenhower `score` (do > schedule > delegate > later — the dominant
+ * term), (2) soonest real deadline, (3) a high-priority person is involved, (4) freshest. Pure and
+ * deterministic — used by BOTH the server ordering and the client list, so the sort is identical
+ * everywhere. It reorders; it changes NO layout.
+ */
+export function sortWithinQuadrant<T extends { score: number; when?: string; source?: string; why?: string; title?: string; updatedAt?: string; createdAt?: string }>(
+  list: T[], highPriorityPeople: string[] = [], now: Date = new Date(),
+): T[] {
+  const vipTokens = highPriorityPeople.flatMap((v) => {
+    const email = v.toLowerCase().match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
+    const name = v.split(/[—\-(,]/)[0].trim().toLowerCase();
+    return [email, name.length >= 3 ? name : undefined].filter((x): x is string => !!x);
+  });
+  const isVip = (t: T) => { const hay = `${t.why || ""} ${t.title || ""} ${t.source || ""}`.toLowerCase(); return vipTokens.some((tok) => hay.includes(tok)); };
+  const fresh = (t: T) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
+  return [...list].sort((a, b) => {
+    if (Math.abs(b.score - a.score) > 1e-6) return b.score - a.score;          // Eisenhower quadrant + weight
+    const da = deadlineEpoch(a.when, now), db = deadlineEpoch(b.when, now);
+    if (da !== db) return da - db;                                             // soonest deadline first
+    const va = isVip(a) ? 1 : 0, vb = isVip(b) ? 1 : 0;
+    if (va !== vb) return vb - va;                                             // high-priority person first
+    return fresh(b) - fresh(a);                                                // freshest first
+  });
+}
+
 /**
  * One step in "what's left" for a task. The agent classifies each: `automatable` means Weave can do it
  * itself (draft/doc/research/open a page); otherwise it's an act only you can take. `dependsOn` is the
@@ -127,6 +180,10 @@ export interface TaskStep {
   /** Set by the server when the action was blocked by the permission gate (doc edit / calendar create).
    *  The client shows an "Approve & Run" prompt; the user's click routes through runStep which bypasses the gate. */
   needsPermission?: boolean;
+  /** Set ONLY by the server's checklist backstop (a deterministic "go look at what was made" nudge, not
+   *  something the model asked for) — excluded from the "does this run still need the user" check in
+   *  runStep, so a focused step-run that merely produced an artifact isn't kept perpetually unfinished. */
+  synthetic?: boolean;
   /** The ONE piece of info the agent needs from the user to automate this step (a choice, a date, a name).
    *  The client shows it inline with `options` as tappable answers + a free-text input; answering runs the step. */
   question?: string;
@@ -168,7 +225,8 @@ export interface WebTask {
 
   // Filled once it runs:
   context?: string;        // one-paragraph grounded background
-  synthesis?: string;      // what the agent actually did
+  synthesis?: string;      // what the agent actually did (one-line summary)
+  did?: string[];          // concrete past-tense bullets of the actions performed this run
   links?: TaskLink[];      // docs/drafts it produced
   steps?: TaskStep[];      // what's left, as classified bullets (automatable / needs-you / dependent)
   sendables?: Sendable[];  // drafted email / composed Slack message the user can send in one click
@@ -187,6 +245,11 @@ export interface WebTask {
   /** A manual task added while AI was paused/unavailable — raw text, not yet refined. The card offers a
    *  "Refine" action to clean it up once AI is back. */
   unrefined?: boolean;
+  /** Artifacts Otto created for THIS task across runs (doc/draft/event ids). A rerun/revision may UPDATE
+   *  these (permission carve-out: Otto edits what Otto made) instead of creating duplicates. */
+  artifacts?: { kind: "doc" | "sheet" | "slides" | "draft" | "event"; id: string; url?: string; label?: string }[];
+  /** Cost of the most recent run (input/output tokens) — shown in the timeline for cost visibility. */
+  lastRunTokens?: { in: number; out: number };
 }
 
 export interface ConnectionStatus {
@@ -198,6 +261,7 @@ export interface ConnectionStatus {
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist
   paused: boolean;            // "pause all AI usage" toggle — client skips auto-run/generate/chat while true
+  highPriorityPeople?: string[]; // used ONLY to break ranking ties (VIP's task sorts first) — no UI of its own
 }
 
 export interface RunResult {

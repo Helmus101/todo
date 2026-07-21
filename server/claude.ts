@@ -454,8 +454,13 @@ export async function classifyCandidates(
     `quantity — the handful that matter. ALWAYS include: a direct question or request from a real person awaiting ` +
     `their reply; a SENT-BY-USER commitment ("I'll send/do/call…") with no later fulfilment visible; an event in ` +
     `the next 48h that plainly needs prep. When such an item exists, an empty tasks list is WRONG.\n` +
+    `CONSOLIDATE — one real-world obligation = ONE task. If several candidates concern the SAME thing (a ` +
+    `calendar event AND the email thread that set it up; several copies of one outreach the user sent), emit a ` +
+    `SINGLE task and pick the candidate the user must ACT on to anchor it (prefer the email/thread they need to ` +
+    `handle; else the event). NEVER emit two tasks for one meeting, thread, or commitment. Each task's title must ` +
+    `name a DISTINCT obligation — if two of your tasks would start with the same verb+object, merge them.\n` +
     `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative ≤9 words",` +
-    `"why":"one clause naming the concrete trigger","when":"deadline or ''","urgency":0..1,"importance":0..1,` +
+    `"why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item — NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,` +
     `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about",` +
     `"fact":"one short sentence"}]} — profileUpdates: 0-3 DURABLE facts about who this person is that these ` +
     `items reveal (a key relationship, an ongoing project) — only lasting identity facts, not task content. ` +
@@ -504,15 +509,31 @@ export async function classifyCandidates(
   try {
     let out = await ask();
     let tasks = parse(out);
-    // Empty-result guard: zero tasks from a healthy candidate pool is usually the model giving up, not an
-    // empty world. ONE retry with a pointed nudge; a second empty is accepted as honest.
-    if (!tasks.length && items.length >= 6) {
-      const retry = await ask(
-        `You returned no tasks from ${items.length} candidates. Re-examine them: direct questions from real ` +
-        `people and the user's own SENT commitments are almost always actionable. Return an empty tasks list ` +
-        `ONLY if truly nothing needs them.`);
+    // Empty-result guard: this call is measurably non-deterministic even at low temperature — replaying
+    // the IDENTICAL prompt against the SAME candidates returned empty in 2 of 3 tries in live testing. A
+    // single retry with a generic "reconsider everything" nudge inherits the same failure mode (it did,
+    // live). So: compute a DETERMINISTIC shortlist of "strong" candidates (the user's own unfulfilled
+    // commitments, GitHub items explicitly assigned/requested of them) — items that are near-certainly
+    // actionable — and if the model still comes back empty, retry TWICE, each time pointing directly at
+    // those specific indices. A small, concrete judgment ("does #14 still need action?") is far more
+    // reliable than a global "did I miss anything in 30 items?" — and costs nothing extra when the first
+    // call already succeeded.
+    const strongIdx = items
+      .map((it, i) => ({ it, i }))
+      .filter(({ it }) => it.labels.includes("sent") || it.labels.includes("assigned") || it.labels.includes("review-requested"))
+      .map(({ i }) => i);
+    for (let attempt = 0; !tasks.length && items.length >= 6 && attempt < 2; attempt++) {
+      const nudge = strongIdx.length
+        ? `You returned no tasks. Look SPECIFICALLY at candidates #${strongIdx.join(", #")} — each is either a ` +
+          `commitment YOU (the user) made that has no later fulfilment visible, or a GitHub item explicitly ` +
+          `assigned to/requesting review from them. For EACH one individually, decide: does it still need ` +
+          `action? Return a task for every one that does. Only return an empty list if NONE of them do.`
+        : `You returned no tasks from ${items.length} candidates. Re-examine them: direct questions from real ` +
+          `people and the user's own SENT commitments are almost always actionable. Return an empty tasks list ` +
+          `ONLY if truly nothing needs them.`;
+      const retry = await ask(nudge);
       const retried = parse(retry);
-      if (retried.length) { out = retry; tasks = retried; }
+      if (retried.length) { out = retry; tasks = retried; break; }
     }
     return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates) };
   } finally {
@@ -535,10 +556,18 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
     const res = await retryRequest(() => client.chat.completions.create({
       model,
       max_tokens: 500,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You turn a person's rough to-do note into one crisp, actionable task. Preserve their intent and any specifics they gave; do NOT invent names, dates, or facts they didn't state. Output STRICT JSON only." },
+        { role: "system", content:
+          "You turn a person's rough to-do note into ONE crisp, actionable task title. Make it a specific " +
+          "imperative that names the concrete object/person from THEIR note — 'email sarah' → 'Reply to Sarah " +
+          "about the proposal', 'trip' → 'Prepare Boston trip itinerary', 'call dentist' → 'Call the dentist " +
+          "to book a cleaning'. NEVER invent names, dates, companies, or facts they didn't state — only sharpen " +
+          "what's there (if the note is just 'trip' with no destination, use 'Plan the trip', not a made-up city). " +
+          "Infer priority from the wording (urgent words, deadlines) and the person's profile only. Output STRICT JSON only." },
         { role: "user", content: profileBlock(profile) +
-          `\nRough note: "${raw.slice(0, 300)}"\n\nReturn JSON: {"title": short imperative <= 9 words, ` +
+          `\nRough note: "${raw.slice(0, 300)}"\n\nReturn JSON: {"title": short imperative <= 9 words that names the specific object/person, ` +
           `"why": one concise clause capturing the intent, ` +
           `"when": a deadline for COMPLETING THIS TASK (e.g. "today", "by Fri") — ONLY if the note explicitly says when the TASK itself must be done (e.g. "by tomorrow", "before June 30"). If the note only mentions dates as background context (e.g. a trip date, event date, year mentioned in passing) leave this "", ` +
           `"urgency": 0..1 time pressure, "importance": 0..1 stakes}. JSON only.` }
@@ -561,10 +590,12 @@ export interface ProfileUpdate { category: "name" | "about" | "preference" | "pe
 export interface RunOutput {
   context: string;
   synthesis: string;
+  did: string[];              // concrete past-tense bullets — one per action actually performed
   steps: TaskStep[];
   links: TaskLink[];          // the artifacts it made this run (draft / doc / sheet / event / issue), so the user can open them
   sendables: Sendable[];      // drafted email / composed Slack message the user can fire with one click
   profileUpdates: ProfileUpdate[];
+  tokens?: { in: number; out: number }; // cost telemetry — recorded on the task's timeline per run
 }
 
 const RUN_SYSTEM =
@@ -576,12 +607,16 @@ const RUN_SYSTEM =
   `NOT ask the user for anything you could find or do yourself. Be rigorously honest and grounded; never invent specifics.\n` +
   `WORK IN THREE PHASES: (1) PLAN silently — from the task and the context you gather, decide which tools ` +
   `you'll use and what artifacts (draft/doc/event/cells) you'll produce; never show this plan to the user. ` +
-  `(2) DO — execute the reversible work through the tools. (3) REPORT via submit — "synthesis" = what you ` +
-  `actually DID (past tense), "links" = EVERY artifact you produced, "steps" = EVERYTHING that still needs ` +
+  `(2) DO — execute the reversible work through the tools. (3) REPORT via submit — "synthesis" = one-line ` +
+  `summary of what you DID (past tense), "did" = one bullet per concrete action you performed (with names), ` +
+  `"links" = EVERY artifact you produced, "steps" = EVERYTHING that still needs ` +
   `the user, as a complete checklist. Leave steps empty ONLY when a sendable covers the remaining action or ` +
   `truly nothing is left.\n` +
   `You can also use web_search for any external fact or context you need (a person, company, deadline, how-to, ` +
   `or a reference link) — look it up rather than guess.\n` +
+  `PICK THE RIGHT ARTIFACT TYPE: a task that says "spreadsheet", "sheet", "tracker", or asks for rows/columns ` +
+  `of structured data belongs in GOOGLE SHEETS, not a Doc — even though a Doc can hold a table, a sheet is ` +
+  `what the user asked for and is what they can filter/sort/total. Only use a Doc for prose/lists/plans.\n` +
   `GOOGLE SHEETS — YOU MUST ACTUALLY WRITE: if the task involves updating a spreadsheet (e.g. filling in ` +
   `restaurant names, meal ideas, trip data, any cells), you MUST call the Sheets write tools ` +
   `(GOOGLESHEETS_BATCH_UPDATE_VALUES, GOOGLESHEETS_UPDATE_VALUES, GOOGLESHEETS_APPEND_VALUES, etc.) to ACTUALLY ` +
@@ -730,6 +765,7 @@ const RUN_TOOLS = [
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
     context: { type: "string", description: "what this is about — 1-2 SHORT bullets, each a line beginning with '- '. Brief; the user only sees this if they expand it." },
     synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' NO caveats, NO explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
+    did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run, past tense with the specific names/artifacts, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
     steps: {
       type: "array",
       description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). Often empty.",
@@ -777,7 +813,7 @@ const RUN_TOOLS = [
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
-export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
+export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
   const profileUpdates: ProfileUpdate[] = [];
   const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(extras?.selfBrief ? [SELF_BRIEF_TOOL] : []), ...(extras?.tools?.length ? extras.tools : [])];
   const connectedLine = extras?.connected?.length
@@ -788,9 +824,18 @@ export async function runTask(task: { title: string; why: string; source?: strin
     : "";
   // Artifacts this task already produced on a previous run — the agent MUST reuse + UPDATE these, never make
   // a fresh copy (this is what stops "5 road-trip packing lists"). A deterministic anti-duplication signal.
-  const priorArtifacts = (task.links || []).filter((l) => l?.url);
+  const hasArtifactIds = !!task.artifacts?.length; // real ids to check writes against (vs. legacy links-only)
+  const priorArtifactIds = new Set((task.artifacts || []).map((a) => a.id));
+  const priorArtifacts: { label?: string; url?: string; extra?: string }[] = hasArtifactIds
+    ? task.artifacts!.map((a) => ({ label: a.label || a.kind, url: a.url, extra: `${a.kind} id ${a.id}` }))
+    : (task.links || []).filter((l) => l?.url);
   const artifactsBlock = priorArtifacts.length
-    ? `\nALREADY CREATED FOR THIS TASK (you made these on a prior run — OPEN and UPDATE the existing one, do NOT create a new copy):\n${priorArtifacts.map((l) => `- ${l.label}: ${l.url}`).join("\n")}\n`
+    ? `\nALREADY CREATED FOR THIS TASK (you made these on a prior run — OPEN and UPDATE the existing one; ` +
+      `updates to THESE ids are permitted without approval. Do NOT create a new copy). For a Google Doc, ` +
+      `prefer the MARKDOWN update tool (whole-document markdown text) over the raw index-based batch-update ` +
+      `API — it needs no structural inspection, so update it directly instead of reading the doc's internal ` +
+      `structure first:\n` +
+      `${priorArtifacts.map((l) => `- ${l.label}${l.extra ? ` (${l.extra})` : ""}${l.url ? `: ${l.url}` : ""}`).join("\n")}\n`
     : "";
   const head = nowBlock() + `TASK: ${task.title}\nWHY: ${task.why}\n` + profileBlock(profile) + artifactsBlock + connectedLine;
   const deadlineHint = deadlineBlock(`${task.title}\n${task.why}`);
@@ -805,15 +850,47 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   const MAX = 8; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
   let tokIn = 0, tokOut = 0, rounds = 0;
+  // Has the agent performed ANY write/create yet? Drives the deterministic act-now enforcement below.
+  const WRITE_NAME = /(CREATE|UPDATE|APPEND|PATCH|MODIFY|BATCH|DRAFT|INSERT|WRITE|REPLACE|QUICK_ADD|MOVE|COPY|ADD_)/i;
+  let wroteAny = false;
+  let finishBacks = 0; // times we've bounced a submit for leaving work undone / claiming a phantom artifact
+  // Backstop for a drafted-but-unreported reply: the model sometimes drafts a real Gmail reply, says so in
+  // synthesis, but forgets to populate the structured "sendables" entry — leaving no Send button for
+  // something that genuinely exists. Track the last successful draft call so withTokens can patch it in.
+  let lastGmailDraft: { to?: string; subject?: string; body?: string; draftId?: string } | undefined;
+  const withTokens = (o: RunOutput): RunOutput => {
+    let sendables = o.sendables;
+    if (lastGmailDraft?.draftId && lastGmailDraft.to && !sendables.some((s) => s.app === "gmail")) {
+      sendables = [...sendables, {
+        app: "gmail" as const, label: "Send reply", to: lastGmailDraft.to,
+        subject: lastGmailDraft.subject, body: lastGmailDraft.body, draftId: lastGmailDraft.draftId,
+      }].slice(0, 6);
+    }
+    // "did" backstop: the model sometimes omits the structured did[] field even after genuinely writing
+    // something (submit still requires synthesis, which then carries the same information) — fall back to
+    // the one-line synthesis rather than showing an empty "What Otto did" section for real work.
+    const did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
+    return { ...o, did, sendables, tokens: { in: tokIn, out: tokOut } };
+  };
   try {
   for (let i = 0; i < MAX; i++) {
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
-    if (i === 2 && !focus) {
-      messages.push({ role: "user", content: "CHECKPOINT: if this task produces an artifact (doc/sheet/deck/draft/event) and you haven't CREATED it yet, create it with your NEXT tool call and fill it from what you already know. Stop reading — reading is not the work." });
-    }
-    if (i === 4 && !focus) {
-      messages.push({ role: "user", content: "REMINDER: You have now gathered significant context. WRITE NOW — create/update the actual artifact (doc, sheet cells, draft, event) with the real data. Do not make another read call. Complete the work and call submit." });
+    // Write-aware enforcement: prompts alone don't stop read-forever drift (observed live: 8 rounds of
+    // reads, zero artifacts, "create the doc" left as a step). Track whether ANY write/create tool has
+    // actually run and escalate EVERY round from round 3 until one does.
+    // Revisions start closer to done (the artifact + its id are already known) — enforce a round earlier.
+    if (i >= (priorArtifacts.length ? 1 : 2) && !wroteAny && !focus) {
+      // Artifact-aware: when this is a rerun/revision, the enforcement must point at UPDATING the existing
+      // artifact, never suggest CREATE — naming a create tool here was observed live steering revisions
+      // into making a SECOND copy instead of editing the one listed in "ALREADY CREATED FOR THIS TASK".
+      const nudge = priorArtifacts.length
+        ? `ENFORCEMENT (round ${i + 1}/${MAX}): you have written NOTHING yet. Your NEXT tool call MUST update ` +
+          `the EXISTING artifact listed above under "ALREADY CREATED FOR THIS TASK" (its id is listed — use ` +
+          `an UPDATE/PATCH/APPEND tool with that id) with the requested change. Do NOT create a new one. Do ` +
+          `NOT make another read call.`
+        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. Your NEXT tool call MUST be a create/write tool (GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. If the task truly requires no artifact, call submit now.`;
+      messages.push({ role: "user", content: nudge });
     }
     const client = deepseekClient();
     const lastRoundHint = i === MAX - 1 ? "You must call submit now with the final result. Do not answer with prose." : "";
@@ -833,13 +910,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
     if (!toolUses.length) {
       const textContent = res.choices[0]?.message?.content || "";
       const out = firstJson<RunOutput>(textContent);
-      if (out) return finalize(out, textContent, profileUpdates);
+      if (out) return withTokens(finalize(out, textContent, profileUpdates));
       if (i < MAX - 1) {
         if (textContent) messages.push({ role: "assistant", content: textContent });
         messages.push({ role: "user", content: "You still have not used any tools. Read the connected apps and do the work now. Do not answer with prose until you have actually acted." });
         continue;
       }
-      return finalize(out, textContent, profileUpdates);
+      return withTokens(finalize(out, textContent, profileUpdates));
     }
     messages.push({ role: "assistant", content: res.choices[0]?.message?.content || "", tool_calls: toolUses });
     let submitted: RunOutput | null = null;
@@ -854,22 +931,71 @@ export async function runTask(task: { title: string; why: string; source?: strin
           if (fact) profileUpdates.push({ category: cat, fact });
           content = "saved";
         }
-        else if (toolName === "submit") { submitted = finalize(input as RunOutput, "", profileUpdates); content = "submitted"; }
+        else if (toolName === "submit") {
+          const draft = finalize(input as RunOutput, "", profileUpdates);
+          // (a) A revision that never actually wrote anything is a FABRICATED success (observed live: agent
+          //     spent its whole budget reading the doc, never called update, then claimed "Updated the doc").
+          const fabricatedRevision = hasArtifactIds && !wroteAny;
+          // (b) FINISH, DON'T HAND BACK: an unblocked automatable step Otto could do itself must not survive
+          //     into steps[] — Otto acts. (synthetic backstop / permission-gated / dependent / question steps
+          //     are legitimately left for the user.)
+          const leftUndone = draft.steps.find((s) => s.automatable && !s.synthetic && s.dependsOn === undefined && !s.question && !s.needsPermission);
+          // (c) PREPARED WITHOUT AN ARTIFACT: claims to have drafted/created/updated something but produced
+          //     no link/sendable AND no write ever succeeded this run — the "it just prepares stuff" failure.
+          const claimsArtifact = /\b(drafted|created|updated|filled|composed|wrote|added a|built)\b/i.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
+          const hasArtifact = draft.links.length > 0 || draft.sendables.length > 0 || wroteAny;
+          if (fabricatedRevision) {
+            content = "REJECTED: you're revising an artifact that already exists, but you have not made any " +
+              "update/write tool call this run. Call the update tool on the id listed under 'ALREADY CREATED " +
+              "FOR THIS TASK' now — THEN submit. Do not resubmit the same claim without writing first.";
+          } else if (leftUndone && finishBacks < 2) {
+            finishBacks++;
+            content = `REJECTED: "${leftUndone.text}" is something YOU can do with your tools — do it NOW, don't ` +
+              `leave it for the user. steps[] must contain ONLY what genuinely needs the user (an approval, a ` +
+              `decision, an answer only they have, or a login/payment/physical action). Act, then submit.`;
+          } else if (claimsArtifact && !hasArtifact && finishBacks < 2) {
+            finishBacks++;
+            content = "REJECTED: your report claims you drafted/created/updated something, but no artifact " +
+              "(draft, doc, sheet, event) was actually produced and no write succeeded this run. Either DO it " +
+              "now with the real tool, or report honestly what you found without claiming work you didn't do.";
+          } else {
+            // did[] must be backed by a real write: if nothing was written, drop bullets that claim creation.
+            if (!wroteAny) draft.did = draft.did.filter((d) => !/\b(drafted|created|updated|filled|composed|wrote|added a|built)\b/i.test(d));
+            submitted = draft; content = "submitted";
+          }
+        }
         else if (toolName === "web_search") { content = await runWebSearch(input); }
         else if (toolName === "send_self_brief") {
           content = extras?.selfBrief ? await extras.selfBrief(String(input?.subject || ""), String(input?.body || "")) : "ERROR: not available";
+        }
+        // A revision with existing artifacts blocks CREATE_* calls entirely — not just "discourages" them.
+        // Observed live: after only counting ANY write as satisfying the "you must write" enforcement, the
+        // agent found the update path hard and called CREATE again instead — same duplicate, different
+        // gate. Block it before the tool runs, so a duplicate can't be created even by mistake.
+        else if (hasArtifactIds && /CREATE/i.test(toolName) && !/CREATE.*(SUB.?ISSUE|COMMENT|LABEL|BRANCH)/i.test(toolName)) {
+          content = "BLOCKED: this task already has an artifact (see 'ALREADY CREATED FOR THIS TASK') — creating a new one would duplicate it. Use the UPDATE tool on the EXISTING id instead.";
         }
         else {
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.
           const r = extras ? await extras.call(toolName, input || {}) : null;
           content = r ?? `Unknown tool: ${toolName}`;
+          // Count as satisfying "you must write" ONLY when it's a genuine update (references an existing
+          // artifact id) OR there are no prior artifacts to conflict with (a create is legitimately new work).
+          const isRealWrite = r !== null && WRITE_NAME.test(String(toolName)) && !/^ERROR|PERMISSION_REQUIRED/i.test(String(r));
+          const argStr = JSON.stringify(input || {});
+          const targetsExisting = [...priorArtifactIds].some((id) => id.length >= 8 && argStr.includes(id));
+          if (isRealWrite && (!hasArtifactIds || targetsExisting)) wroteAny = true;
+          if (isRealWrite && /GMAIL_(CREATE|UPDATE)_EMAIL_DRAFT/i.test(toolName)) {
+            const idMatch = /"(?:draft_?id|id)"\s*:\s*"([\w-]{6,})"/i.exec(String(r));
+            if (idMatch) lastGmailDraft = { to: String(input?.recipient_email || input?.to || "").trim() || undefined, subject: input?.subject ? String(input.subject) : undefined, body: input?.body ? String(input.body) : undefined, draftId: idMatch[1] };
+          }
         }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
       // Capped well below the old 4000 — a fresh result only needs enough to extract the fact/id you asked
       // for; anything you need beyond that, search again. This cap applies to every tool call, every round.
       messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
     }
-    if (submitted) return submitted;
+    if (submitted) return withTokens(submitted);
   }
   // Rescue path: if the model never called submit, ask it once (without tools) to produce a final JSON result.
   try {
@@ -886,7 +1012,8 @@ export async function runTask(task: { title: string; why: string; source?: strin
         {
           role: "system",
           content:
-            "You must output STRICT JSON only: {context:string,synthesis:string,steps:array,links:array,sendables:array}. " +
+            "You must output STRICT JSON only: {context:string,synthesis:string,did:array,steps:array,links:array,sendables:array}. " +
+            "did = one short past-tense bullet per action ACTUALLY performed with tools (empty if none). " +
             "Report ONLY what the transcript shows was ACTUALLY DONE with tools. synthesis = one short past-tense " +
             "sentence of performed actions ('Created X', 'Drafted Y'); if nothing was created or written, say " +
             "plainly what was found and put ALL remaining work in steps (each {text, automatable}) — do NOT " +
@@ -899,7 +1026,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     });
     const text = rescue.choices[0]?.message?.content || "";
     const out = firstJson<RunOutput>(text);
-    if (out) return finalize(out, text, profileUpdates);
+    if (out) return withTokens(finalize(out, text, profileUpdates));
   } catch {
     // fall through to the throw below
   }
@@ -978,22 +1105,47 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // Now I'll create…") on the card instead of a result. And planning-tense text is not a result even when
   // it arrives in the right field — a run that only says what it WOULD do gets the honest-failure retry.
   let synthesis = brief(String(out?.synthesis || ""), 3, 550);
-  if (/\b(let me|i'?ll (?:first|now|then|use|create|draft|check)|i will (?:first|now|then)|now i(?:'?ll)? |first,? i(?:'?ll)? |seems like|my plan is|i need to|i should)\b/i.test(synthesis)) synthesis = "";
+  const PLANNING = /\b(let me|i'?ll (?:first|now|then|use|create|draft|check)|i will (?:first|now|then)|now i(?:'?ll)? |first,? i(?:'?ll)? |seems like|my plan is|i need to|i should)\b/i;
+  if (PLANNING.test(synthesis)) synthesis = "";
+  // "What Otto did" bullets: same hygiene as synthesis — past-tense actions only, planning prose dropped.
+  const did: string[] = (Array.isArray(out?.did) ? out.did : [])
+    .map((d: any) => String(d || "").trim().replace(/^\s*[-•*]\s*/, ""))
+    .filter((d: string) => d.length >= 6 && !PLANNING.test(d))
+    .map((d: string) => d.slice(0, 160))
+    .slice(0, 6);
   void fallbackText; // kept in the signature for call-site compatibility; intentionally unused as content
   // A completely empty result (no report, no steps, no artifacts) is a FAILED run, not a quiet success —
   // throwing routes it to the honest-failure path (task returns to ready + client auto-retries).
   if (!synthesis && !steps.length && !links.length && !sendables.length) {
     throw new Error("The run produced no output — it will retry.");
   }
+  // Otto-work leak check (observed live: "Create a new Google Doc…" listed as a USER step): a step that
+  // starts with a doable verb and carries no judgment for the user gets flipped to automatable — Auto-do
+  // then executes it instead of dumping Otto's own work on the user.
+  const DOABLE = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make)\b/i;
+  const JUDGMENT = /\b(choose|decide|pick|confirm|approve|review|prefer|want|which|verify|check with|sign|pay)\b/i;
+  for (const s of steps) {
+    if (!s.automatable && DOABLE.test(s.text) && !JUDGMENT.test(s.text) && !s.question) s.automatable = true;
+  }
+  // Never list DONE work as remaining: a step that near-duplicates a did-bullet is stale planning residue.
+  const stale = (txt: string) => did.some((d) => {
+    const a = new Set(txt.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+    const b = new Set(d.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+    const inter = [...a].filter((w) => b.has(w)).length;
+    return a.size > 2 && inter / a.size >= 0.7;
+  });
+  const cleanedSteps = steps.filter((s) => !stale(s.text));
+  steps.length = 0; steps.push(...cleanedSteps);
   // Checklist backstop: artifacts with NO steps and NO sendable leave the user without a "what's left"
   // list — the report the card promises. Deterministically add "Review <artifact>" so the checklist can
   // never be absent when something was produced. (Sendables don't need it: the send button IS the next action.)
   if (!steps.length && !sendables.length && links.length) {
-    for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url });
+    for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
   }
   return {
     context: brief(String(out?.context || ""), 3, 600),
     synthesis: synthesis || "Done.",
+    did,
     steps,
     links,
     sendables,
