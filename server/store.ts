@@ -95,27 +95,52 @@ export async function createUser(email: string, passHash: string): Promise<boole
 
 export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; }
 
-/** Load an account's saved profile + tasks + Google connection. Empty if cloud off or row missing. */
-export async function loadState(email?: string): Promise<AccountState> {
-  if (!client || !email) return { profile: emptyProfile(), tasks: [] };
-  try {
-    const { data, error } = await client.from(TABLE).select("profile,tasks,google").eq("email", email).maybeSingle();
-    if (error) { console.warn("[store] load failed:", error.message); return { profile: emptyProfile(), tasks: [] }; }
-    const google = data?.google && (data.google as any).tokens ? (data.google as StoredGoogle) : undefined;
-    return { profile: normalizeProfile(data?.profile), tasks: Array.isArray(data?.tasks) ? data!.tasks : [], google };
-  } catch (e) { console.warn("[store] load threw:", (e as any)?.message || e); return { profile: emptyProfile(), tasks: [] }; }
+// A transient network drop (undici "terminated"/"fetch failed", a reset socket) is NOT the same as "no
+// data" — but Supabase surfaces it both as a thrown error AND, sometimes, as a returned {error}. Treating
+// it as empty state is data-lossy: an account's tasks briefly vanish, and a merge-on-save (commitUser)
+// can drop cloud-only tasks. So we detect transience and RETRY with backoff before ever giving up.
+const isTransient = (msg: string): boolean =>
+  /terminated|fetch failed|socket hang up|network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR|timeout|503|502|429/i.test(msg);
+async function withRetry<T>(label: string, op: () => Promise<{ data: T; error: { message?: string } | null }>, tries = 3): Promise<{ data: T | null; error: { message?: string } | null }> {
+  let lastErr: { message?: string } | null = null;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const { data, error } = await op();
+      if (!error) return { data, error: null };
+      lastErr = error;
+      if (!isTransient(error.message || "")) return { data: null, error }; // real error (RLS, constraint) → don't retry
+    } catch (e: any) {
+      lastErr = { message: e?.message || String(e) };
+      if (!isTransient(lastErr.message || "")) throw e; // programmer/unknown error → surface it
+    }
+    if (attempt < tries - 1) await new Promise((r) => setTimeout(r, 250 * (attempt + 1))); // 250ms, 500ms
+  }
+  console.warn(`[store] ${label} exhausted retries:`, lastErr?.message);
+  return { data: null, error: lastErr };
 }
 
-/** Persist an account's profile + tasks + Google connection (best-effort; never throws into the request path). */
+/** Load an account's saved profile + tasks + Google connection. Empty if cloud off or row missing.
+ *  Transient network failures are retried (see withRetry) so a blip never collapses state to empty. */
+export async function loadState(email?: string): Promise<AccountState> {
+  if (!client || !email) return { profile: emptyProfile(), tasks: [] };
+  const { data, error } = await withRetry("load", async () =>
+    client!.from(TABLE).select("profile,tasks,google").eq("email", email).maybeSingle());
+  if (error) { console.warn("[store] load failed:", error.message); return { profile: emptyProfile(), tasks: [] }; }
+  const d = data as any;
+  const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
+  return { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google };
+}
+
+/** Persist an account's profile + tasks + Google connection (best-effort; never throws into the request
+ *  path). Transient network failures are retried so a blip doesn't silently drop a write. */
 export async function saveState(email: string | undefined, state: AccountState): Promise<void> {
   if (!client || !email) return;
-  try {
-    const { error } = await client.from(TABLE).upsert(
+  const { error } = await withRetry("save", async () =>
+    client!.from(TABLE).upsert(
       { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], google: state.google ?? null, updated_at: new Date().toISOString() },
       { onConflict: "email" }
-    );
-    if (error) console.warn("[store] save failed:", error.message);
-  } catch (e) { console.warn("[store] save threw:", (e as any)?.message || e); }
+    ).then((r) => ({ data: null, error: r.error })));
+  if (error) console.warn("[store] save failed:", error.message);
 }
 
 /** Every account email with saved state — the cron sweeper iterates these to work while users are offline. */

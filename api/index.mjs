@@ -666,6 +666,7 @@ ${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}
 ` : "";
   const sys = `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER items are commitments THEY made ("I'll send you X") \u2014 create a task to FULFILL unfulfilled ones. Events: only if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs are actionable while open. Skip FYIs, receipts, automated mail, and anything already on their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank HIGHER (importance \u2265 0.7); things their preferences deprioritize rank lower or get skipped. Quality over quantity \u2014 the handful that matter. ALWAYS include: a direct question or request from a real person awaiting their reply; a SENT-BY-USER commitment ("I'll send/do/call\u2026") with no later fulfilment visible; an event in the next 48h that plainly needs prep. When such an item exists, an empty tasks list is WRONG.
 CONSOLIDATE \u2014 one real-world obligation = ONE task. If several candidates concern the SAME thing (a calendar event AND the email thread that set it up; several copies of one outreach the user sent), emit a SINGLE task and pick the candidate the user must ACT on to anchor it (prefer the email/thread they need to handle; else the event). NEVER emit two tasks for one meeting, thread, or commitment. Each task's title must name a DISTINCT obligation \u2014 if two of your tasks would start with the same verb+object, merge them.
+SCORING: an item you judge actionable is, by definition, NOT trivial \u2014 score a genuine reply/commitment at importance \u2265 0.5, and higher (\u2265 0.7) for high-priority people or stated projects. urgency reflects the deadline: \u2265 0.7 within ~48h, ~0.5 this week, lower if open-ended. Never score an actionable item you're returning below 0.4 on BOTH axes \u2014 if it's that trivial, omit it instead.
 Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative \u22649 words","why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item \u2014 NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about","fact":"one short sentence"}]} \u2014 profileUpdates: 0-3 DURABLE facts about who this person is that these items reveal (a key relationship, an ongoing project) \u2014 only lasting identity facts, not task content. Empty arrays are fine.`;
   const client2 = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
@@ -1170,32 +1171,42 @@ async function createUser(email, passHash) {
     return false;
   }
 }
+var isTransient2 = (msg) => /terminated|fetch failed|socket hang up|network|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR|timeout|503|502|429/i.test(msg);
+async function withRetry(label, op, tries = 3) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      const { data, error } = await op();
+      if (!error) return { data, error: null };
+      lastErr = error;
+      if (!isTransient2(error.message || "")) return { data: null, error };
+    } catch (e) {
+      lastErr = { message: e?.message || String(e) };
+      if (!isTransient2(lastErr.message || "")) throw e;
+    }
+    if (attempt < tries - 1) await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
+  }
+  console.warn(`[store] ${label} exhausted retries:`, lastErr?.message);
+  return { data: null, error: lastErr };
+}
 async function loadState(email) {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
-  try {
-    const { data, error } = await client.from(TABLE).select("profile,tasks,google").eq("email", email).maybeSingle();
-    if (error) {
-      console.warn("[store] load failed:", error.message);
-      return { profile: emptyProfile(), tasks: [] };
-    }
-    const google = data?.google && data.google.tokens ? data.google : void 0;
-    return { profile: normalizeProfile(data?.profile), tasks: Array.isArray(data?.tasks) ? data.tasks : [], google };
-  } catch (e) {
-    console.warn("[store] load threw:", e?.message || e);
+  const { data, error } = await withRetry("load", async () => client.from(TABLE).select("profile,tasks,google").eq("email", email).maybeSingle());
+  if (error) {
+    console.warn("[store] load failed:", error.message);
     return { profile: emptyProfile(), tasks: [] };
   }
+  const d = data;
+  const google = d?.google && d.google.tokens ? d.google : void 0;
+  return { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google };
 }
 async function saveState(email, state) {
   if (!client || !email) return;
-  try {
-    const { error } = await client.from(TABLE).upsert(
-      { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], google: state.google ?? null, updated_at: (/* @__PURE__ */ new Date()).toISOString() },
-      { onConflict: "email" }
-    );
-    if (error) console.warn("[store] save failed:", error.message);
-  } catch (e) {
-    console.warn("[store] save threw:", e?.message || e);
-  }
+  const { error } = await withRetry("save", async () => client.from(TABLE).upsert(
+    { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], google: state.google ?? null, updated_at: (/* @__PURE__ */ new Date()).toISOString() },
+    { onConflict: "email" }
+  ).then((r) => ({ data: null, error: r.error })));
+  if (error) console.warn("[store] save failed:", error.message);
 }
 async function listAccountEmails(limit = 200) {
   if (!client) return [];
@@ -2403,7 +2414,7 @@ function applyQualityBar(genTasks, items, vips = []) {
     const it = byAnchor.get(normKey2(g.anchorKey));
     if (it?.labels?.includes("sent") && g.when) return true;
     if (isVip(it?.sender)) return true;
-    return g.importance >= 0.55 || g.urgency >= 0.65;
+    return g.importance >= 0.45 || g.urgency >= 0.45;
   });
 }
 async function generate(existing, profile, extras, userEmail) {
@@ -2425,7 +2436,10 @@ async function generate(existing, profile, extras, userEmail) {
         const classified = candidates.length ? await classifyCandidates(candidates, profile, active.map((a) => a.title)) : { tasks: [], profileUpdates: [] };
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
         const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
-        return foldGenerated(existing, kept, profile.highPriorityPeople || []);
+        const folded = foldGenerated(existing, kept, profile.highPriorityPeople || []);
+        const newCards = folded.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
+        console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [tasks] sweep pipeline: ${items.length} items \u2192 ${candidates.length} candidates \u2192 ${classified.tasks.length} classified \u2192 ${kept.length} passed bar \u2192 ${newCards} new card${newCards === 1 ? "" : "s"}`);
+        return folded;
       }
     } catch (e) {
       console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e);

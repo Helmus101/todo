@@ -459,6 +459,10 @@ export async function classifyCandidates(
     `SINGLE task and pick the candidate the user must ACT on to anchor it (prefer the email/thread they need to ` +
     `handle; else the event). NEVER emit two tasks for one meeting, thread, or commitment. Each task's title must ` +
     `name a DISTINCT obligation — if two of your tasks would start with the same verb+object, merge them.\n` +
+    `SCORING: an item you judge actionable is, by definition, NOT trivial — score a genuine reply/commitment ` +
+    `at importance ≥ 0.5, and higher (≥ 0.7) for high-priority people or stated projects. urgency reflects the ` +
+    `deadline: ≥ 0.7 within ~48h, ~0.5 this week, lower if open-ended. Never score an actionable item you're ` +
+    `returning below 0.4 on BOTH axes — if it's that trivial, omit it instead.\n` +
     `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative ≤9 words",` +
     `"why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item — NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,` +
     `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about",` +

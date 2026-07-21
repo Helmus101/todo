@@ -268,7 +268,12 @@ export function applyQualityBar<T extends { anchorKey?: string; when?: string; u
     const it = byAnchor.get(normKey(g.anchorKey));
     if (it?.labels?.includes("sent") && g.when) return true;  // a commitment THEY made, with a deadline: always keep
     if (isVip(it?.sender)) return true;                        // high-priority person's ask: always keep
-    return g.importance >= 0.55 || g.urgency >= 0.65;          // otherwise: real stakes or real time pressure only
+    // The classifier is ALREADY the judgment layer — it returns ONLY items that genuinely need action
+    // (and an empty list otherwise). So this is a WEAK floor, not a second opinion: drop a task only when
+    // the model itself scored it trivial on BOTH axes (low stakes AND no time pressure). A normally-scored
+    // actionable item (~0.5 on either axis, the model's neutral default) survives — otherwise a real
+    // "reply awaited" task the classifier surfaced gets silently killed and the sweep shows nothing.
+    return g.importance >= 0.45 || g.urgency >= 0.45;
   });
 }
 
@@ -308,7 +313,12 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
         // Model suggests scores; CODE decides what clears the bar (VIPs + deadline'd commitments always do).
         const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
-        return foldGenerated(existing, kept, profile.highPriorityPeople || []);
+        const folded = foldGenerated(existing, kept, profile.highPriorityPeople || []);
+        // Pipeline visibility: where do candidates go? A sudden "0 new" is now diagnosable at a glance —
+        // was it the classifier (classified 0), the quality bar (kept 0), or dedupe (folded == existing).
+        const newCards = folded.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
+        console.log(`${new Date().toISOString()} [tasks] sweep pipeline: ${items.length} items → ${candidates.length} candidates → ${classified.tasks.length} classified → ${kept.length} passed bar → ${newCards} new card${newCards === 1 ? "" : "s"}`);
+        return folded;
       }
     } catch (e: any) { console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e); }
   }
