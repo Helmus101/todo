@@ -57,7 +57,7 @@ function gmailToItems(data: any, label: string, account?: { id?: string; email?:
   }).filter((x): x is SourceItem => !!x);
 }
 
-export function calendarToItems(data: any, now: number = Date.now()): SourceItem[] {
+export function calendarToItems(data: any, now: number = Date.now(), account?: { id?: string; email?: string }): SourceItem[] {
   const evs: any[] = data?.items || data?.events || data?.data?.items || (Array.isArray(data) ? data : []);
   return (evs || []).slice(0, 25).map((e: any): SourceItem | null => {
     const id = String(e?.id ?? e?.eventId ?? "").trim();
@@ -76,11 +76,13 @@ export function calendarToItems(data: any, now: number = Date.now()): SourceItem
       sender: String(e?.organizer?.email ?? "").slice(0, 120),
       timestamp: String(start),
       labels: ["event"],
+      accountId: account?.id,
+      accountEmail: account?.email,
     };
   }).filter((x): x is SourceItem => !!x);
 }
 
-function driveToItems(data: any): SourceItem[] {
+function driveToItems(data: any, account?: { id?: string; email?: string }): SourceItem[] {
   const files: any[] = data?.files || data?.items || data?.data?.files || (Array.isArray(data) ? data : []);
   return (files || []).slice(0, 15).map((f: any): SourceItem | null => {
     const id = String(f?.id ?? f?.fileId ?? "").trim();
@@ -96,6 +98,8 @@ function driveToItems(data: any): SourceItem[] {
       sender: modifiedBy.slice(0, 120),
       timestamp: String(f?.modifiedTime ?? f?.sharedWithMeTime ?? ""),
       labels: [f?.sharedWithMeTime ? "shared" : "modified"],
+      accountId: account?.id,
+      accountEmail: account?.email,
     };
   }).filter((x): x is SourceItem => !!x);
 }
@@ -133,10 +137,12 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const grab = async (fn: () => Promise<SourceItem[]>) => {
     try { const got = await fn(); attempted = true; items.push(...got); } catch { /* source unavailable — skip */ }
   };
-  // Multi-Gmail: read inbox + sent from EVERY connected Gmail account, tagging each item with its account so
-  // execution routes back to the right inbox. With 0-1 accounts we pass no id (unchanged single-account path).
-  let gmailAccounts: { id?: string; email?: string }[] = [{}];
-  try { const accs = await getConnectedAccounts(userEmail, "gmail"); if (accs.length > 1) gmailAccounts = accs.map((a) => ({ id: a.id, email: a.email })); } catch { /* fall back to single */ }
+  // Multi-account (Google): read from EVERY connected account per app, tagging each item with its account so
+  // execution routes back to the right one. With 0-1 accounts we pass no id (unchanged single-account path).
+  const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
+    try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
+  };
+  const [gmailAccounts, calAccounts, driveAccounts] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive")]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
@@ -145,26 +151,27 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
       query: "in:sent newer_than:10d", max_results: 15,
     }, acc.id), "sent", acc)),
   ]);
+  const calGrabs = calAccounts.map((acc) => grab(async () => {
+    const now = new Date();
+    const week = new Date(now.getTime() + 7 * 24 * 3600 * 1000);
+    return calendarToItems(await readAction(userEmail, "GOOGLECALENDAR_EVENTS_LIST", {
+      timeMin: now.toISOString(), timeMax: week.toISOString(), maxResults: 20, singleEvents: true, orderBy: "startTime",
+    }, acc.id), Date.now(), acc);
+  }));
+  const driveGrabs = driveAccounts.map((acc) => grab(async () => {
+    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split(".")[0];
+    const files = driveToItems(await readAction(userEmail, "GOOGLEDRIVE_LIST_FILES", {
+      q: `(sharedWithMe = true or modifiedTime > '${since}') and trashed = false`,
+      orderBy: "modifiedTime desc", pageSize: 15,
+      fields: "files(id,name,mimeType,webViewLink,modifiedTime,sharedWithMeTime,lastModifyingUser)",
+    }, acc.id), acc);
+    // Only files where ANOTHER person is the actor — the user's own edits aren't a to-do trigger.
+    return files.filter((f) => f.labels.includes("shared") || (f.sender && !f.sender.toLowerCase().includes(userEmail.split("@")[0].toLowerCase())));
+  }));
   await Promise.all([
     ...gmailGrabs,
-    grab(async () => {
-      const now = new Date();
-      const week = new Date(now.getTime() + 7 * 24 * 3600 * 1000);
-      return calendarToItems(await readAction(userEmail, "GOOGLECALENDAR_EVENTS_LIST", {
-        timeMin: now.toISOString(), timeMax: week.toISOString(), maxResults: 20, singleEvents: true, orderBy: "startTime",
-      }));
-    }),
-    // Drive: recent files OTHERS shared/touched — docs waiting on the user that never arrive by email.
-    grab(async () => {
-      const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split(".")[0];
-      const files = driveToItems(await readAction(userEmail, "GOOGLEDRIVE_LIST_FILES", {
-        q: `(sharedWithMe = true or modifiedTime > '${since}') and trashed = false`,
-        orderBy: "modifiedTime desc", pageSize: 15,
-        fields: "files(id,name,mimeType,webViewLink,modifiedTime,sharedWithMeTime,lastModifyingUser)",
-      }));
-      // Only files where ANOTHER person is the actor — the user's own edits aren't a to-do trigger.
-      return files.filter((f) => f.labels.includes("shared") || (f.sender && !f.sender.toLowerCase().includes(userEmail.split("@")[0].toLowerCase())));
-    }),
+    ...calGrabs,
+    ...driveGrabs,
     // GitHub (if connected): things waiting on the user — open issues assigned to them, PRs where their
     // review was requested. Both fail silently for accounts without GitHub.
     grab(async () => githubToItems(await readAction(userEmail, "GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER", {

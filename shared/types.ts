@@ -35,12 +35,13 @@ export interface Profile {
   preferences: string[];  // e.g. "concise emails", "no meetings before 10am"
   people: string[];       // key people + relationship ("Sarah — my manager")
   projects: string[];     // ongoing projects / goals
-  paused?: boolean;       // "pause all AI usage" — blocks generation, task runs, and chat server-side
+  paused?: boolean;       // "pause all AI usage" — blocks generation and task runs server-side
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
   lastSweepAt?: string;   // ISO stamp of the last SUCCESSFUL generation sweep — durable "did we check today"
                           // marker (survives restarts; source of truth for the once-per-local-day guarantee)
   lastForcedAt?: string;  // ISO stamp of the last time the sweep FORCED a "daily minimum" task (when it would
                           // otherwise have surfaced nothing) — so we guarantee at most one forced task per local day
+  genPerDay?: number;     // how many times/day Otto scans for new tasks (1–4; default 1). Sets the sweep cadence.
   // Structured preferences for autonomous behavior
   workingHours?: { start: string; end: string; timezone: string }; // e.g. { start: "09:00", end: "18:00", timezone: "America/New_York" }
   responseStyle?: "concise" | "detailed" | "casual" | "formal"; // how AI should draft responses
@@ -50,9 +51,12 @@ export interface Profile {
   // Trust/confidence system for gradual automation
   confidence?: Record<string, number>; // action category → confidence score (0-1), e.g., { "draft_email": 0.85, "create_calendar": 0.6 }
   confidenceHistory?: Array<{ action: string; approved: boolean; at: string }>; // track approval/rejection history
-  // Cumulative AI token usage across sweeps + task runs (for the Settings "usage" view). Monotonic counters
-  // (merged by MAX across devices), so the number only ever grows — approximate, for visibility not billing.
-  usage?: { in: number; out: number; runs: number; since: string };
+  timezone?: string;      // the user's IANA timezone (auto-captured from the browser) — source of truth for
+                          // all "local day" boundaries (sweep cadence, daily-minimum). Falls back to UTC.
+  // Cumulative AI token usage across sweeps + task runs (for the Settings "usage" view). Cumulative counters
+  // are monotonic (merged by MAX across devices); the month* counters roll over each calendar month and back
+  // the monthly spend cap. Approximate — for visibility + a cost ceiling, not exact billing.
+  usage?: { in: number; out: number; runs: number; since: string; monthKey?: string; monthIn?: number; monthOut?: number };
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -68,6 +72,8 @@ export function normalizeProfile(p: any): Profile {
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
     lastForcedAt: typeof p?.lastForcedAt === "string" ? p.lastForcedAt : undefined,
+    genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
+    timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
     // Structured preferences
     workingHours: p?.workingHours && typeof p.workingHours === "object" ? {
       start: String(p.workingHours.start || "09:00"),
@@ -84,16 +90,72 @@ export function normalizeProfile(p: any): Profile {
     usage: p?.usage && typeof p.usage === "object" ? {
       in: Number(p.usage.in) || 0, out: Number(p.usage.out) || 0, runs: Number(p.usage.runs) || 0,
       since: typeof p.usage.since === "string" ? p.usage.since : new Date().toISOString(),
+      monthKey: typeof p.usage.monthKey === "string" ? p.usage.monthKey : undefined,
+      monthIn: Number(p.usage.monthIn) || 0, monthOut: Number(p.usage.monthOut) || 0,
     } : undefined,
   };
 }
-/** Add one AI call's token cost to a profile's cumulative usage counter (mutates in place). Best-effort,
- *  for the Settings visibility view — never throws, tolerates missing token data. */
+
+/** Is this a resolvable IANA timezone? (Intl throws on an unknown zone.) */
+export function isValidTz(tz: string): boolean {
+  try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
+}
+/** The user's timezone for all "local day" math — their captured zone, then legacy workingHours, then UTC. */
+export function tzOf(profile?: Profile | null): string {
+  return profile?.timezone || profile?.workingHours?.timezone || "UTC";
+}
+
+/** The current calendar month key ("YYYY-MM") in a given timezone — the monthly cap's rollover boundary. */
+export function monthKeyOf(tz?: string, now: Date = new Date()): string {
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit" }).format(now); }
+  catch { return now.toISOString().slice(0, 7); }
+}
+
+// DeepSeek pricing in USD per 1M tokens (approximate; output ≈4× input). Single source of truth so the
+// Settings cost display and the server-side monthly cap always agree.
+export const USD_PER_1M_IN = 0.27;
+export const USD_PER_1M_OUT = 1.10;
+export function usageCostUsd(inTok: number, outTok: number): number {
+  return (Number(inTok) || 0) / 1e6 * USD_PER_1M_IN + (Number(outTok) || 0) / 1e6 * USD_PER_1M_OUT;
+}
+/** Month-to-date AI spend (USD) for this account, honoring the calendar-month rollover. */
+export function monthCostUsd(profile?: Profile | null, tz?: string, now: Date = new Date()): number {
+  const u = profile?.usage;
+  if (!u) return 0;
+  // A stale monthKey means the stored month* counters belong to a past month — treat this month as $0.
+  if (u.monthKey && u.monthKey !== monthKeyOf(tz ?? tzOf(profile), now)) return 0;
+  return usageCostUsd(u.monthIn || 0, u.monthOut || 0);
+}
+/** The monthly AI budget (USD). Override with MONTHLY_AI_BUDGET_USD (server-side); default $3. */
+export function monthlyBudgetUsd(): number {
+  const raw = typeof process !== "undefined" ? Number(process.env?.MONTHLY_AI_BUDGET_USD) : NaN;
+  return Number.isFinite(raw) && raw >= 0 ? raw : 3;
+}
+/** Has this account crossed its monthly AI budget? Gates generation + execution when true. */
+export function overMonthlyBudget(profile?: Profile | null, now: Date = new Date()): boolean {
+  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd();
+}
+/** When the budget resets — the 1st of next month in the user's timezone, as an ISO date ("YYYY-MM-DD"). */
+export function budgetRenewsOn(profile?: Profile | null, now: Date = new Date()): string {
+  const [y, m] = monthKeyOf(tzOf(profile), now).split("-").map(Number);
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+  return `${ny}-${String(nm).padStart(2, "0")}-01`;
+}
+
+/** Add one AI call's token cost to a profile's usage counters (mutates in place) — cumulative for the
+ *  Settings view, plus month-to-date (with calendar-month rollover) for the spend cap. Best-effort. */
 export function addUsage(profile: Profile, tokens?: { in?: number; out?: number } | null): void {
   const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0;
   if (!tin && !tout) return;
   const u = profile.usage || { in: 0, out: 0, runs: 0, since: new Date().toISOString() };
-  profile.usage = { in: u.in + tin, out: u.out + tout, runs: u.runs + 1, since: u.since };
+  const mk = monthKeyOf(tzOf(profile));
+  const sameMonth = u.monthKey === mk;
+  profile.usage = {
+    in: u.in + tin, out: u.out + tout, runs: u.runs + 1, since: u.since,
+    monthKey: mk,
+    monthIn: (sameMonth ? (u.monthIn || 0) : 0) + tin,
+    monthOut: (sameMonth ? (u.monthOut || 0) : 0) + tout,
+  };
 }
 
 const FACT_STOP = new Set(["the","and","for","with","from","that","this","they","their","them","she","her","his","him","who","handles","handled","leads","are","was","were","has","have","will","its","willem","also","both"]);
@@ -278,11 +340,14 @@ export interface ConnectionStatus {
   user?: string;              // the account email
   name?: string;              // what to call the user (from their profile) — personalizes the UI
   googleConnected: boolean;   // Gmail is connected (via Composio) — the minimum to generate tasks
-  aiReady: boolean;           // ANTHROPIC_API_KEY present
+  aiReady: boolean;           // DEEPSEEK_API_KEY present
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist
-  paused: boolean;            // "pause all AI usage" toggle — client skips auto-run/generate/chat while true
+  paused: boolean;            // "pause all AI usage" toggle — client skips auto-run/generate while true
   highPriorityPeople?: string[]; // used ONLY to break ranking ties (VIP's task sorts first) — no UI of its own
+  genPerDay?: number;         // how many times/day Otto scans for new tasks (1–4) — drives the client sweep cadence
+  timezone?: string;          // the account's captured IANA timezone (client compares to detect a change)
+  overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
 }
 
 export interface RunResult {

@@ -226,6 +226,34 @@ export async function getAllConnectionStatuses(userId: string, apps: string[], c
   }
 }
 
+// Per-toolkit read that yields the account's own email address — so the Settings UI shows WHICH Google
+// account each connection is (not "Account 1"). Calendar's primary-calendar id IS the account email. Called
+// directly (not via readAction) so it isn't blocked by the read-policy allowlist. Best-effort; returns "".
+const DRIVE_ABOUT = { action: "GOOGLEDRIVE_GET_ABOUT", args: { fields: "user" }, pick: (r: any) => r?.user?.emailAddress };
+const EMAIL_PROBE: Record<string, { action: string; args: Record<string, unknown>; pick: (r: any) => string | undefined }> = {
+  gmail:          { action: "GMAIL_GET_PROFILE", args: {}, pick: (r) => r?.emailAddress || r?.email },
+  googledrive:    DRIVE_ABOUT,
+  // Docs/Sheets/Slides carry the Drive scope, so the Drive "about" call resolves their email too (Composio
+  // runs it against their own connected account id).
+  googledocs:     DRIVE_ABOUT,
+  googlesheets:   DRIVE_ABOUT,
+  googleslides:   DRIVE_ABOUT,
+  googlecalendar: { action: "GOOGLECALENDAR_GET_CALENDAR_PROFILE", args: {}, pick: (r) => r?.id },
+  // Non-Google: show the account's username/handle where a cheap "who am I" read exists.
+  github:         { action: "GITHUB_GET_THE_AUTHENTICATED_USER", args: {}, pick: (r) => r?.login || r?.email },
+  slack:          { action: "SLACK_TEST_AUTHENTICATION", args: {}, pick: (r) => r?.user || r?.email },
+};
+async function resolveAccountEmail(userId: string, app: string, accountId: string): Promise<string | undefined> {
+  const probe = EMAIL_PROBE[app];
+  if (!probe) return undefined;
+  try {
+    const r: any = await sdk().tools.execute(probe.action, { userId, arguments: probe.args, dangerouslySkipVersionCheck: true, connectedAccountId: accountId } as any);
+    const data = r?.data ?? r;
+    const email = probe.pick(data);
+    return typeof email === "string" && /@/.test(email) ? email : undefined;
+  } catch (e: any) { console.warn(`[integrations] email resolve failed (${app}):`, e?.message ?? e); return undefined; }
+}
+
 /** Get all connected accounts for a specific app (returns multiple accounts if connected). Pass
  *  resolveEmails=true (UI only — it's N extra calls) to fill in each Gmail account's real address via
  *  GMAIL_GET_PROFILE when Composio's list doesn't include it, so the user sees which inbox is which. */
@@ -243,12 +271,9 @@ export async function getConnectedAccounts(userId: string, app: string, resolveE
         status: i?.status || i?.connectionStatus || i?.state || "ACTIVE",
       }))
       .filter((a) => a.id); // only return accounts with valid IDs
-    if (resolveEmails && app === "gmail") {
+    if (resolveEmails) {
       await Promise.all(accounts.filter((a) => !a.email).map(async (a) => {
-        try {
-          const prof: any = await readAction(userId, "GMAIL_GET_PROFILE", {}, a.id);
-          a.email = prof?.emailAddress || prof?.email || prof?.response_data?.emailAddress || a.email;
-        } catch (e: any) { console.warn("[integrations] gmail email resolve failed:", e?.message ?? e); }
+        a.email = await resolveAccountEmail(userId, app, a.id);
       }));
     }
     return accounts;
@@ -344,8 +369,8 @@ export interface AgentTools {
 }
 const EMPTY: AgentTools = { tools: [], call: async () => null, connected: [] };
 
-/** Email the user THEMSELVES (e.g. an event brief). The recipient is the connected Gmail account's own
- *  address (fallback: the account email they log in with) — hardcoded here, never chosen by the model. */
+/** Email the user THEMSELVES (e.g. a brief the agent chose to send). The recipient is the connected Gmail
+ *  account's own address (fallback: the login email) — hardcoded here, never chosen by the model. */
 export async function sendSelfBrief(userId: string, subject: string, body: string): Promise<string> {
   if (!integrationsReady() || !userId) return "ERROR: integrations not configured";
   const subj = String(subject || "").trim().slice(0, 200);
@@ -665,10 +690,13 @@ export async function verifyTaskArtifacts(
  * out (isGatedAction) and never reach the agent. Returns empty fast when nothing's connected or Composio
  * isn't configured, so it adds at most one list() call.
  */
-export async function getAgentTools(userId: string, opts?: { gmailAccountId?: string }): Promise<AgentTools> {
+export async function getAgentTools(userId: string, opts?: { accountApp?: string; accountId?: string }): Promise<AgentTools> {
   if (!integrationsReady() || !userId) return EMPTY;
-  const gmailAccountId = opts?.gmailAccountId;
-  const cacheKey = gmailAccountId ? `${userId}::gmail:${gmailAccountId}` : userId;
+  // Multi-account routing: send THIS toolkit's actions to the specific connected account the task came from
+  // (e.g. a calendar task's GOOGLECALENDAR_* calls go to the calendar account it was discovered in).
+  const routeToolkit = opts?.accountId && opts.accountApp ? (SOURCE_TOOLKIT[opts.accountApp] || norm(TOOLKIT_OF(opts.accountApp))) : "";
+  const routeAccountId = routeToolkit ? opts?.accountId : undefined;
+  const cacheKey = routeAccountId ? `${userId}::${routeToolkit}:${routeAccountId}` : userId;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
 
@@ -742,9 +770,9 @@ export async function getAgentTools(userId: string, opts?: { gmailAccountId?: st
     if (/^GOOGLECALENDAR_/.test(action) && args && (("attendees" in args) || ("send_updates" in args))) {
       args = { ...args, send_updates: "none" };
     }
-    // Route Gmail actions to the SPECIFIC connected account this run belongs to (when the user has more
-    // than one). Other toolkits are single-account, so they don't need it.
-    try { return await execute(action, userId, args || {}, /^GMAIL_/.test(action) ? gmailAccountId : undefined); }
+    // Route THIS toolkit's actions to the specific connected account the run belongs to (when the user has
+    // more than one for it). Other toolkits are single-account, so they don't need it.
+    try { return await execute(action, userId, args || {}, routeAccountId && action.toUpperCase().startsWith(routeToolkit + "_") ? routeAccountId : undefined); }
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };
   const data: AgentTools = {

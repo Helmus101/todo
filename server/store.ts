@@ -159,7 +159,7 @@ export async function listAccountEmails(limit = 200): Promise<string[]> {
 // only the anon key + locked-down RLS, or no Supabase at all), an in-memory queue keeps a single dev
 // process fully working — same interface, no durability.
 
-export type JobType = "sweep" | "execute_task" | "execute_step" | "revise" | "end_of_day_report";
+export type JobType = "sweep" | "execute_task" | "execute_step" | "revise";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed_retryable" | "failed_terminal" | "cancelled";
 export interface Job {
   id: string;

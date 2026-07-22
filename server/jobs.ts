@@ -8,7 +8,7 @@
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
-import { emptyProfile, canonStatus, isHandled } from "../shared/types.ts";
+import { emptyProfile, canonStatus, isHandled, tzOf, overMonthlyBudget } from "../shared/types.ts";
 import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
@@ -31,8 +31,23 @@ export function localDay(iso: string | number | Date, timezone?: string): string
  *  independent of how many times cron/kick runs. `now` is injectable for tests. */
 export function sweepDueForDay(lastSweepAt: string | undefined, profile: Profile, now: Date = new Date()): boolean {
   if (!lastSweepAt) return true;
-  const tz = profile.workingHours?.timezone;
+  const tz = tzOf(profile);
   return localDay(lastSweepAt, tz) !== localDay(now, tz);
+}
+
+/** Minimum spacing between sweeps, from the user's chosen cadence (genPerDay 1–4). 1/day → 24h, 4/day → 6h.
+ *  This is what stops Otto sweeping "quite often": the 45-min heartbeat is gone. */
+export function genIntervalMs(profile: Profile): number {
+  const perDay = Math.min(4, Math.max(1, Math.round(Number(profile.genPerDay) || 1)));
+  return Math.floor(86_400_000 / perDay);
+}
+
+/** Is another sweep allowed yet under the user's cadence? Due when the daily floor hasn't been met OR the
+ *  cadence interval since the last SUCCESSFUL sweep has elapsed. */
+export function sweepDue(profile: Profile, now: Date = new Date()): boolean {
+  if (sweepDueForDay(profile.lastSweepAt, profile, now)) return true;
+  const last = Date.parse(profile.lastSweepAt || "") || 0;
+  return now.getTime() - last >= genIntervalMs(profile);
 }
 
 /** Load the account's durable state (the job runner's ONLY source of truth — no sessions here). */
@@ -54,6 +69,7 @@ async function processSweep(job: store.Job): Promise<string> {
   const email = job.user_email;
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
+  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   const extras = await integrations.getAgentTools(email);
   if (!extras?.tools?.length) return "skipped: nothing connected";
   const before = new Set(list.map((t) => t.id));
@@ -98,6 +114,7 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   const taskId = String(job.task_id || "");
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
+  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   const t = list.find((x) => x.id === taskId);
   if (!t) return "skipped: task not found";
   const c = canonStatus(t.status);
@@ -106,7 +123,7 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   if (c === "failed_terminal" && !job.input?.manual) return "skipped: failed terminally — waiting for the user's Retry";
   await store.recordEvent(email, "run_started", { taskId, jobId: job.id, message: job.input?.note ? "Revising per your note" : "Reading context and doing the reversible work" });
   // Multi-Gmail: run against the SAME Gmail account the task came from (drafts land in the right inbox).
-  const extras = await integrations.getAgentTools(email, t.sourceAccountId ? { gmailAccountId: t.sourceAccountId } : undefined);
+  const extras = await integrations.getAgentTools(email, t.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : undefined);
   t.autoRan = true; // whether this attempt succeeds or not, don't loop on it automatically
   const idsBefore = new Set(list.map((x) => x.id)); // to detect follow-up tasks the run spins off
   try {
@@ -151,6 +168,7 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   const index = Number(job.input?.index);
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
+  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   if (!Number.isInteger(index)) return "skipped: bad step index";
   await store.recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
   // The user explicitly clicked Approve & Run — the permissioned toolset is correct here.
@@ -165,62 +183,6 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   return "step executed";
 }
 
-async function processEndOfDayReport(job: store.Job): Promise<string> {
-  const email = job.user_email;
-  const { profile, list } = await loadUser(email);
-  if (profile.paused) return "skipped: AI paused";
-  const extras = await integrations.getAgentTools(email);
-  if (!extras?.selfBrief) return "skipped: Gmail not connected for report";
-  
-  // Generate the report
-  const completed = list.filter((t) => canonStatus(t.status) === "done").slice(-10);
-  const active = list.filter((t) => !isHandled(t.status)).slice(0, 15);
-  const highPriority = active.filter((t) => t.importance >= 0.7).slice(0, 5);
-  
-  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  
-  let body = `End of day report — ${today}\n\n`;
-  
-  if (completed.length) {
-    body += `✓ Completed today (${completed.length}):\n`;
-    for (const t of completed) {
-      body += `  • ${t.title}\n`;
-    }
-    body += "\n";
-  }
-  
-  if (active.length) {
-    body += `📋 Still active (${active.length}):\n`;
-    for (const t of active.slice(0, 8)) {
-      const urgency = t.urgency >= 0.7 ? "🔴" : t.urgency >= 0.4 ? "🟡" : "🟢";
-      body += `  ${urgency} ${t.title}${t.when ? ` (${t.when})` : ""}\n`;
-    }
-    body += "\n";
-  }
-  
-  if (highPriority.length) {
-    body += `⚡ High priority:\n`;
-    for (const t of highPriority) {
-      body += `  • ${t.title}${t.when ? ` — ${t.when}` : ""}\n`;
-    }
-    body += "\n";
-  }
-  
-  body += `— Otto\n\n`;
-  body += `Open your dashboard to see the full list and take action.`;
-  
-  const subject = `Otto daily report — ${completed.length} done, ${active.length} active`;
-  
-  try {
-    const result = await extras.selfBrief(subject, body);
-    await store.recordEvent(email, "report_sent", { jobId: job.id, message: "End of day report emailed" });
-    return `report sent: ${result}`;
-  } catch (e: any) {
-    await store.recordEvent(email, "report_failed", { jobId: job.id, message: String(e?.message || e).slice(0, 200) });
-    throw e;
-  }
-}
-
 /** Run ONE claimed job to completion. Throwing marks it failed (retryable until max_attempts). */
 export async function processJob(job: store.Job): Promise<string> {
   switch (job.type) {
@@ -228,7 +190,6 @@ export async function processJob(job: store.Job): Promise<string> {
     case "execute_task": return processExecuteTask(job);
     case "revise": return processExecuteTask(job); // same processor; input.note carries the revision
     case "execute_step": return processExecuteStep(job);
-    case "end_of_day_report": return processEndOfDayReport(job);
     default: return `skipped: unknown type ${job.type}`;
   }
 }
@@ -271,25 +232,22 @@ export async function enqueueAndDrain(email: string, type: store.JobType, taskId
 /** Cron entry: give every recently-active account its background turn — enqueue a sweep if none has
  *  succeeded within the watch window, enqueue execution for ready tasks, then drain a bounded batch. */
 export async function cronTick(): Promise<{ users: number; enqueued: number; processed: number; failed: number }> {
-  const SWEEP_WINDOW_MS = 45 * 60_000;
   const emails = await store.listAccountEmails(50);
   let enqueued = 0;
   const now = new Date();
-  const currentHour = now.getHours();
-  
+
   for (const email of emails) {
     try {
       const { profile, list } = await loadUser(email);
       if (profile.paused) continue;
+      if (overMonthlyBudget(profile)) continue; // over the monthly AI budget — no new work until it resets
 
-      // (1) SWEEP FIRST — the durable once-per-local-day guarantee. Uses the persisted lastSweepAt marker
-      // (survives restarts), NOT a rolling window: if no successful sweep has landed in the user's current
-      // local day, enqueue one. An already queued/running sweep dedupes via idempotency. The 45-min window
-      // is kept ONLY for the interactive kick path (/api/tasks/generate), not this daily guarantee.
+      // (1) SWEEP FIRST — cadence-driven, from the user's genPerDay (1–4/day; default once daily). Uses the
+      // persisted lastSweepAt marker (survives restarts) so it's spaced by the chosen interval, not a fixed
+      // 45-min heartbeat. An already queued/running sweep dedupes via idempotency.
       const last = await store.getLatestJob(email, "sweep");
       const sweepActive = last && (last.status === "queued" || last.status === "running");
-      const windowElapsed = (Date.now() - (Date.parse(last?.finished_at || last?.created_at || "") || 0)) > SWEEP_WINDOW_MS;
-      if (!sweepActive && (sweepDueForDay(profile.lastSweepAt, profile, now) || windowElapsed)) {
+      if (!sweepActive && sweepDue(profile, now)) {
         await store.enqueueJob(email, "sweep"); enqueued++;
       }
 
@@ -298,21 +256,6 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       // failed_terminal waits for the user's explicit Retry — cron never loops on a broken task.
       const ready = list.filter((t) => canonStatus(t.status) === "ready" && !t.autoRan).slice(0, 2);
       for (const t of ready) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
-
-      // (3) END-OF-DAY REPORT — LAST, and only when nothing is still pending for this user, so the report
-      // reflects a finished day's work (the sweep + its executions) rather than racing ahead of them.
-      if (profile.workingHours) {
-        const [endHour] = profile.workingHours.end.split(":").map(Number);
-        const reportWindowEnd = (endHour + 1) % 24;
-        const inReportWindow = currentHour === endHour || (reportWindowEnd < endHour && (currentHour >= endHour || currentHour < reportWindowEnd));
-        if (inReportWindow) {
-          const lastReport = await store.getLatestJob(email, "end_of_day_report");
-          const lastReportAt = Date.parse(lastReport?.finished_at || lastReport?.created_at || "") || 0;
-          const reportToday = lastReportAt && new Date(lastReportAt).toDateString() === now.toDateString();
-          const stillWorking = await store.countActiveJobs(email); // sweep/execute jobs queued above
-          if (!reportToday && stillWorking === 0) { await store.enqueueJob(email, "end_of_day_report"); enqueued++; }
-        }
-      }
     } catch (e: any) { console.warn(`[jobs] cron skip ${email}:`, e?.message || e); }
   }
   // Hobby-plan cron fires once daily, so this tick is the only guaranteed background turn:

@@ -14,9 +14,10 @@ create table if not exists weave_web_state (
 alter table weave_web_state add column if not exists profile jsonb not null default '{}'::jsonb;
 alter table weave_web_state add column if not exists google jsonb;
 
--- NOTE: the `google` column + `weave_web_users.pass_hash` are SECRETS. With the anon key + the permissive
--- policy below they're readable by anyone holding the (semi-public) anon key — fine for personal use, but
--- for a real/shared deploy run the server with SUPABASE_SERVICE_KEY (bypasses RLS) and drop these policies.
+-- SECURE BY DEFAULT: `weave_web_users.pass_hash` and the `google`/`profile` columns are SECRETS. This file
+-- enables RLS with NO public policy, so the anon key can read/write NOTHING. Production runs the server with
+-- SUPABASE_SERVICE_KEY, which bypasses RLS — that's the only credential that should ever touch these tables.
+-- (For local dev with ONLY the anon key, uncomment the DEV-ONLY block at the very bottom of this file.)
 
 -- Email/password accounts. Profile + tasks above are keyed by this account's email.
 create table if not exists weave_web_users (
@@ -25,18 +26,13 @@ create table if not exists weave_web_users (
   created_at timestamptz not null default now()
 );
 alter table weave_web_users enable row level security;
+-- Remove any permissive policy an older run of this file created.
 drop policy if exists "weave_web_users server access" on weave_web_users;
-create policy "weave_web_users server access" on weave_web_users
-  for all using (true) with check (true);
 
--- The Express server is the trust boundary (it only reads/writes the OAuth-verified user's row).
--- With a SUPABASE_SERVICE_KEY, skip the policy (the service key bypasses RLS). With the anon key
--- (default here), enable RLS + this permissive policy so the server can read/write.
+-- The Express server is the trust boundary (it only reads/writes the OAuth-verified user's row), and it
+-- connects with the service role — so no public policy is needed or wanted here.
 alter table weave_web_state enable row level security;
-
 drop policy if exists "weave_web_state server access" on weave_web_state;
-create policy "weave_web_state server access" on weave_web_state
-  for all using (true) with check (true);
 
 -- Persistent sessions — so logins + working state survive server restarts/deploys (not just the
 -- account row). One row per session id. Expired rows are cleaned lazily on read.
@@ -47,8 +43,6 @@ create table if not exists weave_web_sessions (
 );
 alter table weave_web_sessions enable row level security;
 drop policy if exists "weave_web_sessions server access" on weave_web_sessions;
-create policy "weave_web_sessions server access" on weave_web_sessions
-  for all using (true) with check (true);
 
 -- ── Durable job queue ─────────────────────────────────────────────────────────
 -- Server-side execution (sweeps + task runs) is queued here and drained by GET /api/cron/drain
@@ -96,9 +90,13 @@ create index if not exists weave_web_job_events_task on weave_web_job_events (us
 alter table weave_web_jobs enable row level security;
 alter table weave_web_job_events enable row level security;
 
--- ── PRODUCTION HARDENING (run these once you've set SUPABASE_SERVICE_KEY on the server) ───────
--- The permissive policies above exist so anon-key dev setups work. In production the service key
--- bypasses RLS entirely, so the policies are pure attack surface — drop them:
---   drop policy if exists "weave_web_users server access" on weave_web_users;
---   drop policy if exists "weave_web_state server access" on weave_web_state;
---   drop policy if exists "weave_web_sessions server access" on weave_web_sessions;
+-- ── DEV ONLY — local setups running with the ANON key (no service key) ────────────────────────
+-- DO NOT run this in production. These permissive policies let the semi-public anon key read/write the
+-- secret tables (password hashes, OAuth tokens) — acceptable only on a throwaway local project. In
+-- production the server uses SUPABASE_SERVICE_KEY (bypasses RLS) and boots refuse without it, so leave
+-- this commented out. Uncomment ONLY for anon-key local development:
+--   create policy "weave_web_users server access"    on weave_web_users    for all using (true) with check (true);
+--   create policy "weave_web_state server access"    on weave_web_state    for all using (true) with check (true);
+--   create policy "weave_web_sessions server access" on weave_web_sessions for all using (true) with check (true);
+--   create policy "weave_web_jobs server access"       on weave_web_jobs       for all using (true) with check (true);
+--   create policy "weave_web_job_events server access" on weave_web_job_events for all using (true) with check (true);

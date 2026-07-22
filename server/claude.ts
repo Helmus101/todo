@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { Profile, TaskStep, TaskLink, Sendable } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
-import { webSearch } from "./chat";
+import { webSearch } from "./websearch";
 
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
 function profileBlock(p?: Profile): string {
@@ -70,6 +70,10 @@ function deepseekClient(): OpenAI {
   return new OpenAI({
     apiKey,
     baseURL: "https://api.deepseek.com",
+    // Cap a single request at 90s (SDK default is 10 min — a hung upstream would pin a job for the whole
+    // lock lease). retryRequest owns retries, so disable the SDK's own to avoid double-retrying.
+    timeout: 90_000,
+    maxRetries: 0,
   });
 }
 
@@ -243,7 +247,7 @@ const SUBMIT_TASKS_TOOL = {
   }, required: ["tasks"] },
 };
 
-/** Validate model-supplied profile updates (shared by generation submit + chat remember). */
+/** Validate model-supplied profile updates (shared by generation submit + task-run remember). */
 export function parseProfileUpdates(arr: any): ProfileUpdate[] {
   if (!Array.isArray(arr)) return [];
   return arr
@@ -255,8 +259,8 @@ export function parseProfileUpdates(arr: any): ProfileUpdate[] {
     .slice(0, 4);
 }
 
-// Shared web-search tool for the task agents — gives generation + execution the same "look it up" power the
-// chat has, so planning or doing a task can pull in external context (a person, a deadline, a how-to, a link).
+// Shared web-search tool for the task agents — gives generation + execution the power to "look it up",
+// so planning or doing a task can pull in external context (a person, a deadline, a how-to, a link).
 const WEB_SEARCH_TOOL = {
   name: "web_search",
   description: "Search the web for current or background facts you can't get from the connected apps — a person/company, a deadline or figure, how to do something, a reference link. Returns top results (title, url, snippet).",

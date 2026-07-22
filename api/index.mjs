@@ -28,6 +28,8 @@ function normalizeProfile(p) {
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : void 0,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : void 0,
     lastForcedAt: typeof p?.lastForcedAt === "string" ? p.lastForcedAt : void 0,
+    genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : void 0,
+    timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : void 0,
     // Structured preferences
     workingHours: p?.workingHours && typeof p.workingHours === "object" ? {
       start: String(p.workingHours.start || "09:00"),
@@ -45,15 +47,69 @@ function normalizeProfile(p) {
       in: Number(p.usage.in) || 0,
       out: Number(p.usage.out) || 0,
       runs: Number(p.usage.runs) || 0,
-      since: typeof p.usage.since === "string" ? p.usage.since : (/* @__PURE__ */ new Date()).toISOString()
+      since: typeof p.usage.since === "string" ? p.usage.since : (/* @__PURE__ */ new Date()).toISOString(),
+      monthKey: typeof p.usage.monthKey === "string" ? p.usage.monthKey : void 0,
+      monthIn: Number(p.usage.monthIn) || 0,
+      monthOut: Number(p.usage.monthOut) || 0
     } : void 0
   };
+}
+function isValidTz(tz) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function tzOf(profile) {
+  return profile?.timezone || profile?.workingHours?.timezone || "UTC";
+}
+function monthKeyOf(tz, now = /* @__PURE__ */ new Date()) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit" }).format(now);
+  } catch {
+    return now.toISOString().slice(0, 7);
+  }
+}
+var USD_PER_1M_IN = 0.27;
+var USD_PER_1M_OUT = 1.1;
+function usageCostUsd(inTok, outTok) {
+  return (Number(inTok) || 0) / 1e6 * USD_PER_1M_IN + (Number(outTok) || 0) / 1e6 * USD_PER_1M_OUT;
+}
+function monthCostUsd(profile, tz, now = /* @__PURE__ */ new Date()) {
+  const u = profile?.usage;
+  if (!u) return 0;
+  if (u.monthKey && u.monthKey !== monthKeyOf(tz ?? tzOf(profile), now)) return 0;
+  return usageCostUsd(u.monthIn || 0, u.monthOut || 0);
+}
+function monthlyBudgetUsd() {
+  const raw = typeof process !== "undefined" ? Number(process.env?.MONTHLY_AI_BUDGET_USD) : NaN;
+  return Number.isFinite(raw) && raw >= 0 ? raw : 3;
+}
+function overMonthlyBudget(profile, now = /* @__PURE__ */ new Date()) {
+  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd();
+}
+function budgetRenewsOn(profile, now = /* @__PURE__ */ new Date()) {
+  const [y, m] = monthKeyOf(tzOf(profile), now).split("-").map(Number);
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+  return `${ny}-${String(nm).padStart(2, "0")}-01`;
 }
 function addUsage(profile, tokens) {
   const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0;
   if (!tin && !tout) return;
   const u = profile.usage || { in: 0, out: 0, runs: 0, since: (/* @__PURE__ */ new Date()).toISOString() };
-  profile.usage = { in: u.in + tin, out: u.out + tout, runs: u.runs + 1, since: u.since };
+  const mk = monthKeyOf(tzOf(profile));
+  const sameMonth = u.monthKey === mk;
+  profile.usage = {
+    in: u.in + tin,
+    out: u.out + tout,
+    runs: u.runs + 1,
+    since: u.since,
+    monthKey: mk,
+    monthIn: (sameMonth ? u.monthIn || 0 : 0) + tin,
+    monthOut: (sameMonth ? u.monthOut || 0 : 0) + tout
+  };
 }
 var FACT_STOP = /* @__PURE__ */ new Set(["the", "and", "for", "with", "from", "that", "this", "they", "their", "them", "she", "her", "his", "him", "who", "handles", "handled", "leads", "are", "was", "were", "has", "have", "will", "its", "willem", "also", "both"]);
 var emailsIn = (s) => s.toLowerCase().match(/[\w.+-]+@[\w.-]+\.\w+/g) || [];
@@ -126,177 +182,12 @@ function sortWithinQuadrant(list, highPriorityPeople = [], now = /* @__PURE__ */
 }
 
 // server/claude.ts
-import OpenAI2 from "openai";
-
-// server/chat.ts
 import OpenAI from "openai";
-var MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-var ACTUAL_MODEL = MODEL === "deepseek-reasoner" ? "deepseek-chat" : MODEL;
-async function retryRequest(fn, retries = 3, delayMs = 1e3) {
-  let lastErr;
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await fn();
-    } catch (e) {
-      lastErr = e;
-      const code = String(e?.code || e?.cause?.code || "");
-      const msg = `${e?.message || ""} ${e?.cause?.message || ""}`;
-      const isNetworkError = ["ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(code) || /fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed/i.test(msg) || [429, 500, 502, 503, 504].includes(Number(e?.status));
-      if (!isNetworkError || i === retries - 1) throw e;
-      console.warn(`[ai-chat] request failed (${e?.message || e}), retrying in ${delayMs}ms... (attempt ${i + 1}/${retries})`);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      delayMs *= 2;
-    }
-  }
-  throw lastErr;
-}
-var REMEMBER_TOOL = {
-  type: "function",
-  function: {
-    name: "remember",
-    description: "Save a durable fact about WHO THIS PERSON IS for future tasks and chats \u2014 a preference, a key person/relationship, an ongoing project, their name, or a one-line about. Save NEW facts and CORRECTED versions of outdated profile lines (a corrected fact replaces the old one). Be selective; not for one-off chat details.",
-    parameters: { type: "object", properties: {
-      category: { type: "string", enum: ["name", "about", "preference", "person", "project"] },
-      fact: { type: "string", description: "one short sentence" }
-    }, required: ["category", "fact"] }
-  }
-};
-function collectRemember(input, out) {
-  const fact = String(input?.fact || "").trim().slice(0, 200);
-  const category = ["name", "about", "preference", "person", "project"].includes(input?.category) ? input.category : "preference";
-  if (fact && out.length < 6) {
-    out.push({ category, fact });
-    return "saved";
-  }
-  return "skipped";
-}
-function clientOrThrow() {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) throw new Error("Set DEEPSEEK_API_KEY.");
-  return new OpenAI({ apiKey, baseURL: "https://api.deepseek.com" });
-}
-function contextBlock(profile, tasksSummary) {
-  const parts = [];
-  if (profile?.about) parts.push(`About them: ${profile.about}`);
-  if (profile?.preferences?.length) parts.push(`Preferences: ${profile.preferences.join("; ")}`);
-  if (profile?.people?.length) parts.push(`Key people: ${profile.people.join("; ")}`);
-  if (profile?.projects?.length) parts.push(`Ongoing projects: ${profile.projects.join("; ")}`);
-  let out = parts.length ? `
-WHO YOU'RE TALKING TO (use to personalize; match their style):
-${parts.map((x) => `- ${x}`).join("\n")}
-` : "";
-  if (tasksSummary?.trim()) out += `
-THEIR CURRENT TO-DOS:
-${tasksSummary.trim()}
-`;
-  return out;
-}
-var SYSTEM = (profile, tasksSummary) => `You are Otto's assistant \u2014 a sharp, concise, friendly chat assistant. You can SEARCH THE WEB for current or factual information; do so whenever the answer depends on recent events, current facts, prices, or anything you're not sure of, and CITE your sources. You know who the user is and what's on their plate (below) \u2014 use it to personalize answers and connect things to their world. When they mention a durable fact about themselves (a preference, a key person, a project, their name) or correct something in their profile, call "remember" to save it \u2014 silently, don't announce it. Be direct and genuinely useful; no filler.
-` + contextBlock(profile, tasksSummary);
-var dropMd = (s) => s.replace(/\*\*/g, "").replace(/^#+\s*/gm, "").trim();
-var toApi = (messages) => messages.filter((m) => m.content?.trim()).map((m) => ({ role: m.role, content: m.content }));
-async function deepseekChat(messages, profile, tasksSummary) {
-  const client2 = clientOrThrow();
-  const sources = [];
-  const profileUpdates = [];
-  const convo = toApi(messages);
-  const tool = {
-    type: "function",
-    function: {
-      name: "web_search",
-      description: "Search the web for current or background facts you cannot get from the chat history.",
-      parameters: { type: "object", properties: { query: { type: "string", description: "the search query" } }, required: ["query"] }
-    }
-  };
-  for (let i = 0; i < 5; i++) {
-    const res = await retryRequest(() => client2.chat.completions.create({
-      model: ACTUAL_MODEL,
-      max_tokens: 2200,
-      messages: [{ role: "system", content: SYSTEM(profile, tasksSummary) }, ...convo],
-      tools: [tool, REMEMBER_TOOL]
-    }));
-    const msg = res.choices?.[0]?.message;
-    const toolCalls = msg?.tool_calls || [];
-    if (!toolCalls.length) {
-      const reply = String(msg?.content || "").trim();
-      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+web", profileUpdates };
-    }
-    convo.push({ role: "assistant", content: msg?.content || "", tool_calls: toolCalls });
-    for (const call of toolCalls) {
-      const args = JSON.parse(String(call.function?.arguments || "{}") || "{}");
-      if (call.function?.name === "remember") {
-        convo.push({ role: "tool", tool_call_id: call.id, content: collectRemember(args, profileUpdates) });
-        continue;
-      }
-      const hits = await duckDuckGo(String(args?.query || "")).catch(() => []);
-      for (const h of hits) sources.push({ title: h.title, url: h.url });
-      convo.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(hits.slice(0, 6)) });
-    }
-  }
-  return { reply: "I searched but couldn't pull it together \u2014 try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
-}
-async function chat(messages, profile, tasksSummary) {
-  try {
-    return await deepseekChat(messages, profile, tasksSummary);
-  } catch (e) {
-    console.warn("[chat] deepseek chat failed, falling back to DuckDuckGo:", e?.message || e);
-    return await deepseekDuckDuckGo(messages, profile, tasksSummary);
-  }
-}
+
+// server/websearch.ts
 async function webSearch(query) {
   if (!query.trim()) return [];
   return duckDuckGo(query).catch(() => []);
-}
-async function deepseekDuckDuckGo(messages, profile, tasksSummary) {
-  const client2 = clientOrThrow();
-  const sources = [];
-  const profileUpdates = [];
-  const convo = toApi(messages);
-  const tool = {
-    type: "function",
-    function: {
-      name: "web_search",
-      description: "Search the web (DuckDuckGo) for current/factual info.",
-      parameters: { type: "object", properties: { query: { type: "string", description: "the search query" } }, required: ["query"] }
-    }
-  };
-  for (let i = 0; i < 5; i++) {
-    const res = await retryRequest(() => client2.chat.completions.create({
-      model: ACTUAL_MODEL,
-      max_tokens: 2200,
-      messages: [{ role: "system", content: SYSTEM(profile, tasksSummary) }, ...convo],
-      tools: [tool, REMEMBER_TOOL]
-    }));
-    const msg = res.choices?.[0]?.message;
-    const toolCalls = msg?.tool_calls || [];
-    if (!toolCalls.length) {
-      const reply = String(msg?.content || "").trim();
-      return { reply: dropMd(reply) || "(no answer)", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
-    }
-    convo.push({ role: "assistant", content: msg?.content || "", tool_calls: toolCalls });
-    for (const call of toolCalls) {
-      const args = JSON.parse(String(call.function?.arguments || "{}") || "{}");
-      if (call.function?.name === "remember") {
-        convo.push({ role: "tool", tool_call_id: call.id, content: collectRemember(args, profileUpdates) });
-        continue;
-      }
-      const hits = await duckDuckGo(String(args?.query || "")).catch(() => []);
-      for (const h of hits) sources.push({ title: h.title, url: h.url });
-      convo.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(hits.slice(0, 6)) });
-    }
-  }
-  return { reply: "I searched but couldn't pull it together \u2014 try rephrasing.", sources: dedupe(sources), via: "deepseek+duckduckgo", profileUpdates };
-}
-function dedupe(s) {
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (const x of s) {
-    if (x.url && !seen.has(x.url)) {
-      seen.add(x.url);
-      out.push(x);
-    }
-  }
-  return out.slice(0, 8);
 }
 async function duckDuckGo(query) {
   if (!query.trim()) return [];
@@ -343,7 +234,6 @@ function profileBlock(p) {
   if (recent(p.people).length) parts.push(`Key people: ${recent(p.people).join("; ")}`);
   if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
   if (p.workingHours) parts.push(`Working hours: ${p.workingHours.start}-${p.workingHours.end} (${p.workingHours.timezone})`);
-  if (p.responseStyle) parts.push(`Response style: ${p.responseStyle}`);
   if (p.autoApprove?.length) parts.push(`Prefers automated handling of: ${p.autoApprove.join(", ")} (preference only \u2014 the permission system still decides; gated actions still need approval)`);
   if (p.highPriorityPeople?.length) parts.push(`High-priority people: ${p.highPriorityPeople.join(", ")}`);
   if (p.autoArchivePatterns?.length) parts.push(`Considers noise (never surface as tasks): ${p.autoArchivePatterns.join(", ")}`);
@@ -391,9 +281,13 @@ function aiReady() {
 function deepseekClient() {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("Set DEEPSEEK_API_KEY in web/.env.");
-  return new OpenAI2({
+  return new OpenAI({
     apiKey,
-    baseURL: "https://api.deepseek.com"
+    baseURL: "https://api.deepseek.com",
+    // Cap a single request at 90s (SDK default is 10 min — a hung upstream would pin a job for the whole
+    // lock lease). retryRequest owns retries, so disable the SDK's own to avoid double-retrying.
+    timeout: 9e4,
+    maxRetries: 0
   });
 }
 function isTransient(e) {
@@ -403,7 +297,7 @@ function isTransient(e) {
   if (/fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed/i.test(msg)) return true;
   return [429, 500, 502, 503, 504].includes(Number(e?.status));
 }
-async function retryRequest2(fn, retries = 3, delayMs = 1e3) {
+async function retryRequest(fn, retries = 3, delayMs = 1e3) {
   let lastErr;
   for (let i = 0; i < retries; i++) {
     try {
@@ -585,7 +479,7 @@ Sweep across all of them for everything genuinely awaiting me that is NOT alread
       const lastRoundHint = i === MAX - 1 ? "You must call submit_tasks now with the full actionable list. Do not answer with prose." : "";
       const base = trimOldToolResults(messages);
       const apiMessages = lastRoundHint ? [...base, { role: "user", content: lastRoundHint }] : base;
-      const res = await retryRequest2(() => client2.chat.completions.create({
+      const res = await retryRequest(() => client2.chat.completions.create({
         model: actualModel,
         max_tokens: 4e3,
         messages: [
@@ -643,7 +537,7 @@ Sweep across all of them for everything genuinely awaiting me that is NOT alread
     }
     try {
       const client2 = deepseekClient();
-      const res = await retryRequest2(() => client2.chat.completions.create({
+      const res = await retryRequest(() => client2.chat.completions.create({
         model: actualModel,
         max_tokens: 4e3,
         messages: [
@@ -687,7 +581,7 @@ Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imp
   let tokIn = 0, tokOut = 0, calls = 0;
   const ask = async (extra) => {
     calls++;
-    const res = await retryRequest2(() => client2.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model: actualModel,
       max_tokens: 1800,
       // Determinism guards: JSON mode + near-zero temperature. Without them the same candidate list
@@ -758,7 +652,7 @@ Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative na
   const client2 = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   try {
-    const res = await retryRequest2(() => client2.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model: actualModel,
       max_tokens: 500,
       temperature: 0.2,
@@ -799,7 +693,7 @@ async function refineManualTask(text, profile) {
   try {
     const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
-    const res = await retryRequest2(() => client2.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: 500,
       temperature: 0.2,
@@ -840,11 +734,12 @@ HARD LIMIT \u2014 you can READ and WRITE, but you can NEVER do an irreversible O
 NEWSLETTERS & PROMOTIONAL EMAIL \u2014 NEVER DRAFT A REPLY: before drafting any email reply, check whether the thread is a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender (unsubscribe footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something \u2014 note in "synthesis" that it's mass mail and needs no reply, and stop there.
 THE ONE SEND EXCEPTION \u2014 send_self_brief goes ONLY to the user's own inbox (the server addresses it; you cannot pick a recipient). When the task involves something UPCOMING they must walk into prepared \u2014 a meeting or event in the next ~48h, travel/day-of logistics \u2014 ALSO send them a tight brief (who/when/where or link, agenda, 2-4 prep points, doc links) so it's waiting in their inbox. Mention it in "synthesis" ("\u2026and emailed you a brief"). At most one per task; never for anything that isn't time-sensitive prep.
 CALENDAR INVITES: create/update the event freely \u2014 but it lands on the user's calendar SILENTLY, with NO emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the user gets a one-click "Send invites" button that SHOWS exactly who will be invited before they confirm. You never send the invite; the user's click does, with the recipient list in plain view.
+LANGUAGE \u2014 REPLY IN THE THREAD'S LANGUAGE, ALWAYS. Detect the language the thread is written in (French, Spanish, German, Dutch, \u2026) and write your ENTIRE draft in THAT language \u2014 subject line included. A French thread gets a French reply, never an English one; if the two sides write in different languages, match the language the OTHER person last wrote to the user in. Never switch a thread to English. Match their accents/diacritics and native phrasing too \u2014 a translated-sounding reply is as wrong as the wrong language.
 VOICE \u2014 SOUND LIKE THE USER, NOT AN AI. For a REPLY, the THREAD is the source of truth: FIRST reread the ENTIRE thread you're replying to and mirror ITS conventions \u2014 the register the user (and the other side) already use there, the greeting/sign-off used IN THAT THREAD (often none mid-thread), its typical message length, its formality. Your draft must read as the natural NEXT message of that exact thread. Only when the thread has no messages from the user (or it's a fresh email) fall back to their broader style: READ 2-3 of their OWN sent emails (search "in:sent", ideally to the same recipient) and copy their ACTUAL writing mechanics:
-- CAPITALIZATION: if they write in lowercase ("hey, sounds good"), you write in lowercase. If they use proper caps, so do you.
+- FORMALITY FIRST \u2014 THE THREAD SETS THE REGISTER, NOT the user's casual habits. If the thread is formal (professional outreach, someone senior/unknown, an institution, full sentences, proper greetings/sign-offs, vous in French), write a FORMAL reply \u2014 proper capitalization, complete sentences, a fitting greeting and sign-off \u2014 EVEN IF the user writes lowercase and casual in their personal mail. Only mirror the casual/lowercase style when the thread ITSELF is already casual. When unsure, err toward the thread's formality; a too-casual reply to a formal thread is a real mistake. A remembered "writes lowercase" preference does NOT apply to formal threads.
+- CAPITALIZATION: match the THREAD \u2014 lowercase only if the thread is casual and lowercase; formal threads get proper capitalization.
 - SENTENCE LENGTH & TOTAL LENGTH: if their emails are 2 short lines, yours are 2 short lines \u2014 never longer than they'd write.
-- THEIR WORDS: reuse their habitual greeting ("hey"/"hi"/none), sign-off ("thanks!"/"best"/just their name), filler words, contractions, and punctuation habits (do they use exclamation marks? ellipses? no periods at line ends?).
-- FORMALITY: match the register they use with THIS recipient specifically, if you can see prior thread messages.
+- THEIR WORDS: reuse the greeting/sign-off REGISTER the thread uses (formal: "Dear \u2026/Bonjour \u2026/Best regards"; casual: "hey"/"thanks!"/none), plus their contractions and punctuation habits \u2014 but always within the thread's formality.
 AVOID AI tells \u2014 no "I hope this email finds you well", "I wanted to reach out", "Please don't hesitate", "Thank you for your understanding", em-dash-heavy corporate phrasing, or stiff over-formality. Nudge a touch more polished only for someone senior or unknown. If you pick up a durable detail of their style (e.g. "writes lowercase, signs off 'cheers'"), "remember" it as a preference so future drafts skip the lookup.
 BE SPECIFIC \u2014 INCLUDE THE CONCRETE DETAILS: a draft must contain the real specifics the recipient needs, never vague placeholders. If it's about travel, include the actual FLIGHT TIMES / dates / flight numbers / arrival + departure; if about a meeting, the exact date, time + timezone; if about a place, the address. Pull these from their calendar, the itinerary (Drive/Sheets), the thread, or web_search \u2014 look them up, don't leave "[time]" or omit them. A draft missing the key time/date/number is not finished.
 ACT \u2014 DON'T JUST PLAN (most important rule): if something can be done with your tools, DO IT THIS RUN \u2014 call the tool, draft the reply, create the doc, add the event. NEVER return a step that DESCRIBES an action you could take yourself; take it now and report it in "synthesis". The ONLY things that belong in "steps" are ones that genuinely need the USER \u2014 judged by the "OTTO vs YOU" test below. If a tool errors, try another way or say what blocked you \u2014 do not silently downgrade a doable action to a step. A run that hands back a to-do list of things you could have done yourself is a FAILURE.
@@ -909,6 +804,14 @@ var RUN_TOOLS = [
         summary: { type: "string", description: "gcal: the event title (for in-app review)" },
         when: { type: "string", description: "gcal: the event date/time (for in-app review)" }
       }, required: ["app", "label"] }
+    },
+    follow_ups: {
+      type: "array",
+      description: "DISTINCT NEW obligations you discovered while working that deserve their OWN full task \u2014 NOT a step of this one. Use this when a 'step' is really a separate, substantial action Otto could plan and execute on its own (e.g. this task was 'reply to X', but you found the user should also 'reach out to Y association' \u2014 that's a whole new outreach, not a sub-step). Each becomes its own task Otto will work next. Use SPARINGLY: 0-2, only for genuinely separate substantial actions; a one-click send or a quick human decision is a step/sendable, NOT a follow-up. Never restate THIS task.",
+      items: { type: "object", properties: {
+        title: { type: "string", description: "the new task as a specific imperative naming who+what, \u2264 11 words, e.g. 'Reach out to Fleur de Bitume association at HEC'" },
+        why: { type: "string", description: "one short clause: why it matters / what triggered it" }
+      }, required: ["title", "why"] }
     }
   }, required: ["context", "synthesis", "steps"] } }
 ];
@@ -973,7 +876,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
       const lastRoundHint = i === MAX - 1 ? "You must call submit now with the final result. Do not answer with prose." : "";
       const base = trimOldToolResults(messages);
       const apiMessages = lastRoundHint ? [...base, { role: "user", content: lastRoundHint }] : base;
-      const res = await retryRequest2(() => client2.chat.completions.create({
+      const res = await retryRequest(() => client2.chat.completions.create({
         model: actualModel,
         max_tokens: 2500,
         messages: [
@@ -1157,6 +1060,7 @@ function finalize(out, fallbackText, profileUpdates) {
   if (!steps.length && !sendables.length && links.length) {
     for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
   }
+  const followUps = (Array.isArray(out?.follow_ups) ? out.follow_ups : Array.isArray(out?.followUps) ? out.followUps : []).map((f) => ({ title: String(f?.title || "").trim().slice(0, 90), why: String(f?.why || "").trim().slice(0, 200) })).filter((f) => f.title.length >= 4).slice(0, 2);
   return {
     context: brief(String(out?.context || ""), 2, 380),
     // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
@@ -1166,7 +1070,8 @@ function finalize(out, fallbackText, profileUpdates) {
     steps,
     links,
     sendables,
-    profileUpdates
+    profileUpdates,
+    ...followUps.length ? { followUps } : {}
   };
 }
 function clamp01(n) {
@@ -1502,6 +1407,8 @@ var CATALOG = [
 ];
 var TOOLKIT_OF = (app2) => CATALOG.find((c) => c.key === app2.toLowerCase())?.toolkit ?? app2.toUpperCase();
 var norm = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+var MULTI_APPS = /* @__PURE__ */ new Set(["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"]);
+var SOURCE_TOOLKIT = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE" };
 var logoFor = (toolkit) => `https://logos.composio.dev/api/${String(toolkit).toLowerCase()}`;
 function integrationsReady() {
   return !!process.env.COMPOSIO_API_KEY;
@@ -1626,7 +1533,7 @@ async function resolveAuthConfigId(toolkit) {
 }
 async function initiateConnection(app2, userId, callbackUrl) {
   const authConfigId = await resolveAuthConfigId(TOOLKIT_OF(app2));
-  const multi = app2 === "gmail";
+  const multi = MULTI_APPS.has(app2);
   if (!multi) await disconnect(app2, userId).catch(() => {
   });
   const req = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl, ...multi ? { allowMultiple: true } : {} });
@@ -1649,6 +1556,33 @@ async function getAllConnectionStatuses(userId, apps, connIdByApp = {}) {
     return Object.fromEntries(apps.map((a) => [a, false]));
   }
 }
+var DRIVE_ABOUT = { action: "GOOGLEDRIVE_GET_ABOUT", args: { fields: "user" }, pick: (r) => r?.user?.emailAddress };
+var EMAIL_PROBE = {
+  gmail: { action: "GMAIL_GET_PROFILE", args: {}, pick: (r) => r?.emailAddress || r?.email },
+  googledrive: DRIVE_ABOUT,
+  // Docs/Sheets/Slides carry the Drive scope, so the Drive "about" call resolves their email too (Composio
+  // runs it against their own connected account id).
+  googledocs: DRIVE_ABOUT,
+  googlesheets: DRIVE_ABOUT,
+  googleslides: DRIVE_ABOUT,
+  googlecalendar: { action: "GOOGLECALENDAR_GET_CALENDAR_PROFILE", args: {}, pick: (r) => r?.id },
+  // Non-Google: show the account's username/handle where a cheap "who am I" read exists.
+  github: { action: "GITHUB_GET_THE_AUTHENTICATED_USER", args: {}, pick: (r) => r?.login || r?.email },
+  slack: { action: "SLACK_TEST_AUTHENTICATION", args: {}, pick: (r) => r?.user || r?.email }
+};
+async function resolveAccountEmail(userId, app2, accountId) {
+  const probe = EMAIL_PROBE[app2];
+  if (!probe) return void 0;
+  try {
+    const r = await sdk().tools.execute(probe.action, { userId, arguments: probe.args, dangerouslySkipVersionCheck: true, connectedAccountId: accountId });
+    const data = r?.data ?? r;
+    const email = probe.pick(data);
+    return typeof email === "string" && /@/.test(email) ? email : void 0;
+  } catch (e) {
+    console.warn(`[integrations] email resolve failed (${app2}):`, e?.message ?? e);
+    return void 0;
+  }
+}
 async function getConnectedAccounts(userId, app2, resolveEmails = false) {
   try {
     const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
@@ -1660,14 +1594,9 @@ async function getConnectedAccounts(userId, app2, resolveEmails = false) {
       toolkit: acctToolkit(i),
       status: i?.status || i?.connectionStatus || i?.state || "ACTIVE"
     })).filter((a) => a.id);
-    if (resolveEmails && app2 === "gmail") {
+    if (resolveEmails) {
       await Promise.all(accounts.filter((a) => !a.email).map(async (a) => {
-        try {
-          const prof = await readAction(userId, "GMAIL_GET_PROFILE", {}, a.id);
-          a.email = prof?.emailAddress || prof?.email || prof?.response_data?.emailAddress || a.email;
-        } catch (e) {
-          console.warn("[integrations] gmail email resolve failed:", e?.message ?? e);
-        }
+        a.email = await resolveAccountEmail(userId, app2, a.id);
       }));
     }
     return accounts;
@@ -2019,8 +1948,9 @@ async function verifyTaskArtifacts(userId, t) {
 }
 async function getAgentTools(userId, opts) {
   if (!integrationsReady() || !userId) return EMPTY;
-  const gmailAccountId = opts?.gmailAccountId;
-  const cacheKey = gmailAccountId ? `${userId}::gmail:${gmailAccountId}` : userId;
+  const routeToolkit = opts?.accountId && opts.accountApp ? SOURCE_TOOLKIT[opts.accountApp] || norm(TOOLKIT_OF(opts.accountApp)) : "";
+  const routeAccountId = routeToolkit ? opts?.accountId : void 0;
+  const cacheKey = routeAccountId ? `${userId}::${routeToolkit}:${routeAccountId}` : userId;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
   const connected = await listConnectedToolkits(userId);
@@ -2083,7 +2013,7 @@ async function getAgentTools(userId, opts) {
       args = { ...args, send_updates: "none" };
     }
     try {
-      return await execute(action, userId, args || {}, /^GMAIL_/.test(action) ? gmailAccountId : void 0);
+      return await execute(action, userId, args || {}, routeAccountId && action.toUpperCase().startsWith(routeToolkit + "_") ? routeAccountId : void 0);
     } catch (e) {
       return `Tool error (${action}): ${e?.message ?? e}`;
     }
@@ -2158,7 +2088,7 @@ function gmailToItems(data, label, account) {
     };
   }).filter((x) => !!x);
 }
-function calendarToItems(data, now = Date.now()) {
+function calendarToItems(data, now = Date.now(), account) {
   const evs = data?.items || data?.events || data?.data?.items || (Array.isArray(data) ? data : []);
   return (evs || []).slice(0, 25).map((e) => {
     const id = String(e?.id ?? e?.eventId ?? "").trim();
@@ -2175,11 +2105,13 @@ function calendarToItems(data, now = Date.now()) {
       snippet: `${start}${e?.location ? ` @ ${e.location}` : ""}${e?.description ? ` \u2014 ${String(e.description).replace(/\s+/g, " ").slice(0, 140)}` : ""}`,
       sender: String(e?.organizer?.email ?? "").slice(0, 120),
       timestamp: String(start),
-      labels: ["event"]
+      labels: ["event"],
+      accountId: account?.id,
+      accountEmail: account?.email
     };
   }).filter((x) => !!x);
 }
-function driveToItems(data) {
+function driveToItems(data, account) {
   const files = data?.files || data?.items || data?.data?.files || (Array.isArray(data) ? data : []);
   return (files || []).slice(0, 15).map((f) => {
     const id = String(f?.id ?? f?.fileId ?? "").trim();
@@ -2194,7 +2126,9 @@ function driveToItems(data) {
       snippet: `${f?.mimeType ? String(f.mimeType).replace("application/vnd.google-apps.", "") : "file"}${modifiedBy ? ` \u2014 last modified by ${modifiedBy}` : ""}${f?.sharedWithMeTime ? ` \u2014 shared with you ${f.sharedWithMeTime}` : ""}`,
       sender: modifiedBy.slice(0, 120),
       timestamp: String(f?.modifiedTime ?? f?.sharedWithMeTime ?? ""),
-      labels: [f?.sharedWithMeTime ? "shared" : "modified"]
+      labels: [f?.sharedWithMeTime ? "shared" : "modified"],
+      accountId: account?.id,
+      accountEmail: account?.email
     };
   }).filter((x) => !!x);
 }
@@ -2229,12 +2163,15 @@ async function discoverSourceItems(userEmail) {
     } catch {
     }
   };
-  let gmailAccounts = [{}];
-  try {
-    const accs = await getConnectedAccounts(userEmail, "gmail");
-    if (accs.length > 1) gmailAccounts = accs.map((a) => ({ id: a.id, email: a.email }));
-  } catch {
-  }
+  const accountsFor = async (app2) => {
+    try {
+      const a = await getConnectedAccounts(userEmail, app2);
+      return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}];
+    } catch {
+      return [{}];
+    }
+  };
+  const [gmailAccounts, calAccounts, driveAccounts] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive")]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social",
@@ -2245,30 +2182,31 @@ async function discoverSourceItems(userEmail) {
       max_results: 15
     }, acc.id), "sent", acc))
   ]);
+  const calGrabs = calAccounts.map((acc) => grab(async () => {
+    const now = /* @__PURE__ */ new Date();
+    const week = new Date(now.getTime() + 7 * 24 * 3600 * 1e3);
+    return calendarToItems(await readAction(userEmail, "GOOGLECALENDAR_EVENTS_LIST", {
+      timeMin: now.toISOString(),
+      timeMax: week.toISOString(),
+      maxResults: 20,
+      singleEvents: true,
+      orderBy: "startTime"
+    }, acc.id), Date.now(), acc);
+  }));
+  const driveGrabs = driveAccounts.map((acc) => grab(async () => {
+    const since = new Date(Date.now() - 7 * 24 * 3600 * 1e3).toISOString().split(".")[0];
+    const files = driveToItems(await readAction(userEmail, "GOOGLEDRIVE_LIST_FILES", {
+      q: `(sharedWithMe = true or modifiedTime > '${since}') and trashed = false`,
+      orderBy: "modifiedTime desc",
+      pageSize: 15,
+      fields: "files(id,name,mimeType,webViewLink,modifiedTime,sharedWithMeTime,lastModifyingUser)"
+    }, acc.id), acc);
+    return files.filter((f) => f.labels.includes("shared") || f.sender && !f.sender.toLowerCase().includes(userEmail.split("@")[0].toLowerCase()));
+  }));
   await Promise.all([
     ...gmailGrabs,
-    grab(async () => {
-      const now = /* @__PURE__ */ new Date();
-      const week = new Date(now.getTime() + 7 * 24 * 3600 * 1e3);
-      return calendarToItems(await readAction(userEmail, "GOOGLECALENDAR_EVENTS_LIST", {
-        timeMin: now.toISOString(),
-        timeMax: week.toISOString(),
-        maxResults: 20,
-        singleEvents: true,
-        orderBy: "startTime"
-      }));
-    }),
-    // Drive: recent files OTHERS shared/touched — docs waiting on the user that never arrive by email.
-    grab(async () => {
-      const since = new Date(Date.now() - 7 * 24 * 3600 * 1e3).toISOString().split(".")[0];
-      const files = driveToItems(await readAction(userEmail, "GOOGLEDRIVE_LIST_FILES", {
-        q: `(sharedWithMe = true or modifiedTime > '${since}') and trashed = false`,
-        orderBy: "modifiedTime desc",
-        pageSize: 15,
-        fields: "files(id,name,mimeType,webViewLink,modifiedTime,sharedWithMeTime,lastModifyingUser)"
-      }));
-      return files.filter((f) => f.labels.includes("shared") || f.sender && !f.sender.toLowerCase().includes(userEmail.split("@")[0].toLowerCase()));
-    }),
+    ...calGrabs,
+    ...driveGrabs,
     // GitHub (if connected): things waiting on the user — open issues assigned to them, PRs where their
     // review was requested. Both fail silently for accounts without GitHub.
     grab(async () => githubToItems(await readAction(userEmail, "GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER", {
@@ -2508,6 +2446,8 @@ function mergeProfileStates(p1, p2) {
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? p2.lastSweepAt ?? p1.lastSweepAt : p1.lastSweepAt ?? p2.lastSweepAt,
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? p2.lastForcedAt ?? p1.lastForcedAt : p1.lastForcedAt ?? p2.lastForcedAt,
+    genPerDay: p2.genPerDay ?? p1.genPerDay,
+    timezone: p2.timezone ?? p1.timezone,
     // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
     // p2's explicit `undefined` keys from normalizeProfile — the bug that silently dropped workingHours).
     workingHours: p2.workingHours ?? p1.workingHours,
@@ -2517,12 +2457,20 @@ function mergeProfileStates(p1, p2) {
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
-    usage: p1.usage || p2.usage ? {
-      in: Math.max(p1.usage?.in || 0, p2.usage?.in || 0),
-      out: Math.max(p1.usage?.out || 0, p2.usage?.out || 0),
-      runs: Math.max(p1.usage?.runs || 0, p2.usage?.runs || 0),
-      since: [p1.usage?.since, p2.usage?.since].filter(Boolean).sort()[0] || (/* @__PURE__ */ new Date()).toISOString()
-    } : void 0
+    // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.
+    usage: p1.usage || p2.usage ? (() => {
+      const mk = [p1.usage?.monthKey, p2.usage?.monthKey].filter(Boolean).sort().pop();
+      const monthOf = (u, field = "monthIn") => u?.monthKey === mk ? u?.[field] || 0 : 0;
+      return {
+        in: Math.max(p1.usage?.in || 0, p2.usage?.in || 0),
+        out: Math.max(p1.usage?.out || 0, p2.usage?.out || 0),
+        runs: Math.max(p1.usage?.runs || 0, p2.usage?.runs || 0),
+        since: [p1.usage?.since, p2.usage?.since].filter(Boolean).sort()[0] || (/* @__PURE__ */ new Date()).toISOString(),
+        monthKey: mk,
+        monthIn: Math.max(monthOf(p1.usage, "monthIn"), monthOf(p2.usage, "monthIn")),
+        monthOut: Math.max(monthOf(p1.usage, "monthOut"), monthOf(p2.usage, "monthOut"))
+      };
+    })() : void 0
   };
 }
 var MAX_NEW_PER_SWEEP = 8;
@@ -2552,7 +2500,7 @@ function localDayOf(iso, timezone) {
 }
 function forcedDueToday(profile, now = /* @__PURE__ */ new Date()) {
   if (!profile.lastForcedAt) return true;
-  const tz = profile.workingHours?.timezone;
+  const tz = tzOf(profile);
   return localDayOf(profile.lastForcedAt, tz) !== localDayOf(now.toISOString(), tz);
 }
 async function generate(existing, profile, extras, userEmail) {
@@ -2720,6 +2668,24 @@ async function runById(list, id, profile, extras, revision) {
     task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out));
     task.lastRunTokens = out.tokens;
     addUsage(profile, out.tokens);
+    for (const f of out.followUps || []) {
+      if (!f.title || list.some((x) => !isHandled(x.status) && nearDup(x.title, f.title))) continue;
+      const e = eisenhower(0.5, 0.6);
+      list.push({
+        id: randomUUID(),
+        title: f.title.slice(0, 120),
+        why: f.why || `Follow-up from "${task.title}"`,
+        source: task.source,
+        risk: "low",
+        urgency: 0.5,
+        importance: 0.6,
+        quadrant: e.quadrant,
+        score: e.score,
+        status: "ready",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        sourceAccountId: task.sourceAccountId
+      });
+    }
     task.status = "needs_review";
     task.lastError = void 0;
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -2793,8 +2759,17 @@ function localDay(iso, timezone) {
 }
 function sweepDueForDay(lastSweepAt, profile, now = /* @__PURE__ */ new Date()) {
   if (!lastSweepAt) return true;
-  const tz = profile.workingHours?.timezone;
+  const tz = tzOf(profile);
   return localDay(lastSweepAt, tz) !== localDay(now, tz);
+}
+function genIntervalMs(profile) {
+  const perDay = Math.min(4, Math.max(1, Math.round(Number(profile.genPerDay) || 1)));
+  return Math.floor(864e5 / perDay);
+}
+function sweepDue(profile, now = /* @__PURE__ */ new Date()) {
+  if (sweepDueForDay(profile.lastSweepAt, profile, now)) return true;
+  const last = Date.parse(profile.lastSweepAt || "") || 0;
+  return now.getTime() - last >= genIntervalMs(profile);
 }
 async function loadUser(email) {
   const st = await loadState(email);
@@ -2810,6 +2785,7 @@ async function processSweep(job) {
   const email = job.user_email;
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
+  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   const extras = await getAgentTools(email);
   if (!extras?.tools?.length) return "skipped: nothing connected";
   const before = new Set(list.map((t) => t.id));
@@ -2852,6 +2828,7 @@ async function processExecuteTask(job) {
   const taskId = String(job.task_id || "");
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
+  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   const t = list.find((x) => x.id === taskId);
   if (!t) return "skipped: task not found";
   const c = canonStatus(t.status);
@@ -2859,8 +2836,9 @@ async function processExecuteTask(job) {
   if (c === "needs_review" && !job.input?.note) return "skipped: already executed";
   if (c === "failed_terminal" && !job.input?.manual) return "skipped: failed terminally \u2014 waiting for the user's Retry";
   await recordEvent(email, "run_started", { taskId, jobId: job.id, message: job.input?.note ? "Revising per your note" : "Reading context and doing the reversible work" });
-  const extras = await getAgentTools(email, t.sourceAccountId ? { gmailAccountId: t.sourceAccountId } : void 0);
+  const extras = await getAgentTools(email, t.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : void 0);
   t.autoRan = true;
+  const idsBefore = new Set(list.map((x) => x.id));
   try {
     const updated = await runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : void 0);
     if (updated && (updated.links?.length || updated.sendables?.length)) {
@@ -2870,6 +2848,11 @@ async function processExecuteTask(job) {
       else void recordEvent(email, "verified", { taskId, jobId: job.id, message: "Artifacts verified against the live account" });
     }
     await commitUser(email, profile, list);
+    const spawned = list.filter((x) => !idsBefore.has(x.id) && canonStatus(x.status) === "ready").slice(0, 2);
+    for (const s of spawned) {
+      await enqueueJob(email, "execute_task", s.id);
+      void recordEvent(email, "found", { taskId: s.id, jobId: job.id, message: `Follow-up from "${t.title.slice(0, 60)}"` });
+    }
     const done = updated?.steps?.length ? `${updated.steps.filter((s) => !s.done).length} step(s) need you` : "fully handled";
     const cost = updated?.lastRunTokens ? ` (${Math.round(updated.lastRunTokens.in / 1e3)}k tokens)` : "";
     await recordEvent(email, "run_succeeded", { taskId, jobId: job.id, message: (updated?.synthesis?.slice(0, 200) || done) + cost });
@@ -2890,6 +2873,7 @@ async function processExecuteStep(job) {
   const index = Number(job.input?.index);
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
+  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   if (!Number.isInteger(index)) return "skipped: bad step index";
   await recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
   const permTools = await getAgentToolsWithPermission(email).catch(() => void 0);
@@ -2902,61 +2886,6 @@ async function processExecuteStep(job) {
   await recordEvent(email, "step_done", { taskId, jobId: job.id, message: updated?.steps?.[index]?.text?.slice(0, 200) });
   return "step executed";
 }
-async function processEndOfDayReport(job) {
-  const email = job.user_email;
-  const { profile, list } = await loadUser(email);
-  if (profile.paused) return "skipped: AI paused";
-  const extras = await getAgentTools(email);
-  if (!extras?.selfBrief) return "skipped: Gmail not connected for report";
-  const completed = list.filter((t) => canonStatus(t.status) === "done").slice(-10);
-  const active = list.filter((t) => !isHandled(t.status)).slice(0, 15);
-  const highPriority = active.filter((t) => t.importance >= 0.7).slice(0, 5);
-  const today = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  let body = `End of day report \u2014 ${today}
-
-`;
-  if (completed.length) {
-    body += `\u2713 Completed today (${completed.length}):
-`;
-    for (const t of completed) {
-      body += `  \u2022 ${t.title}
-`;
-    }
-    body += "\n";
-  }
-  if (active.length) {
-    body += `\u{1F4CB} Still active (${active.length}):
-`;
-    for (const t of active.slice(0, 8)) {
-      const urgency = t.urgency >= 0.7 ? "\u{1F534}" : t.urgency >= 0.4 ? "\u{1F7E1}" : "\u{1F7E2}";
-      body += `  ${urgency} ${t.title}${t.when ? ` (${t.when})` : ""}
-`;
-    }
-    body += "\n";
-  }
-  if (highPriority.length) {
-    body += `\u26A1 High priority:
-`;
-    for (const t of highPriority) {
-      body += `  \u2022 ${t.title}${t.when ? ` \u2014 ${t.when}` : ""}
-`;
-    }
-    body += "\n";
-  }
-  body += `\u2014 Otto
-
-`;
-  body += `Open your dashboard to see the full list and take action.`;
-  const subject = `Otto daily report \u2014 ${completed.length} done, ${active.length} active`;
-  try {
-    const result = await extras.selfBrief(subject, body);
-    await recordEvent(email, "report_sent", { jobId: job.id, message: "End of day report emailed" });
-    return `report sent: ${result}`;
-  } catch (e) {
-    await recordEvent(email, "report_failed", { jobId: job.id, message: String(e?.message || e).slice(0, 200) });
-    throw e;
-  }
-}
 async function processJob(job) {
   switch (job.type) {
     case "sweep":
@@ -2968,8 +2897,6 @@ async function processJob(job) {
     // same processor; input.note carries the revision
     case "execute_step":
       return processExecuteStep(job);
-    case "end_of_day_report":
-      return processEndOfDayReport(job);
     default:
       return `skipped: unknown type ${job.type}`;
   }
@@ -3004,19 +2931,17 @@ async function enqueueAndDrain(email, type, taskId, input) {
   return await getJob(job.id, email) || job;
 }
 async function cronTick() {
-  const SWEEP_WINDOW_MS = 45 * 6e4;
   const emails = await listAccountEmails(50);
   let enqueued = 0;
   const now = /* @__PURE__ */ new Date();
-  const currentHour = now.getHours();
   for (const email of emails) {
     try {
       const { profile, list } = await loadUser(email);
       if (profile.paused) continue;
+      if (overMonthlyBudget(profile)) continue;
       const last = await getLatestJob(email, "sweep");
       const sweepActive = last && (last.status === "queued" || last.status === "running");
-      const windowElapsed = Date.now() - (Date.parse(last?.finished_at || last?.created_at || "") || 0) > SWEEP_WINDOW_MS;
-      if (!sweepActive && (sweepDueForDay(profile.lastSweepAt, profile, now) || windowElapsed)) {
+      if (!sweepActive && sweepDue(profile, now)) {
         await enqueueJob(email, "sweep");
         enqueued++;
       }
@@ -3024,21 +2949,6 @@ async function cronTick() {
       for (const t of ready) {
         await enqueueJob(email, "execute_task", t.id);
         enqueued++;
-      }
-      if (profile.workingHours) {
-        const [endHour] = profile.workingHours.end.split(":").map(Number);
-        const reportWindowEnd = (endHour + 1) % 24;
-        const inReportWindow = currentHour === endHour || reportWindowEnd < endHour && (currentHour >= endHour || currentHour < reportWindowEnd);
-        if (inReportWindow) {
-          const lastReport = await getLatestJob(email, "end_of_day_report");
-          const lastReportAt = Date.parse(lastReport?.finished_at || lastReport?.created_at || "") || 0;
-          const reportToday = lastReportAt && new Date(lastReportAt).toDateString() === now.toDateString();
-          const stillWorking = await countActiveJobs(email);
-          if (!reportToday && stillWorking === 0) {
-            await enqueueJob(email, "end_of_day_report");
-            enqueued++;
-          }
-        }
       }
     } catch (e) {
       console.warn(`[jobs] cron skip ${email}:`, e?.message || e);
@@ -3268,11 +3178,16 @@ app.get("/api/status", async (req, res) => {
     // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
     paused: !!req.session.profile?.paused,
-    highPriorityPeople: req.session.profile?.highPriorityPeople
+    highPriorityPeople: req.session.profile?.highPriorityPeople,
+    genPerDay: req.session.profile?.genPerDay,
+    timezone: req.session.profile?.timezone,
+    overBudget: overMonthlyBudget(req.session.profile)
   };
   res.json(s);
 });
 var isPaused = (req) => !!req.session.profile?.paused;
+var overBudget = (req) => overMonthlyBudget(req.session.profile);
+var BUDGET_MSG = "Otto's reached its monthly AI budget \u2014 it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
   const p = req.session.profile ||= emptyProfile();
   p.paused = req.body?.paused === true;
@@ -3304,6 +3219,10 @@ var CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1e3;
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to sweep for new tasks." });
+    return;
+  }
+  if (overBudget(req)) {
+    res.json({ tasks: req.session.tasks || [], note: "skipped: monthly AI budget reached" });
     return;
   }
   try {
@@ -3338,10 +3257,10 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
     res.status(400).json({ error: "title required" });
     return;
   }
-  const refined = aiReady() && !isPaused(req) ? await refineManualTask(title, req.session.profile) : null;
+  const refined = aiReady() && !isPaused(req) && !overBudget(req) ? await refineManualTask(title, req.session.profile) : null;
   req.session.tasks = addManual(req.session.tasks || [], title, refined);
   const added = req.session.tasks[0];
-  if (added && aiReady() && !isPaused(req) && !added.unrefined && canonStatus(added.status) === "ready") {
+  if (added && aiReady() && !isPaused(req) && !overBudget(req) && !added.unrefined && canonStatus(added.status) === "ready") {
     added.status = "queued";
     try {
       await enqueueJob(req.session.user, "execute_task", added.id);
@@ -3354,6 +3273,10 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to refine." });
+    return;
+  }
+  if (overBudget(req)) {
+    res.status(402).json({ error: BUDGET_MSG });
     return;
   }
   if (!aiReady()) {
@@ -3399,6 +3322,10 @@ app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res)
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to run tasks." });
     return;
   }
+  if (overBudget(req)) {
+    res.status(402).json({ error: BUDGET_MSG });
+    return;
+  }
   await runViaJob(req, res, "execute_task", { manual: true });
 });
 app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, res) => {
@@ -3409,6 +3336,10 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, r
   }
   if (isPaused(req)) {
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to revise tasks." });
+    return;
+  }
+  if (overBudget(req)) {
+    res.status(402).json({ error: BUDGET_MSG });
     return;
   }
   await runViaJob(req, res, "revise", { note });
@@ -3456,6 +3387,10 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
   if (isPaused(req)) {
     res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to run steps." });
+    return;
+  }
+  if (overBudget(req)) {
+    res.status(402).json({ error: BUDGET_MSG });
     return;
   }
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : void 0;
@@ -3571,34 +3506,22 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
 app.get("/api/usage", requireAuth, async (req, res) => {
   try {
     const state = await loadState(req.session.user);
-    const u = state.profile?.usage;
-    res.json(u ? { in: u.in, out: u.out, total: u.in + u.out, runs: u.runs, since: u.since } : { in: 0, out: 0, total: 0, runs: 0, since: null });
+    const p = state.profile;
+    const u = p?.usage;
+    res.json({
+      in: u?.in || 0,
+      out: u?.out || 0,
+      total: (u?.in || 0) + (u?.out || 0),
+      runs: u?.runs || 0,
+      since: u?.since || null,
+      // Month-to-date spend against the cap (both USD) — what the Settings view + budget banner read.
+      monthCostUsd: monthCostUsd(p),
+      budgetUsd: monthlyBudgetUsd(),
+      over: overMonthlyBudget(p),
+      renewsOn: budgetRenewsOn(p)
+    });
   } catch (e) {
     res.status(500).json({ error: e?.message || "usage failed" });
-  }
-});
-app.post("/api/chat", requireAuth, rateLimit(20, 6e4), async (req, res) => {
-  if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to chat." });
-    return;
-  }
-  try {
-    const messages = Array.isArray(req.body?.messages) ? req.body.messages.filter((m) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string").slice(-20) : [];
-    if (!messages.length) {
-      res.status(400).json({ error: "messages required" });
-      return;
-    }
-    const live = (req.session.tasks || []).filter((t) => t.status !== "done" && t.status !== "dismissed").slice(0, 25);
-    const tasksSummary = live.map((t) => `- ${t.title}${t.when ? ` (${t.when})` : ""}`).join("\n");
-    const out = await chat(messages, req.session.profile, tasksSummary);
-    if (out.profileUpdates?.length) {
-      const profile = req.session.profile ||= emptyProfile();
-      for (const u of out.profileUpdates) applyProfileUpdate(profile, u);
-      await commit(req);
-    }
-    res.json(out);
-  } catch (e) {
-    res.status(500).json({ error: e?.message || "chat failed" });
   }
 });
 var listKey = (c) => c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : "";
@@ -3634,6 +3557,10 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     p.responseStyle = value;
   } else if (key2 === "autoApprove" && Array.isArray(value)) {
     p.autoApprove = value.map(String);
+  } else if (key2 === "genPerDay") {
+    p.genPerDay = Math.min(4, Math.max(1, Math.round(Number(value) || 1)));
+  } else if (key2 === "timezone" && typeof value === "string" && isValidTz(value)) {
+    p.timezone = value;
   } else if (key2 === "highPriorityPeople" && Array.isArray(value)) {
     p.highPriorityPeople = value.map(String);
   } else if (key2 === "autoArchivePatterns" && Array.isArray(value)) {

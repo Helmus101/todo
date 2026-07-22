@@ -3,19 +3,47 @@
   <head>
     <meta charset="utf-8" />
     <style>
-      body { font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; width: 236px; padding: 16px; margin: 0; color: #0c0c0d; }
-      .head { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; }
-      .head img { width: 26px; height: 26px; display: block; }
-      .head h1 { font-size: 14px; font-weight: 700; margin: 0; }
-      .status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #1c7d4d; }
-      .dot { width: 9px; height: 9px; border-radius: 50%; background: #1c7d4d; flex: none; }
-      .hint { font-size: 11.5px; color: #9aa2b4; margin-top: 8px; line-height: 1.45; }
+      :root {
+        --ink: #1d1d1f; --ink-2: #6e6e73; --ink-3: #aeaeb2;
+        --accent: #2563eb; --accent-soft: rgba(37, 99, 235, 0.10);
+        --line: rgba(0, 0, 0, 0.08);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+        width: 260px; padding: 18px; color: var(--ink); background: #fff;
+        -webkit-font-smoothing: antialiased;
+      }
+      .head { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
+      .mark { width: 30px; height: 30px; border-radius: 8px; background: var(--accent-soft); color: var(--accent);
+        display: flex; align-items: center; justify-content: center; flex: none; }
+      .head h1 { font-size: 15px; font-weight: 680; letter-spacing: -0.01em; }
+      .status {
+        display: flex; align-items: center; gap: 9px; padding: 11px 12px;
+        background: var(--accent-soft); border-radius: 10px;
+      }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+      .status span { font-size: 13px; font-weight: 600; color: var(--accent); }
+      .hint { font-size: 11.5px; color: var(--ink-3); margin-top: 12px; line-height: 1.5; }
     </style>
   </head>
   <body>
-    <div class="head"><img src="icons/icon-48.png" alt="" /><h1>Otto Tabs</h1></div>
-    <div class="status"><span class="dot"></span><span id="status">Connected</span></div>
-    <div class="hint">Otto opens drafts, docs and pages here for you — into one “Otto” tab group.</div>
+    <div class="head">
+      <span class="mark">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="3.7" cy="6" r="1.85" fill="currentColor" />
+          <circle cx="3.7" cy="12" r="1.85" fill="currentColor" />
+          <circle cx="3.7" cy="18" r="1.85" fill="currentColor" />
+          <rect x="7.6" y="4.75" width="10.4" height="2.5" rx="1.25" fill="currentColor" />
+          <rect x="7.6" y="10.75" width="11.6" height="2.5" rx="1.25" fill="currentColor" />
+          <rect x="7.6" y="16.75" width="3.3" height="2.5" rx="1.25" fill="currentColor" />
+          <path d="M10 16 L13.7 19.7 L21.6 10.2" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <h1>Otto Tabs</h1>
+    </div>
+    <div class="status"><span class="dot"></span><span id="status">Active</span></div>
+    <div class="hint">Otto opens drafts, docs and pages for you — grouped into one “Otto” tab group, so it can work while you're away.</div>
     <script src="popup.js"></script>
   </body>
 </html>

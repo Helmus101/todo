@@ -6,13 +6,12 @@ import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, budgetRenewsOn } from "../shared/types.ts";
 import { aiReady, refineManualTask } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
-import { chat, type ChatTurn } from "./chat.ts";
 import { updateConfidence } from "./tasks.ts";
 
 declare module "express-session" {
@@ -50,8 +49,25 @@ const app = express();
 app.set("trust proxy", 1);
 // Liveness probe for the host platform — no auth, no session, no DB; just "the process is up".
 app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
+// Content-Security-Policy: scripts are self-only (the self-heal script is externalized, not inline);
+// styles allow 'unsafe-inline' for React style={{}} attributes; images allow the Composio logo CDN + data:.
+// On Vercel the static HTML is served by Vercel's layer (see vercel.json headers) — this covers the Express
+// (Docker/self-host) path and every API response.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https://logos.composio.dev",
+  "connect-src 'self'",
+  "font-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+].join("; ");
 // Security headers
 app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", CSP);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
@@ -138,7 +154,7 @@ const toolsFor = (req: express.Request) => integrations.getAgentTools(req.sessio
 const normEmail = (s: unknown) => String(s || "").trim().toLowerCase();
 const validEmail = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 
-app.post("/api/auth/signup", async (req, res) => {
+app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   if (!validEmail(email) || password.length < 6) { res.status(400).json({ error: "Enter a valid email and a password of at least 6 characters." }); return; }
@@ -150,7 +166,7 @@ app.post("/api/auth/signup", async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", rateLimit(10, 15 * 60_000), async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   const u = await getUser(email);
@@ -248,13 +264,19 @@ app.get("/api/status", async (req, res) => {
     cloud: cloudEnabled(),
     paused: !!req.session.profile?.paused,
     highPriorityPeople: req.session.profile?.highPriorityPeople,
+    genPerDay: req.session.profile?.genPerDay,
+    timezone: req.session.profile?.timezone,
+    overBudget: overMonthlyBudget(req.session.profile),
   };
   res.json(s);
 });
 
-// "Pause all AI usage" — the ONE toggle that stops generation, task runs, and chat. Enforced server-side
+// "Pause all AI usage" — the ONE toggle that stops generation and task runs. Enforced server-side
 // (isPaused, used below) so it holds even if a stale client tab tries to call one of those routes anyway.
 const isPaused = (req: express.Request): boolean => !!req.session.profile?.paused;
+// Monthly AI spend cap — the honest 402 an interactive route returns when the account is over budget.
+const overBudget = (req: express.Request): boolean => overMonthlyBudget(req.session.profile);
+const BUDGET_MSG = "Otto's reached its monthly AI budget — it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   p.paused = req.body?.paused === true;
@@ -294,6 +316,7 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
 const CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1000; // min gap between background sweeps
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to sweep for new tasks." }); return; }
+  if (overBudget(req)) { res.json({ tasks: req.session.tasks || [], note: "skipped: monthly AI budget reached" }); return; }
   try {
     const user = req.session.user!;
     const force = req.body?.force === true; // the manual Refresh button — always run a REAL sweep
@@ -324,14 +347,14 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   const title = String(req.body?.title || "").trim();
   if (!title) { res.status(400).json({ error: "title required" }); return; }
   // AI-refine the user's rough note into a crisp task (falls back to the raw text if refinement fails,
-  // or if AI usage is paused — the task still gets added, just unrefined).
-  const refined = aiReady() && !isPaused(req) ? await refineManualTask(title, req.session.profile) : null;
+  // or if AI usage is paused / over the monthly budget — the task still gets added, just unrefined).
+  const refined = aiReady() && !isPaused(req) && !overBudget(req) ? await refineManualTask(title, req.session.profile) : null;
   req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined);
   // AUTO-RUN: a manually-added task should just start working — no "Run" click needed. Queue it for
-  // execution (unless AI is off/paused or it went in unrefined) and mark it queued so the client's kick loop
-  // drains it. addManual unshifts, so the new task is at index 0.
+  // execution (unless AI is off/paused/over budget or it went in unrefined) and mark it queued so the
+  // client's kick loop drains it. addManual unshifts, so the new task is at index 0.
   const added = req.session.tasks[0];
-  if (added && aiReady() && !isPaused(req) && !added.unrefined && canonStatus(added.status) === "ready") {
+  if (added && aiReady() && !isPaused(req) && !overBudget(req) && !added.unrefined && canonStatus(added.status) === "ready") {
     added.status = "queued";
     try { await enqueueJob(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
   }
@@ -342,6 +365,7 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
 // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to refine." }); return; }
+  if (overBudget(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: "not found" }); return; }
@@ -381,6 +405,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
 // `manual: true` marks a deliberate user click, which is allowed to retry a terminally-failed task.
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run tasks." }); return; }
+  if (overBudget(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   await runViaJob(req, res, "execute_task", { manual: true });
 });
 
@@ -390,6 +415,7 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
   const note = String(req.body?.note || "").trim();
   if (!note) { res.status(400).json({ error: "note required" }); return; }
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to revise tasks." }); return; }
+  if (overBudget(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   await runViaJob(req, res, "revise", { note });
 });
 
@@ -442,6 +468,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
 // same as full runs, so it's durably locked and audited.
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run steps." }); return; }
+  if (overBudget(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
   await runViaJob(req, res, "execute_step", { index: Number(req.params.index), ...(answer ? { answer } : {}) });
 });
@@ -553,32 +580,14 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
 app.get("/api/usage", requireAuth, async (req, res) => {
   try {
     const state = await loadState(req.session.user!);
-    const u = state.profile?.usage;
-    res.json(u ? { in: u.in, out: u.out, total: u.in + u.out, runs: u.runs, since: u.since }
-              : { in: 0, out: 0, total: 0, runs: 0, since: null });
+    const p = state.profile;
+    const u = p?.usage;
+    res.json({
+      in: u?.in || 0, out: u?.out || 0, total: (u?.in || 0) + (u?.out || 0), runs: u?.runs || 0, since: u?.since || null,
+      // Month-to-date spend against the cap (both USD) — what the Settings view + budget banner read.
+      monthCostUsd: monthCostUsd(p), budgetUsd: monthlyBudgetUsd(), over: overMonthlyBudget(p), renewsOn: budgetRenewsOn(p),
+    });
   } catch (e: any) { res.status(500).json({ error: e?.message || "usage failed" }); }
-});
-
-// ── Chat (DeepSeek + web search, grounded in the user's profile + to-dos) ─────────
-app.post("/api/chat", requireAuth, rateLimit(20, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
-  try {
-    const messages: ChatTurn[] = Array.isArray(req.body?.messages)
-      ? req.body.messages.filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string").slice(-20)
-      : [];
-    if (!messages.length) { res.status(400).json({ error: "messages required" }); return; }
-    // Give the chat the user's live to-dos as context (titles + timeline only — concise).
-    const live = (req.session.tasks || []).filter((t) => t.status !== "done" && t.status !== "dismissed").slice(0, 25);
-    const tasksSummary = live.map((t) => `- ${t.title}${t.when ? ` (${t.when})` : ""}`).join("\n");
-    const out = await chat(messages, req.session.profile, tasksSummary);
-    // Chat is where users volunteer who they are — persist anything the assistant chose to remember.
-    if (out.profileUpdates?.length) {
-      const profile = (req.session.profile ||= emptyProfile());
-      for (const u of out.profileUpdates) tasks.applyProfileUpdate(profile, u);
-      await commit(req);
-    }
-    res.json(out);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "chat failed" }); }
 });
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
@@ -608,6 +617,10 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     p.responseStyle = value;
   } else if (key === "autoApprove" && Array.isArray(value)) {
     p.autoApprove = value.map(String);
+  } else if (key === "genPerDay") {
+    p.genPerDay = Math.min(4, Math.max(1, Math.round(Number(value) || 1)));
+  } else if (key === "timezone" && typeof value === "string" && isValidTz(value)) {
+    p.timezone = value;
   } else if (key === "highPriorityPeople" && Array.isArray(value)) {
     p.highPriorityPeople = value.map(String);
   } else if (key === "autoArchivePatterns" && Array.isArray(value)) {

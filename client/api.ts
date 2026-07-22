@@ -4,9 +4,6 @@ import { emptyProfile, normalizeProfile } from "../shared/types.ts";
 export interface IntegrationItem { key: string; name: string; blurb: string; category: string; logo: string; connected: boolean; accounts?: ConnectedAccount[]; }
 export interface ConnectedAccount { id: string; email?: string; toolkit: string; status: string; }
 export interface IntegrationsResp { ready: boolean; items: IntegrationItem[]; }
-export interface ChatSource { title: string; url: string; }
-export interface ChatMsg { role: "user" | "assistant"; content: string; }
-export interface ChatReply { reply: string; sources: ChatSource[]; via: string; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -75,7 +72,6 @@ export const api = {
   runStep: (id: string, index: number, answer?: string): Promise<WebTask> => post(`/api/tasks/${id}/step/${index}/run`, answer ? { answer } : undefined),
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
   sendDraft: (id: string, index: number): Promise<WebTask> => post(`/api/tasks/${id}/send/${index}`),
-  chat: (messages: ChatMsg[]): Promise<ChatReply> => post("/api/chat", { messages }),
   // Profile responses are normalized to a valid shape (and fall back to empty on a 401/odd body) so the
   // editor never receives a non-Profile object and crashes.
   profile: (): Promise<Profile> => req("/api/profile").then(j).then(normalizeProfile).catch(() => emptyProfile()),
@@ -87,7 +83,7 @@ export const api = {
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
-  usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null }> => req("/api/usage").then(j),
+  usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string }> => req("/api/usage").then(j),
   refine: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/refine`),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
   // Drain one queued job server-side and return the fresh task list + how many jobs remain active.

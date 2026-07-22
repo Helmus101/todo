@@ -38,6 +38,7 @@ function statusChip(t: WebTask, retrying?: boolean): { label: string; tone: "mut
 // Translate a sweep job's skip/failure line into user terms — an honest reason, never a fake all-clear.
 function sweepSkipMessage(note: string): string {
   if (/nothing connected/i.test(note)) return "No apps are connected for this account — connect Gmail in Settings so Otto has something to read.";
+  if (/budget reached/i.test(note)) return "Otto's reached its monthly AI budget — it resets on the 1st.";
   if (/paused/i.test(note)) return "AI is paused — resume it in Settings to sweep for new tasks.";
   return `Sweep didn't finish: ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}`;
 }
@@ -49,6 +50,11 @@ function subtitle(t: WebTask): string {
   if (c === "failed_retryable" || c === "failed_terminal") return t.lastError || "";
   if (c === "ready") return t.why;
   return "";
+}
+// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date.
+function fmtDay(iso: string): string {
+  const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 // Format a task's deadline: a raw ISO date/datetime → "Jul 27"; already-human text ("late July", "today") as-is.
 function fmtWhen(when: string): string {
@@ -88,7 +94,11 @@ const markDocsOpened = (urls: string[]) => {
 let sessionDocsOpened = 0;               // burst control: cap how many open within one session load
 const SESSION_DOC_CAP = 4;               // ceiling on auto-opened docs per session load
 const PER_TASK_DOC_CAP = 2;              // and per task
-const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") !== "0"; } catch { return true; } };
+// Auto-opening created docs is OFF by default — it needs the Tabs extension, so it's opt-in ("1" = on).
+const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") === "1"; } catch { return false; } };
+// Chrome Web Store listing URL — set this once the extension is published to flip the primary install
+// button from the self-hosted zip to a one-click "Add to Chrome". Empty until then.
+const CHROME_STORE_URL = "";
 
 /** Render context/synthesis as a clean bullet list (one bullet per line; leading -/•/* stripped). Full
  *  text always shown — never truncated. Falls back to a single line if there's just one. */
@@ -177,13 +187,16 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const [extOn, setExtOn] = useState(extPresent()); // is the Otto Tabs extension present? (it sets data-weave-ext)
-  const [introSeen, setIntroSeen] = useState(() => { try { return localStorage.getItem("otto-intro") === "1"; } catch { return false; } });
   const [onboard, setOnboard] = useState(() => { try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
   const [loadError, setLoadError] = useState(false); // backend unreachable after retries → show a retry screen
   const [reloadKey, setReloadKey] = useState(0);      // bump to re-attempt the status fetch
+  // AI budget (from the CLOUD-authoritative /api/usage) — drives the "budget reached" banner + renewal date,
+  // so it reflects usage racked up by background jobs, not just this session.
+  const [budget, setBudget] = useState<{ over: boolean; renewsOn: string } | null>(null);
+  const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
+  // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
-  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.setItem("otto-intro", "1"); } catch { /* ignore */ } setOnboard(false); setIntroSeen(true); };
-  const dismissIntro = () => { try { localStorage.setItem("otto-intro", "1"); } catch { /* ignore */ } setIntroSeen(true); };
+  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
   // The staggered card entrance runs ONCE on first paint; later list updates (a step ticked, a background
   // sweep folding in) must not replay the whole cascade — that's what made loads feel janky.
@@ -245,10 +258,12 @@ export function App() {
   // so a failed/timed-out sweep retries on the next trigger instead of silently losing its slot. Each
   // sweep is a cheap read-only DELTA ("what's new since the list was built"), which is what makes
   // watching all day affordable.
-  const SWEEP_EVERY_MS = 45 * 60_000;
+  // Cadence from the user's setting: 1–4 scans/day (default 1). 1/day → 24h between sweeps, 4/day → 6h.
+  const genPerDay = Math.min(4, Math.max(1, status?.genPerDay || 1));
+  const SWEEP_EVERY_MS = Math.floor(24 * 60 * 60_000 / genPerDay);
   const sweeping = useRef(false);
   const sweepIfDue = useCallback(async () => {
-    if (!connected || status?.paused || sweeping.current) return;
+    if (!connected || status?.paused || status?.overBudget || sweeping.current) return;
     try { if (Date.now() - Number(localStorage.getItem("otto-lastgen") || 0) < SWEEP_EVERY_MS) return; } catch { /* sweep anyway */ }
     sweeping.current = true;
     setScanning(true);
@@ -260,20 +275,20 @@ export function App() {
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
     } catch { /* marker stays unset — next focus/interval tick retries */ }
     finally { sweeping.current = false; setScanning(false); }
-  }, [connected, status?.paused]);
+  }, [connected, status?.paused, SWEEP_EVERY_MS]);
 
-  // Once Google is connected: load tasks + trigger the daily sweep (silent, in background).
+  // Once Google is connected: load tasks + budget, trigger the daily sweep (silent, in background).
   useEffect(() => {
     if (!connected) return;
-    void (async () => { await syncTasks(); void sweepIfDue(); })();
-  }, [connected, status?.aiReady, syncTasks, sweepIfDue]);
+    void (async () => { await syncTasks(); void loadBudget(); void sweepIfDue(); })();
+  }, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);
 
   // Returning to the tab re-syncs the list (tasks finished elsewhere appear WITHOUT a manual reload) and
   // sweeps again if the watch interval has passed — so Otto keeps watching throughout the day, and the
   // list is never stuck waiting for a tab-switch to show up.
   useEffect(() => {
     if (!connected) return;
-    const on = () => { if (!document.hidden) { void syncTasks(); void sweepIfDue(); } };
+    const on = () => { if (!document.hidden) { void syncTasks(); void loadBudget(); void sweepIfDue(); } };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
     const tick = setInterval(on, 15 * 60_000); // long-lived tab: keep watching without any user action
@@ -334,6 +349,7 @@ export function App() {
       else if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now.");
       else if (!fresh.length) setNote(`Swept your apps — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything actionable is already on your list"}.`);
       else setNote(`Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} queued to run` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`);
+      void loadBudget();
     }
     catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
     finally { setBusy(false); }
@@ -342,6 +358,19 @@ export function App() {
 
   // Signed in, the dashboard lives at /tasks. Redirect the bare "/" there (landing only shows signed-OUT).
   useEffect(() => { if (status?.loggedIn && route === "") navigate("tasks"); }, [status?.loggedIn, route]);
+
+  // Auto-capture the browser's timezone once it differs from what's stored — so all "local day" math on the
+  // server (sweep cadence, daily-minimum) is correct without ever asking the user. Fires only on a real change.
+  const tzSynced = useRef(false);
+  useEffect(() => {
+    if (!status?.loggedIn || tzSynced.current) return;
+    const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ""; } })();
+    if (tz && tz !== status.timezone) { tzSynced.current = true; void api.setProfilePreference("timezone", tz).then(loadStatus).catch(() => { tzSynced.current = false; }); }
+  }, [status?.loggedIn, status?.timezone, loadStatus]);
+
+  // Legal pages are PUBLIC — reachable logged-out or in, and even before status loads.
+  if (route === "privacy") return <LegalPage kind="privacy" />;
+  if (route === "terms") return <LegalPage kind="terms" />;
 
   if (!status) {
     if (loadError) return (
@@ -377,18 +406,13 @@ export function App() {
           <a className={`tab ${route === "settings" ? "active" : ""}`} href="/settings">Settings</a>
         </nav>
         <div className="spacer" />
-        {extOn
-          ? <span className="ext-chip" title="Otto Tabs extension is connected — pages open automatically">Tabs connected</span>
-          : <a className="ext-link" href="/otto-tabs-extension.zip" download title="Download the Otto Tabs extension, then load it unpacked at chrome://extensions (Developer mode) so created docs open automatically">Get the Tabs extension</a>}
         {(route === "" || route === "tasks" || route.startsWith("task/")) && status.googleConnected && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? "Finding…" : "Refresh"}</button>}
       </header>
 
       {onboard && <Onboarding onStatus={loadStatus} onDone={finishOnboard} />}
 
       {route === "settings" ? (
-        <SettingsPage status={status} onSignOut={signOut} onChanged={loadStatus} />
-      ) : route === "chat" ? (
-        <ChatPage />
+        <SettingsPage status={status} onSignOut={signOut} onChanged={loadStatus} extOn={extOn} />
       ) : !status.googleConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -411,13 +435,13 @@ export function App() {
               <button className="btn xs ghost" onClick={() => navigate("settings")}>Settings</button>
             </div>
           )}
-          {!introSeen && (
-            <div className="intro">
+          {!status.paused && (budget?.over ?? status.overBudget) && (
+            <div className="intro paused-banner">
               <div className="intro-body">
-                <div className="intro-title">How it works</div>
-                <p>Otto scans your apps daily and does what it safely can. You review & confirm. Hit Refresh anytime.</p>
+                <div className="intro-title">Monthly AI budget reached</div>
+                <p>Otto's paused new work — it renews {budget?.renewsOn ? fmtDay(budget.renewsOn) : "on the 1st"}. Your to-dos stay put.</p>
               </div>
-              <button className="btn xs ghost" onClick={dismissIntro}>Got it</button>
+              <button className="btn xs ghost" onClick={() => navigate("settings")}>Settings</button>
             </div>
           )}
           <AddTask onAdded={setTasks} />
@@ -429,8 +453,26 @@ export function App() {
             // Until the first server response, an empty list means "still loading", not "all clear" —
             // show the skeleton instead of flashing the empty state.
             if (shown.length === 0 && (busy || !loaded)) return <TaskSkeleton />;
-            if (shown.length === 0)
-              return <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}.`}</div>;
+            if (shown.length === 0) {
+              const who = status.name || firstName(status.user);
+              // First run (nothing ever completed) reads differently from a genuinely cleared list.
+              if (note) return <div className="empty">{note}</div>;
+              if (handled === 0) return (
+                <div className="empty-state">
+                  <div className="empty-mark"><Logo size={28} /></div>
+                  <h3>Otto is on watch{who ? `, ${who}` : ""}</h3>
+                  <p>It's reading your inbox, calendar and Drive. New tasks land here automatically — or scan right now.</p>
+                  <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? "Scanning…" : "Scan now"}</button>
+                </div>
+              );
+              return (
+                <div className="empty-state">
+                  <div className="empty-mark done"><span className="empty-check">✓</span></div>
+                  <h3>You're all clear{who ? `, ${who}` : ""}</h3>
+                  <p>Nothing needs you right now. Otto keeps watching and will surface anything new.</p>
+                </div>
+              );
+            }
             // No priority bands — the list is simply ranked most-important first (sortWithinQuadrant). One
             // clean list, no section headers.
             return <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => (
@@ -502,25 +544,36 @@ function TaskSkeleton() {
 
 /** A connect-Gmail call to action — shown on the dashboard until Gmail is linked (via Composio, in Settings). */
 function ConnectCard({ status }: { status: ConnectionStatus }) {
+  const who = status.name || firstName(status.user);
   return (
     <div className="connect-card">
-      <h2>{(status.name || firstName(status.user)) ? `Welcome, ${status.name || firstName(status.user)}` : "Welcome to Otto"}</h2>
-      <p>Connect Gmail to begin. Otto reads your apps and drafts your to-dos — it never sends without you.</p>
+      <div className="connect-mark"><Logo size={30} /></div>
+      <h2>{who ? `Welcome, ${who}` : "Welcome to Otto"}</h2>
+      <p>Connect Gmail and Otto gets to work — reading your apps and drafting your to-dos. It never sends anything without you.</p>
       {!status.googleConfigured && <div className="warn">Integrations aren't configured on the server (COMPOSIO_API_KEY).</div>}
       {!status.aiReady && <div className="warn">Server is missing DEEPSEEK_API_KEY — task generation is disabled.</div>}
-      <a className="btn primary big" href="/settings">Connect in Settings</a>
+      <a className="btn primary big" href="/settings">Connect Gmail</a>
     </div>
   );
 }
 
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
-function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void }) {
+function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void; extOn: boolean }) {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null } | null>(null);
+  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
+  // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
+  const [paused, setPausedLocal] = useState(status.paused);
+  const [genPerDay, setGenPerDay] = useState(Math.min(4, Math.max(1, status.genPerDay || 1)));
+  const [autoOpen, setAutoOpen] = useState(autoOpenDocsOn());
+  useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
+  useEffect(() => { setGenPerDay(Math.min(4, Math.max(1, status.genPerDay || 1))); }, [status.genPerDay]);
   useEffect(() => { void api.profile().then(setProfile); void api.usage().then(setUsage).catch(() => {}); }, []);
-  const fmtTok = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
+  const changeGen = (n: number) => { setGenPerDay(n); void api.setProfilePreference("genPerDay", n).then(() => onChanged()); };
+  const toggleAutoOpen = (v: boolean) => { setAutoOpen(v); try { localStorage.setItem("otto-autoopen-docs", v ? "1" : "0"); } catch { /* ignore */ } };
+  // Month-to-date AI spend vs. the cap — both computed server-side (USD, approximate; for visibility + the cap).
+  const fmtUsd = (n: number) => n <= 0 ? "$0" : n < 0.01 ? "< $0.01" : `$${n.toFixed(2)}`;
 
   return (
     <main className="settings-page">
@@ -529,7 +582,8 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
       <section className="settings-sec">
         <h3>Account</h3>
         <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? " · synced" : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>Sign out</button></div>
-        {usage && usage.total > 0 && <div className="modal-row"><span className="lbl">AI usage</span><span className="val">{fmtTok(usage.total)} tokens · {usage.runs} runs</span></div>}
+        {usage && <div className="modal-row"><span className="lbl">AI usage this month</span><span className="val" title={`${usage.runs} runs total`}>≈ {fmtUsd(usage.monthCostUsd)} of {fmtUsd(usage.budgetUsd)}{usage.over ? " · reached" : ""} · renews {fmtDay(usage.renewsOn)}</span></div>}
+        <div className="modal-row"><span className="lbl">Legal</span><span className="val"><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></span></div>
       </section>
 
       <section className="settings-sec">
@@ -540,14 +594,40 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
 
       <section className="settings-sec">
         <h3>Preferences</h3>
-        <label className="pref-row">
-          <input type="checkbox" checked={status.paused} onChange={(e) => { void api.setPaused(e.target.checked).then(() => onChanged()); }} />
-          <span className="pref-text"><b>Pause Otto</b><span className="settings-hint">Stops all AI. Your to-dos stay put.</span></span>
-        </label>
-        <label className="pref-row">
-          <input type="checkbox" defaultChecked={autoOpenDocsOn()} onChange={(e) => { try { localStorage.setItem("otto-autoopen-docs", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
-          <span className="pref-text"><b>Open created docs automatically</b><span className="settings-hint">Needs the Tabs extension.</span></span>
-        </label>
+        <div className="set-list">
+          <label className="set-row">
+            <span className="set-text"><b>Pause Otto</b><span className="settings-hint">Stops all AI. Your to-dos stay put.</span></span>
+            <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => { const v = e.target.checked; setPausedLocal(v); void api.setPaused(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
+          </label>
+          <div className="set-row">
+            <span className="set-text"><b>Scan for new tasks</b><span className="settings-hint">How often Otto checks your apps each day.</span></span>
+            <div className="seg" role="group" aria-label="Scans per day">
+              {[1, 2, 3, 4].map((n) => (
+                <button key={n} className={`seg-btn ${genPerDay === n ? "on" : ""}`} onClick={() => changeGen(n)}>{n}×</button>
+              ))}
+            </div>
+          </div>
+          <label className="set-row">
+            <span className="set-text"><b>Connect to Otto Tabs</b><span className="settings-hint">Lets Otto open pages for you automatically — drafts, docs, links — grouped into one tab group. Needs the free Tabs extension.</span></span>
+            <span className="switch"><input type="checkbox" checked={autoOpen} onChange={(e) => toggleAutoOpen(e.target.checked)} /><span className="switch-track" /></span>
+          </label>
+          {autoOpen && (
+            extOn
+              ? <div className="ext-panel ok"><span className="ext-chip">✓ Tabs extension connected</span><span className="settings-hint">Otto will open pages into an “Otto” tab group as it works.</span></div>
+              : <div className="ext-panel">
+                  <p className="settings-hint">Add the free Tabs extension so Otto can open pages for you. Two ways:</p>
+                  {CHROME_STORE_URL && <a className="btn xs primary ext-primary" href={CHROME_STORE_URL} target="_blank" rel="noreferrer">Add to Chrome ↗</a>}
+                  <div className="ext-how">
+                    <div className="ext-how-title">{CHROME_STORE_URL ? "Or install it manually" : "Install it in under a minute"}</div>
+                    <ol className="ext-steps">
+                      <li><a href="/otto-tabs-extension.zip" download>Download the extension</a> and unzip it.</li>
+                      <li>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b> (top-right).</li>
+                      <li>Click <b>Load unpacked</b> and pick the unzipped folder.</li>
+                    </ol>
+                  </div>
+                </div>
+          )}
+        </div>
       </section>
 
       <section className="settings-sec">
@@ -562,20 +642,23 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
 }
 
 
-/** Connected Gmail accounts (multi-account) — one row per inbox with its address + an individual Disconnect. */
-function GmailAccounts({ onChanged }: { onChanged?: () => void }) {
+// Google apps allow connecting multiple accounts (personal + work).
+const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
+
+/** Connected accounts for a multi-account app — one row per account with its address + an individual Disconnect. */
+function AppAccounts({ app, onChanged }: { app: string; onChanged?: () => void }) {
   const [accts, setAccts] = useState<ConnectedAccount[] | null>(null);
   const [busy, setBusy] = useState("");
-  const load = useCallback(async () => { try { setAccts((await api.integrationAccounts("gmail")).accounts); } catch { setAccts([]); } }, []);
+  const load = useCallback(async () => { try { setAccts((await api.integrationAccounts(app)).accounts); } catch { setAccts([]); } }, [app]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { const on = () => { if (!document.hidden) void load(); }; window.addEventListener("focus", on); return () => window.removeEventListener("focus", on); }, [load]);
-  const disc = async (id: string) => { setBusy(id); try { await api.disconnectAccount("gmail", id); await load(); onChanged?.(); } finally { setBusy(""); } };
+  const disc = async (id: string) => { setBusy(id); try { await api.disconnectAccount(app, id); await load(); onChanged?.(); } finally { setBusy(""); } };
   if (!accts?.length) return null;
   return (
     <div className="int-accounts">
-      {accts.map((a) => (
+      {accts.map((a, i) => (
         <div key={a.id} className="int-acct">
-          <span className="int-acct-email">{a.email || "Connected Gmail"}</span>
+          <span className="int-acct-email">{a.email || (accts.length > 1 ? `Account ${i + 1}` : "Connected")}</span>
           <button className="btn xs ghost" disabled={busy === a.id} onClick={() => void disc(a.id)}>{busy === a.id ? "…" : "Disconnect"}</button>
         </div>
       ))}
@@ -638,16 +721,15 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
                     <div className="int-name">{i.name}{i.connected && <span className="int-dot" title="Connected" />}</div>
                     <div className="int-blurb">{i.blurb}</div>
                   </div>
-                  {/* Gmail supports multiple accounts → always offer "Add account"; other apps toggle connect/disconnect. */}
-                  {i.key === "gmail" ? (
-                    <a className="btn xs" href="/integrations/gmail/connect" target="_blank" rel="noreferrer">{i.connected ? "Add account ↗" : "Connect ↗"}</a>
-                  ) : i.connected ? (
-                    <button className="btn xs ghost" disabled={busy === i.key} onClick={() => void disconnect(i.key)}>{busy === i.key ? "…" : "Disconnect"}</button>
-                  ) : (
+                  {/* Not connected → Connect. Connected Google apps → Add account (multi). Connected single
+                      apps → no button here; the account row below carries its identity + Disconnect. */}
+                  {!i.connected ? (
                     <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>
-                  )}
+                  ) : MULTI_ACCOUNT_APPS.includes(i.key) ? (
+                    <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Add account ↗</a>
+                  ) : null}
                 </div>
-                {i.key === "gmail" && i.connected && <GmailAccounts onChanged={load} />}
+                {i.connected && <AppAccounts app={i.key} onChanged={load} />}
               </Fragment>
             ))}
           </div>
@@ -657,9 +739,11 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
-/** First-run ONBOARDING for a brand-new account — a 3-step welcome overlay that explains Otto and walks the
- *  user through connecting their first apps (each connect opens in a new tab; we re-check on focus so a tile
- *  flips to ✓ when they come back). Shown once after sign-up; "Skip"/finish clears the otto-onboard flag. */
+/** First-run ONBOARDING for a brand-new account — the ONE place Otto is explained. A guided 4-step overlay:
+ *  welcome + name → how it works → connect first apps → done. Each connect opens in a new tab; we re-check
+ *  on focus so a tile flips to ✓ when the user comes back. Shown once after sign-up; finishing (or "Skip")
+ *  clears the otto-onboard flag. */
+const OB_STEPS = 4;
 function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => void }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
@@ -689,16 +773,17 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
     <div className="onboard-overlay" role="dialog" aria-modal="true">
       <div className="onboard-card">
         <button className="onboard-skip" onClick={onDone} aria-label="Skip onboarding">Skip</button>
-        <div className="onboard-brand"><Logo size={22} /> <span>Otto</span></div>
+        <div className="onboard-top">
+          <div className="onboard-brand"><Logo size={20} /> <span>Otto</span></div>
+          <div className="onboard-progress" aria-hidden="true">
+            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} className={d <= step ? "on" : ""} />)}
+          </div>
+        </div>
+
         {step === 0 && (
           <div className="onboard-step">
             <h2>Welcome to Otto</h2>
-            <p className="onboard-lead">A to-do list that does itself. Otto reads your apps, does the reversible work, and surfaces only what needs you.</p>
-            <ul className="onboard-points">
-              <li>Done for you — ready to review</li>
-              <li>Needs you — a decision, a send, a payment</li>
-              <li>Completed — checked off</li>
-            </ul>
+            <p className="onboard-lead">The to-do list that does itself. Otto reads your apps, does the reversible work, and surfaces only what needs you.</p>
             <label className="field onboard-name"><span>What should Otto call you?</span>
               <input className="addinput" placeholder="Your name" value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
@@ -706,10 +791,27 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>Get started</button></div>
           </div>
         )}
+
         {step === 1 && (
           <div className="onboard-step">
+            <h2>How Otto works</h2>
+            <p className="onboard-lead">Every day, Otto reads your inbox, calendar and Drive — then sorts everything into three simple states.</p>
+            <div className="ob-states">
+              <div className="ob-state"><span className="ob-dot done" /><div><b>Done for you</b><span>Drafts and docs, ready to review.</span></div></div>
+              <div className="ob-state"><span className="ob-dot need" /><div><b>Needs you</b><span>A decision, a send, or a payment — you confirm.</span></div></div>
+              <div className="ob-state"><span className="ob-dot check" /><div><b>Completed</b><span>Checked off and out of your way.</span></div></div>
+            </div>
+            <div className="onboard-actions onboard-actions-split">
+              <button className="btn ghost" onClick={() => setStep(0)}>Back</button>
+              <button className="btn primary big" onClick={() => setStep(2)}>Next</button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="onboard-step">
             <h2>Connect your apps</h2>
-            <p className="onboard-lead">Connect Gmail and Calendar. Each opens in a new tab — sign in, then come back.</p>
+            <p className="onboard-lead">This is what Otto reads to get ahead of your day. Each opens in a new tab — sign in, then come back.</p>
             {items === null ? <div className="muted small">Loading…</div> : (
               <div className="onboard-apps">
                 {essentials.map((i) => (
@@ -717,90 +819,30 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
                     <img className="int-logo" src={i.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                     <div className="onboard-app-name">{i.name}</div>
                     {i.connected
-                      ? <span className="onboard-app-ok">Connected</span>
+                      ? <span className="onboard-app-ok">✓ Connected</span>
                       : <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>}
                   </div>
                 ))}
               </div>
             )}
-            <p className="muted small">More apps in Settings.</p>
-            <div className="onboard-actions">
-              <button className="btn primary big" onClick={() => setStep(2)}>{connectedCount ? `Continue — ${connectedCount} connected` : "Skip for now"}</button>
+            <p className="muted small">You can add more apps any time in Settings.</p>
+            <div className="onboard-actions onboard-actions-split">
+              <button className="btn ghost" onClick={() => setStep(1)}>Back</button>
+              <button className="btn primary big" onClick={() => setStep(3)}>{connectedCount ? `Continue — ${connectedCount} connected` : "Skip for now"}</button>
             </div>
           </div>
         )}
-        {step === 2 && (
-          <div className="onboard-step">
-            <h2>You're all set</h2>
-            <p className="onboard-lead">{connectedCount ? "Otto will get to work. Anything needing you shows up as a task." : "Connect an app any time from Settings."}</p>
+
+        {step === 3 && (
+          <div className="onboard-step onboard-done">
+            <div className="onboard-done-mark"><Logo size={30} /></div>
+            <h2>You're all set{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
+            <p className="onboard-lead">{connectedCount ? "Otto's already getting to work. Anything that needs you will show up as a task." : "Connect an app any time from Settings, and Otto gets to work."}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>Go to my tasks</button></div>
           </div>
         )}
-        <div className="onboard-dots">{[0, 1, 2].map((d) => <span key={d} className={d === step ? "on" : ""} />)}</div>
       </div>
     </div>
-  );
-}
-
-/** Chat PAGE (route /chat): a DeepSeek-backed assistant that can search the web (DuckDuckGo fallback) and
- *  knows the user's profile + current to-dos. Sources render as clickable chips under each answer. */
-function ChatPage() {
-  const [msgs, setMsgs] = useState<{ role: "user" | "assistant"; content: string; sources?: { title: string; url: string }[]; via?: string }[]>([]);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
-
-  const send = async () => {
-    const q = text.trim();
-    if (!q || busy) return;
-    const next = [...msgs, { role: "user" as const, content: q }];
-    setMsgs(next); setText(""); setBusy(true);
-    try {
-      const r = await api.chat(next.map((m) => ({ role: m.role, content: m.content })));
-      setMsgs((prev) => [...prev, { role: "assistant", content: r.reply, sources: r.sources, via: r.via }]);
-    } catch (e: any) {
-      setMsgs((prev) => [...prev, { role: "assistant", content: `Sorry — ${e?.message || "something went wrong"}.` }]);
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <main className="chat-page">
-      <div className="chat-scroll">
-        {msgs.length === 0 && (
-          <div className="chat-empty">
-            <h2>Ask Otto anything.</h2>
-            <p>It can search the web for current facts, and it knows your profile and what's on your plate. Try "what's new with my projects?" or "summarize the latest on X".</p>
-          </div>
-        )}
-        {msgs.map((m, i) => (
-          <div key={i} className={`chat-msg ${m.role}`}>
-            <div className="chat-bubble">
-              {m.content.split("\n").map((line, j) => <p key={j}>{line || " "}</p>)}
-              {m.sources?.length ? (
-                <div className="chat-sources">
-                  {m.sources.map((s, k) => <a key={k} className="chat-src" href={s.url} target="_blank" rel="noreferrer" title={s.url}>{s.title}</a>)}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ))}
-        {busy && <div className="chat-msg assistant"><div className="chat-bubble muted">Thinking…</div></div>}
-        <div ref={endRef} />
-      </div>
-      <div className="chat-input">
-        <input
-          className="addinput"
-          placeholder="Message Otto…"
-          value={text}
-          disabled={busy}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
-          autoFocus
-        />
-        <button className="btn primary" disabled={busy || !text.trim()} onClick={() => void send()}>{busy ? "…" : "Send"}</button>
-      </div>
-    </main>
   );
 }
 
@@ -843,6 +885,7 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
             {mode === "signup" ? "Have an account? Log in" : "New here? Create an account"}
           </button>
           <a className="login-back" href="/">← Back to home</a>
+          <div className="login-legal">By continuing you agree to our <a href="/terms">Terms</a> & <a href="/privacy">Privacy Policy</a>.</div>
         </div>
       </main>
     </div>
@@ -908,6 +951,27 @@ function Landing() {
         </div>
       </main>
 
+      {/* Second product visual — the actual list, already handled. Shows the three states in context. */}
+      <section className="landing-sec">
+        <h2 className="reveal">Open Otto. It's already done.</h2>
+        <p className="lead reveal">No blank inbox to wade through. The replies are drafted, the docs are prepped — only the calls that need you are left.</p>
+        <div className="landing-tasks reveal" style={{ ["--d" as any]: "0.08s" }} aria-hidden="true">
+          <div className="lt-row"><span className="lt-dot need" /><div className="lt-text"><span className="lt-title">Reply to Sarah about the Q3 budget</span><span className="lt-sub">Draft ready in your voice</span></div><span className="lt-chip">Review</span></div>
+          <div className="lt-row"><span className="lt-dot done" /><div className="lt-text"><span className="lt-title">Prep the vendor comparison doc</span><span className="lt-sub">Built from three email threads</span></div><span className="lt-chip">Done for you</span></div>
+          <div className="lt-row"><span className="lt-dot need" /><div className="lt-text"><span className="lt-title">Approve the invoice from Northwind</span><span className="lt-sub">Needs your OK before it's paid</span></div><span className="lt-chip">Needs you</span></div>
+          <div className="lt-row is-done"><span className="lt-dot check">✓</span><div className="lt-text"><span className="lt-title">Send the signed contract to legal</span></div><span className="lt-when">2h ago</span></div>
+        </div>
+      </section>
+
+      <section className="landing-sec">
+        <h2 className="reveal">What you get back</h2>
+        <div className="outcomes">
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.0s" }}><span className="outcome-mark">✓</span><div><h3>Your inbox, triaged</h3><p>Otto reads every thread and surfaces only the handful that genuinely need you — the rest never reaches your list.</p></div></div>
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.1s" }}><span className="outcome-mark">✓</span><div><h3>Replies drafted in your voice</h3><p>It learns how you write from your sent mail, then drafts the response — matched to the thread, ready to send.</p></div></div>
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.2s" }}><span className="outcome-mark">✓</span><div><h3>Nothing sent without you</h3><p>Every draft waits for your OK. Otto never sends, posts, invites, or pays on its own — you're always the last step.</p></div></div>
+        </div>
+      </section>
+
       <section className="landing-sec">
         <h2 className="reveal">How it works</h2>
         <p className="lead reveal">Connect once. From then on Otto watches the things that actually need you — and quietly gets ahead of them.</p>
@@ -929,12 +993,131 @@ function Landing() {
 
       <section className="cta-band reveal">
         <h2>Stop managing your to-do list.</h2>
-        <p>Let Otto read your world and clear what it can — you just confirm the rest.</p>
+        <p>Connect Gmail and let Otto clear what it can — you just confirm the rest. Free to start, ready in a minute.</p>
         <a className="btn big cta-band-btn" href="/signup">Get started — it's free</a>
+        <div className="cta-fine">No credit card · Otto never sends without you</div>
       </section>
 
-      <div className="landing-foot">Otto — the to-do list that does itself.</div>
+      <div className="landing-foot">
+        <div>Otto — the to-do list that does itself.</div>
+        <nav className="foot-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
+      </div>
     </div>
+  );
+}
+
+// ── Legal pages (public) ──────────────────────────────────────────────────────
+// An accurate privacy policy is required for Google's OAuth verification (Gmail/Calendar/Drive are
+// sensitive/restricted scopes) and is basic legal table-stakes for publishing.
+const LEGAL_ENTITY = "Willem Tjong";
+const LEGAL_EMAIL = "tjong.willem@gmail.com";
+const LEGAL_JURISDICTION = "France";
+const LEGAL_UPDATED = "July 22, 2026";
+
+function LegalPage({ kind }: { kind: "privacy" | "terms" }) {
+  return (
+    <div className="landing legal-page">
+      <header className="landing-nav">
+        <a className="brand" href="/"><Logo size={22} /> Otto</a>
+        <nav className="landing-navlinks">
+          <a className="btn ghost" href="/privacy">Privacy</a>
+          <a className="btn ghost" href="/terms">Terms</a>
+        </nav>
+      </header>
+      <main className="legal">
+        {kind === "privacy" ? <PrivacyBody /> : <TermsBody />}
+        <p className="legal-meta">Last updated: {LEGAL_UPDATED} · Operated by {LEGAL_ENTITY} · Contact: {LEGAL_EMAIL}</p>
+        <a className="legal-back" href="/">← Back to Otto</a>
+      </main>
+    </div>
+  );
+}
+
+function PrivacyBody() {
+  return (
+    <>
+      <h1>Privacy Policy</h1>
+      <p>Otto ("we", "us") is a to-do assistant that reads the apps you connect and prepares work for you. This policy explains what we access, why, and your choices. Otto is operated by {LEGAL_ENTITY}.</p>
+
+      <h2>What we access</h2>
+      <p>Only the apps you explicitly connect, and only to do the work you asked for:</p>
+      <ul>
+        <li><b>Gmail</b> — to read recent threads and prepare draft replies. Otto creates drafts; it never sends, deletes, or modifies mail on its own.</li>
+        <li><b>Google Calendar</b> — to read events and prepare drafts of new events for your review.</li>
+        <li><b>Google Drive / Docs / Sheets / Slides</b> — to read relevant files and create or update documents it makes for you.</li>
+        <li><b>Other integrations you connect</b> — accessed only for the tasks they relate to.</li>
+      </ul>
+      <p>Otto performs <b>reversible</b> work autonomously (drafts, documents, research). Anything irreversible — sending an email, posting, inviting, deleting, or paying — is <b>never</b> done without your explicit confirmation.</p>
+
+      <h2>What we store</h2>
+      <ul>
+        <li>Your account email and a securely hashed password (we never store your password in plain text).</li>
+        <li>The tasks Otto generates and a profile of facts it learns to do better work (people, projects, preferences) — you can view and delete these any time in Settings.</li>
+        <li>Approximate AI-usage counts for showing your monthly usage.</li>
+      </ul>
+      <p>We do not sell your data, use it for advertising, or use your content to train foundation models.</p>
+
+      <h2>Service providers</h2>
+      <p>Otto shares data with the processors needed to run the service, under their terms:</p>
+      <ul>
+        <li><b>Composio</b> — brokers the OAuth connections to your apps and executes read/write actions on your behalf.</li>
+        <li><b>DeepSeek</b> — the AI model that reads context and drafts the work. Relevant content is sent to generate each task/draft.</li>
+        <li><b>Supabase</b> — stores your account, tasks, and profile.</li>
+        <li>Hosting/infrastructure providers that run the app.</li>
+      </ul>
+
+      <h2>Retention & deletion</h2>
+      <p>Your data is kept while your account is active. You can clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time, or request full account deletion by contacting us at {LEGAL_EMAIL}. Disconnecting an app immediately revokes Otto's access to it.</p>
+
+      <h2>Security</h2>
+      <p>Connections use OAuth (we never see your app passwords). Data is transmitted over HTTPS and access is scoped to your account. No system is perfectly secure, but we take reasonable measures to protect your information.</p>
+
+      <h2>Google API disclosure</h2>
+      <p>Otto's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+      <h2>Your rights & contact</h2>
+      <p>Depending on your jurisdiction ({LEGAL_JURISDICTION}), you may have rights to access, correct, or delete your data. To exercise them, contact {LEGAL_EMAIL}. We'll update this policy as the service evolves and note the date above.</p>
+    </>
+  );
+}
+
+function TermsBody() {
+  return (
+    <>
+      <h1>Terms of Service</h1>
+      <p>By using Otto, operated by {LEGAL_ENTITY}, you agree to these terms.</p>
+
+      <h2>The service</h2>
+      <p>Otto reads the apps you connect and prepares work — drafts, documents, and organized tasks. It performs reversible actions autonomously and asks for your confirmation before anything irreversible (sending, posting, inviting, deleting, paying). You are responsible for reviewing anything Otto prepares before you act on it.</p>
+
+      <h2>Your responsibilities</h2>
+      <ul>
+        <li>Keep your account credentials secure and provide accurate information.</li>
+        <li>Only connect accounts you are authorized to use.</li>
+        <li>Use Otto lawfully and not to send spam, harass, or violate others' rights or the connected apps' terms.</li>
+      </ul>
+
+      <h2>AI-generated content — review everything</h2>
+      <p>Otto uses AI, which can be inaccurate, incomplete, or wrong. Every draft, document, and suggestion is a starting point that <b>you must review and verify</b> before sending, saving, or relying on it. You are solely responsible for anything you choose to send, publish, or act upon. Otto only prepares reversible work and asks for your confirmation before anything irreversible; the decision — and its consequences — are yours.</p>
+
+      <h2>No warranty</h2>
+      <p>The service is provided "as is" and "as available", without warranties of any kind, whether express, implied, or statutory — including any implied warranties of merchantability, fitness for a particular purpose, accuracy, or non-infringement. We do not warrant that Otto will be uninterrupted, error-free, secure, or that its output will be correct or suitable for any purpose. You use it at your own risk.</p>
+
+      <h2>Limitation of liability</h2>
+      <p>To the fullest extent permitted by applicable law, {LEGAL_ENTITY} and anyone involved in providing Otto shall not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, nor for any loss of data, profits, revenue, goodwill, missed communications, mistaken sends, or business interruption, arising out of or relating to your use of (or inability to use) Otto or anything it prepares or does — even if advised of the possibility. To the fullest extent permitted by law, our total aggregate liability for all claims relating to the service will not exceed the greater of the amount you paid us in the 12 months before the claim, or €50. Nothing in these terms excludes liability that cannot be excluded under applicable law.</p>
+
+      <h2>Your data & your responsibility</h2>
+      <p>You are responsible for the accounts and content you connect and for ensuring you have the right to do so. You act as the controller of the personal data in your connected accounts; Otto processes it only to provide the service, as described in the Privacy Policy. You agree to indemnify and hold {LEGAL_ENTITY} harmless from any claims, losses, or expenses arising from your use of Otto, your content, or your breach of these terms or of any third party's rights or terms.</p>
+
+      <h2>Availability & changes</h2>
+      <p>Otto is an independent tool and is not endorsed by or affiliated with Google, or any other integrated provider. We may change, suspend, limit (including via a monthly AI budget), or discontinue any part of the service at any time without liability.</p>
+
+      <h2>Termination</h2>
+      <p>You may stop using Otto and delete your account at any time. We may suspend or terminate accounts that violate these terms or that create risk or legal exposure.</p>
+
+      <h2>Governing law & contact</h2>
+      <p>These terms are governed by the laws of {LEGAL_JURISDICTION}, without regard to conflict-of-laws rules, and the courts of {LEGAL_JURISDICTION} have jurisdiction, except where mandatory local consumer law provides otherwise. If any provision is held unenforceable, the rest remains in effect. Questions: {LEGAL_EMAIL}.</p>
+    </>
   );
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
-import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled } from "../shared/types.ts";
+import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates } from "./discover.ts";
@@ -238,6 +238,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
+    genPerDay: p2.genPerDay ?? p1.genPerDay,
+    timezone: p2.timezone ?? p1.timezone,
     // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
     // p2's explicit `undefined` keys from normalizeProfile — the bug that silently dropped workingHours).
     workingHours: p2.workingHours ?? p1.workingHours,
@@ -247,12 +249,20 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
-    usage: (p1.usage || p2.usage) ? {
-      in: Math.max(p1.usage?.in || 0, p2.usage?.in || 0),
-      out: Math.max(p1.usage?.out || 0, p2.usage?.out || 0),
-      runs: Math.max(p1.usage?.runs || 0, p2.usage?.runs || 0),
-      since: [p1.usage?.since, p2.usage?.since].filter(Boolean).sort()[0] || new Date().toISOString(),
-    } : undefined,
+    // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.
+    usage: (p1.usage || p2.usage) ? (() => {
+      const mk = [p1.usage?.monthKey, p2.usage?.monthKey].filter(Boolean).sort().pop();
+      const monthOf = (u?: Profile["usage"], field: "monthIn" | "monthOut" = "monthIn") => (u?.monthKey === mk ? (u?.[field] || 0) : 0);
+      return {
+        in: Math.max(p1.usage?.in || 0, p2.usage?.in || 0),
+        out: Math.max(p1.usage?.out || 0, p2.usage?.out || 0),
+        runs: Math.max(p1.usage?.runs || 0, p2.usage?.runs || 0),
+        since: [p1.usage?.since, p2.usage?.since].filter(Boolean).sort()[0] || new Date().toISOString(),
+        monthKey: mk,
+        monthIn: Math.max(monthOf(p1.usage, "monthIn"), monthOf(p2.usage, "monthIn")),
+        monthOut: Math.max(monthOf(p1.usage, "monthOut"), monthOf(p2.usage, "monthOut")),
+      };
+    })() : undefined,
   };
 }
 
@@ -306,7 +316,7 @@ function localDayOf(iso: string, timezone?: string): string {
 /** Have we NOT yet forced a daily-minimum task in the user's current local day? */
 function forcedDueToday(profile: Profile, now: Date = new Date()): boolean {
   if (!profile.lastForcedAt) return true;
-  const tz = profile.workingHours?.timezone;
+  const tz = tzOf(profile);
   return localDayOf(profile.lastForcedAt, tz) !== localDayOf(now.toISOString(), tz);
 }
 

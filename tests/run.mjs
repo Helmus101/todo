@@ -3,8 +3,8 @@ import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergePr
 import { parseGenerated, finalize } from "../server/claude.ts";
 import { isWriteGatedAction, ACTION_POLICIES, scopeTools } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch } from "../shared/types.ts";
-import { sweepDueForDay, localDay } from "../server/jobs.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, usageCostUsd, tzOf, isValidTz } from "../shared/types.ts";
+import { sweepDueForDay, localDay, genIntervalMs, sweepDue } from "../server/jobs.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -204,6 +204,49 @@ check("swept yesterday IS due", sweepDueForDay("2026-07-19T23:00:00Z", utcProfil
 // 2026-07-20T02:00Z is still Jul 19 in New York (22:00 EDT) — a "morning" sweep the next NY day is due.
 check("timezone day boundary respected", sweepDueForDay("2026-07-20T02:00:00Z", nyProfile, new Date("2026-07-20T13:00:00Z")));
 check("localDay in NY vs UTC differ across midnight", localDay("2026-07-20T02:00:00Z", "America/New_York") === "2026-07-19" && localDay("2026-07-20T02:00:00Z", "UTC") === "2026-07-20");
+
+// ── Sweep cadence (genPerDay 1–4) ─────────────────────────────────────────────
+section("sweep cadence");
+check("default cadence is once a day (24h)", genIntervalMs(utcProfile) === 86_400_000);
+check("4×/day cadence is 6h", genIntervalMs({ ...emptyProfile(), genPerDay: 4 }) === 21_600_000);
+check("genPerDay clamps above 4", genIntervalMs({ ...emptyProfile(), genPerDay: 9 }) === 21_600_000);
+check("genPerDay clamps below 1", genIntervalMs({ ...emptyProfile(), genPerDay: 0 }) === 86_400_000);
+// 1×/day: a sweep 2h ago on the SAME day is not due yet (interval not elapsed, day floor met).
+check("1×/day: not due 2h after a same-day sweep", !sweepDue({ ...utcProfile, genPerDay: 1, lastSweepAt: "2026-07-20T06:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
+// 4×/day: same 2h gap IS enough once >6h... 2h isn't, 7h is.
+check("4×/day: not due 2h after a sweep", !sweepDue({ ...utcProfile, genPerDay: 4, lastSweepAt: "2026-07-20T06:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
+check("4×/day: due 7h after a sweep", sweepDue({ ...utcProfile, genPerDay: 4, lastSweepAt: "2026-07-20T01:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
+
+// ── Timezone resolution ───────────────────────────────────────────────────────
+section("timezone");
+check("tzOf prefers profile.timezone", tzOf({ ...emptyProfile(), timezone: "Europe/Paris", workingHours: { start: "9", end: "18", timezone: "UTC" } }) === "Europe/Paris");
+check("tzOf falls back to workingHours", tzOf({ ...emptyProfile(), workingHours: { start: "9", end: "18", timezone: "America/New_York" } }) === "America/New_York");
+check("tzOf falls back to UTC", tzOf(emptyProfile()) === "UTC");
+check("isValidTz accepts a real zone", isValidTz("Europe/Paris"));
+check("isValidTz rejects junk", !isValidTz("Mars/Olympus"));
+
+// ── Monthly spend cap ─────────────────────────────────────────────────────────
+section("spend cap");
+// usageCostUsd: 1M input + 1M output = 0.27 + 1.10 USD.
+check("usageCostUsd weights in/out separately", Math.abs(usageCostUsd(1e6, 1e6) - 1.37) < 1e-9);
+// addUsage accumulates within a month and rolls the month* counters over at the boundary.
+const upA = emptyProfile();
+addUsage(upA, { in: 1000, out: 2000 });
+check("addUsage sets monthKey + month counters", upA.usage.monthKey === monthKeyOf("UTC") && upA.usage.monthIn === 1000 && upA.usage.monthOut === 2000);
+addUsage(upA, { in: 500, out: 0 });
+check("addUsage accumulates within the month", upA.usage.monthIn === 1500 && upA.usage.in === 1500);
+// A stale monthKey → this month reads as $0 (rollover), even though cumulative persists.
+const stale = { ...emptyProfile(), usage: { in: 9e9, out: 9e9, runs: 5, since: "2020-01-01", monthKey: "2020-01", monthIn: 9e9, monthOut: 9e9 } };
+check("monthCostUsd is 0 after a month rollover", monthCostUsd(stale, "UTC") === 0);
+// overMonthlyBudget honors MONTHLY_AI_BUDGET_USD.
+const heavy = { ...emptyProfile(), usage: { in: 5e8, out: 5e8, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthIn: 5e8, monthOut: 5e8 } }; // ≈ $685 this month
+const prevBudget = process.env.MONTHLY_AI_BUDGET_USD;
+process.env.MONTHLY_AI_BUDGET_USD = "3";
+check("overMonthlyBudget true when way over", overMonthlyBudget(heavy) === true);
+check("overMonthlyBudget false for a fresh profile", overMonthlyBudget(emptyProfile()) === false);
+process.env.MONTHLY_AI_BUDGET_USD = "0";
+check("budget of 0 blocks any usage", overMonthlyBudget(upA) === true);
+if (prevBudget === undefined) delete process.env.MONTHLY_AI_BUDGET_USD; else process.env.MONTHLY_AI_BUDGET_USD = prevBudget;
 
 // ── Eisenhower ranking (WS2) ──────────────────────────────────────────────────
 section("sortWithinQuadrant");
