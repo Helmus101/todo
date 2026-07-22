@@ -1,68 +1,124 @@
-# Weave Web — the to-do list that does itself
+# Otto — the to-do list that does itself
 
-A standalone web app that reads your Gmail, Calendar, and connected apps (Slack, GitHub, Notion, etc.), generates your real to-dos, and **auto-runs the reversible work** (drafts, briefs/docs, research) the moment a task appears — leaving you only a short checklist of the acts only you can do. It never sends or changes anything irreversibly without you.
+Otto reads your Gmail, Calendar, and Drive (plus any apps you connect — Slack, GitHub, Notion, and more), turns them into your real to-dos, and **auto-runs the reversible work** — drafting replies in your voice, prepping docs, gathering context — the moment a task appears. You're left with a short checklist of only the things that genuinely need you. It **never sends, deletes, or changes anything irreversibly without your explicit confirmation.**
 
-- **Backend:** Node + Express
-- **Frontend:** Vite + React
-- **Integrations:** Composio (Gmail, Calendar, Slack, GitHub, Notion, Linear, Todoist, and more)
-- **AI:** DeepSeek (OpenAI-compatible API) for task generation and execution
+> Self-hostable and open source (MIT). Bring your own API keys and run it in a few minutes.
 
-## Quick Start
+## Features
+
+- **Reads your world, builds your list** — inbox, calendar, and Drive become a ranked, deduplicated to-do list (Eisenhower-ordered).
+- **Does the reversible work for you** — drafts, Google Docs/Sheets/Slides, research/synthesis — all reviewable, nothing sent.
+- **You confirm the rest** — anything irreversible (send, invite, delete, pay) is surfaced as a one-tap approval, never auto-done.
+- **Learns who you are** — remembers your people, projects, and preferences so its work sounds like you.
+- **Runs with the browser closed** — a durable job queue drains on a schedule, so tasks generate and execute in the background.
+- **Multi-account** — connect several Gmail (and other) accounts; drafts land in the right inbox.
+- **Cost-capped** — a configurable monthly AI spend cap per account.
+
+## Tech stack
+
+- **Backend:** Node + Express (TypeScript), a durable Supabase-backed job queue
+- **Frontend:** Vite + React (TypeScript)
+- **Integrations:** [Composio](https://composio.dev) (Gmail, Calendar, Drive/Docs/Sheets/Slides, Slack, GitHub, Notion, Linear, …)
+- **AI:** [DeepSeek](https://deepseek.com) via the OpenAI-compatible API
+- **Storage:** [Supabase](https://supabase.com) (Postgres) — optional but recommended
+
+## Quick start
 
 ```bash
-cd web
+git clone <your-fork-url> otto && cd otto
 cp .env.example .env
-# Set DEEPSEEK_API_KEY and COMPOSIO_API_KEY (get from https://composio.dev)
-# Set SESSION_SECRET to a long random string
+#   → set DEEPSEEK_API_KEY, COMPOSIO_API_KEY (https://composio.dev), and SESSION_SECRET
 npm install
-npm run dev      # Open http://localhost:5273
+npm run dev          # opens http://localhost:5273
 ```
 
-## Required Environment Variables
+That's enough to run locally. Add Supabase (below) to persist across restarts.
 
-- `DEEPSEEK_API_KEY` - For the AI agent (task generation + execution)
-- `COMPOSIO_API_KEY` - For app integrations (get from https://composio.dev)
-- `SESSION_SECRET` - Long random string for session signing
-- `PUBLIC_URL` - Your app's URL (http://localhost:5273 locally, https://your-domain in production)
+## Environment variables
 
-## Optional Environment Variables
+**Required**
 
-- `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` - For cloud persistence (tasks/profile survive restarts)
-- `SUPABASE_SERVICE_KEY` - More secure than anon key (bypasses RLS)
-- `DEEPSEEK_MODEL` - Default: deepseek-chat
-- `CRON_SECRET` - Protects the background job runner endpoint (required on Vercel)
-- `PORT` - Default: 8788
+| Var | Purpose |
+|-----|---------|
+| `DEEPSEEK_API_KEY` | The AI agent (task generation + execution) |
+| `COMPOSIO_API_KEY` | App integrations — get it at https://composio.dev |
+| `SESSION_SECRET` | Signs the session cookie (`openssl rand -hex 32`) |
+| `PUBLIC_URL` | Your origin (`http://localhost:5273` dev, your HTTPS URL in prod) |
 
-## Cloud Persistence (Recommended)
+**Optional**
 
-Your profile, tasks, and app connections are saved to Supabase keyed by your account email, so they survive restarts/redeploys and follow your account.
+| Var | Purpose |
+|-----|---------|
+| `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` | Cloud persistence (recommended; **required in production**) |
+| `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | Anon-key fallback for local dev only |
+| `MONTHLY_AI_BUDGET_USD` | Per-account monthly AI spend cap (default `3`) |
+| `CRON_SECRET` | Protects `/api/cron/drain` (required on Vercel) |
+| `DEEPSEEK_MODEL` | Default `deepseek-chat` |
+| `PORT` | Default `8788` |
 
-**Setup:**
-1. Run `web/supabase.sql` in the Supabase SQL editor to create the tables
-2. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env`
-3. For production, set `SUPABASE_SERVICE_KEY` instead (more secure)
+See [`.env.example`](.env.example) for the annotated list.
+
+## Cloud persistence (recommended)
+
+Your profile, tasks, and connections are keyed by account email so they survive restarts and follow you.
+
+1. Run [`supabase.sql`](supabase.sql) in the Supabase SQL editor (creates the tables; ships **RLS-locked, deny-by-default**).
+2. Set `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. **The server refuses to boot in production without the service key** — it bypasses RLS and must stay server-side only.
+3. For a throwaway local project you may instead use the anon key + uncomment the clearly-marked DEV-ONLY policies in `supabase.sql`.
 
 ## Deploy
 
 ```bash
-npm run build    # → dist/
-npm start        # Production: Express serves dist/ + API on $PORT
+npm run build        # → dist/
+npm start            # production: Express serves dist/ + the API on $PORT
 ```
 
-Deploy to any Node host (Render, Railway, Fly, VM). Set env vars, set `PUBLIC_URL=https://your-domain`.
+Runs on any Node host (Render, Railway, Fly, a VM, or Docker — a `Dockerfile` is included) and on Vercel (`vercel.json` wires the API function, static hosting, cron, and security headers). Set the required env, point `PUBLIC_URL` at your HTTPS domain, and see the **Production checklist** below.
 
-A `Dockerfile` is included for containerized deployments.
+### Production checklist
+
+- Required env set (boot fails without them): `SESSION_SECRET`, `DEEPSEEK_API_KEY`, `COMPOSIO_API_KEY`, `PUBLIC_URL`.
+- `supabase.sql` run; `SUPABASE_SERVICE_KEY` set; anon/service keys never shipped to the client.
+- `CRON_SECRET` set (Vercel Cron drains the job queue).
+- Security is wired: CSP + security headers, auth rate-limiting, bcrypt passwords, `httpOnly`/`secure` cookies, no secrets in the client bundle.
+- `/privacy` and `/terms` are published in-app — **required for Google OAuth verification.**
+- **Google OAuth:** Gmail/Calendar/Drive are sensitive/restricted scopes. Submit the OAuth consent screen with your privacy-policy URL + homepage; until verified, Google caps the app at 100 users and shows an "unverified app" screen.
 
 ## What it does / doesn't
 
-- **Auto-runs reversible prep:** drafts (never sent), Google Docs, research/synthesis
-- **Never irreversible without you:** sending email, calendar invites, payments → surface as a checklist
-- **Asks nothing:** it mines your mail/calendar for the facts; only acts that *require you* show up
-- **Multi-account support:** Connect multiple Gmail accounts and other apps
-- **Privacy-first:** All data stored per account; nothing shared
+- ✅ Auto-runs reversible prep: drafts (never sent), Docs/Sheets/Slides, research/synthesis.
+- 🔒 Never irreversible without you: sending mail, calendar invites, payments, deletes → surfaced as a checklist.
+- 🧠 Mines your mail/calendar for the facts; only acts that *require you* show up.
+- 🗂️ Data is stored per account; nothing is shared, sold, or used to train models.
 
-## Opening tabs (optional Chrome extension)
+## Optional: Otto Tabs Chrome extension
 
-Steps that mean "open a page" open a tab. With the extension in `web/extension/`, pages open unattended and are collected into a named tab group.
+Steps that mean "open a page" can open tabs unattended, grouped into one "Otto" tab group. The unpacked extension lives in [`extension/`](extension/): `chrome://extensions` → Developer mode → Load unpacked → select the folder.
 
-Load it: `chrome://extensions` → Developer mode → Load unpacked → select `web/extension/`
+## Project layout
+
+```
+client/     React app (Vite)
+server/     Express API, job queue, AI agent, integrations
+shared/     Types + pure helpers shared by client & server
+extension/  Otto Tabs Chrome extension (MV3)
+tests/      Pure-function test suite (npm test)
+supabase.sql  Postgres schema + RLS
+```
+
+## Development
+
+```bash
+npm run dev         # server + client with hot reload
+npm test            # pure-function tests (no network/AI)
+npm run typecheck   # tsc --noEmit
+npm run build       # production client build
+```
+
+## Contributing
+
+Issues and PRs welcome. Please run `npm run typecheck && npm test && npm run build` before opening a PR, and keep changes consistent with the existing style.
+
+## License
+
+[MIT](LICENSE) © Willem Tjong. Otto is an independent project and is not affiliated with or endorsed by Google, Composio, DeepSeek, or Supabase.

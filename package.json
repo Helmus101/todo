@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "description": "A to-do list that executes itself — connects Google (Gmail + Calendar), generates tasks, and runs the reversible ones.",
+  "license": "MIT",
+  "author": "Willem Tjong",
   "scripts": {
     "dev": "concurrently -k -n server,client \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/index.ts",

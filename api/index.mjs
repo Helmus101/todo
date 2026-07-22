@@ -2979,7 +2979,20 @@ if (PROD) {
 var app = express();
 app.set("trust proxy", 1);
 app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
+var CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https://logos.composio.dev",
+  "connect-src 'self'",
+  "font-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'"
+].join("; ");
 app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy", CSP);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
@@ -3058,7 +3071,7 @@ var rateLimit = (max, windowMs) => (req, res, next) => {
 var toolsFor = (req) => getAgentTools(req.session.user).catch(() => void 0);
 var normEmail = (s) => String(s || "").trim().toLowerCase();
 var validEmail = (e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
-app.post("/api/auth/signup", async (req, res) => {
+app.post("/api/auth/signup", rateLimit(6, 60 * 6e4), async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   if (!validEmail(email) || password.length < 6) {
@@ -3081,7 +3094,7 @@ app.post("/api/auth/signup", async (req, res) => {
   await saveSession(req);
   res.json({ ok: true });
 });
-app.post("/api/auth/login", async (req, res) => {
+app.post("/api/auth/login", rateLimit(10, 15 * 6e4), async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   const u = await getUser(email);
