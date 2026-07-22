@@ -55,6 +55,12 @@ export const CATALOG: Integration[] = [
 
 const TOOLKIT_OF = (app: string) => CATALOG.find((c) => c.key === app.toLowerCase())?.toolkit ?? app.toUpperCase();
 const norm = (s: string) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+// Apps that support connecting MULTIPLE accounts (personal + work). All Google services — the user often
+// has two Google accounts. Others stay single-account (connecting again replaces the old connection).
+export const MULTI_APPS = new Set(["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"]);
+// A task's `source` (gmail/calendar/drive) → the Composio toolkit prefix, so execution routes that toolkit's
+// actions to the SAME account the task came from.
+const SOURCE_TOOLKIT: Record<string, string> = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE" };
 
 /** Real brand logo for a toolkit — served straight from Composio's logo CDN (SVG). Used by the Settings grid
  *  so each app shows its actual logo (not a hand-drawn icon). Verified to resolve for every catalog slug. */
@@ -192,8 +198,12 @@ async function resolveAuthConfigId(toolkit: string): Promise<string> {
  *  REPLACES it (also required — without allowMultiple, Composio errors if an active account exists). */
 export async function initiateConnection(app: string, userId: string, callbackUrl: string): Promise<{ redirectUrl: string; connectionId: string }> {
   const authConfigId = await resolveAuthConfigId(TOOLKIT_OF(app));
-  await disconnect(app, userId).catch(() => {});
-  const req: any = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl } as any);
+  // Google apps support MULTIPLE accounts: don't remove the existing one, and pass allowMultiple so Composio
+  // doesn't reject the link when an active account already exists. Every other app stays single — connecting
+  // again replaces the old connection.
+  const multi = MULTI_APPS.has(app);
+  if (!multi) await disconnect(app, userId).catch(() => {});
+  const req: any = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl, ...(multi ? { allowMultiple: true } : {}) } as any);
   const redirectUrl = String(req?.redirectUrl ?? req?.redirectUri ?? "").trim();
   const connectionId = String(req?.id ?? req?.connectedAccountId ?? "").trim();
   if (!redirectUrl) throw new Error(`Composio returned no redirect URL for ${app}.`);
@@ -216,21 +226,32 @@ export async function getAllConnectionStatuses(userId: string, apps: string[], c
   }
 }
 
-/** Get all connected accounts for a specific app (returns multiple accounts if connected). */
-export async function getConnectedAccounts(userId: string, app: string): Promise<ConnectedAccount[]> {
+/** Get all connected accounts for a specific app (returns multiple accounts if connected). Pass
+ *  resolveEmails=true (UI only — it's N extra calls) to fill in each Gmail account's real address via
+ *  GMAIL_GET_PROFILE when Composio's list doesn't include it, so the user sees which inbox is which. */
+export async function getConnectedAccounts(userId: string, app: string, resolveEmails = false): Promise<ConnectedAccount[]> {
   try {
     const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
     const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
     const targetToolkit = norm(TOOLKIT_OF(app));
-    return items
+    const accounts = items
       .filter((i) => acctToolkit(i) === targetToolkit)
       .map((i) => ({
         id: acctId(i),
-        email: i?.email || i?.accountEmail || i?.metadata?.email,
+        email: i?.email || i?.accountEmail || i?.metadata?.email || i?.data?.email,
         toolkit: acctToolkit(i),
         status: i?.status || i?.connectionStatus || i?.state || "ACTIVE",
       }))
       .filter((a) => a.id); // only return accounts with valid IDs
+    if (resolveEmails && app === "gmail") {
+      await Promise.all(accounts.filter((a) => !a.email).map(async (a) => {
+        try {
+          const prof: any = await readAction(userId, "GMAIL_GET_PROFILE", {}, a.id);
+          a.email = prof?.emailAddress || prof?.email || prof?.response_data?.emailAddress || a.email;
+        } catch (e: any) { console.warn("[integrations] gmail email resolve failed:", e?.message ?? e); }
+      }));
+    }
+    return accounts;
   } catch (e: any) {
     console.warn("[integrations] getConnectedAccounts error:", e?.message ?? e);
     return [];
@@ -284,9 +305,10 @@ async function listConnectedToolkits(userId: string): Promise<string[]> {
   }
 }
 
-/** Run a Composio action for a user (only ever READ actions reach here from the agent). */
-async function execute(action: string, userId: string, args: Record<string, unknown>): Promise<string> {
-  const result = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+/** Run a Composio action for a user. `connectedAccountId` disambiguates WHICH connected account to use —
+ *  required for Gmail once the user has more than one (otherwise Composio can't tell which inbox). */
+async function execute(action: string, userId: string, args: Record<string, unknown>, connectedAccountId?: string): Promise<string> {
+  const result = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
   return JSON.stringify(result ?? {}, null, 2).slice(0, 4000);
 }
 
@@ -459,11 +481,11 @@ export function scopeTools(t: AgentTools, task: { title: string; why?: string; s
 
 /** Execute ONE explicitly-named READ action directly (the deterministic discovery pipeline) — refuses
  *  anything that isn't a pure read, so this path can never write, send, or delete regardless of caller. */
-export async function readAction(userId: string, action: string, args: Record<string, unknown>): Promise<any> {
+export async function readAction(userId: string, action: string, args: Record<string, unknown>, connectedAccountId?: string): Promise<any> {
   if (!integrationsReady() || !userId) throw new Error("integrations not configured");
   const policy = ACTION_POLICIES[action.toUpperCase()];
   if (policy !== "auto" || !isRead(action.toUpperCase())) throw new Error(`not an allowed read action: ${action}`);
-  const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+  const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
   if (r && r.successful === false) throw new Error(String(r.error || `read failed: ${action}`));
   return r?.data ?? r;
 }
@@ -643,9 +665,11 @@ export async function verifyTaskArtifacts(
  * out (isGatedAction) and never reach the agent. Returns empty fast when nothing's connected or Composio
  * isn't configured, so it adds at most one list() call.
  */
-export async function getAgentTools(userId: string): Promise<AgentTools> {
+export async function getAgentTools(userId: string, opts?: { gmailAccountId?: string }): Promise<AgentTools> {
   if (!integrationsReady() || !userId) return EMPTY;
-  const hit = cache.get(userId);
+  const gmailAccountId = opts?.gmailAccountId;
+  const cacheKey = gmailAccountId ? `${userId}::gmail:${gmailAccountId}` : userId;
+  const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
 
   const connected = await listConnectedToolkits(userId);
@@ -718,7 +742,9 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
     if (/^GOOGLECALENDAR_/.test(action) && args && (("attendees" in args) || ("send_updates" in args))) {
       args = { ...args, send_updates: "none" };
     }
-    try { return await execute(action, userId, args || {}); }
+    // Route Gmail actions to the SPECIFIC connected account this run belongs to (when the user has more
+    // than one). Other toolkits are single-account, so they don't need it.
+    try { return await execute(action, userId, args || {}, /^GMAIL_/.test(action) ? gmailAccountId : undefined); }
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };
   const data: AgentTools = {
@@ -727,7 +753,7 @@ export async function getAgentTools(userId: string): Promise<AgentTools> {
     selfBrief: connected.includes("gmail") ? (subject, body) => sendSelfBrief(userId, subject, body) : undefined,
   };
   data.withAllowedArtifacts = (ids: string[]) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts });
-  cache.set(userId, { at: Date.now(), data });
+  cache.set(cacheKey, { at: Date.now(), data });
   return data;
 }
 

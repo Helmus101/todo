@@ -27,6 +27,7 @@ function normalizeProfile(p) {
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : void 0,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : void 0,
+    lastForcedAt: typeof p?.lastForcedAt === "string" ? p.lastForcedAt : void 0,
     // Structured preferences
     workingHours: p?.workingHours && typeof p.workingHours === "object" ? {
       start: String(p.workingHours.start || "09:00"),
@@ -39,8 +40,20 @@ function normalizeProfile(p) {
     autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : void 0,
     // Trust/confidence system
     confidence: p?.confidence && typeof p.confidence === "object" ? p.confidence : void 0,
-    confidenceHistory: Array.isArray(p?.confidenceHistory) ? p.confidenceHistory.slice(-100) : void 0
+    confidenceHistory: Array.isArray(p?.confidenceHistory) ? p.confidenceHistory.slice(-100) : void 0,
+    usage: p?.usage && typeof p.usage === "object" ? {
+      in: Number(p.usage.in) || 0,
+      out: Number(p.usage.out) || 0,
+      runs: Number(p.usage.runs) || 0,
+      since: typeof p.usage.since === "string" ? p.usage.since : (/* @__PURE__ */ new Date()).toISOString()
+    } : void 0
   };
+}
+function addUsage(profile, tokens) {
+  const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0;
+  if (!tin && !tout) return;
+  const u = profile.usage || { in: 0, out: 0, runs: 0, since: (/* @__PURE__ */ new Date()).toISOString() };
+  profile.usage = { in: u.in + tin, out: u.out + tout, runs: u.runs + 1, since: u.since };
 }
 var FACT_STOP = /* @__PURE__ */ new Set(["the", "and", "for", "with", "from", "that", "this", "they", "their", "them", "she", "her", "his", "him", "who", "handles", "handled", "leads", "are", "was", "were", "has", "have", "will", "its", "willem", "also", "both"]);
 var emailsIn = (s) => s.toLowerCase().match(/[\w.+-]+@[\w.-]+\.\w+/g) || [];
@@ -667,7 +680,8 @@ ${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}
   const sys = `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER items are commitments THEY made ("I'll send you X") \u2014 create a task to FULFILL unfulfilled ones. Events: only if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs are actionable while open. Skip FYIs, receipts, automated mail, and anything already on their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank HIGHER (importance \u2265 0.7); things their preferences deprioritize rank lower or get skipped. Quality over quantity \u2014 the handful that matter. ALWAYS include: a direct question or request from a real person awaiting their reply; a SENT-BY-USER commitment ("I'll send/do/call\u2026") with no later fulfilment visible; an event in the next 48h that plainly needs prep. When such an item exists, an empty tasks list is WRONG.
 CONSOLIDATE \u2014 one real-world obligation = ONE task. If several candidates concern the SAME thing (a calendar event AND the email thread that set it up; several copies of one outreach the user sent), emit a SINGLE task and pick the candidate the user must ACT on to anchor it (prefer the email/thread they need to handle; else the event). NEVER emit two tasks for one meeting, thread, or commitment. Each task's title must name a DISTINCT obligation \u2014 if two of your tasks would start with the same verb+object, merge them.
 SCORING: an item you judge actionable is, by definition, NOT trivial \u2014 score a genuine reply/commitment at importance \u2265 0.5, and higher (\u2265 0.7) for high-priority people or stated projects. urgency reflects the deadline: \u2265 0.7 within ~48h, ~0.5 this week, lower if open-ended. Never score an actionable item you're returning below 0.4 on BOTH axes \u2014 if it's that trivial, omit it instead.
-Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative \u22649 words","why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item \u2014 NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about","fact":"one short sentence"}]} \u2014 profileUpdates: 0-3 DURABLE facts about who this person is that these items reveal (a key relationship, an ongoing project) \u2014 only lasting identity facts, not task content. Empty arrays are fine.`;
+TITLES MUST BE SPECIFIC \u2014 name the actual person/company AND the actual subject, so the task is clear without opening anything. GOOD: "Reply to Chloe at BOND about the demo", "Send media-coverage docs to Paris Model Congress", "Confirm attendance to Guillaume's Aug call". BAD (too vague \u2014 never do this): "Follow up on sent email", "Reply to email", "Respond to message", "Handle request". If you can't name the person or subject from the candidate, you don't understand it well enough to include it \u2014 omit it.
+Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imperative naming who+what, \u226411 words","why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item \u2014 NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about","fact":"one short sentence"}]} \u2014 profileUpdates: 0-3 DURABLE facts about who this person is that these items reveal (a key relationship, an ongoing project) \u2014 only lasting identity facts, not task content. Empty arrays are fine.`;
   const client2 = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
   let tokIn = 0, tokOut = 0, calls = 0;
@@ -707,7 +721,8 @@ ${extra}` : "") }
         importance: clamp01(r.importance ?? 0.6),
         anchorKey: it.anchorKey,
         // from the SOURCE — never the model
-        link: it.url
+        link: it.url,
+        accountId: it.accountId
       };
     }).slice(0, 12);
   };
@@ -725,9 +740,57 @@ ${extra}` : "") }
         break;
       }
     }
-    return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates) };
+    return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates), tokens: { in: tokIn, out: tokOut } };
   } finally {
     console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] classifyCandidates: ${items.length} in \u2192 ${calls} call${calls === 1 ? "" : "s"}, ${tokIn} in / ${tokOut} out tokens`);
+  }
+}
+async function pickOneTask(items, profile, activeTitles) {
+  if (!items.length) return null;
+  const list = items.slice(0, 30).map((it, i) => `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
+  const activeBlock = activeTitles?.length ? `
+Already on their list (pick something DIFFERENT):
+${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}
+` : "";
+  const sys = `Pick the SINGLE most useful thing this person could do TODAY from the candidates below \u2014 you must return EXACTLY ONE task. This is a "one useful thing a day" nudge, so it's fine if it's small, but it must be a real action they'd value: an upcoming event to prep for, a birthday to acknowledge, a reply someone is waiting on, a commitment they made to fulfil, or clear progress on a stated project. NEVER pick a newsletter, promo, receipt, or automated mail. Prefer the most time-sensitive or personal item. Use their profile to choose well.
+The title MUST be specific \u2014 name the actual person/company AND subject ("Wish Sonya a happy birthday", "Reply to Chloe at BOND about the demo"), NEVER vague ("Follow up on email", "Handle message").
+Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative naming who+what, \u226411 words","why":"one clause naming the concrete trigger","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,"risk":"low"|"high"}`;
+  const client2 = deepseekClient();
+  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  try {
+    const res = await retryRequest2(() => client2.chat.completions.create({
+      model: actualModel,
+      max_tokens: 500,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `
+CANDIDATES:
+${list}` }
+      ]
+    }));
+    const tokens = { in: res.usage?.prompt_tokens || 0, out: res.usage?.completion_tokens || 0 };
+    const r = firstJson(String(res.choices?.[0]?.message?.content || ""));
+    const idx = Number(r?.i);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= items.length || String(r?.title || "").trim().length < 4) return null;
+    const it = items[idx];
+    const task = {
+      title: String(r.title).slice(0, 90),
+      why: String(r.why || "Worth doing today.").slice(0, 400),
+      when: r.when ? String(r.when).slice(0, 40) : void 0,
+      source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : "gmail",
+      risk: r.risk === "high" ? "high" : "low",
+      urgency: clamp01(r.urgency ?? 0.4),
+      importance: clamp01(r.importance ?? 0.5),
+      anchorKey: it.anchorKey,
+      link: it.url,
+      accountId: it.accountId
+    };
+    console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] pickOneTask: "${task.title}" (${tokens.in} in / ${tokens.out} out)`);
+    return { task, tokens };
+  } catch {
+    return null;
   }
 }
 async function refineManualTask(text, profile) {
@@ -764,7 +827,9 @@ Return JSON: {"title": short imperative <= 9 words that names the specific objec
   }
 }
 var RUN_SYSTEM = `You execute ONE task for the user, end to end, using the tools available \u2014 their CONNECTED apps via Composio (Gmail, Google Calendar, Docs, Slides, Drive, Sheets, and any others: Slack, GitHub, Notion, Linear, Todoist, \u2026). USE them to gather the real facts AND to DO the reversible work: draft a reply, create a doc/deck/sheet, add a task or calendar event, update an issue. Use WHATEVER connected apps the task touches (Slack, Notion, Linear, Sheets, GitHub, \u2026), not just email, and do as MUCH as your tools allow. Do NOT ask the user for anything you could find or do yourself. Be rigorously honest and grounded; never invent specifics.
-WORK IN THREE PHASES: (1) PLAN silently \u2014 from the task and the context you gather, decide which tools you'll use and what artifacts (draft/doc/event/cells) you'll produce; never show this plan to the user. (2) DO \u2014 execute the reversible work through the tools. (3) REPORT via submit \u2014 "synthesis" = one-line summary of what you DID (past tense), "did" = one bullet per concrete action you performed (with names), "links" = EVERY artifact you produced, "steps" = EVERYTHING that still needs the user, as a complete checklist. Leave steps empty ONLY when a sendable covers the remaining action or truly nothing is left.
+WORK IN THREE PHASES: (1) PLAN silently \u2014 from the task and the context you gather, decide which tools you'll use and what artifacts (draft/doc/event/cells) you'll produce; never show this plan to the user. (2) DO \u2014 execute the reversible work through the tools. (3) REPORT via submit \u2014 BE BRIEF, the user wants to scan not read: "synthesis" = ONE short past-tense line of what you DID, "did" = at most 3 short bullets of concrete actions you produced (with names; omit this if nothing meaningful was produced \u2014 never pad it), "links" = EVERY artifact you produced, "steps" = only what genuinely still needs the user, each a SHORT one-liner (never a paragraph), the essential few not an exhaustive checklist. Leave steps empty when a sendable covers the remaining action or nothing is left.
+PREP EVEN WHEN BLOCKED \u2014 if you can't fully DELIVER because one piece is missing (a recipient/contact, a login, an approval, a file), still PRODUCE what you can: write the actual message/greeting/content text. BUT NEVER invent the missing piece to force completion \u2014 if you do NOT have the person's REAL email/contact, do NOT create a draft addressed to a guessed or placeholder address (never name@example.com, never a made-up address). Instead put the ready-to-send TEXT into the step's own text so the user can paste it, and leave "Find <the real contact>" as the blocking step. Prepping means producing real CONTENT, never fabricating a missing fact. A blocked task still hands the user something PREPPED \u2014 never just a report that a lookup came up empty.
+"did" IS A LIST OF WINS, NOT A SEARCH LOG \u2014 each "did" bullet is something you PRODUCED or PREPPED. NEVER list dead-end attempts ("searched Gmail \u2014 no results", "checked Contacts \u2014 none", "couldn't find X"): they are noise to the user. If a lookup found nothing, either prep around it or put the missing piece in steps \u2014 do not report the failed search as an action.
 You can also use web_search for any external fact or context you need (a person, company, deadline, how-to, or a reference link) \u2014 look it up rather than guess.
 PICK THE RIGHT ARTIFACT TYPE: a task that says "spreadsheet", "sheet", "tracker", or asks for rows/columns of structured data belongs in GOOGLE SHEETS, not a Doc \u2014 even though a Doc can hold a table, a sheet is what the user asked for and is what they can filter/sort/total. Only use a Doc for prose/lists/plans.
 GOOGLE SHEETS \u2014 YOU MUST ACTUALLY WRITE: if the task involves updating a spreadsheet (e.g. filling in restaurant names, meal ideas, trip data, any cells), you MUST call the Sheets write tools (GOOGLESHEETS_BATCH_UPDATE_VALUES, GOOGLESHEETS_UPDATE_VALUES, GOOGLESHEETS_APPEND_VALUES, etc.) to ACTUALLY write the data into the cells \u2014 do NOT just produce a plan or list in synthesis. Read the sheet first to find the exact cells/ranges that need filling, then call the write tool with real content. Sheet cell writes are FULLY PERMITTED and reversible \u2014 you do NOT need user approval to write cells. Do it now.
@@ -899,6 +964,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
   };
   try {
     for (let i = 0; i < MAX; i++) {
+      if (i >= 5 && !wroteAny && !focus && !hasArtifactIds) break;
       if (i >= (priorArtifacts.length ? 1 : 2) && !wroteAny && !focus) {
         const nudge = priorArtifacts.length ? `ENFORCEMENT (round ${i + 1}/${MAX}): you have written NOTHING yet. Your NEXT tool call MUST update the EXISTING artifact listed above under "ALREADY CREATED FOR THIS TASK" (its id is listed \u2014 use an UPDATE/PATCH/APPEND tool with that id) with the requested change. Do NOT create a new one. Do NOT make another read call.` : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet \u2014 only reads. Your NEXT tool call MUST be a create/write tool (GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, \u2026) that produces the task's artifact with the content you already have. Do NOT make another read call. If the task truly requires no artifact, call submit now.`;
         messages.push({ role: "user", content: nudge });
@@ -929,7 +995,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
           messages.push({ role: "user", content: "You still have not used any tools. Read the connected apps and do the work now. Do not answer with prose until you have actually acted." });
           continue;
         }
-        return withTokens(finalize(out, textContent, profileUpdates));
+        break;
       }
       messages.push({ role: "assistant", content: res.choices[0]?.message?.content || "", tool_calls: toolUses });
       let submitted = null;
@@ -997,6 +1063,10 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
       const rescue = await client2.chat.completions.create({
         model: actualModel,
         max_tokens: 1400,
+        response_format: { type: "json_object" },
+        // FORCE parseable JSON — without this the rescue sometimes
+        // returned prose, so finalize threw and the run fell to the defeatist fallback. JSON mode makes the
+        // rescue reliably usable, so a run that gathered ANY context produces a real result.
         messages: [
           {
             role: "system",
@@ -1010,7 +1080,14 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
       if (out) return withTokens(finalize(out, text, profileUpdates));
     } catch {
     }
-    throw new Error("The run didn't produce a result \u2014 it will retry.");
+    const sourceUrl = (task.links || []).find((l) => l?.url)?.url;
+    return withTokens(finalize({
+      synthesis: "This one needs your call \u2014 take it from here.",
+      did: [],
+      steps: [{ text: `Open and handle: ${task.title.slice(0, 70)}`, automatable: false, ...sourceUrl ? { url: sourceUrl } : {} }],
+      links: [],
+      sendables: []
+    }, "", profileUpdates));
   } finally {
     console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
@@ -1018,7 +1095,8 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
 function finalize(out, fallbackText, profileUpdates) {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
   const steps = rawSteps.map((s, idx) => ({
-    text: String(s?.text || "").trim(),
+    text: String(s?.text || "").trim().slice(0, 180),
+    // keep steps to a scannable one-liner, not a paragraph
     automatable: !!s?.automatable,
     needsPermission: !!s?.needsPermission,
     // Valid only if it points at a REAL other step — a bad index (9 in a 3-step list, or itself)
@@ -1027,7 +1105,7 @@ function finalize(out, fallbackText, profileUpdates) {
     url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : void 0,
     question: s?.question ? String(s.question).trim().slice(0, 200) : void 0,
     options: Array.isArray(s?.options) ? s.options.map((o) => String(o).trim()).filter(Boolean).slice(0, 4) : void 0
-  })).filter((s) => s.text).slice(0, 10);
+  })).filter((s) => s.text).slice(0, 6);
   const kindLabel = (url2) => /docs\.google\.com\/document/i.test(url2) ? "the Google Doc Otto created" : /docs\.google\.com\/spreadsheets/i.test(url2) ? "the Google Sheet Otto created" : /docs\.google\.com\/presentation/i.test(url2) ? "the slides Otto created" : /mail\.google\.com/i.test(url2) ? "the email thread" : /calendar\.google\.com/i.test(url2) ? "the calendar event" : "the linked page";
   const isJunkLabel = (s) => !s || /^(open|link|url|click here|view|here|document|doc)$/i.test(s.trim()) || /^https?:\/\//i.test(s.trim());
   const links = (Array.isArray(out?.links) ? out.links : []).map((l) => {
@@ -1048,12 +1126,16 @@ function finalize(out, fallbackText, profileUpdates) {
     eventId: s?.eventId ? String(s.eventId).slice(0, 200) : void 0,
     summary: s?.summary ? String(s.summary).slice(0, 300) : void 0,
     when: s?.when ? String(s.when).slice(0, 120) : void 0
-  })).filter((s) => s.app === "gmail" && !!s.draftId && !!s.to && !!(s.subject || s.body) || s.app === "slack" && !!s.channel && !!s.text || s.app === "gcal" && !!s.eventId && !!s.attendees?.length && !!(s.summary || s.when)).slice(0, 6);
+  })).filter((s) => s.app === "gmail" && !!s.draftId && !!s.to && !!(s.subject || s.body) || s.app === "slack" && !!s.channel && !!s.text || s.app === "gcal" && !!s.eventId && !!s.attendees?.length && !!(s.summary || s.when)).filter((s) => !/@example\.(?:com|org|net)\b|@(?:test|placeholder|domain|email)\.\w+|\bplaceholder\b/i.test(`${s.to || ""} ${(s.attendees || []).join(" ")}`)).slice(0, 6);
   const brief = (s, lines, chars) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
-  let synthesis = brief(String(out?.synthesis || ""), 3, 550);
+  let synthesis = brief(String(out?.synthesis || ""), 2, 260);
   const PLANNING = /\b(let me|i'?ll (?:first|now|then|use|create|draft|check)|i will (?:first|now|then)|now i(?:'?ll)? |first,? i(?:'?ll)? |seems like|my plan is|i need to|i should)\b/i;
   if (PLANNING.test(synthesis)) synthesis = "";
-  const did = (Array.isArray(out?.did) ? out.did : []).map((d) => String(d || "").trim().replace(/^\s*[-•*]\s*/, "")).filter((d) => d.length >= 6 && !PLANNING.test(d)).map((d) => d.slice(0, 160)).slice(0, 6);
+  const DEAD_END = /\bno (results?|matches?|contacts?|entries|records|response|reply|emails?|luck|info(?:rmation)?)\b|\bnothing (?:found|available|to)\b|\bcouldn'?t\b|\bcould not\b|\bunable to\b|\bnot? found\b|\bno .{0,20}\bfound\b|\bfailed to\b|\bwithout success\b/i;
+  const PLACEHOLDER = /@example\.(?:com|org|net)\b|@(?:test|placeholder|domain|email)\.\w+|\[[^\]]*\b(?:email|address|name|phone|contact)\b[^\]]*\]|\bplaceholder\b/i;
+  const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted)\b/i;
+  const did = (Array.isArray(out?.did) ? out.did : []).map((d) => String(d || "").trim().replace(/^\s*[-•*]\s*/, "")).filter((d) => d.length >= 6 && !PLANNING.test(d) && !DEAD_END.test(d) && !PLACEHOLDER.test(d) && !INVESTIGATIVE.test(d)).map((d) => d.slice(0, 130)).slice(0, 4);
+  if (synthesis && !did.length && !links.length && !sendables.length && (DEAD_END.test(synthesis) || INVESTIGATIVE.test(synthesis))) synthesis = "";
   void fallbackText;
   if (!synthesis && !steps.length && !links.length && !sendables.length) {
     throw new Error("The run produced no output \u2014 it will retry.");
@@ -1076,8 +1158,10 @@ function finalize(out, fallbackText, profileUpdates) {
     for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
   }
   return {
-    context: brief(String(out?.context || ""), 3, 600),
-    synthesis: synthesis || "Done.",
+    context: brief(String(out?.context || ""), 2, 380),
+    // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
+    // neutral placeholder (never "Done." on a task that still needs the user — that would misread as finished).
+    synthesis: synthesis || (steps.some((s) => !s.done) ? "" : "Done."),
     did,
     steps,
     links,
@@ -1542,9 +1626,10 @@ async function resolveAuthConfigId(toolkit) {
 }
 async function initiateConnection(app2, userId, callbackUrl) {
   const authConfigId = await resolveAuthConfigId(TOOLKIT_OF(app2));
-  await disconnect(app2, userId).catch(() => {
+  const multi = app2 === "gmail";
+  if (!multi) await disconnect(app2, userId).catch(() => {
   });
-  const req = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl });
+  const req = await sdk().connectedAccounts.link(userId, authConfigId, { callbackUrl, ...multi ? { allowMultiple: true } : {} });
   const redirectUrl = String(req?.redirectUrl ?? req?.redirectUri ?? "").trim();
   const connectionId = String(req?.id ?? req?.connectedAccountId ?? "").trim();
   if (!redirectUrl) throw new Error(`Composio returned no redirect URL for ${app2}.`);
@@ -1564,17 +1649,28 @@ async function getAllConnectionStatuses(userId, apps, connIdByApp = {}) {
     return Object.fromEntries(apps.map((a) => [a, false]));
   }
 }
-async function getConnectedAccounts(userId, app2) {
+async function getConnectedAccounts(userId, app2, resolveEmails = false) {
   try {
     const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
     const items = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
     const targetToolkit = norm(TOOLKIT_OF(app2));
-    return items.filter((i) => acctToolkit(i) === targetToolkit).map((i) => ({
+    const accounts = items.filter((i) => acctToolkit(i) === targetToolkit).map((i) => ({
       id: acctId(i),
-      email: i?.email || i?.accountEmail || i?.metadata?.email,
+      email: i?.email || i?.accountEmail || i?.metadata?.email || i?.data?.email,
       toolkit: acctToolkit(i),
       status: i?.status || i?.connectionStatus || i?.state || "ACTIVE"
     })).filter((a) => a.id);
+    if (resolveEmails && app2 === "gmail") {
+      await Promise.all(accounts.filter((a) => !a.email).map(async (a) => {
+        try {
+          const prof = await readAction(userId, "GMAIL_GET_PROFILE", {}, a.id);
+          a.email = prof?.emailAddress || prof?.email || prof?.response_data?.emailAddress || a.email;
+        } catch (e) {
+          console.warn("[integrations] gmail email resolve failed:", e?.message ?? e);
+        }
+      }));
+    }
+    return accounts;
   } catch (e) {
     console.warn("[integrations] getConnectedAccounts error:", e?.message ?? e);
     return [];
@@ -1621,8 +1717,8 @@ async function listConnectedToolkits(userId) {
     return [];
   }
 }
-async function execute(action, userId, args) {
-  const result = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true });
+async function execute(action, userId, args, connectedAccountId) {
+  const result = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...connectedAccountId ? { connectedAccountId } : {} });
   return JSON.stringify(result ?? {}, null, 2).slice(0, 4e3);
 }
 async function sendSendable(userId, s) {
@@ -1744,11 +1840,11 @@ function scopeTools(t, task) {
   if (scoped.length < 15) return t;
   return { ...t, tools: scoped };
 }
-async function readAction(userId, action, args) {
+async function readAction(userId, action, args, connectedAccountId) {
   if (!integrationsReady() || !userId) throw new Error("integrations not configured");
   const policy = ACTION_POLICIES[action.toUpperCase()];
   if (policy !== "auto" || !isRead(action.toUpperCase())) throw new Error(`not an allowed read action: ${action}`);
-  const r = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true });
+  const r = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...connectedAccountId ? { connectedAccountId } : {} });
   if (r && r.successful === false) throw new Error(String(r.error || `read failed: ${action}`));
   return r?.data ?? r;
 }
@@ -1921,9 +2017,11 @@ async function verifyTaskArtifacts(userId, t) {
   if (dropped.length) console.warn(`[integrations] artifact verification dropped ${dropped.length}: ${dropped.join("; ")}`);
   return dropped;
 }
-async function getAgentTools(userId) {
+async function getAgentTools(userId, opts) {
   if (!integrationsReady() || !userId) return EMPTY;
-  const hit = cache.get(userId);
+  const gmailAccountId = opts?.gmailAccountId;
+  const cacheKey = gmailAccountId ? `${userId}::gmail:${gmailAccountId}` : userId;
+  const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
   const connected = await listConnectedToolkits(userId);
   if (!connected.length) {
@@ -1985,7 +2083,7 @@ async function getAgentTools(userId) {
       args = { ...args, send_updates: "none" };
     }
     try {
-      return await execute(action, userId, args || {});
+      return await execute(action, userId, args || {}, /^GMAIL_/.test(action) ? gmailAccountId : void 0);
     } catch (e) {
       return `Tool error (${action}): ${e?.message ?? e}`;
     }
@@ -1998,7 +2096,7 @@ async function getAgentTools(userId) {
     selfBrief: connected.includes("gmail") ? (subject, body) => sendSelfBrief(userId, subject, body) : void 0
   };
   data.withAllowedArtifacts = (ids) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts });
-  cache.set(userId, { at: Date.now(), data });
+  cache.set(cacheKey, { at: Date.now(), data });
   return data;
 }
 var statusCache = /* @__PURE__ */ new Map();
@@ -2040,7 +2138,7 @@ function isNoise(it) {
   return NOISE_SENDER.test(it.sender || "") || NOISE_SUBJECT.test(it.title || "");
 }
 var normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
-function gmailToItems(data, label) {
+function gmailToItems(data, label, account) {
   const msgs = data?.messages || data?.data?.messages || data?.response_data?.messages || (Array.isArray(data) ? data : []);
   return (msgs || []).slice(0, 25).map((m) => {
     const threadId = String(m?.threadId ?? m?.thread_id ?? m?.id ?? "").trim();
@@ -2054,7 +2152,9 @@ function gmailToItems(data, label) {
       snippet: String(m?.preview?.body ?? m?.snippet ?? m?.messageText ?? m?.preview ?? "").replace(/\s+/g, " ").slice(0, 400),
       sender: String(m?.sender ?? m?.from ?? m?.fromAddress ?? "").slice(0, 120),
       timestamp: String(m?.messageTimestamp ?? m?.internalDate ?? m?.date ?? ""),
-      labels: [label]
+      labels: [label],
+      accountId: account?.id,
+      accountEmail: account?.email
     };
   }).filter((x) => !!x);
 }
@@ -2129,15 +2229,24 @@ async function discoverSourceItems(userEmail) {
     } catch {
     }
   };
-  await Promise.all([
+  let gmailAccounts = [{}];
+  try {
+    const accs = await getConnectedAccounts(userEmail, "gmail");
+    if (accs.length > 1) gmailAccounts = accs.map((a) => ({ id: a.id, email: a.email }));
+  } catch {
+  }
+  const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social",
       max_results: 20
-    }), "inbox")),
+    }, acc.id), "inbox", acc)),
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:sent newer_than:10d",
       max_results: 15
-    }), "sent")),
+    }, acc.id), "sent", acc))
+  ]);
+  await Promise.all([
+    ...gmailGrabs,
     grab(async () => {
       const now = /* @__PURE__ */ new Date();
       const week = new Date(now.getTime() + 7 * 24 * 3600 * 1e3);
@@ -2351,7 +2460,13 @@ function dedupeTasks(list) {
   const kept = [];
   for (const t of list) {
     const ak = normKey2(t.anchorKey), link = linkOf(t);
-    const i = kept.findIndex((k) => !!ak && normKey2(k.anchorKey) === ak || !!link && linkOf(k) === link || sameTask(k, t));
+    const i = kept.findIndex((k) => {
+      const kak = normKey2(k.anchorKey);
+      if (!!ak && kak === ak) return true;
+      if (!!link && linkOf(k) === link) return true;
+      if (!!ak && !!kak && kak !== ak && (k.status === "done" || k.status === "dismissed")) return false;
+      return sameTask(k, t);
+    });
     if (i >= 0) kept[i] = betterOf(kept[i], t);
     else kept.push(t);
   }
@@ -2392,13 +2507,22 @@ function mergeProfileStates(p1, p2) {
     pausedAt: pausedSide.pausedAt,
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? p2.lastSweepAt ?? p1.lastSweepAt : p1.lastSweepAt ?? p2.lastSweepAt,
+    lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? p2.lastForcedAt ?? p1.lastForcedAt : p1.lastForcedAt ?? p2.lastForcedAt,
     // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
     // p2's explicit `undefined` keys from normalizeProfile — the bug that silently dropped workingHours).
     workingHours: p2.workingHours ?? p1.workingHours,
     responseStyle: p2.responseStyle ?? p1.responseStyle,
     autoApprove: p2.autoApprove ?? p1.autoApprove,
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
-    autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns
+    autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
+    // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
+    // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
+    usage: p1.usage || p2.usage ? {
+      in: Math.max(p1.usage?.in || 0, p2.usage?.in || 0),
+      out: Math.max(p1.usage?.out || 0, p2.usage?.out || 0),
+      runs: Math.max(p1.usage?.runs || 0, p2.usage?.runs || 0),
+      since: [p1.usage?.since, p2.usage?.since].filter(Boolean).sort()[0] || (/* @__PURE__ */ new Date()).toISOString()
+    } : void 0
   };
 }
 var MAX_NEW_PER_SWEEP = 8;
@@ -2414,8 +2538,22 @@ function applyQualityBar(genTasks, items, vips = []) {
     const it = byAnchor.get(normKey2(g.anchorKey));
     if (it?.labels?.includes("sent") && g.when) return true;
     if (isVip(it?.sender)) return true;
-    return g.importance >= 0.45 || g.urgency >= 0.45;
+    return g.importance >= 0.35 || g.urgency >= 0.35;
   });
+}
+function localDayOf(iso, timezone) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  } catch {
+    return d.toISOString().slice(0, 10);
+  }
+}
+function forcedDueToday(profile, now = /* @__PURE__ */ new Date()) {
+  if (!profile.lastForcedAt) return true;
+  const tz = profile.workingHours?.timezone;
+  return localDayOf(profile.lastForcedAt, tz) !== localDayOf(now.toISOString(), tz);
 }
 async function generate(existing, profile, extras, userEmail) {
   const handled = existing.filter((t) => t.status === "done" || t.status === "dismissed").map((t) => ({
@@ -2434,11 +2572,23 @@ async function generate(existing, profile, extras, userEmail) {
         const knownAnchors = existing.map((t) => t.anchorKey);
         const candidates = filterCandidates(items, knownAnchors);
         const classified = candidates.length ? await classifyCandidates(candidates, profile, active.map((a) => a.title)) : { tasks: [], profileUpdates: [] };
+        addUsage(profile, classified.tokens);
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
         const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
         const folded = foldGenerated(existing, kept, profile.highPriorityPeople || []);
         const newCards = folded.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
         console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [tasks] sweep pipeline: ${items.length} items \u2192 ${candidates.length} candidates \u2192 ${classified.tasks.length} classified \u2192 ${kept.length} passed bar \u2192 ${newCards} new card${newCards === 1 ? "" : "s"}`);
+        if (newCards === 0 && candidates.length && forcedDueToday(profile)) {
+          const one = await pickOneTask(candidates, profile, active.map((a) => a.title));
+          if (one) {
+            addUsage(profile, one.tokens);
+            profile.lastForcedAt = (/* @__PURE__ */ new Date()).toISOString();
+            const withForced = foldGenerated(existing, [...kept, one.task], profile.highPriorityPeople || []);
+            const forcedNew = withForced.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
+            console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [tasks] daily-minimum: forced "${one.task.title}" (${forcedNew} new after fold)`);
+            return withForced;
+          }
+        }
         return folded;
       }
     } catch (e) {
@@ -2446,6 +2596,7 @@ async function generate(existing, profile, extras, userEmail) {
     }
   }
   const gen = await generateTasks(profile, extras ? readOnly(extras) : void 0, handled, active);
+  addUsage(profile, gen.tokens);
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   return foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
 }
@@ -2468,6 +2619,7 @@ function foldGenerated(existing, genTasks, highPriorityPeople = []) {
       when: g.when,
       source: g.source,
       risk: g.risk,
+      sourceAccountId: g.accountId,
       urgency: g.urgency,
       importance: g.importance,
       quadrant: e.quadrant,
@@ -2567,6 +2719,7 @@ async function runById(list, id, profile, extras, revision) {
     task.sendables = out.sendables?.length ? out.sendables : void 0;
     task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out));
     task.lastRunTokens = out.tokens;
+    addUsage(profile, out.tokens);
     task.status = "needs_review";
     task.lastError = void 0;
     task.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -2602,6 +2755,7 @@ Info from the user for this step: "${answer.trim()}". Use it.` : "";
 What the user has already decided/done:
 ${decisions}` : step.text) + qa;
   const out = await runTask({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
+  addUsage(profile, out.tokens);
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);
   if ((out.steps || []).some((s) => !s.automatable && !s.synthetic)) {
@@ -2705,7 +2859,7 @@ async function processExecuteTask(job) {
   if (c === "needs_review" && !job.input?.note) return "skipped: already executed";
   if (c === "failed_terminal" && !job.input?.manual) return "skipped: failed terminally \u2014 waiting for the user's Retry";
   await recordEvent(email, "run_started", { taskId, jobId: job.id, message: job.input?.note ? "Revising per your note" : "Reading context and doing the reversible work" });
-  const extras = await getAgentTools(email);
+  const extras = await getAgentTools(email, t.sourceAccountId ? { gmailAccountId: t.sourceAccountId } : void 0);
   t.autoRan = true;
   try {
     const updated = await runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : void 0);
@@ -3050,7 +3204,7 @@ app.get("/api/integrations/:app/accounts", requireAuth, async (req, res) => {
     res.status(404).json({ error: "Unknown integration." });
     return;
   }
-  const accounts = integrationsReady() ? await getConnectedAccounts(req.session.user, app2) : [];
+  const accounts = integrationsReady() ? await getConnectedAccounts(req.session.user, app2, true) : [];
   res.json({ accounts });
 });
 app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
@@ -3186,6 +3340,14 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   }
   const refined = aiReady() && !isPaused(req) ? await refineManualTask(title, req.session.profile) : null;
   req.session.tasks = addManual(req.session.tasks || [], title, refined);
+  const added = req.session.tasks[0];
+  if (added && aiReady() && !isPaused(req) && !added.unrefined && canonStatus(added.status) === "ready") {
+    added.status = "queued";
+    try {
+      await enqueueJob(req.session.user, "execute_task", added.id);
+    } catch {
+    }
+  }
   await commit(req);
   res.json(req.session.tasks);
 });
@@ -3404,6 +3566,15 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: e?.message || "status failed" });
+  }
+});
+app.get("/api/usage", requireAuth, async (req, res) => {
+  try {
+    const state = await loadState(req.session.user);
+    const u = state.profile?.usage;
+    res.json(u ? { in: u.in, out: u.out, total: u.in + u.out, runs: u.runs, since: u.since } : { in: 0, out: 0, total: 0, runs: 0, since: null });
+  } catch (e) {
+    res.status(500).json({ error: e?.message || "usage failed" });
   }
 });
 app.post("/api/chat", requireAuth, rateLimit(20, 6e4), async (req, res) => {

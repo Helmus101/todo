@@ -16,7 +16,8 @@ function profileBlock(p?: Profile): string {
   if (recent(p.people).length) parts.push(`Key people: ${recent(p.people).join("; ")}`);
   if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
   if (p.workingHours) parts.push(`Working hours: ${p.workingHours.start}-${p.workingHours.end} (${p.workingHours.timezone})`);
-  if (p.responseStyle) parts.push(`Response style: ${p.responseStyle}`);
+  // NOTE: responseStyle is deliberately NOT injected — reply tone/formality comes from the THREAD, not a
+  // global preference (a "formal" default would fight a casual thread and vice-versa).
   // Auto-approve entries are the user's PREFERENCE, never permission: the code-enforced action policy
   // still gates every tool call — a policy-gated action stays gated no matter what this list says.
   if (p.autoApprove?.length) parts.push(`Prefers automated handling of: ${p.autoApprove.join(", ")} (preference only — the permission system still decides; gated actions still need approval)`);
@@ -156,6 +157,8 @@ export interface GeneratedTask {
   anchorKey?: string;
   /** A URL to open the source item (the Gmail thread / the calendar event), if the agent has one. */
   link?: string;
+  /** Multi-Gmail: the Composio connected-account id this item came from, so execution acts on the right inbox. */
+  accountId?: string;
 }
 
 const GEN_SYSTEM =
@@ -310,7 +313,7 @@ export function parseGenerated(arr: any): GeneratedTask[] {
  * it reads the recent inbox + upcoming events itself, then submits tasks. Returns [] if nothing is connected
  * to read (the client then prompts the user to connect Gmail/Calendar in Settings).
  */
-export interface GenerationResult { tasks: GeneratedTask[]; profileUpdates: ProfileUpdate[]; }
+export interface GenerationResult { tasks: GeneratedTask[]; profileUpdates: ProfileUpdate[]; tokens?: { in: number; out: number }; }
 
 export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[], active?: { title: string; anchorKey?: string }[]): Promise<GenerationResult> {
   const empty: GenerationResult = { tasks: [], profileUpdates: [] };
@@ -434,7 +437,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
  * and source on the resulting task is copied from the item itself, so references cannot be hallucinated.
  */
 export async function classifyCandidates(
-  items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[] }[],
+  items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string }[],
   profile?: Profile,
   activeTitles?: string[],
 ): Promise<GenerationResult> {
@@ -463,7 +466,12 @@ export async function classifyCandidates(
     `at importance ≥ 0.5, and higher (≥ 0.7) for high-priority people or stated projects. urgency reflects the ` +
     `deadline: ≥ 0.7 within ~48h, ~0.5 this week, lower if open-ended. Never score an actionable item you're ` +
     `returning below 0.4 on BOTH axes — if it's that trivial, omit it instead.\n` +
-    `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"short imperative ≤9 words",` +
+    `TITLES MUST BE SPECIFIC — name the actual person/company AND the actual subject, so the task is clear ` +
+    `without opening anything. GOOD: "Reply to Chloe at BOND about the demo", "Send media-coverage docs to ` +
+    `Paris Model Congress", "Confirm attendance to Guillaume's Aug call". BAD (too vague — never do this): ` +
+    `"Follow up on sent email", "Reply to email", "Respond to message", "Handle request". If you can't name ` +
+    `the person or subject from the candidate, you don't understand it well enough to include it — omit it.\n` +
+    `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words",` +
     `"why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item — NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,` +
     `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about",` +
     `"fact":"one short sentence"}]} — profileUpdates: 0-3 DURABLE facts about who this person is that these ` +
@@ -506,6 +514,7 @@ export async function classifyCandidates(
           importance: clamp01(r.importance ?? 0.6),
           anchorKey: it.anchorKey,           // from the SOURCE — never the model
           link: it.url,
+          accountId: it.accountId,
         };
       })
       .slice(0, 12);
@@ -539,10 +548,69 @@ export async function classifyCandidates(
       const retried = parse(retry);
       if (retried.length) { out = retry; tasks = retried; break; }
     }
-    return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates) };
+    return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates), tokens: { in: tokIn, out: tokOut } };
   } finally {
     console.log(`${new Date().toISOString()} [ai] classifyCandidates: ${items.length} in → ${calls} call${calls === 1 ? "" : "s"}, ${tokIn} in / ${tokOut} out tokens`);
   }
+}
+
+/**
+ * Daily-minimum fallback: when a sweep would otherwise surface NOTHING new, pick the SINGLE most useful
+ * thing the user could do today from the candidates — so there's always at least one fresh task a day.
+ * Deliberately more permissive than classifyCandidates (it returns exactly one, even something small like
+ * wishing someone happy birthday or a light follow-up), but still never a newsletter/receipt.
+ */
+export async function pickOneTask(
+  items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string }[],
+  profile?: Profile,
+  activeTitles?: string[],
+): Promise<{ task: GeneratedTask; tokens: { in: number; out: number } } | null> {
+  if (!items.length) return null;
+  const list = items.slice(0, 30).map((it, i) =>
+    `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
+  const activeBlock = activeTitles?.length ? `\nAlready on their list (pick something DIFFERENT):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
+  const sys =
+    `Pick the SINGLE most useful thing this person could do TODAY from the candidates below — you must return ` +
+    `EXACTLY ONE task. This is a "one useful thing a day" nudge, so it's fine if it's small, but it must be a ` +
+    `real action they'd value: an upcoming event to prep for, a birthday to acknowledge, a reply someone is ` +
+    `waiting on, a commitment they made to fulfil, or clear progress on a stated project. NEVER pick a ` +
+    `newsletter, promo, receipt, or automated mail. Prefer the most time-sensitive or personal item. Use their ` +
+    `profile to choose well.\n` +
+    `The title MUST be specific — name the actual person/company AND subject ("Wish Sonya a happy birthday", ` +
+    `"Reply to Chloe at BOND about the demo"), NEVER vague ("Follow up on email", "Handle message").\n` +
+    `Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words","why":"one clause ` +
+    `naming the concrete trigger","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,` +
+    `"risk":"low"|"high"}`;
+  const client = deepseekClient();
+  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  try {
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: actualModel, max_tokens: 500, temperature: 0.2, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` },
+      ],
+    }));
+    const tokens = { in: res.usage?.prompt_tokens || 0, out: res.usage?.completion_tokens || 0 };
+    const r: any = firstJson(String(res.choices?.[0]?.message?.content || ""));
+    const idx = Number(r?.i);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= items.length || String(r?.title || "").trim().length < 4) return null;
+    const it = items[idx];
+    const task: GeneratedTask = {
+      title: String(r.title).slice(0, 90),
+      why: String(r.why || "Worth doing today.").slice(0, 400),
+      when: r.when ? String(r.when).slice(0, 40) : undefined,
+      source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : "gmail",
+      risk: r.risk === "high" ? "high" : "low",
+      urgency: clamp01(r.urgency ?? 0.4),
+      importance: clamp01(r.importance ?? 0.5),
+      anchorKey: it.anchorKey,
+      link: it.url,
+      accountId: it.accountId,
+    };
+    console.log(`${new Date().toISOString()} [ai] pickOneTask: "${task.title}" (${tokens.in} in / ${tokens.out} out)`);
+    return { task, tokens };
+  } catch { return null; }
 }
 
 export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; }
@@ -599,6 +667,7 @@ export interface RunOutput {
   links: TaskLink[];          // the artifacts it made this run (draft / doc / sheet / event / issue), so the user can open them
   sendables: Sendable[];      // drafted email / composed Slack message the user can fire with one click
   profileUpdates: ProfileUpdate[];
+  followUps?: { title: string; why: string }[]; // distinct NEW obligations discovered → each becomes its own task
   tokens?: { in: number; out: number }; // cost telemetry — recorded on the task's timeline per run
 }
 
@@ -611,11 +680,23 @@ const RUN_SYSTEM =
   `NOT ask the user for anything you could find or do yourself. Be rigorously honest and grounded; never invent specifics.\n` +
   `WORK IN THREE PHASES: (1) PLAN silently — from the task and the context you gather, decide which tools ` +
   `you'll use and what artifacts (draft/doc/event/cells) you'll produce; never show this plan to the user. ` +
-  `(2) DO — execute the reversible work through the tools. (3) REPORT via submit — "synthesis" = one-line ` +
-  `summary of what you DID (past tense), "did" = one bullet per concrete action you performed (with names), ` +
-  `"links" = EVERY artifact you produced, "steps" = EVERYTHING that still needs ` +
-  `the user, as a complete checklist. Leave steps empty ONLY when a sendable covers the remaining action or ` +
-  `truly nothing is left.\n` +
+  `(2) DO — execute the reversible work through the tools. (3) REPORT via submit — BE BRIEF, the user wants to ` +
+  `scan not read: "synthesis" = ONE short past-tense line of what you DID, "did" = at most 3 short bullets of ` +
+  `concrete actions you produced (with names; omit this if nothing meaningful was produced — never pad it), ` +
+  `"links" = EVERY artifact you produced, "steps" = only what genuinely still needs the user, each a SHORT ` +
+  `one-liner (never a paragraph), the essential few not an exhaustive checklist. Leave steps empty when a ` +
+  `sendable covers the remaining action or nothing is left.\n` +
+  `PREP EVEN WHEN BLOCKED — if you can't fully DELIVER because one piece is missing (a recipient/contact, a ` +
+  `login, an approval, a file), still PRODUCE what you can: write the actual message/greeting/content text. ` +
+  `BUT NEVER invent the missing piece to force completion — if you do NOT have the person's REAL email/contact, ` +
+  `do NOT create a draft addressed to a guessed or placeholder address (never name@example.com, never a made-up ` +
+  `address). Instead put the ready-to-send TEXT into the step's own text so the user can paste it, and leave ` +
+  `"Find <the real contact>" as the blocking step. Prepping means producing real CONTENT, never fabricating a ` +
+  `missing fact. A blocked task still hands the user something PREPPED — never just a report that a lookup came up empty.\n` +
+  `"did" IS A LIST OF WINS, NOT A SEARCH LOG — each "did" bullet is something you PRODUCED or PREPPED. NEVER ` +
+  `list dead-end attempts ("searched Gmail — no results", "checked Contacts — none", "couldn't find X"): they ` +
+  `are noise to the user. If a lookup found nothing, either prep around it or put the missing piece in steps — ` +
+  `do not report the failed search as an action.\n` +
   `You can also use web_search for any external fact or context you need (a person, company, deadline, how-to, ` +
   `or a reference link) — look it up rather than guess.\n` +
   `PICK THE RIGHT ARTIFACT TYPE: a task that says "spreadsheet", "sheet", "tracker", or asks for rows/columns ` +
@@ -660,17 +741,28 @@ const RUN_SYSTEM =
   `instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the ` +
   `user gets a one-click "Send invites" button that SHOWS exactly who will be invited before they confirm. You ` +
   `never send the invite; the user's click does, with the recipient list in plain view.\n` +
+  `LANGUAGE — REPLY IN THE THREAD'S LANGUAGE, ALWAYS. Detect the language the thread is written in (French, ` +
+  `Spanish, German, Dutch, …) and write your ENTIRE draft in THAT language — subject line included. A French ` +
+  `thread gets a French reply, never an English one; if the two sides write in different languages, match the ` +
+  `language the OTHER person last wrote to the user in. Never switch a thread to English. Match their ` +
+  `accents/diacritics and native phrasing too — a translated-sounding reply is as wrong as the wrong language.\n` +
   `VOICE — SOUND LIKE THE USER, NOT AN AI. For a REPLY, the THREAD is the source of truth: FIRST reread the ` +
   `ENTIRE thread you're replying to and mirror ITS conventions — the register the user (and the other side) ` +
   `already use there, the greeting/sign-off used IN THAT THREAD (often none mid-thread), its typical message ` +
   `length, its formality. Your draft must read as the natural NEXT message of that exact thread. Only when the ` +
   `thread has no messages from the user (or it's a fresh email) fall back to their broader style: READ 2-3 of ` +
   `their OWN sent emails (search "in:sent", ideally to the same recipient) and copy their ACTUAL writing mechanics:\n` +
-  `- CAPITALIZATION: if they write in lowercase ("hey, sounds good"), you write in lowercase. If they use proper caps, so do you.\n` +
+  `- FORMALITY FIRST — THE THREAD SETS THE REGISTER, NOT the user's casual habits. If the thread is formal ` +
+  `(professional outreach, someone senior/unknown, an institution, full sentences, proper greetings/sign-offs, ` +
+  `vous in French), write a FORMAL reply — proper capitalization, complete sentences, a fitting greeting and ` +
+  `sign-off — EVEN IF the user writes lowercase and casual in their personal mail. Only mirror the casual/` +
+  `lowercase style when the thread ITSELF is already casual. When unsure, err toward the thread's formality; a ` +
+  `too-casual reply to a formal thread is a real mistake. A remembered "writes lowercase" preference does NOT ` +
+  `apply to formal threads.\n` +
+  `- CAPITALIZATION: match the THREAD — lowercase only if the thread is casual and lowercase; formal threads get proper capitalization.\n` +
   `- SENTENCE LENGTH & TOTAL LENGTH: if their emails are 2 short lines, yours are 2 short lines — never longer than they'd write.\n` +
-  `- THEIR WORDS: reuse their habitual greeting ("hey"/"hi"/none), sign-off ("thanks!"/"best"/just their name), ` +
-  `filler words, contractions, and punctuation habits (do they use exclamation marks? ellipses? no periods at line ends?).\n` +
-  `- FORMALITY: match the register they use with THIS recipient specifically, if you can see prior thread messages.\n` +
+  `- THEIR WORDS: reuse the greeting/sign-off REGISTER the thread uses (formal: "Dear …/Bonjour …/Best regards"; ` +
+  `casual: "hey"/"thanks!"/none), plus their contractions and punctuation habits — but always within the thread's formality.\n` +
   `AVOID AI tells — no "I hope this email finds you well", "I wanted to reach out", "Please don't hesitate", ` +
   `"Thank you for your understanding", em-dash-heavy corporate phrasing, or stiff over-formality. Nudge a touch ` +
   `more polished only for someone senior or unknown. If you pick up a durable detail of their style (e.g. ` +
@@ -809,6 +901,14 @@ const RUN_TOOLS = [
         when: { type: "string", description: "gcal: the event date/time (for in-app review)" },
       }, required: ["app", "label"] },
     },
+    follow_ups: {
+      type: "array",
+      description: "DISTINCT NEW obligations you discovered while working that deserve their OWN full task — NOT a step of this one. Use this when a 'step' is really a separate, substantial action Otto could plan and execute on its own (e.g. this task was 'reply to X', but you found the user should also 'reach out to Y association' — that's a whole new outreach, not a sub-step). Each becomes its own task Otto will work next. Use SPARINGLY: 0-2, only for genuinely separate substantial actions; a one-click send or a quick human decision is a step/sendable, NOT a follow-up. Never restate THIS task.",
+      items: { type: "object", properties: {
+        title: { type: "string", description: "the new task as a specific imperative naming who+what, ≤ 11 words, e.g. 'Reach out to Fleur de Bitume association at HEC'" },
+        why: { type: "string", description: "one short clause: why it matters / what triggered it" },
+      }, required: ["title", "why"] },
+    },
   }, required: ["context", "synthesis", "steps"] } },
 ];
 
@@ -878,6 +978,15 @@ export async function runTask(task: { title: string; why: string; source?: strin
   };
   try {
   for (let i = 0; i < MAX; i++) {
+    // Early-bail on read-only drift: after 5 full rounds (which include 3 write-enforcement nudges from
+    // round 3) with ZERO writes and no submit, another round won't change the outcome — it's either a
+    // nothing-to-do task or a stuck one. Stop here and let the rescue pass turn the gathered context into
+    // an honest conclusion, instead of burning rounds 6-8 (the most expensive, since the transcript is
+    // largest) to reach the same end. Focused single-step runs and revisions-with-artifacts are exempt:
+    // a focus run does one specific thing, and a revision's non-write is caught by the fabricated-revision
+    // gate. Observed live: a vacuous "follow up on sent email" task ran a full 8 rounds / 137k tokens only
+    // to conclude nothing was needed — this caps that at ~5 rounds.
+    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds) break;
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
     // Write-aware enforcement: prompts alone don't stop read-forever drift (observed live: 8 rounds of
@@ -920,7 +1029,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
         messages.push({ role: "user", content: "You still have not used any tools. Read the connected apps and do the work now. Do not answer with prose until you have actually acted." });
         continue;
       }
-      return withTokens(finalize(out, textContent, profileUpdates));
+      break; // last round, no tools, no parseable JSON → fall through to the rescue + honest fallback (never throw)
     }
     messages.push({ role: "assistant", content: res.choices[0]?.message?.content || "", tool_calls: toolUses });
     let submitted: RunOutput | null = null;
@@ -1012,6 +1121,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
     const rescue: any = await client.chat.completions.create({
       model: actualModel,
       max_tokens: 1400,
+      response_format: { type: "json_object" }, // FORCE parseable JSON — without this the rescue sometimes
+      // returned prose, so finalize threw and the run fell to the defeatist fallback. JSON mode makes the
+      // rescue reliably usable, so a run that gathered ANY context produces a real result.
       messages: [
         {
           role: "system",
@@ -1034,9 +1146,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
   } catch {
     // fall through to the throw below
   }
-  // No usable result even after the rescue pass. NEVER fake an "executed" state ("Prepared what I
-  // could…" + a Run-again step) — throw so the task honestly returns to ready and retries.
-  throw new Error("The run didn't produce a result — it will retry.");
+  // No usable result even after the rescue pass. Do NOT throw: throwing sends the task back through the
+  // job queue's retry (observed live: the SAME non-converging run replays 3× at 130–240k tokens each, then
+  // fails terminally — a huge burn to keep re-discovering a vacuous task has nothing to do). A genuinely
+  // transient tool/API error is already handled per-round above, so reaching here means the agent RAN but
+  // couldn't converge on a concrete action. Return an HONEST result instead — no fabricated "executed"
+  // claim, no artifact — so the task lands in a visible "needs you" state and the expensive loop stops.
+  const sourceUrl = (task.links || []).find((l) => l?.url)?.url;
+  return withTokens(finalize({
+    synthesis: "This one needs your call — take it from here.",
+    did: [],
+    steps: [{ text: `Open and handle: ${task.title.slice(0, 70)}`, automatable: false, ...(sourceUrl ? { url: sourceUrl } : {}) }],
+    links: [],
+    sendables: [],
+  }, "", profileUpdates));
   } finally {
     console.log(`${new Date().toISOString()} [ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
@@ -1046,7 +1169,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
   const steps: TaskStep[] = rawSteps
     .map((s: any, idx: number) => ({
-      text: String(s?.text || "").trim(),
+      text: String(s?.text || "").trim().slice(0, 180), // keep steps to a scannable one-liner, not a paragraph
       automatable: !!s?.automatable,
       needsPermission: !!s?.needsPermission,
       // Valid only if it points at a REAL other step — a bad index (9 in a 3-step list, or itself)
@@ -1057,7 +1180,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
       options: Array.isArray(s?.options) ? s.options.map((o: any) => String(o).trim()).filter(Boolean).slice(0, 4) : undefined,
     }))
     .filter((s: TaskStep) => s.text)
-    .slice(0, 10);
+    .slice(0, 6); // fewer, tighter steps — a short list reads better than an exhaustive one
   // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.
   const kindLabel = (url: string): string =>
     /docs\.google\.com\/document/i.test(url) ? "the Google Doc Otto created"
@@ -1101,6 +1224,9 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
       (s.app === "gmail" && !!s.draftId && !!s.to && !!(s.subject || s.body)) ||
       (s.app === "slack" && !!s.channel && !!s.text) ||
       (s.app === "gcal" && !!s.eventId && !!s.attendees?.length && !!(s.summary || s.when)))
+    // Never surface a Send button aimed at a FABRICATED recipient (example.com / placeholder) — the model
+    // guessed an address it couldn't find. Drop it so the user isn't offered to send into the void.
+    .filter((s: Sendable) => !/@example\.(?:com|org|net)\b|@(?:test|placeholder|domain|email)\.\w+|\bplaceholder\b/i.test(`${s.to || ""} ${(s.attendees || []).join(" ")}`))
     .slice(0, 6);
   // Brevity backstop: a few lines + a hard char cap, so even a verbose run can't produce a wall of text.
   const brief = (s: string, lines: number, chars: number) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
@@ -1108,15 +1234,30 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // to the transcript is how the user ended up reading the model's THINKING ("Seems like… Let me first…
   // Now I'll create…") on the card instead of a result. And planning-tense text is not a result even when
   // it arrives in the right field — a run that only says what it WOULD do gets the honest-failure retry.
-  let synthesis = brief(String(out?.synthesis || ""), 3, 550);
+  let synthesis = brief(String(out?.synthesis || ""), 2, 260);
   const PLANNING = /\b(let me|i'?ll (?:first|now|then|use|create|draft|check)|i will (?:first|now|then)|now i(?:'?ll)? |first,? i(?:'?ll)? |seems like|my plan is|i need to|i should)\b/i;
   if (PLANNING.test(synthesis)) synthesis = "";
   // "What Otto did" bullets: same hygiene as synthesis — past-tense actions only, planning prose dropped.
+  // ALSO drop dead-end bullets: a "searched X — no results / couldn't find / not found" line is NOT a
+  // meaningful action to the user, it's noise about a failed attempt. This section should show only what
+  // Otto actually PRODUCED or PREPPED, never a log of things that came up empty.
+  const DEAD_END = /\bno (results?|matches?|contacts?|entries|records|response|reply|emails?|luck|info(?:rmation)?)\b|\bnothing (?:found|available|to)\b|\bcouldn'?t\b|\bcould not\b|\bunable to\b|\bnot? found\b|\bno .{0,20}\bfound\b|\bfailed to\b|\bwithout success\b/i;
+  // A fabricated placeholder recipient/fact ("name@example.com", "[email]") is worse than admitting the
+  // contact is unknown — drop any bullet that leans on one, so a made-up address never reads as a real action.
+  const PLACEHOLDER = /@example\.(?:com|org|net)\b|@(?:test|placeholder|domain|email)\.\w+|\[[^\]]*\b(?:email|address|name|phone|contact)\b[^\]]*\]|\bplaceholder\b/i;
+  // "did" = things PRODUCED, not the looking that preceded them. A bullet that merely describes investigation
+  // ("Searched Gmail for X", "Checked Contacts", "Looked through Drive", "Scrolled contacts") is a MEANS, not
+  // a result — drop it. Real wins start with produce-verbs (drafted/created/wrote/updated/added/prepared/…).
+  const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted)\b/i;
   const did: string[] = (Array.isArray(out?.did) ? out.did : [])
     .map((d: any) => String(d || "").trim().replace(/^\s*[-•*]\s*/, ""))
-    .filter((d: string) => d.length >= 6 && !PLANNING.test(d))
-    .map((d: string) => d.slice(0, 160))
-    .slice(0, 6);
+    .filter((d: string) => d.length >= 6 && !PLANNING.test(d) && !DEAD_END.test(d) && !PLACEHOLDER.test(d) && !INVESTIGATIVE.test(d))
+    .map((d: string) => d.slice(0, 130))
+    .slice(0, 4);
+  // A purely dead-end synthesis ("searched … found none", "couldn't find …") is the same noise we strip from
+  // did — if the run PRODUCED nothing (no did, no artifact), blank it so the card leads with "what's left"
+  // instead of a report of what came up empty. (Kept when there IS a produced result to describe.)
+  if (synthesis && !did.length && !links.length && !sendables.length && (DEAD_END.test(synthesis) || INVESTIGATIVE.test(synthesis))) synthesis = "";
   void fallbackText; // kept in the signature for call-site compatibility; intentionally unused as content
   // A completely empty result (no report, no steps, no artifacts) is a FAILED run, not a quiet success —
   // throwing routes it to the honest-failure path (task returns to ready + client auto-retries).
@@ -1146,14 +1287,23 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   if (!steps.length && !sendables.length && links.length) {
     for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
   }
+  // Follow-up tasks the run discovered — distinct new obligations that each deserve their own task. Capped
+  // and validated; the run loop turns these into real tasks the sweep/kick then executes.
+  const followUps = (Array.isArray(out?.follow_ups) ? out.follow_ups : Array.isArray(out?.followUps) ? out.followUps : [])
+    .map((f: any) => ({ title: String(f?.title || "").trim().slice(0, 90), why: String(f?.why || "").trim().slice(0, 200) }))
+    .filter((f: { title: string; why: string }) => f.title.length >= 4)
+    .slice(0, 2);
   return {
-    context: brief(String(out?.context || ""), 3, 600),
-    synthesis: synthesis || "Done.",
+    context: brief(String(out?.context || ""), 2, 380),
+    // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
+    // neutral placeholder (never "Done." on a task that still needs the user — that would misread as finished).
+    synthesis: synthesis || (steps.some((s) => !s.done) ? "" : "Done."),
     did,
     steps,
     links,
     sendables,
     profileUpdates,
+    ...(followUps.length ? { followUps } : {}),
   };
 }
 

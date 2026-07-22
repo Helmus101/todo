@@ -6,9 +6,9 @@ import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus } from "../shared/types.ts";
 import { aiReady, refineManualTask } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -186,7 +186,7 @@ app.get("/api/integrations", requireAuth, async (req, res) => {
 app.get("/api/integrations/:app/accounts", requireAuth, async (req, res) => {
   const app2 = String(req.params.app);
   if (!integrations.CATALOG.some((c) => c.key === app2)) { res.status(404).json({ error: "Unknown integration." }); return; }
-  const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2) : [];
+  const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2, true) : [];
   res.json({ accounts });
 });
 
@@ -327,6 +327,14 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   // or if AI usage is paused — the task still gets added, just unrefined).
   const refined = aiReady() && !isPaused(req) ? await refineManualTask(title, req.session.profile) : null;
   req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined);
+  // AUTO-RUN: a manually-added task should just start working — no "Run" click needed. Queue it for
+  // execution (unless AI is off/paused or it went in unrefined) and mark it queued so the client's kick loop
+  // drains it. addManual unshifts, so the new task is at index 0.
+  const added = req.session.tasks[0];
+  if (added && aiReady() && !isPaused(req) && !added.unrefined && canonStatus(added.status) === "ready") {
+    added.status = "queued";
+    try { await enqueueJob(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
+  }
   await commit(req);
   res.json(req.session.tasks);
 });
@@ -538,6 +546,17 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
       cronConfigured: !!process.env.CRON_SECRET,
     });
   } catch (e: any) { res.status(500).json({ error: e?.message || "status failed" }); }
+});
+
+// AI token usage for the signed-in user — read from the CLOUD (not the session), so usage racked up by
+// background job runs (sweeps/executions with the browser closed) is reflected, not just this tab's.
+app.get("/api/usage", requireAuth, async (req, res) => {
+  try {
+    const state = await loadState(req.session.user!);
+    const u = state.profile?.usage;
+    res.json(u ? { in: u.in, out: u.out, total: u.in + u.out, runs: u.runs, since: u.since }
+              : { in: 0, out: 0, total: 0, runs: 0, since: null });
+  } catch (e: any) { res.status(500).json({ error: e?.message || "usage failed" }); }
 });
 
 // ── Chat (DeepSeek + web search, grounded in the user's profile + to-dos) ─────────

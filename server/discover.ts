@@ -9,7 +9,7 @@
  * and every anchor/link on a resulting task comes from the SOURCE item, never from the model, so a
  * hallucinated reference is structurally impossible.
  */
-import { readAction } from "./integrations.ts";
+import { readAction, getConnectedAccounts } from "./integrations.ts";
 
 export interface SourceItem {
   sourceApp: "gmail" | "calendar" | "drive" | "github";
@@ -21,6 +21,8 @@ export interface SourceItem {
   sender?: string;
   timestamp?: string;
   labels: string[];       // e.g. ["inbox"], ["sent"] (a sent item = a commitment the user made), ["event"], ["shared"]
+  accountId?: string;     // Composio connected-account id this came from (multi-Gmail: routes execution back)
+  accountEmail?: string;  // the account's own address (for display / disambiguation)
 }
 
 // Deterministic noise filters — mass mail never even reaches the model.
@@ -34,7 +36,7 @@ export function isNoise(it: SourceItem): boolean {
 const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 
 // Composio response shapes drift between versions — read every known key defensively.
-function gmailToItems(data: any, label: string): SourceItem[] {
+function gmailToItems(data: any, label: string, account?: { id?: string; email?: string }): SourceItem[] {
   const msgs: any[] = data?.messages || data?.data?.messages || data?.response_data?.messages || (Array.isArray(data) ? data : []);
   return (msgs || []).slice(0, 25).map((m: any): SourceItem | null => {
     const threadId = String(m?.threadId ?? m?.thread_id ?? m?.id ?? "").trim();
@@ -49,6 +51,8 @@ function gmailToItems(data: any, label: string): SourceItem[] {
       sender: String(m?.sender ?? m?.from ?? m?.fromAddress ?? "").slice(0, 120),
       timestamp: String(m?.messageTimestamp ?? m?.internalDate ?? m?.date ?? ""),
       labels: [label],
+      accountId: account?.id,
+      accountEmail: account?.email,
     };
   }).filter((x): x is SourceItem => !!x);
 }
@@ -129,13 +133,20 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const grab = async (fn: () => Promise<SourceItem[]>) => {
     try { const got = await fn(); attempted = true; items.push(...got); } catch { /* source unavailable — skip */ }
   };
-  await Promise.all([
+  // Multi-Gmail: read inbox + sent from EVERY connected Gmail account, tagging each item with its account so
+  // execution routes back to the right inbox. With 0-1 accounts we pass no id (unchanged single-account path).
+  let gmailAccounts: { id?: string; email?: string }[] = [{}];
+  try { const accs = await getConnectedAccounts(userEmail, "gmail"); if (accs.length > 1) gmailAccounts = accs.map((a) => ({ id: a.id, email: a.email })); } catch { /* fall back to single */ }
+  const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
-    }), "inbox")),
+    }, acc.id), "inbox", acc)),
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:sent newer_than:10d", max_results: 15,
-    }), "sent")),
+    }, acc.id), "sent", acc)),
+  ]);
+  await Promise.all([
+    ...gmailGrabs,
     grab(async () => {
       const now = new Date();
       const week = new Date(now.getTime() + 7 * 24 * 3600 * 1000);

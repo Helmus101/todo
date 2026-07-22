@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
-import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant } from "../shared/types.ts";
-import { generateTasks, classifyCandidates, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
+import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled } from "../shared/types.ts";
+import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates } from "./discover.ts";
 
@@ -180,10 +180,18 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
   const kept: WebTask[] = [];
   for (const t of list) {
     const ak = normKey(t.anchorKey), link = linkOf(t);
-    const i = kept.findIndex((k) =>
-      (!!ak && normKey(k.anchorKey) === ak) ||
-      (!!link && linkOf(k) === link) ||
-      sameTask(k, t));
+    const i = kept.findIndex((k) => {
+      const kak = normKey(k.anchorKey);
+      if (!!ak && kak === ak) return true;             // SAME anchor (same thread/event) → dup
+      if (!!link && linkOf(k) === link) return true;   // same source link → dup
+      // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER are different real-world items
+      // (two distinct emails/events). A genuinely NEW email must not be swallowed into a similarly-titled
+      // OLD *handled* task ("refresh finds nothing") — so across distinct anchors, don't let a DONE or
+      // DISMISSED task title-suppress a new one. But two ACTIVE same-title cards ARE worth merging (the
+      // user shouldn't see visual duplicates), and anchorless tasks (manual/agent-sweep) still title-dedupe.
+      if (!!ak && !!kak && kak !== ak && (k.status === "done" || k.status === "dismissed")) return false;
+      return sameTask(k, t);
+    });
     if (i >= 0) kept[i] = betterOf(kept[i], t);
     else kept.push(t);
   }
@@ -229,6 +237,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     pausedAt: pausedSide.pausedAt,
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
+    lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
     // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
     // p2's explicit `undefined` keys from normalizeProfile — the bug that silently dropped workingHours).
     workingHours: p2.workingHours ?? p1.workingHours,
@@ -236,6 +245,14 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     autoApprove: p2.autoApprove ?? p1.autoApprove,
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
+    // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
+    // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
+    usage: (p1.usage || p2.usage) ? {
+      in: Math.max(p1.usage?.in || 0, p2.usage?.in || 0),
+      out: Math.max(p1.usage?.out || 0, p2.usage?.out || 0),
+      runs: Math.max(p1.usage?.runs || 0, p2.usage?.runs || 0),
+      since: [p1.usage?.since, p2.usage?.since].filter(Boolean).sort()[0] || new Date().toISOString(),
+    } : undefined,
   };
 }
 
@@ -268,13 +285,29 @@ export function applyQualityBar<T extends { anchorKey?: string; when?: string; u
     const it = byAnchor.get(normKey(g.anchorKey));
     if (it?.labels?.includes("sent") && g.when) return true;  // a commitment THEY made, with a deadline: always keep
     if (isVip(it?.sender)) return true;                        // high-priority person's ask: always keep
-    // The classifier is ALREADY the judgment layer — it returns ONLY items that genuinely need action
-    // (and an empty list otherwise). So this is a WEAK floor, not a second opinion: drop a task only when
-    // the model itself scored it trivial on BOTH axes (low stakes AND no time pressure). A normally-scored
-    // actionable item (~0.5 on either axis, the model's neutral default) survives — otherwise a real
-    // "reply awaited" task the classifier surfaced gets silently killed and the sweep shows nothing.
-    return g.importance >= 0.45 || g.urgency >= 0.45;
+    // The classifier is ALREADY the judgment layer — and a SELECTIVE one (typically a handful out of
+    // dozens of candidates). So this is only a last-ditch safety net against the model contradicting its
+    // own "actionable" verdict with a near-zero score: drop a task ONLY when it scored trivial on BOTH
+    // axes. Scoring is mildly non-deterministic run to run, so a tight floor (0.45) would flip a genuine
+    // "reply awaited" task in and out of the list across sweeps — keep the floor low and trust the
+    // classifier's inclusion decision; scores drive RANKING, not survival.
+    return g.importance >= 0.35 || g.urgency >= 0.35;
   });
+}
+
+/** Local calendar day (YYYY-MM-DD) of an instant in the user's timezone — for the once-per-day force gate.
+ *  Duplicated tiny helper (not imported from jobs.ts) to avoid a circular module dependency. */
+function localDayOf(iso: string, timezone?: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
+  catch { return d.toISOString().slice(0, 10); }
+}
+/** Have we NOT yet forced a daily-minimum task in the user's current local day? */
+function forcedDueToday(profile: Profile, now: Date = new Date()): boolean {
+  if (!profile.lastForcedAt) return true;
+  const tz = profile.workingHours?.timezone;
+  return localDayOf(profile.lastForcedAt, tz) !== localDayOf(now.toISOString(), tz);
 }
 
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
@@ -307,7 +340,8 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         const candidates = filterCandidates(items, knownAnchors);
         const classified = candidates.length
           ? await classifyCandidates(candidates, profile, active.map((a) => a.title))
-          : { tasks: [], profileUpdates: [] };
+          : { tasks: [], profileUpdates: [] as ProfileUpdate[] };
+        addUsage(profile, (classified as { tokens?: { in: number; out: number } }).tokens);
         // The classification pass also LEARNS: durable facts these items revealed (a key person, an
         // ongoing project) fold straight into the profile — memory keeps growing on every sweep.
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
@@ -318,6 +352,21 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         // was it the classifier (classified 0), the quality bar (kept 0), or dedupe (folded == existing).
         const newCards = folded.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
         console.log(`${new Date().toISOString()} [tasks] sweep pipeline: ${items.length} items → ${candidates.length} candidates → ${classified.tasks.length} classified → ${kept.length} passed bar → ${newCards} new card${newCards === 1 ? "" : "s"}`);
+        // DAILY MINIMUM — "at least one task a day": if this sweep surfaced nothing new AND we haven't
+        // already forced a task in the user's current local day, pick the single most useful candidate and
+        // add it. Gated once-per-local-day (lastForcedAt) so repeated manual refreshes don't pile up, and
+        // only when there ARE candidates to choose from. The forced pick still folds through dedupe.
+        if (newCards === 0 && candidates.length && forcedDueToday(profile)) {
+          const one = await pickOneTask(candidates, profile, active.map((a) => a.title));
+          if (one) {
+            addUsage(profile, one.tokens);
+            profile.lastForcedAt = new Date().toISOString();
+            const withForced = foldGenerated(existing, [...kept, one.task], profile.highPriorityPeople || []);
+            const forcedNew = withForced.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
+            console.log(`${new Date().toISOString()} [tasks] daily-minimum: forced "${one.task.title}" (${forcedNew} new after fold)`);
+            return withForced;
+          }
+        }
         return folded;
       }
     } catch (e: any) { console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e); }
@@ -325,6 +374,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
 
   // FALLBACK — open-ended agent sweep over the read-only tool view (covers non-Google sources too).
   const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
+  addUsage(profile, gen.tokens);
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   return foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
 }
@@ -332,7 +382,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
 /** Pure post-processing of a sweep's output: absorb duplicates into the existing list, cap genuinely NEW
  *  cards at MAX_NEW_PER_SWEEP (top by score), prune old handled records. Split out so it's unit-testable
  *  without an AI call. */
-export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string }[], highPriorityPeople: string[] = []): WebTask[] {
+export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string; accountId?: string }[], highPriorityPeople: string[] = []): WebTask[] {
   const now = new Date().toISOString();
   // DISMISSED = "I don't want this" — suppress not just the exact item but anything SIMILAR to it, with a
   // deliberately looser match (incl. cross-field title↔why) than the live-task dedupe. A false positive
@@ -356,7 +406,7 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
     const id = randomUUID();
     freshIds.add(id);
     candidates.push({
-      id, title: g.title, why: g.why, when: g.when, source: g.source, risk: g.risk,
+      id, title: g.title, why: g.why, when: g.when, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
     });
@@ -470,6 +520,19 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out));
     task.lastRunTokens = out.tokens;
+    addUsage(profile, out.tokens);
+    // Spin off DISTINCT new obligations the run discovered as their OWN tasks — so Otto plans + works each
+    // fully (as if freshly generated) instead of burying it as a one-line step. Deduped against the list;
+    // inherits the source account so its own execution routes to the right inbox. The job layer auto-runs them.
+    for (const f of out.followUps || []) {
+      if (!f.title || list.some((x) => !isHandled(x.status) && nearDup(x.title, f.title))) continue;
+      const e = eisenhower(0.5, 0.6);
+      list.push({
+        id: randomUUID(), title: f.title.slice(0, 120), why: f.why || `Follow-up from "${task.title}"`,
+        source: task.source, risk: "low", urgency: 0.5, importance: 0.6, quadrant: e.quadrant, score: e.score,
+        status: "ready", createdAt: new Date().toISOString(), sourceAccountId: task.sourceAccountId,
+      });
+    }
     task.status = "needs_review";
     task.lastError = undefined;
     task.updatedAt = new Date().toISOString();
@@ -523,6 +586,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
     : "";
   const focus = (decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text) + qa;
   const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
+  addUsage(profile, out.tokens);
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);
   // If the focused run still needs the user (it returned a needs-you step), it couldn't finish — flip this step

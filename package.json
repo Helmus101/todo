@@ -8,6 +8,8 @@
     "dev": "concurrently -k -n server,client \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "wait-on -t 60000 tcp:127.0.0.1:8788 && vite",
+    "predev": "bash scripts/zip-extension.sh",
+    "prebuild": "bash scripts/zip-extension.sh",
     "build": "vite build",
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc --noEmit",

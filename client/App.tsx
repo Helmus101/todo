@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant } from "../shared/types.ts";
-import { api, type IntegrationItem } from "./api.ts";
+import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 
 /** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
 const relTime = (iso: string): string => {
@@ -42,14 +42,19 @@ function sweepSkipMessage(note: string): string {
   return `Sweep didn't finish: ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}`;
 }
 
-function subtitle(t: WebTask, retrying?: boolean): string {
+// One short context line under the title. The STATUS is carried by the chip on the right — the subtitle
+// never repeats it. So: the "why" for a fresh task, the error for a failed one, nothing when the chip says it.
+function subtitle(t: WebTask): string {
   const c = canonStatus(t.status);
-  if (c === "queued") return "Queued — starting shortly…";
-  if (c === "executing") return "Working on it…";
-  if (c === "failed_retryable") return `${retrying ? "Run failed — retrying automatically." : "Run failed — tap Retry."} ${t.lastError || ""}`.trim();
-  if (c === "failed_terminal") return `Run failed — tap Run to retry. ${t.lastError || ""}`.trim();
-  if (c === "needs_review") return statusChip(t)?.label === "Done for you" ? "Done for you" : (statusChip(t)?.label || t.why);
-  return t.why;
+  if (c === "failed_retryable" || c === "failed_terminal") return t.lastError || "";
+  if (c === "ready") return t.why;
+  return "";
+}
+// Format a task's deadline: a raw ISO date/datetime → "Jul 27"; already-human text ("late July", "today") as-is.
+function fmtWhen(when: string): string {
+  const s = String(when || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d.getTime())) return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+  return s;
 }
 
 // Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
@@ -226,10 +231,13 @@ export function App() {
   // Server truth passes through as-is — the job layer owns execution state now; the client just displays it.
   const retryFlags = (list: WebTask[]) => list;
 
-  // Pull the server's task list (cheap GET; also reconciles cross-device state server-side).
+  // Pull the server's task list (cheap GET; also reconciles cross-device state server-side). Always resolves
+  // `loaded` — even on an empty/failed fetch — so the loading screen can never hang half-forever (the
+  // 15-min tick + focus re-sync retry a transient miss).
   const syncTasks = useCallback(async () => {
     const t = await api.tasks().catch(() => null);
-    if (t) { setTasks(retryFlags(t)); setLoaded(true); }
+    if (t) setTasks(retryFlags(t));
+    setLoaded(true);
   }, []);
 
   // Continuous monitoring: run a background sweep when the last SUCCESSFUL one is older than the watch
@@ -369,7 +377,9 @@ export function App() {
           <a className={`tab ${route === "settings" ? "active" : ""}`} href="/settings">Settings</a>
         </nav>
         <div className="spacer" />
-        {extOn && <span className="ext-chip" title="Otto Tabs extension is connected — pages open automatically">Tabs connected</span>}
+        {extOn
+          ? <span className="ext-chip" title="Otto Tabs extension is connected — pages open automatically">Tabs connected</span>
+          : <a className="ext-link" href="/otto-tabs-extension.zip" download title="Download the Otto Tabs extension, then load it unpacked at chrome://extensions (Developer mode) so created docs open automatically">Get the Tabs extension</a>}
         {(route === "" || route === "tasks" || route.startsWith("task/")) && status.googleConnected && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? "Finding…" : "Refresh"}</button>}
       </header>
 
@@ -396,7 +406,7 @@ export function App() {
             <div className="intro paused-banner">
               <div className="intro-body">
                 <div className="intro-title">AI is paused</div>
-                <p>Otto won't sweep, run tasks, or chat until you resume it in Settings.</p>
+                <p>Resume in Settings to continue.</p>
               </div>
               <button className="btn xs ghost" onClick={() => navigate("settings")}>Settings</button>
             </div>
@@ -405,7 +415,7 @@ export function App() {
             <div className="intro">
               <div className="intro-body">
                 <div className="intro-title">How it works</div>
-                <p>Once a day, Otto automatically scans your inbox, calendar & files, then quietly does what it safely can — drafting replies, prepping docs. You just review & confirm. Hit Refresh anytime for a fresh sweep.</p>
+                <p>Otto scans your apps daily and does what it safely can. You review & confirm. Hit Refresh anytime.</p>
               </div>
               <button className="btn xs ghost" onClick={dismissIntro}>Got it</button>
             </div>
@@ -420,29 +430,20 @@ export function App() {
             // show the skeleton instead of flashing the empty state.
             if (shown.length === 0 && (busy || !loaded)) return <TaskSkeleton />;
             if (shown.length === 0)
-              return <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}. New mail or meetings show up here.`}</div>;
-            // Execution-plan view: the list (already score-sorted) renders under High / Medium / Low
-            // priority bands so a glance answers "what actually matters right now".
-            const band = (t: WebTask) => t.quadrant === "do" ? "High priority" : t.quadrant === "later" ? "Low priority" : "Medium";
-            let prevBand = "";
-            return <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => {
-                  const b = band(t);
-                  const head = b !== prevBand ? <div className="band-head" key={`band-${b}`}>{b}</div> : null;
-                  prevBand = b;
-                  return (
-                    <Fragment key={t.id}>
-                      {head}
-                      <Card
-                        task={t}
-                        retrying={retryingIds.includes(t.id)}
-                        open={t.id === openId}
-                        onToggle={() => navigate(t.id === openId ? "" : `task/${t.id}`)}
-                        onChange={setTasks}
-                        onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
-                      />
-                    </Fragment>
-                  );
-                })}</div>;
+              return <div className="empty">{note || `You're all clear${(status.name || firstName(status.user)) ? `, ${status.name || firstName(status.user)}` : ""}.`}</div>;
+            // No priority bands — the list is simply ranked most-important first (sortWithinQuadrant). One
+            // clean list, no section headers.
+            return <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => (
+                  <Card
+                    key={t.id}
+                    task={t}
+                    retrying={retryingIds.includes(t.id)}
+                    open={t.id === openId}
+                    onToggle={() => navigate(t.id === openId ? "" : `task/${t.id}`)}
+                    onChange={setTasks}
+                    onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                  />
+                ))}</div>;
           })()}
           {completed.length > 0 && (
             <div className="completed-section">
@@ -472,23 +473,29 @@ export function App() {
   );
 }
 
-/** Loading placeholder while Otto scans the inbox/calendar — shimmer cards so the screen never sits empty. */
+/** Thorough loading screen while Otto loads/scans — a spinner, a status line, and shimmer rows so the
+ *  whole list arrives at once (never a half-populated flash). */
 function TaskSkeleton() {
-  const widths = ["68%", "54%", "61%"];
+  const widths = ["66%", "52%", "71%", "58%", "63%"];
   return (
-    <div className="list" aria-hidden="true">
-      {widths.map((w, i) => (
-        <div key={i} className="card skel">
-          <div className="card-main">
-            <span className="skel-box skel-pill" />
-            <div className="card-text">
-              <div className="skel-box skel-line" style={{ width: w }} />
-              <div className="skel-box skel-line sm" style={{ width: "36%" }} />
+    <div className="loading-screen" aria-busy="true" aria-live="polite">
+      <div className="loading-head">
+        <span className="spinner sm" />
+        <span className="loading-msg">Loading your tasks…</span>
+      </div>
+      <div className="list" aria-hidden="true">
+        {widths.map((w, i) => (
+          <div key={i} className="card skel">
+            <div className="card-main">
+              <span className="skel-box skel-pill" />
+              <div className="card-text">
+                <div className="skel-box skel-line" style={{ width: w }} />
+                <div className="skel-box skel-line sm" style={{ width: "34%" }} />
+              </div>
             </div>
           </div>
-        </div>
-      ))}
-      <div className="skel-note">Looking through your inbox, calendar &amp; Drive…</div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -498,7 +505,7 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
   return (
     <div className="connect-card">
       <h2>{(status.name || firstName(status.user)) ? `Welcome, ${status.name || firstName(status.user)}` : "Welcome to Otto"}</h2>
-      <p>Connect Gmail to begin. Otto reads your inbox, calendar and Drive so it can do your to-dos — it only ever creates <b>drafts</b> and <b>docs</b>, and never sends without you.</p>
+      <p>Connect Gmail to begin. Otto reads your apps and drafts your to-dos — it never sends without you.</p>
       {!status.googleConfigured && <div className="warn">Integrations aren't configured on the server (COMPOSIO_API_KEY).</div>}
       {!status.aiReady && <div className="warn">Server is missing DEEPSEEK_API_KEY — task generation is disabled.</div>}
       <a className="btn primary big" href="/settings">Connect in Settings</a>
@@ -510,7 +517,10 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
  *  person-profile editor, and exactly what Otto will/won't do. */
 function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void }) {
   const [profile, setProfile] = useState<Profile | null>(null);
-  useEffect(() => { void api.profile().then(setProfile); }, []);
+  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null } | null>(null);
+  const [showKnows, setShowKnows] = useState(false);
+  useEffect(() => { void api.profile().then(setProfile); void api.usage().then(setUsage).catch(() => {}); }, []);
+  const fmtTok = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
 
   return (
     <main className="settings-page">
@@ -518,123 +528,62 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
 
       <section className="settings-sec">
         <h3>Account</h3>
-        <div className="modal-row"><span className="lbl">Signed in as</span><span className="val">{status.user}{status.cloud ? " · synced to cloud" : ""}</span></div>
-        <div className="modal-row"><span className="lbl">Session</span><button className="btn xs" onClick={() => void onSignOut()}>Sign out</button></div>
+        <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? " · synced" : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>Sign out</button></div>
+        {usage && usage.total > 0 && <div className="modal-row"><span className="lbl">AI usage</span><span className="val">{fmtTok(usage.total)} tokens · {usage.runs} runs</span></div>}
       </section>
 
       <section className="settings-sec">
-        <h3>Integrations</h3>
-        <p className="settings-hint">Connect the apps you live in — start with <b>Gmail</b> and <b>Google Calendar</b> (that's what your to-dos are built from). Otto can read them and do the reversible work (draft a reply, create a doc, add a task). It can <b>never send, post, publish, or delete</b> on its own — those stay your call.</p>
+        <h3>Apps</h3>
+        <p className="settings-hint">Otto reads your apps and does reversible work — it <b>never sends, posts, or deletes</b> on its own.</p>
         <Integrations onChanged={onChanged} />
-        <SmokeCheck />
       </section>
 
       <section className="settings-sec">
         <h3>Preferences</h3>
         <label className="pref-row">
-          <input type="checkbox" defaultChecked={autoOpenDocsOn()} onChange={(e) => { try { localStorage.setItem("otto-autoopen-docs", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
-          <span className="pref-text"><b>Open created documents automatically</b><span className="settings-hint">When Otto makes a Doc, Sheet or Slides, open it in a tab so you can review it — needs the Otto Tabs extension, and it's capped so you're never flooded.</span></span>
+          <input type="checkbox" checked={status.paused} onChange={(e) => { void api.setPaused(e.target.checked).then(() => onChanged()); }} />
+          <span className="pref-text"><b>Pause Otto</b><span className="settings-hint">Stops all AI. Your to-dos stay put.</span></span>
         </label>
         <label className="pref-row">
-          <input type="checkbox" checked={status.paused} onChange={(e) => { void api.setPaused(e.target.checked).then(() => onChanged()); }} />
-          <span className="pref-text"><b>Pause all AI usage</b><span className="settings-hint">Stops the daily sweep, task runs, and chat immediately — nothing calls the AI while this is on. Your existing to-dos stay put; flip it off to resume.</span></span>
+          <input type="checkbox" defaultChecked={autoOpenDocsOn()} onChange={(e) => { try { localStorage.setItem("otto-autoopen-docs", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
+          <span className="pref-text"><b>Open created docs automatically</b><span className="settings-hint">Needs the Tabs extension.</span></span>
         </label>
-        <div className="pref-group">
-          <label className="pref-row">
-            <span className="pref-text"><b>Working hours</b><span className="settings-hint">When Otto should be active (e.g., 9am-6pm)</span></span>
-          </label>
-          <div className="pref-inputs">
-            <input type="time" className="pref-input" value={profile?.workingHours?.start || "09:00"} onChange={(e) => { void api.setProfilePreference("workingHours", { ...profile?.workingHours, start: e.target.value }).then(setProfile); }} />
-            <span>to</span>
-            <input type="time" className="pref-input" value={profile?.workingHours?.end || "18:00"} onChange={(e) => { void api.setProfilePreference("workingHours", { ...profile?.workingHours, end: e.target.value }).then(setProfile); }} />
-          </div>
-        </div>
-        <div className="pref-group">
-          <label className="pref-row">
-            <span className="pref-text"><b>Response style</b><span className="settings-hint">How Otto should draft your replies</span></span>
-          </label>
-          <select className="pref-select" value={profile?.responseStyle || "concise"} onChange={(e) => { void api.setProfilePreference("responseStyle", e.target.value).then(setProfile); }}>
-            <option value="concise">Concise</option>
-            <option value="detailed">Detailed</option>
-            <option value="casual">Casual</option>
-            <option value="formal">Formal</option>
-          </select>
-        </div>
-        <div className="pref-group">
-          <label className="pref-row">
-            <span className="pref-text"><b>Auto-approve actions</b><span className="settings-hint">Actions Otto can do without asking (e.g., schedule meetings under 30min)</span></span>
-          </label>
-          {([["schedule_meetings_under_30min", "Schedule meetings under 30 minutes"], ["archive_newsletters", "Archive newsletters automatically"]] as const).map(([key, label]) => (
-            <label className="pref-row" key={key}>
-              <input
-                type="checkbox"
-                checked={!!profile?.autoApprove?.includes(key)}
-                onChange={(e) => {
-                  const cur = profile?.autoApprove || [];
-                  const next = e.target.checked ? [...cur, key] : cur.filter((x) => x !== key);
-                  void api.setProfilePreference("autoApprove", next).then(setProfile);
-                }}
-              />
-              <span className="pref-text">{label}</span>
-            </label>
-          ))}
-        </div>
       </section>
 
       <section className="settings-sec">
-        <h3>What Otto knows about you</h3>
-        <p className="settings-hint">Otto fills this in as it works — and it shapes how it chooses and does your to-dos. Edit anything.</p>
-        <ProfileEditor />
-      </section>
-
-      <section className="settings-sec">
-        <h3>What Otto can do</h3>
-        <p className="settings-hint">Through your connected apps it can read your world and do the <b>reversible</b> work — draft replies, create docs/decks/sheets, add tasks, update issues. It can <b>never</b> do something irreversible on its own: no sending or forwarding email, no posting messages, no publishing, no deleting. Those always stay with you.</p>
+        <button className="sec-toggle" onClick={() => setShowKnows((v) => !v)}>
+          <h3>What Otto knows about you</h3>
+          <span className={`caret ${showKnows ? "open" : ""}`}>›</span>
+        </button>
+        {showKnows && <><p className="settings-hint">Otto fills this in as it works. Edit anything.</p><ProfileEditor /></>}
       </section>
     </main>
   );
 }
 
-/** Live integration check: create → verify → clean up against the real connected account, per app.
- *  This is the proof that action names, payloads, and OAuth scopes actually work — run it after
- *  connecting apps and before trusting autonomous execution. */
-function SmokeCheck() {
-  const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<{ app: string; step: string; ok: boolean; detail?: string }[] | null>(null);
-  const [error, setError] = useState("");
-  const run = async () => {
-    setRunning(true); setError(""); setResults(null);
-    try { setResults(await api.smokeTest()); }
-    catch (e: any) { setError(e?.message || "Integration check failed."); }
-    finally { setRunning(false); }
-  };
-  const passed = results?.filter((r) => r.ok).length ?? 0;
+
+/** Connected Gmail accounts (multi-account) — one row per inbox with its address + an individual Disconnect. */
+function GmailAccounts({ onChanged }: { onChanged?: () => void }) {
+  const [accts, setAccts] = useState<ConnectedAccount[] | null>(null);
+  const [busy, setBusy] = useState("");
+  const load = useCallback(async () => { try { setAccts((await api.integrationAccounts("gmail")).accounts); } catch { setAccts([]); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { const on = () => { if (!document.hidden) void load(); }; window.addEventListener("focus", on); return () => window.removeEventListener("focus", on); }, [load]);
+  const disc = async (id: string) => { setBusy(id); try { await api.disconnectAccount("gmail", id); await load(); onChanged?.(); } finally { setBusy(""); } };
+  if (!accts?.length) return null;
   return (
-    <div className="smoke-check">
-      <div className="pref-row">
-        <button className="btn xs" disabled={running} onClick={() => void run()}>{running ? "Checking… (up to a minute)" : "Run integration check"}</button>
-        <span className="settings-hint">Creates a labeled test draft/event/doc in each connected app, verifies it exists, then deletes it — proves everything works end to end. Nothing is sent to anyone.</span>
-      </div>
-      {error && <div className="warn">{error}</div>}
-      {results && (
-        <div className="smoke-results">
-          <div className={`muted small ${passed === results.length ? "" : "warn-text"}`}><b>{passed}/{results.length}</b> checks passed{passed === results.length ? " — integrations are ready." : " — the failures below need attention before trusting autonomous runs."}</div>
-          {results.map((r, i) => (
-            <div key={i} className="smoke-row">
-              <span>{r.ok ? "✓" : "✗"}</span>
-              <span className="smoke-app">{r.app}</span>
-              <span>{r.step}</span>
-              {r.detail && <span className="muted small">{r.detail}</span>}
-            </div>
-          ))}
+    <div className="int-accounts">
+      {accts.map((a) => (
+        <div key={a.id} className="int-acct">
+          <span className="int-acct-email">{a.email || "Connected Gmail"}</span>
+          <button className="btn xs ghost" disabled={busy === a.id} onClick={() => void disc(a.id)}>{busy === a.id ? "…" : "Disconnect"}</button>
         </div>
-      )}
+      ))}
     </div>
   );
 }
 
-/** Integrations grid (Composio): one tile per app, grouped by category. Connect = redirect to the OAuth
- *  flow; Disconnect = revoke. Status is read live from Composio so a finished OAuth shows up on return. */
+/** Integrations grid (Composio): one tile per app, grouped by category. Connect = OAuth; Disconnect = revoke. */
 function Integrations({ onChanged }: { onChanged?: () => void }) {
   const [items, setItems] = useState<IntegrationItem[] | null>(null);
   const [ready, setReady] = useState(true);
@@ -682,18 +631,24 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
           <div className="int-cat">{cat}</div>
           <div className="int-grid">
             {items.filter((i) => i.category === cat).map((i) => (
-              <div key={i.key} className={`int-tile ${i.connected ? "on" : ""}`}>
-                <img className="int-logo" src={i.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-                <div className="int-info">
-                  <div className="int-name">{i.name}{i.connected && <span className="int-dot" title="Connected" />}</div>
-                  <div className="int-blurb">{i.blurb}</div>
+              <Fragment key={i.key}>
+                <div className={`int-tile ${i.connected ? "on" : ""}`}>
+                  <img className="int-logo" src={i.logo} alt="" loading="lazy" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                  <div className="int-info">
+                    <div className="int-name">{i.name}{i.connected && <span className="int-dot" title="Connected" />}</div>
+                    <div className="int-blurb">{i.blurb}</div>
+                  </div>
+                  {/* Gmail supports multiple accounts → always offer "Add account"; other apps toggle connect/disconnect. */}
+                  {i.key === "gmail" ? (
+                    <a className="btn xs" href="/integrations/gmail/connect" target="_blank" rel="noreferrer">{i.connected ? "Add account ↗" : "Connect ↗"}</a>
+                  ) : i.connected ? (
+                    <button className="btn xs ghost" disabled={busy === i.key} onClick={() => void disconnect(i.key)}>{busy === i.key ? "…" : "Disconnect"}</button>
+                  ) : (
+                    <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>
+                  )}
                 </div>
-                {i.connected ? (
-                  <button className="btn xs ghost" disabled={busy === i.key} onClick={() => void disconnect(i.key)}>{busy === i.key ? "…" : "Disconnect"}</button>
-                ) : (
-                  <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Connect ↗</a>
-                )}
-              </div>
+                {i.key === "gmail" && i.connected && <GmailAccounts onChanged={load} />}
+              </Fragment>
             ))}
           </div>
         </div>
@@ -738,7 +693,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
         {step === 0 && (
           <div className="onboard-step">
             <h2>Welcome to Otto</h2>
-            <p className="onboard-lead">Otto is a to-do list that does itself. It reads your inbox, calendar &amp; files, quietly does the reversible work — drafting replies, prepping docs, organizing tasks — and surfaces only what needs you.</p>
+            <p className="onboard-lead">A to-do list that does itself. Otto reads your apps, does the reversible work, and surfaces only what needs you.</p>
             <ul className="onboard-points">
               <li>Done for you — ready to review</li>
               <li>Needs you — a decision, a send, a payment</li>
@@ -754,7 +709,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
         {step === 1 && (
           <div className="onboard-step">
             <h2>Connect your apps</h2>
-            <p className="onboard-lead">Connect at least Gmail and Calendar so Otto has something to work with. Each opens in a new tab — finish the sign-in there, then come back.</p>
+            <p className="onboard-lead">Connect Gmail and Calendar. Each opens in a new tab — sign in, then come back.</p>
             {items === null ? <div className="muted small">Loading…</div> : (
               <div className="onboard-apps">
                 {essentials.map((i) => (
@@ -768,7 +723,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
                 ))}
               </div>
             )}
-            <p className="muted small">More apps (Slack, Notion, GitHub…) live in Settings whenever you want them.</p>
+            <p className="muted small">More apps in Settings.</p>
             <div className="onboard-actions">
               <button className="btn primary big" onClick={() => setStep(2)}>{connectedCount ? `Continue — ${connectedCount} connected` : "Skip for now"}</button>
             </div>
@@ -777,7 +732,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
         {step === 2 && (
           <div className="onboard-step">
             <h2>You're all set</h2>
-            <p className="onboard-lead">{connectedCount ? "Otto will start finding things it can do for you. Anything needing your call shows up as a task — review, then one click to send." : "Connect an app any time from Settings and Otto will get to work."}</p>
+            <p className="onboard-lead">{connectedCount ? "Otto will get to work. Anything needing you shows up as a task." : "Connect an app any time from Settings."}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>Go to my tasks</button></div>
           </div>
         )}
@@ -896,6 +851,30 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
 
 /** Marketing landing (signed out, route /). CTAs route to the dedicated login / sign-up page. */
 function Landing() {
+  const DRAFT = "sounds good — thursday works. i'll bring the updated numbers and we can walk through the deltas together";
+  const [typed, setTyped] = useState("");
+  const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Scroll-reveal: each .reveal element animates in the first time it enters the viewport.
+  useEffect(() => {
+    if (reduced) { document.querySelectorAll(".reveal").forEach((el) => el.classList.add("in")); return; }
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+    }, { threshold: 0.18, rootMargin: "0px 0px -8% 0px" });
+    document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [reduced]);
+
+  // Live typewriter in the hero demo — types the draft out, then holds. (Full text immediately if reduced-motion.)
+  useEffect(() => {
+    if (reduced) { setTyped(DRAFT); return; }
+    let i = 0; const start = setTimeout(function tick() {
+      i++; setTyped(DRAFT.slice(0, i));
+      if (i < DRAFT.length) setTimeout(tick, 26 + (DRAFT[i] === " " ? 40 : 0));
+    }, 900);
+    return () => clearTimeout(start);
+  }, [reduced]);
+
   return (
     <div className="landing">
       <header className="landing-nav">
@@ -907,15 +886,15 @@ function Landing() {
       </header>
 
       <main className="hero">
-        <h1 className="hero-title">The to-do list that <em>does itself</em>.</h1>
-        <p className="hero-sub">Otto reads your inbox, calendar and Drive — then gets ahead of the work. It drafts the replies, preps the docs, and clears your list before you have to ask.</p>
-        <div className="hero-cta">
+        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>The to-do list that <em>does itself</em>.</h1>
+        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Otto reads your inbox, calendar and Drive — then gets ahead of the work. It drafts the replies, preps the docs, and clears your list before you have to ask.</p>
+        <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.25s" }}>
           <a className="btn primary big" href="/signup">Get started — it's free</a>
           <a className="btn ghost" href="/login">Log in</a>
         </div>
-        <div className="fineprint">Only ever drafts &amp; docs — Otto never sends anything without you.</div>
+        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>Only ever drafts &amp; docs — Otto never sends anything without you.</div>
         {/* One product visual: the live drafting demo, nothing else. */}
-        <div className="hero-demo" aria-hidden="true">
+        <div className="hero-demo hero-in" style={{ ["--d" as any]: "0.42s" }} aria-hidden="true">
           <div className="hero-demo-label"><span className="live-dot" /> Live — drafting in your voice</div>
           <div className="demo-window">
             <div className="demo-titlebar"><span /><span /><span /></div>
@@ -923,32 +902,32 @@ function Landing() {
               <p className="demo-line"><b>To:</b> sarah@acme.com</p>
               <p className="demo-line"><b>Subject:</b> Re: Q3 budget review</p>
               <p className="demo-line gap">hi sarah,</p>
-              <p className="demo-line">sounds good — thursday works. i'll bring the updated numbers and we can walk through the deltas together<span className="demo-caret" /></p>
+              <p className="demo-line">{typed}<span className="demo-caret" /></p>
             </div>
           </div>
         </div>
       </main>
 
       <section className="landing-sec">
-        <h2>How it works</h2>
-        <p className="lead">Connect once. From then on Otto watches the things that actually need you — and quietly gets ahead of them.</p>
+        <h2 className="reveal">How it works</h2>
+        <p className="lead reveal">Connect once. From then on Otto watches the things that actually need you — and quietly gets ahead of them.</p>
         <div className="how">
-          <div className="how-step"><div className="n">01</div><h3>It reads your world</h3><p>Inbox, calendar and Drive — pulling out the few things that genuinely need a reply, a decision, or prep.</p></div>
-          <div className="how-step"><div className="n">02</div><h3>It does the work</h3><p>Drafts the reply in your voice, builds the doc, gathers the context — then shows you exactly what it did.</p></div>
-          <div className="how-step"><div className="n">03</div><h3>You just confirm</h3><p>Open a draft, tweak it, send. Anything only you can do is laid out as a short, tickable checklist.</p></div>
+          <div className="how-step reveal" style={{ ["--d" as any]: "0.0s" }}><div className="n">01</div><h3>It reads your world</h3><p>Inbox, calendar and Drive — pulling out the few things that genuinely need a reply, a decision, or prep.</p></div>
+          <div className="how-step reveal" style={{ ["--d" as any]: "0.1s" }}><div className="n">02</div><h3>It does the work</h3><p>Drafts the reply in your voice, builds the doc, gathers the context — then shows you exactly what it did.</p></div>
+          <div className="how-step reveal" style={{ ["--d" as any]: "0.2s" }}><div className="n">03</div><h3>You just confirm</h3><p>Open a draft, tweak it, send. Anything only you can do is laid out as a short, tickable checklist.</p></div>
         </div>
       </section>
 
       <section className="landing-sec">
-        <h2>Built to be trusted</h2>
+        <h2 className="reveal">Built to be trusted</h2>
         <div className="features">
-          <div className="feature"><div><h3>Drafts, never sends</h3><p>Every email is a draft you review. Nothing leaves your account without your explicit OK.</p></div></div>
-          <div className="feature"><div><h3>Learns who you are</h3><p>It remembers your people, projects and preferences, so its work sounds like you — and sharpens over time.</p></div></div>
-          <div className="feature"><div><h3>Your account, your data</h3><p>Saved privately to your account. It reads your apps and creates drafts &amp; docs — nothing destructive.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>Drafts, never sends</h3><p>Every email is a draft you review. Nothing leaves your account without your explicit OK.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Learns who you are</h3><p>It remembers your people, projects and preferences, so its work sounds like you — and sharpens over time.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>Your account, your data</h3><p>Saved privately to your account. It reads your apps and creates drafts &amp; docs — nothing destructive.</p></div></div>
         </div>
       </section>
 
-      <section className="cta-band">
+      <section className="cta-band reveal">
         <h2>Stop managing your to-do list.</h2>
         <p>Let Otto read your world and clear what it can — you just confirm the rest.</p>
         <a className="btn big cta-band-btn" href="/signup">Get started — it's free</a>
@@ -1059,42 +1038,17 @@ function AddTask({ onAdded }: { onAdded: (t: WebTask[]) => void }) {
     try { onAdded(await api.add(v)); setText(""); } finally { setBusy(false); }
   };
   return (
-    <div className="addrow">
+    <div className="add-task-row">
+      <span className="add-plus" aria-hidden="true">+</span>
       <input
-        className="addinput"
-        placeholder="Add a to-do… Otto will do what it can"
+        className="add-task-input"
+        placeholder="Add a task…"
         value={text}
         disabled={busy}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
       />
-      <button className="btn primary" disabled={busy || !text.trim()} onClick={() => void submit()}>{busy ? "Adding…" : "Add"}</button>
-    </div>
-  );
-}
-
-/** Per-task activity timeline (from the durable job-event log): what happened, when — found, run started,
- *  succeeded/failed, sent, confirmed. Makes "is Otto working / what did it actually do" transparent. */
-function Timeline({ taskId, limit = 8, refreshKey }: { taskId: string; limit?: number; refreshKey?: string }) {
-  const [events, setEvents] = useState<{ kind: string; message?: string; at: string }[] | null>(null);
-  useEffect(() => { void api.taskEvents(taskId).then(setEvents).catch(() => setEvents([])); }, [taskId, refreshKey]);
-  const LABELS: Record<string, string> = {
-    found: "Found", queued: "Queued", run_started: "Started working", run_succeeded: "Finished",
-    run_failed: "Run failed", step_started: "Step started", step_done: "Step completed",
-    sent: "Sent", confirmed: "Marked done", dismissed: "Dismissed",
-  };
-  const when = (at: string) => { try { return new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
-  if (!events?.length) return null;
-  return (
-    <div className="timeline">
-      <div className="timeline-head">Activity</div>
-      {events.slice(0, limit).map((e, i) => (
-        <div className="timeline-row" key={i}>
-          <span className={`timeline-dot ${e.kind === "run_failed" ? "bad" : ""}`} />
-          <span className="timeline-what">{LABELS[e.kind] || e.kind}{e.message ? ` — ${e.message}` : ""}</span>
-          <span className="timeline-when">{when(e.at)}</span>
-        </div>
-      ))}
+      {text.trim() && <button className="btn xs primary" disabled={busy} onClick={() => void submit()}>{busy ? "Adding…" : "Add"}</button>}
     </div>
   );
 }
@@ -1238,14 +1192,13 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
       <div className="card-main" onClick={onToggle}>
         <div className="card-text">
           <div className="card-title">{task.title}</div>
-          <div className="card-sub">{task.when && <span className="when">{task.when}</span>}{subtitle(task, retrying)}</div>
+          {(() => { const sub = subtitle(task); const w = task.when ? fmtWhen(task.when) : ""; return (w || sub) ? <div className="card-sub">{w && <span className="when">{w}</span>}{sub}</div> : null; })()}
         </div>
         {!isDone && task.unrefined ? <span className="chip chip-muted" title="Added while AI was off — tap Refine to clean it up">Unrefined</span> : null}
         {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
-        {cStatus === "executing" ? <span className="card-spin" title="Working…" />
-          : cStatus === "needs_review" && (task.steps?.length ?? 0) > 0
-            ? <span className="card-prog" title="Steps done">{(task.steps || []).filter((s) => s.done).length}/{task.steps!.length}</span>
-            : null}
+        {cStatus === "executing" ? <span className="card-spin" title="Working…" /> : null}
+        {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean. */}
+        {!isDone && <button className="card-x" title="Dismiss" aria-label="Dismiss task" onClick={(e) => { e.stopPropagation(); void leave(() => api.dismiss(task.id)); }}>×</button>}
         <span className="caret">›</span>
       </div>
 
@@ -1403,19 +1356,20 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
               </ul>
           </section>
           )}
-          <section>
-            <h4>What Otto did</h4>
-            {task.did?.length
-              ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{d}</li>)}</ul>
-              : task.synthesis
-                ? <Bullets text={task.synthesis} />
-                : <p className="muted">{cStatus === "queued" ? "Queued — starting shortly…" : cStatus === "executing" ? "Working on it now…" : cStatus === "needs_review" ? "Nothing to report." : cStatus === "failed_retryable" || cStatus === "failed_terminal" ? (task.lastError || "The run failed.") : "Hasn't run yet."}</p>}
-            {task.links?.length ? (
-              <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
-            ) : null}
-          </section>
-          {/* Activity is PRIMARY, not hidden — the latest few timeline events sit right on the card. */}
-          <Timeline taskId={task.id} limit={3} refreshKey={task.updatedAt} />
+          {/* "What Otto did" shows ONLY meaningful output — actions it actually produced/prepped, or the
+              artifacts it made. Dead-end attempts (failed searches) are filtered out server-side; when there's
+              nothing meaningful to show, the section is hidden entirely (the story lives in "What's left"). */}
+          {(task.did?.length || task.links?.length) ? (
+            <section>
+              <h4>What Otto did</h4>
+              {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{d}</li>)}</ul> : null}
+              {task.links?.length ? (
+                <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
+              ) : null}
+            </section>
+          ) : (cStatus === "queued" || cStatus === "executing") ? (
+            <section><h4>What Otto did</h4><p className="muted">{cStatus === "queued" ? "Queued — starting shortly…" : "Working on it now…"}</p></section>
+          ) : null}
           <button className="ctx-toggle" onClick={() => setShowContext((v) => !v)}>{showContext ? "Hide context" : "Show context"}</button>
           {showContext && (
             <section className="ctx">
@@ -1424,7 +1378,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
               {task.evidence?.length ? (
                 <ul className="links src-links">{task.evidence.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
               ) : null}
-              <Timeline taskId={task.id} refreshKey={task.updatedAt} />
             </section>
           )}
           <div className="actions">

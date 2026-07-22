@@ -29,6 +29,19 @@ check("dismissed lookalike suppressed", out1.length === 1 && out1[0].status === 
 const doneA = { ...base, id: "a", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "done", anchorKey: "gmail:x1" };
 const freshDup = { ...base, id: "b", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "ready", anchorKey: "GMAIL_X1" };
 check("done beats fresh duplicate", dedupeTasks([doneA, freshDup]).length === 1 && dedupeTasks([doneA, freshDup])[0].status === "done");
+// A genuinely NEW email (distinct anchor) whose title merely RESEMBLES an old DONE task must NOT be
+// swallowed into it — different anchors = different real-world items. (Regression: "refresh finds nothing"
+// when a fresh inbox thread looked like stale done history.)
+const doneOld = { ...base, id: "o1", title: "Reply to the media coverage email", why: "press asked earlier", source: "gmail", status: "done", anchorKey: "gmail:old1" };
+const newEmail = { ...base, id: "n1", title: "Reply to the media coverage email", why: "new press request today", source: "gmail", status: "ready", anchorKey: "gmail:new2" };
+check("new email not suppressed by similar done task", dedupeTasks([doneOld, newEmail]).length === 2);
+// …but two ACTIVE same-title cards (distinct anchors) still merge — no visual duplicates for the user.
+const activeOld = { ...doneOld, id: "ac1", status: "needs_review" };
+check("active same-title cards still merge", dedupeTasks([activeOld, newEmail]).length === 1);
+// …same anchor (formatting drift) always merges, regardless of status.
+check("same anchor still merges", dedupeTasks([doneOld, { ...newEmail, anchorKey: "GMAIL_OLD1" }]).length === 1);
+// …and anchorless title dups still merge (manual tasks / agent-sweep fallback).
+check("anchorless title dup still merges", dedupeTasks([{ ...doneOld, anchorKey: undefined }, { ...newEmail, anchorKey: undefined }]).length === 1);
 
 // ── Cross-device merge ────────────────────────────────────────────────────────
 section("mergeTaskLists");

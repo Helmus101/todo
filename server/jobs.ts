@@ -105,8 +105,10 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   if (c === "needs_review" && !job.input?.note) return "skipped: already executed"; // idempotency — a retry never re-burns a finished run
   if (c === "failed_terminal" && !job.input?.manual) return "skipped: failed terminally — waiting for the user's Retry";
   await store.recordEvent(email, "run_started", { taskId, jobId: job.id, message: job.input?.note ? "Revising per your note" : "Reading context and doing the reversible work" });
-  const extras = await integrations.getAgentTools(email);
+  // Multi-Gmail: run against the SAME Gmail account the task came from (drafts land in the right inbox).
+  const extras = await integrations.getAgentTools(email, t.sourceAccountId ? { gmailAccountId: t.sourceAccountId } : undefined);
   t.autoRan = true; // whether this attempt succeeds or not, don't loop on it automatically
+  const idsBefore = new Set(list.map((x) => x.id)); // to detect follow-up tasks the run spins off
   try {
     const updated = await tasks.runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : undefined);
     // Live artifact verification: read every claimed draft/event/doc back from the real account before the
@@ -118,6 +120,13 @@ async function processExecuteTask(job: store.Job): Promise<string> {
       else void store.recordEvent(email, "verified", { taskId, jobId: job.id, message: "Artifacts verified against the live account" });
     }
     await commitUser(email, profile, list);
+    // Auto-run any FOLLOW-UP tasks the run spun off (distinct new obligations it discovered) — queue each so
+    // Otto plans + works it just like a freshly-generated task. Bounded; they run on the next drain/kick.
+    const spawned = list.filter((x) => !idsBefore.has(x.id) && canonStatus(x.status) === "ready").slice(0, 2);
+    for (const s of spawned) {
+      await store.enqueueJob(email, "execute_task", s.id);
+      void store.recordEvent(email, "found", { taskId: s.id, jobId: job.id, message: `Follow-up from "${t.title.slice(0, 60)}"` });
+    }
     const done = updated?.steps?.length ? `${updated.steps.filter((s) => !s.done).length} step(s) need you` : "fully handled";
     const cost = updated?.lastRunTokens ? ` (${Math.round(updated.lastRunTokens.in / 1000)}k tokens)` : "";
     await store.recordEvent(email, "run_succeeded", { taskId, jobId: job.id, message: (updated?.synthesis?.slice(0, 200) || done) + cost });

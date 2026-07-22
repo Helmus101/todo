@@ -39,6 +39,8 @@ export interface Profile {
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
   lastSweepAt?: string;   // ISO stamp of the last SUCCESSFUL generation sweep — durable "did we check today"
                           // marker (survives restarts; source of truth for the once-per-local-day guarantee)
+  lastForcedAt?: string;  // ISO stamp of the last time the sweep FORCED a "daily minimum" task (when it would
+                          // otherwise have surfaced nothing) — so we guarantee at most one forced task per local day
   // Structured preferences for autonomous behavior
   workingHours?: { start: string; end: string; timezone: string }; // e.g. { start: "09:00", end: "18:00", timezone: "America/New_York" }
   responseStyle?: "concise" | "detailed" | "casual" | "formal"; // how AI should draft responses
@@ -48,6 +50,9 @@ export interface Profile {
   // Trust/confidence system for gradual automation
   confidence?: Record<string, number>; // action category → confidence score (0-1), e.g., { "draft_email": 0.85, "create_calendar": 0.6 }
   confidenceHistory?: Array<{ action: string; approved: boolean; at: string }>; // track approval/rejection history
+  // Cumulative AI token usage across sweeps + task runs (for the Settings "usage" view). Monotonic counters
+  // (merged by MAX across devices), so the number only ever grows — approximate, for visibility not billing.
+  usage?: { in: number; out: number; runs: number; since: string };
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -62,6 +67,7 @@ export function normalizeProfile(p: any): Profile {
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
+    lastForcedAt: typeof p?.lastForcedAt === "string" ? p.lastForcedAt : undefined,
     // Structured preferences
     workingHours: p?.workingHours && typeof p.workingHours === "object" ? {
       start: String(p.workingHours.start || "09:00"),
@@ -75,7 +81,19 @@ export function normalizeProfile(p: any): Profile {
     // Trust/confidence system
     confidence: p?.confidence && typeof p.confidence === "object" ? p.confidence : undefined,
     confidenceHistory: Array.isArray(p?.confidenceHistory) ? p.confidenceHistory.slice(-100) : undefined,
+    usage: p?.usage && typeof p.usage === "object" ? {
+      in: Number(p.usage.in) || 0, out: Number(p.usage.out) || 0, runs: Number(p.usage.runs) || 0,
+      since: typeof p.usage.since === "string" ? p.usage.since : new Date().toISOString(),
+    } : undefined,
   };
+}
+/** Add one AI call's token cost to a profile's cumulative usage counter (mutates in place). Best-effort,
+ *  for the Settings visibility view — never throws, tolerates missing token data. */
+export function addUsage(profile: Profile, tokens?: { in?: number; out?: number } | null): void {
+  const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0;
+  if (!tin && !tout) return;
+  const u = profile.usage || { in: 0, out: 0, runs: 0, since: new Date().toISOString() };
+  profile.usage = { in: u.in + tin, out: u.out + tout, runs: u.runs + 1, since: u.since };
 }
 
 const FACT_STOP = new Set(["the","and","for","with","from","that","this","they","their","them","she","her","his","him","who","handles","handled","leads","are","was","were","has","have","will","its","willem","also","both"]);
@@ -236,6 +254,9 @@ export interface WebTask {
   /** Stable identity of the underlying thing (e.g. "gmail:<threadId>", "calendar:<eventId>"). Dedupes
    *  the SAME email/event across refreshes even when the model rephrases the title. */
   anchorKey?: string;
+  /** Multi-Gmail: the Composio connected-account id this task's source came from, so execution acts on the
+   *  right inbox (drafts the reply in the account that received the mail). Undefined for single-account users. */
+  sourceAccountId?: string;
   createdAt: string;
   /** Bumped on every mutation (status change, step tick, run result) — breaks cross-device merge ties so a
    *  STALE copy can never overwrite a newer one. */
