@@ -426,14 +426,6 @@ async function runWebSearch(input) {
   if (!q) return "[]";
   return JSON.stringify((await webSearch(q)).slice(0, 6));
 }
-var SELF_BRIEF_TOOL = {
-  name: "send_self_brief",
-  description: "Email a brief TO THE USER'S OWN INBOX (the server addresses it to them \u2014 you cannot pick a recipient). Use when something upcoming needs prep they should see WITHOUT opening this app: a meeting/event in the next ~48h (send who/when/where or link, agenda, 2-4 prep points, doc links) or day-of logistics. Plain text, tight, scannable. NEVER a way to message anyone else; at most one per task.",
-  input_schema: { type: "object", properties: {
-    subject: { type: "string", description: "short subject, e.g. 'Brief: Q3 review with Sarah \u2014 Thu 2pm'" },
-    body: { type: "string", description: "the brief \u2014 plain text, short lines/bullets, all specifics included" }
-  }, required: ["subject", "body"] }
-};
 var ANCHORED_SOURCES = /* @__PURE__ */ new Set(["gmail", "calendar", "googlecalendar", "slack"]);
 function parseGenerated(arr) {
   if (!Array.isArray(arr)) return [];
@@ -732,7 +724,7 @@ CREATE EARLY \u2014 if the task produces an artifact (a doc, sheet, deck, draft 
 AUTO-EXECUTION \u2014 If the user has auto-approved certain actions (e.g., "schedule_meetings_under_30min"), you can execute those WITHOUT adding them to sendables for approval. Check their profile for autoApprove patterns. For example, if they've approved scheduling meetings under 30min, you can create the calendar event directly without asking. Otherwise, follow the normal approval flow.
 HARD LIMIT \u2014 you can READ and WRITE, but you can NEVER do an irreversible OUTBOUND or DESTRUCTIVE action: no sending/forwarding email, no sending/posting messages, no publishing, no deleting (those tools are not even available to you). For email you ONLY ever leave a DRAFT; for Slack you only COMPOSE the message. You never send/post \u2014 instead OFFER the send as a one-click button via "sendables" (see submit), which the user reviews and fires. Never say you "sent", "emailed", "posted", or "messaged" \u2014 say you DRAFTED/PREPARED it. Never claim an action you didn't take.
 NEWSLETTERS & PROMOTIONAL EMAIL \u2014 NEVER DRAFT A REPLY: before drafting any email reply, check whether the thread is a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender (unsubscribe footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something \u2014 note in "synthesis" that it's mass mail and needs no reply, and stop there.
-THE ONE SEND EXCEPTION \u2014 send_self_brief goes ONLY to the user's own inbox (the server addresses it; you cannot pick a recipient). When the task involves something UPCOMING they must walk into prepared \u2014 a meeting or event in the next ~48h, travel/day-of logistics \u2014 ALSO send them a tight brief (who/when/where or link, agenda, 2-4 prep points, doc links) so it's waiting in their inbox. Mention it in "synthesis" ("\u2026and emailed you a brief"). At most one per task; never for anything that isn't time-sensitive prep.
+NO AUTONOMOUS EMAIL, EVER \u2014 not even to the user's own inbox. If something upcoming needs their attention (a meeting/event in the next ~48h, travel/day-of logistics), put the brief (who/when/where, agenda, prep points, doc links) directly in "synthesis"/"context" so they see it in the app \u2014 never send an email for it.
 CALENDAR INVITES: create/update the event freely \u2014 but it lands on the user's calendar SILENTLY, with NO emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the user gets a one-click "Send invites" button that SHOWS exactly who will be invited before they confirm. You never send the invite; the user's click does, with the recipient list in plain view.
 LANGUAGE \u2014 REPLY IN THE THREAD'S LANGUAGE, ALWAYS. Detect the language the thread is written in (French, Spanish, German, Dutch, \u2026) and write your ENTIRE draft in THAT language \u2014 subject line included. A French thread gets a French reply, never an English one; if the two sides write in different languages, match the language the OTHER person last wrote to the user in. Never switch a thread to English. Match their accents/diacritics and native phrasing too \u2014 a translated-sounding reply is as wrong as the wrong language.
 VOICE \u2014 SOUND LIKE THE USER, NOT AN AI. For a REPLY, the THREAD is the source of truth: FIRST reread the ENTIRE thread you're replying to and mirror ITS conventions \u2014 the register the user (and the other side) already use there, the greeting/sign-off used IN THAT THREAD (often none mid-thread), its typical message length, its formality. Your draft must read as the natural NEXT message of that exact thread. Only when the thread has no messages from the user (or it's a fresh email) fall back to their broader style: READ 2-3 of their OWN sent emails (search "in:sent", ideally to the same recipient) and copy their ACTUAL writing mechanics:
@@ -817,7 +809,7 @@ var RUN_TOOLS = [
 ];
 async function runTask(task, profile, focus, extras) {
   const profileUpdates = [];
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...extras?.selfBrief ? [SELF_BRIEF_TOOL] : [], ...extras?.tools?.length ? extras.tools : []];
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...extras?.tools?.length ? extras.tools : []];
   const connectedLine = extras?.connected?.length ? `
 Connected apps you can use (read + reversible writes; never send/post/delete): ${extras.connected.join(", ")}.
 ` : `
@@ -934,7 +926,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
           } else if (toolName === "web_search") {
             content = await runWebSearch(input);
           } else if (toolName === "send_self_brief") {
-            content = extras?.selfBrief ? await extras.selfBrief(String(input?.subject || ""), String(input?.body || "")) : "ERROR: not available";
+            content = "Blocked: autonomous email is disabled \u2014 put this in synthesis/context instead.";
           } else if (hasArtifactIds && /CREATE/i.test(toolName) && !/CREATE.*(SUB.?ISSUE|COMMENT|LABEL|BRANCH)/i.test(toolName)) {
             content = "BLOCKED: this task already has an artifact (see 'ALREADY CREATED FOR THIS TASK') \u2014 creating a new one would duplicate it. Use the UPDATE tool on the EXISTING id instead.";
           } else {
@@ -1484,7 +1476,10 @@ function isGatedAction(rawName) {
   const policy = ACTION_POLICIES[n];
   if (policy) return policy === "never";
   if (/DRAFT/.test(n) && !/(SEND|DELETE|TRASH)/.test(n)) return false;
-  return /(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|DELETE|REMOVE|TRASH|ARCHIVE|CREATE_POST|CREATE_TWEET|CREATE_MESSAGE|SCHEDULE_MESSAGE|CREATE_DM|_POST_|_POST$|SHARE|INVITE)/.test(n);
+  if (/(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|CREATE_POST|CREATE_TWEET|CREATE_MESSAGE|SCHEDULE_MESSAGE|CREATE_DM|SEND_DM|_POST_|_POST$|SHARE|INVITE|EMAIL|NOTIFY|BROADCAST|ANNOUNCE)/.test(n)) return true;
+  if (/(DELETE|REMOVE|TRASH|ARCHIVE|DESTROY|WIPE|PURGE|ERASE|PERMANENTLY|EMPTY_TRASH|EXPUNGE|CLEAR_ALL)/.test(n)) return true;
+  if (/(^|_)(PAY|PAYMENT|PAYOUT|CHARGE|CAPTURE|CHECKOUT|PURCHASE|TRANSFER|WITHDRAW|REFUND|SUBSCRIBE|INVOICE_SEND)($|_)/.test(n)) return true;
+  return false;
 }
 function isWriteGatedAction(rawName) {
   const n = rawName.toUpperCase();
@@ -1492,10 +1487,11 @@ function isWriteGatedAction(rawName) {
   if (policy) return policy === "approve";
   if (/^GOOGLEDOCS_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|APPEND|INSERT|DELETE_CONTENT|BATCH)/.test(n)) return true;
   if (/^GOOGLESHEETS_/.test(n) && /(DELETE_ROW|DELETE_SHEET|DELETE_COLUMN)/.test(n)) return true;
+  if (/^GOOGLESLIDES_/.test(n) && /CREATE/.test(n) && !/(UPDATE|MODIFY|PATCH|REPLACE|BATCH|DELETE)/.test(n)) return false;
   if (/^GOOGLESLIDES_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|BATCH)/.test(n)) return true;
   if (/^GOOGLECALENDAR_/.test(n) && /(CREATE|INSERT|UPDATE|PATCH|QUICK_ADD)/.test(n)) return true;
   if (/^GMAIL_/.test(n) && /(SEND|REPLY|FORWARD)/.test(n)) return true;
-  return false;
+  return !isRead(n);
 }
 var _client = null;
 function sdk() {
@@ -1672,29 +1668,6 @@ async function sendSendable(userId, s) {
   }
 }
 var EMPTY = { tools: [], call: async () => null, connected: [] };
-async function sendSelfBrief(userId, subject, body) {
-  if (!integrationsReady() || !userId) return "ERROR: integrations not configured";
-  const subj = String(subject || "").trim().slice(0, 200);
-  const text = String(body || "").trim().slice(0, 8e3);
-  if (!subj || !text) return "ERROR: subject and body are required";
-  let to = userId;
-  try {
-    to = (await getConnectedAccounts(userId, "gmail"))[0]?.email || userId;
-  } catch {
-  }
-  if (!/^[\w.+-]+@[\w.-]+\.\w+$/.test(to)) return "ERROR: no usable own-address to send to";
-  try {
-    const r = await sdk().tools.execute("GMAIL_SEND_EMAIL", {
-      userId,
-      arguments: { recipient_email: to, subject: subj, body: text },
-      dangerouslySkipVersionCheck: true
-    });
-    if (r && (r.successful === false || r.error)) return `ERROR: ${String(r.error || "send failed")}`;
-    return `Sent the brief to ${to} (the user's own inbox).`;
-  } catch (e) {
-    return `ERROR: ${e?.message ?? e}`;
-  }
-}
 var cache = /* @__PURE__ */ new Map();
 var CACHE_MS = 12e4;
 var sanitize = (s) => s.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
@@ -1912,6 +1885,25 @@ async function probeArtifact(userId, action, args, expectRef) {
   }
 }
 var DOC_LINK = /docs\.google\.com\/(document|spreadsheets|presentation)\/(?:d\/)?([-\w]{25,})/i;
+async function isArtifactShared(userId, fileId) {
+  if (!fileId) return true;
+  try {
+    const r = await sdk().tools.execute("GOOGLEDRIVE_GET_FILE_METADATA", {
+      userId,
+      arguments: { file_id: fileId, fields: "shared,permissions,ownedByMe" },
+      dangerouslySkipVersionCheck: true
+    });
+    if (!r || r.successful === false) return true;
+    const meta = (r.data ?? r)?.response_data ?? r.data ?? r;
+    if (meta?.shared === true) return true;
+    if (Array.isArray(meta?.permissions) && meta.permissions.length > 1) return true;
+    if (meta?.ownedByMe === false) return true;
+    if (meta?.shared === false && meta?.ownedByMe !== false) return false;
+    return true;
+  } catch {
+    return true;
+  }
+}
 async function verifyTaskArtifacts(userId, t) {
   if (!integrationsReady() || !userId) return [];
   const dropped = [];
@@ -2003,10 +1995,12 @@ async function getAgentTools(userId, opts) {
     if (!action) return null;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete \u2014 leave it as a step for the user instead.`;
     if (isWriteGatedAction(action)) {
+      const isDriveDocAction = /^(GOOGLEDOCS|GOOGLESHEETS|GOOGLESLIDES)_/.test(action);
       const argStr = JSON.stringify(args || {});
-      const targetsOwnArtifact = !!allowIds && [...allowIds].some((id) => id.length >= 8 && argStr.includes(id));
-      if (!targetsOwnArtifact) {
-        return `PERMISSION_REQUIRED: "${action}" requires explicit user approval before it can run. Add it as an automatable step in submit() so the user can approve it with one click.`;
+      const matchedId = isDriveDocAction && allowIds ? [...allowIds].find((id) => id.length >= 8 && argStr.includes(id)) : void 0;
+      const targetsOwnUnsharedArtifact = matchedId ? !await isArtifactShared(userId, matchedId) : false;
+      if (!targetsOwnUnsharedArtifact) {
+        return `PERMISSION_REQUIRED: "${action}" requires explicit user approval before it can run${matchedId ? " (it's shared with other people, so even Otto's own doc needs your OK to edit)" : ""}. Add it as an automatable step in submit() so the user can approve it with one click.`;
       }
     }
     if (/^GOOGLECALENDAR_/.test(action) && args && ("attendees" in args || "send_updates" in args)) {
@@ -2018,14 +2012,8 @@ async function getAgentTools(userId, opts) {
       return `Tool error (${action}): ${e?.message ?? e}`;
     }
   };
-  const data = {
-    tools,
-    call: makeCall(),
-    connected,
-    // Only offered when Gmail is connected — that's both the send channel and the recipient source.
-    selfBrief: connected.includes("gmail") ? (subject, body) => sendSelfBrief(userId, subject, body) : void 0
-  };
-  data.withAllowedArtifacts = (ids) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts });
+  const data = { tools, call: makeCall(), connected, _rawByName: map };
+  data.withAllowedArtifacts = (ids) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts, _rawByName: map });
   cache.set(cacheKey, { at: Date.now(), data });
   return data;
 }
@@ -2046,7 +2034,7 @@ async function getAgentToolsWithPermission(userId) {
   const base = await getAgentTools(userId);
   if (!base.tools.length) return base;
   const permCall = async (name, args) => {
-    const action = name;
+    const action = base._rawByName?.get(name) || name;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete.`;
     if (/^GOOGLECALENDAR_/.test(action) && args && ("attendees" in args || "send_updates" in args)) {
       args = { ...args, send_updates: "none" };
@@ -2057,7 +2045,7 @@ async function getAgentToolsWithPermission(userId) {
       return `Tool error (${action}): ${e?.message ?? e}`;
     }
   };
-  return { tools: base.tools, call: permCall, connected: base.connected, selfBrief: base.selfBrief };
+  return { tools: base.tools, call: permCall, connected: base.connected };
 }
 
 // server/discover.ts

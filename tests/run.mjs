@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts } from "../server/tasks.ts";
 import { parseGenerated, finalize } from "../server/claude.ts";
-import { isWriteGatedAction, ACTION_POLICIES, scopeTools } from "../server/integrations.ts";
+import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, usageCostUsd, tzOf, isValidTz } from "../shared/types.ts";
 import { sweepDueForDay, localDay, genIntervalMs, sweepDue } from "../server/jobs.ts";
@@ -77,6 +77,69 @@ check("gmail read needs no approval", isWriteGatedAction("GMAIL_FETCH_EMAILS") =
 check("doc edit needs approval", isWriteGatedAction("GOOGLEDOCS_UPDATE_EXISTING_DOCUMENT") === true);
 check("unlisted destructive action falls back to regex", isWriteGatedAction("GOOGLESLIDES_BATCH_UPDATE_PRESENTATION") === true);
 check("sheet cell write is auto", isWriteGatedAction("GOOGLESHEETS_UPDATE_VALUES") === false);
+
+// ── Irreversible-action guardrail — the app must NEVER send/delete/invite/pay unattended ─────────
+// isGatedAction (tool is STRIPPED from the agent's toolset entirely) — the hardest guarantee.
+section("guardrail: never-run (isGatedAction) — sends, deletes, invites, payments");
+// Sends (reaching other people) — every channel.
+check("Gmail send is gated", isGatedAction("GMAIL_SEND_EMAIL"));
+check("Gmail reply is gated", isGatedAction("GMAIL_REPLY_TO_THREAD"));
+check("Gmail forward is gated", isGatedAction("GMAIL_FORWARD_MESSAGE"));
+check("Gmail send-draft is gated", isGatedAction("GMAIL_SEND_DRAFT"));
+check("Slack post is gated", isGatedAction("SLACK_CHAT_POST_MESSAGE"));
+check("Slack send-message is gated", isGatedAction("SLACK_SEND_MESSAGE"));
+check("Twitter tweet is gated", isGatedAction("TWITTER_CREATE_TWEET"));
+check("LinkedIn post is gated", isGatedAction("LINKEDIN_CREATE_POST"));
+check("Discord DM is gated", isGatedAction("DISCORD_CREATE_DM"));
+check("generic 'invite' action is gated", isGatedAction("GOOGLECALENDAR_SEND_INVITE"));
+check("generic 'share' action is gated", isGatedAction("GOOGLEDRIVE_SHARE_FILE"));
+check("generic notify/broadcast/announce actions are gated", isGatedAction("SLACK_NOTIFY_CHANNEL") && isGatedAction("TODOIST_BROADCAST_UPDATE") && isGatedAction("HUBSPOT_ANNOUNCE_CAMPAIGN"));
+// Deletes / destructive (data can't come back) — every app, not just Google.
+check("Gmail delete is gated", isGatedAction("GMAIL_DELETE_MESSAGE"));
+check("Gmail trash is gated", isGatedAction("GMAIL_TRASH_MESSAGE"));
+check("Calendar delete is gated", isGatedAction("GOOGLECALENDAR_DELETE_EVENT"));
+check("Drive delete is gated", isGatedAction("GOOGLEDRIVE_DELETE_FILE"));
+check("Sheets delete-sheet is gated", isGatedAction("GOOGLESHEETS_DELETE_SHEET"));
+check("generic delete on ANY toolkit is gated (Notion)", isGatedAction("NOTION_DELETE_PAGE"));
+check("generic delete on ANY toolkit is gated (GitHub)", isGatedAction("GITHUB_DELETE_REPOSITORY"));
+check("generic delete on ANY toolkit is gated (Linear)", isGatedAction("LINEAR_DELETE_ISSUE"));
+check("wipe/purge/erase/destroy are gated", isGatedAction("AIRTABLE_WIPE_BASE") && isGatedAction("TRELLO_PURGE_BOARD") && isGatedAction("CLICKUP_ERASE_SPACE") && isGatedAction("ASANA_DESTROY_PROJECT"));
+check("empty-trash is gated", isGatedAction("GMAIL_EMPTY_TRASH"));
+// Financial (moves money) — a category the old regex never covered at all.
+check("payment is gated", isGatedAction("STRIPE_CREATE_PAYMENT"));
+check("charge is gated", isGatedAction("STRIPE_CHARGE_CUSTOMER"));
+check("refund is gated", isGatedAction("STRIPE_CREATE_REFUND"));
+check("checkout is gated", isGatedAction("SHOPIFY_CHECKOUT_COMPLETE"));
+check("transfer is gated", isGatedAction("PAYPAL_TRANSFER_FUNDS"));
+check("subscribe (recurring charge) is gated", isGatedAction("STRIPE_SUBSCRIBE_CUSTOMER"));
+// Safe actions must NOT be caught by the broadened regex (no false positives).
+check("reading mail is NOT gated", !isGatedAction("GMAIL_FETCH_EMAILS"));
+check("creating a draft is NOT gated", !isGatedAction("GMAIL_CREATE_EMAIL_DRAFT"));
+check("updating a draft is NOT gated", !isGatedAction("GMAIL_UPDATE_EMAIL_DRAFT"));
+check("listing drafts is NOT gated", !isGatedAction("GMAIL_LIST_DRAFTS"));
+check("creating a doc is NOT gated", !isGatedAction("GOOGLEDOCS_CREATE_DOCUMENT"));
+check("creating a calendar event is NOT gated (only write-gated)", !isGatedAction("GOOGLECALENDAR_CREATE_EVENT"));
+check("a company named 'Sharemint' etc. doesn't false-positive on SHARE", !isGatedAction("HUBSPOT_GET_CONTACT")); // sanity: unrelated read
+
+// isWriteGatedAction (DEFAULT DENY) — the "any other irreversible action" backstop. Any write the code
+// hasn't explicitly reviewed as safe must require the user's "Approve & Run" click, not silently run.
+section("guardrail: default-deny for unaudited writes (isWriteGatedAction)");
+check("unknown app's create action requires approval (GitHub issue)", isWriteGatedAction("GITHUB_CREATE_ISSUE") === true);
+check("unknown app's create action requires approval (Notion page)", isWriteGatedAction("NOTION_CREATE_PAGE") === true);
+check("unknown app's create action requires approval (Linear ticket)", isWriteGatedAction("LINEAR_CREATE_ISSUE") === true);
+check("unknown app's create action requires approval (Jira issue)", isWriteGatedAction("JIRA_CREATE_ISSUE") === true);
+check("unknown app's create action requires approval (Todoist task)", isWriteGatedAction("TODOIST_CREATE_TASK") === true);
+check("unknown app's create action requires approval (HubSpot contact)", isWriteGatedAction("HUBSPOT_CREATE_CONTACT") === true);
+check("unknown app's update action requires approval (Trello card)", isWriteGatedAction("TRELLO_UPDATE_CARD") === true);
+// Reads on any toolkit stay auto (gathering context isn't an action against the world).
+check("reads on unaudited toolkits stay auto (GitHub list)", isWriteGatedAction("GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER") === false);
+check("reads on unaudited toolkits stay auto (Notion search)", isWriteGatedAction("NOTION_SEARCH_PAGES") === false);
+check("reads on unaudited toolkits stay auto (Linear get)", isWriteGatedAction("LINEAR_GET_ISSUE") === false);
+// The explicitly-reviewed Google auto-writes must still work (no regression from the default-deny flip).
+check("Gmail draft create stays auto (explicit policy)", isWriteGatedAction("GMAIL_CREATE_EMAIL_DRAFT") === false);
+check("Sheets cell update stays auto (explicit policy)", isWriteGatedAction("GOOGLESHEETS_UPDATE_VALUES") === false);
+check("Sheets append stays auto (explicit policy)", isWriteGatedAction("GOOGLESHEETS_APPEND_VALUES") === false);
+check("Docs create-new stays auto (explicit policy)", isWriteGatedAction("GOOGLEDOCS_CREATE_DOCUMENT") === false);
 
 // ── Task lifecycle ────────────────────────────────────────────────────────────
 section("task lifecycle");
@@ -261,6 +324,14 @@ check("a real deadline beats no deadline", noWhenLast[0].title === "dated");
 const byVip = sortWithinQuadrant([rt({ title: "random", why: "someone asked" }), rt({ title: "boss", why: "Sarah needs the numbers" })], ["Sarah — my manager (sarah@acme.com)"], RANK_NOW);
 check("high-priority person breaks a tie", byVip[0].title === "boss");
 check("deadlineEpoch: empty sorts last", deadlineEpoch("") === Infinity && deadlineEpoch("today", RANK_NOW) === RANK_NOW.getTime());
+
+// ── Guardrail: shared-doc edits fail CLOSED, never open ───────────────────────
+// isArtifactShared backs the "Otto may edit its own artifact" carve-out (integrations.ts). Any error —
+// including "integrations not configured" (COMPOSIO_API_KEY unset here) — must be treated as SHARED, so
+// the carve-out never silently fires when sharing status can't actually be confirmed.
+section("guardrail: shared-artifact check fails closed");
+check("no fileId → treated as shared (no bypass)", await isArtifactShared("user@example.com", "") === true);
+check("unreachable/unconfigured Composio → treated as shared (fail closed)", await isArtifactShared("user@example.com", "some-real-looking-file-id-12345") === true);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

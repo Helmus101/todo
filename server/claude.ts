@@ -272,18 +272,6 @@ async function runWebSearch(input: any): Promise<string> {
   return JSON.stringify((await webSearch(q)).slice(0, 6));
 }
 
-// The ONE autonomous send the run agent has: an email to the USER THEMSELVES. The server resolves the
-// recipient (their own connected Gmail address) — the model supplies only subject + body, so it is
-// structurally impossible to message anyone else through this.
-const SELF_BRIEF_TOOL = {
-  name: "send_self_brief",
-  description: "Email a brief TO THE USER'S OWN INBOX (the server addresses it to them — you cannot pick a recipient). Use when something upcoming needs prep they should see WITHOUT opening this app: a meeting/event in the next ~48h (send who/when/where or link, agenda, 2-4 prep points, doc links) or day-of logistics. Plain text, tight, scannable. NEVER a way to message anyone else; at most one per task.",
-  input_schema: { type: "object", properties: {
-    subject: { type: "string", description: "short subject, e.g. 'Brief: Q3 review with Sarah — Thu 2pm'" },
-    body: { type: "string", description: "the brief — plain text, short lines/bullets, all specifics included" },
-  }, required: ["subject", "body"] },
-};
-
 // Sources where every item HAS a stable id/link the tools return — a task claiming to come from one of
 // these without either is unverifiable (likely hallucinated or sloppily reported) and gets dropped.
 const ANCHORED_SOURCES = new Set(["gmail", "calendar", "googlecalendar", "slack"]);
@@ -735,11 +723,9 @@ const RUN_SYSTEM =
   `footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ ` +
   `social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something — ` +
   `note in "synthesis" that it's mass mail and needs no reply, and stop there.\n` +
-  `THE ONE SEND EXCEPTION — send_self_brief goes ONLY to the user's own inbox (the server addresses it; you ` +
-  `cannot pick a recipient). When the task involves something UPCOMING they must walk into prepared — a meeting ` +
-  `or event in the next ~48h, travel/day-of logistics — ALSO send them a tight brief (who/when/where or link, ` +
-  `agenda, 2-4 prep points, doc links) so it's waiting in their inbox. Mention it in "synthesis" ("…and emailed ` +
-  `you a brief"). At most one per task; never for anything that isn't time-sensitive prep.\n` +
+  `NO AUTONOMOUS EMAIL, EVER — not even to the user's own inbox. If something upcoming needs their attention ` +
+  `(a meeting/event in the next ~48h, travel/day-of logistics), put the brief (who/when/where, agenda, prep ` +
+  `points, doc links) directly in "synthesis"/"context" so they see it in the app — never send an email for it.\n` +
   `CALENDAR INVITES: create/update the event freely — but it lands on the user's calendar SILENTLY, with NO ` +
   `emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; ` +
   `instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the ` +
@@ -923,7 +909,7 @@ const RUN_TOOLS = [
  */
 export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
   const profileUpdates: ProfileUpdate[] = [];
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(extras?.selfBrief ? [SELF_BRIEF_TOOL] : []), ...(extras?.tools?.length ? extras.tools : [])];
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(extras?.tools?.length ? extras.tools : [])];
   const connectedLine = extras?.connected?.length
     ? `\nConnected apps you can use (read + reversible writes; never send/post/delete): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
@@ -1082,9 +1068,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
           }
         }
         else if (toolName === "web_search") { content = await runWebSearch(input); }
-        else if (toolName === "send_self_brief") {
-          content = extras?.selfBrief ? await extras.selfBrief(String(input?.subject || ""), String(input?.body || "")) : "ERROR: not available";
-        }
+        // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
+        // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.
+        else if (toolName === "send_self_brief") { content = "Blocked: autonomous email is disabled — put this in synthesis/context instead."; }
         // A revision with existing artifacts blocks CREATE_* calls entirely — not just "discourages" them.
         // Observed live: after only counting ANY write as satisfying the "you must write" enforcement, the
         // agent found the update path hard and called CREATE again instead — same duplicate, different

@@ -111,12 +111,18 @@ export const ACTION_POLICIES: Record<string, ActionMode> = {
  * op? Policy registry first (explicit, code-enforced), regex classifier as the fallback for actions the
  * registry doesn't list. A draft is explicitly NOT gated (safe).
  */
-function isGatedAction(rawName: string): boolean {
+export function isGatedAction(rawName: string): boolean {
   const n = rawName.toUpperCase();
   const policy = ACTION_POLICIES[n];
   if (policy) return policy === "never";
   if (/DRAFT/.test(n) && !/(SEND|DELETE|TRASH)/.test(n)) return false; // creating/updating a draft is safe
-  return /(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|DELETE|REMOVE|TRASH|ARCHIVE|CREATE_POST|CREATE_TWEET|CREATE_MESSAGE|SCHEDULE_MESSAGE|CREATE_DM|_POST_|_POST$|SHARE|INVITE)/.test(n);
+  // Irreversible OUTBOUND (reaches other people): sends, posts, publishes, invites, shares, messages, DMs.
+  if (/(SEND|REPLY|FORWARD|PUBLISH|UNSUBSCRIBE|TWEET|CREATE_POST|CREATE_TWEET|CREATE_MESSAGE|SCHEDULE_MESSAGE|CREATE_DM|SEND_DM|_POST_|_POST$|SHARE|INVITE|EMAIL|NOTIFY|BROADCAST|ANNOUNCE)/.test(n)) return true;
+  // Irreversible DESTRUCTIVE (data can't be brought back): deletes, trashes, archives, purges, wipes.
+  if (/(DELETE|REMOVE|TRASH|ARCHIVE|DESTROY|WIPE|PURGE|ERASE|PERMANENTLY|EMPTY_TRASH|EXPUNGE|CLEAR_ALL)/.test(n)) return true;
+  // Irreversible FINANCIAL (moves money): payments, charges, transfers, purchases, payouts, refunds.
+  if (/(^|_)(PAY|PAYMENT|PAYOUT|CHARGE|CAPTURE|CHECKOUT|PURCHASE|TRANSFER|WITHDRAW|REFUND|SUBSCRIBE|INVOICE_SEND)($|_)/.test(n)) return true;
+  return false;
 }
 
 /**
@@ -126,7 +132,13 @@ function isGatedAction(rawName: string): boolean {
  * autonomous agent loop returns a PERMISSION_REQUIRED message; calling them via runStep() (the
  * user-approved path) goes through getAgentToolsWithPermission() which skips this check.
  *
- * Gated:
+ * DEFAULT IS DENY: any write action (not a read, per isRead) that isn't an EXPLICIT "auto" in the policy
+ * registry requires approval. A new/unaudited integration's create/update actions (a GitHub issue, a
+ * Notion page, a Linear ticket, …) are therefore gated by default — silently trusting an action we've
+ * never reviewed is exactly the gap this function exists to close. Extending the auto-allowlist for a new
+ * toolkit is a deliberate, reviewed decision (add it to ACTION_POLICIES), never an accident of a regex miss.
+ *
+ * Explicitly gated (also true without reaching the default, for clarity/documentation):
  *   - Editing existing Google Docs / Sheets / Slides (UPDATE, PATCH, BATCH_UPDATE, …)
  *   - Creating OR updating Google Calendar events (any write on GOOGLECALENDAR_)
  *   - Sending emails (belt-and-suspenders — also caught by isGatedAction above)
@@ -141,13 +153,18 @@ export function isWriteGatedAction(rawName: string): boolean {
   // Google Sheets — cell writes are REVERSIBLE (cells can be cleared/rewritten), so the agent may update
   // sheets autonomously. Only structural deletes (delete entire rows/sheets) still require approval.
   if (/^GOOGLESHEETS_/.test(n) && /(DELETE_ROW|DELETE_SHEET|DELETE_COLUMN)/.test(n)) return true;
-  // Google Slides — edits to existing presentations.
+  // Google Slides — creating a NEW presentation is safe (private, under the user's own Drive, fully
+  // reversible via delete) and stays auto, same as Docs/Sheets create-new; checked BEFORE the edit rule
+  // (and before the default-deny fallback below) so it short-circuits regardless of the exact action slug.
+  if (/^GOOGLESLIDES_/.test(n) && /CREATE/.test(n) && !/(UPDATE|MODIFY|PATCH|REPLACE|BATCH|DELETE)/.test(n)) return false;
+  // Edits to EXISTING presentations need approval.
   if (/^GOOGLESLIDES_/.test(n) && /(UPDATE|MODIFY|PATCH|REPLACE|BATCH)/.test(n)) return true;
   // Google Calendar — creating OR updating events always requires permission (they land on calendars).
   if (/^GOOGLECALENDAR_/.test(n) && /(CREATE|INSERT|UPDATE|PATCH|QUICK_ADD)/.test(n)) return true;
   // Gmail sends — belt-and-suspenders (isGatedAction already strips these, but guard here too).
   if (/^GMAIL_/.test(n) && /(SEND|REPLY|FORWARD)/.test(n)) return true;
-  return false;
+  // DEFAULT DENY: anything else that isn't a read is an unaudited write — require approval.
+  return !isRead(n);
 }
 
 let _client: Composio | null = null;
@@ -360,35 +377,16 @@ export interface AgentTools {
   tools: AgentTool[];
   call: (name: string, args: Record<string, unknown>) => Promise<string | null>;
   connected: string[];
-  /** Send a brief TO THE USER'S OWN INBOX — the recipient is resolved server-side (never model-supplied),
-   *  so this is the one send the agent may make autonomously without breaking the "never sends" guarantee. */
-  selfBrief?: (subject: string, body: string) => Promise<string>;
   /** A view whose call() may run write-gated actions targeting these artifact ids — the "Otto may edit
    *  what Otto made" carve-out for reruns/revisions. Everything else stays gated. */
   withAllowedArtifacts?: (ids: string[]) => AgentTools;
+  /** INTERNAL — sanitized tool name → raw Composio action slug, so getAgentToolsWithPermission() can
+   *  resolve the real action instead of assuming sanitize() is an identity transform (it truncates names
+   *  over 64 chars, which would otherwise silently execute the wrong/truncated action). Not part of the
+   *  public contract consumers rely on; only read within this module. */
+  _rawByName?: Map<string, string>;
 }
 const EMPTY: AgentTools = { tools: [], call: async () => null, connected: [] };
-
-/** Email the user THEMSELVES (e.g. a brief the agent chose to send). The recipient is the connected Gmail
- *  account's own address (fallback: the login email) — hardcoded here, never chosen by the model. */
-export async function sendSelfBrief(userId: string, subject: string, body: string): Promise<string> {
-  if (!integrationsReady() || !userId) return "ERROR: integrations not configured";
-  const subj = String(subject || "").trim().slice(0, 200);
-  const text = String(body || "").trim().slice(0, 8000);
-  if (!subj || !text) return "ERROR: subject and body are required";
-  let to = userId;
-  try { to = (await getConnectedAccounts(userId, "gmail"))[0]?.email || userId; } catch { /* fall back to account email */ }
-  if (!/^[\w.+-]+@[\w.-]+\.\w+$/.test(to)) return "ERROR: no usable own-address to send to";
-  try {
-    const r: any = await sdk().tools.execute("GMAIL_SEND_EMAIL", {
-      userId,
-      arguments: { recipient_email: to, subject: subj, body: text },
-      dangerouslySkipVersionCheck: true,
-    } as any);
-    if (r && (r.successful === false || r.error)) return `ERROR: ${String(r.error || "send failed")}`;
-    return `Sent the brief to ${to} (the user's own inbox).`;
-  } catch (e: any) { return `ERROR: ${e?.message ?? e}`; }
-}
 
 // Building the tool list is N Composio calls; cache per account for a short window so we don't pay it on
 // every single task run. (Server process memory — Date.now() is fine here, this isn't a workflow script.)
@@ -465,8 +463,7 @@ const isRead = (n: string) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|
 
 /** A READ-ONLY view of an AgentTools set, for the generation sweep: it only ever reads, so shipping write
  *  schemas to it every round is pure token waste — and this makes "READ ONLY" structural, not prompt-enforced.
- *  (Sanitized tool names keep the Composio verb words, so isRead matches them directly.) No selfBrief either:
- *  the sweep must not send anything. */
+ *  (Sanitized tool names keep the Composio verb words, so isRead matches them directly.) */
 export function readOnly(t: AgentTools): AgentTools {
   return { tools: t.tools.filter((x) => isRead(x.name)), call: t.call, connected: t.connected };
 }
@@ -643,6 +640,36 @@ async function probeArtifact(userId: string, action: string, args: Record<string
 export const DOC_LINK = /docs\.google\.com\/(document|spreadsheets|presentation)\/(?:d\/)?([-\w]{25,})/i;
 
 /**
+ * Does this Drive-hosted file (Doc/Sheet/Slide) have ANY sharing beyond the owner? Used to decide whether
+ * Otto may keep silently editing an artifact it created earlier in THIS task (the "own artifact" carve-out
+ * in makeCall below) — that carve-out must NEVER cover a file shared with other people, since an edit would
+ * then be visible to them too, not just a private revision. Only a doc Otto made AND that is still
+ * unshared skips the approval click; anything else — including any doc/file the user shares with others —
+ * still requires it.
+ *
+ * FAILS CLOSED: a network error, an unrecognized response shape, or any ambiguity is treated as SHARED
+ * (approval required) rather than assumed private. Silently allowing an edit is the wrong direction to
+ * fail in; asking for a confirmation click that turns out to be unnecessary costs nothing.
+ */
+export async function isArtifactShared(userId: string, fileId: string): Promise<boolean> {
+  if (!fileId) return true;
+  try {
+    const r: any = await sdk().tools.execute("GOOGLEDRIVE_GET_FILE_METADATA", {
+      userId,
+      arguments: { file_id: fileId, fields: "shared,permissions,ownedByMe" },
+      dangerouslySkipVersionCheck: true,
+    } as any);
+    if (!r || r.successful === false) return true; // couldn't check → fail closed
+    const meta = (r.data ?? r)?.response_data ?? r.data ?? r;
+    if (meta?.shared === true) return true;
+    if (Array.isArray(meta?.permissions) && meta.permissions.length > 1) return true; // owner + at least one other
+    if (meta?.ownedByMe === false) return true; // not even solely the user's file
+    if (meta?.shared === false && meta?.ownedByMe !== false) return false; // explicit, unambiguous "private, mine"
+    return true; // response shape we don't recognize → fail closed rather than guess
+  } catch { return true; } // fail closed — including "this action doesn't exist"
+}
+
+/**
  * Verify a finished run's claimed artifacts against the LIVE account: Gmail draft ids via the drafts list,
  * calendar events via a direct GET, Google Docs/Sheets links via a direct GET on the document id.
  * Prunes anything confirmed missing IN PLACE and returns human-readable notes about what was dropped.
@@ -755,13 +782,20 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
     if (!action) return null;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete — leave it as a step for the user instead.`;
     // HARDCODED PERMISSION GATE: editing existing documents and creating/updating calendar events require
-    // the user's explicit "Approve & Run" click — EXCEPT artifacts OTTO ITSELF created for this task
-    // (allowIds): Otto may edit what Otto made, never the user's own documents.
+    // the user's explicit "Approve & Run" click — EXCEPT editing a Doc/Sheet/Slide OTTO ITSELF created for
+    // this task (allowIds), AND ONLY WHEN that document is still private (unshared) — see isArtifactShared.
+    // A doc shared with other people always needs the click, even if Otto made it, because an edit now
+    // affects what THEY see too, not just a private draft. This carve-out is DOCUMENT-ONLY, by design, not
+    // by accident: Calendar events never qualify, even if Otto created the event — a change to a calendar
+    // event (time, attendees, location) always needs the user's explicit OK, full stop.
     if (isWriteGatedAction(action)) {
+      const isDriveDocAction = /^(GOOGLEDOCS|GOOGLESHEETS|GOOGLESLIDES)_/.test(action);
       const argStr = JSON.stringify(args || {});
-      const targetsOwnArtifact = !!allowIds && [...allowIds].some((id) => id.length >= 8 && argStr.includes(id));
-      if (!targetsOwnArtifact) {
-        return `PERMISSION_REQUIRED: "${action}" requires explicit user approval before it can run. ` +
+      const matchedId = isDriveDocAction && allowIds ? [...allowIds].find((id) => id.length >= 8 && argStr.includes(id)) : undefined;
+      const targetsOwnUnsharedArtifact = matchedId ? !(await isArtifactShared(userId, matchedId)) : false;
+      if (!targetsOwnUnsharedArtifact) {
+        return `PERMISSION_REQUIRED: "${action}" requires explicit user approval before it can run` +
+          `${matchedId ? " (it's shared with other people, so even Otto's own doc needs your OK to edit)" : ""}. ` +
           `Add it as an automatable step in submit() so the user can approve it with one click.`;
       }
     }
@@ -775,12 +809,8 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
     try { return await execute(action, userId, args || {}, routeAccountId && action.toUpperCase().startsWith(routeToolkit + "_") ? routeAccountId : undefined); }
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };
-  const data: AgentTools = {
-    tools, call: makeCall(), connected,
-    // Only offered when Gmail is connected — that's both the send channel and the recipient source.
-    selfBrief: connected.includes("gmail") ? (subject, body) => sendSelfBrief(userId, subject, body) : undefined,
-  };
-  data.withAllowedArtifacts = (ids: string[]) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts });
+  const data: AgentTools = { tools, call: makeCall(), connected, _rawByName: map };
+  data.withAllowedArtifacts = (ids: string[]) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts, _rawByName: map });
   cache.set(cacheKey, { at: Date.now(), data });
   return data;
 }
@@ -811,11 +841,11 @@ export async function getAgentToolsWithPermission(userId: string): Promise<Agent
   if (!base.tools.length) return base;
   // Build a permissioned call closure that skips the write gate but keeps the irreversible-send gate.
   const permCall = async (name: string, args: Record<string, unknown>): Promise<string | null> => {
-    // The sanitized name is the key; we need the raw Composio action name.
-    // We derive it by fetching the tools again (cached, so free) and rebuilding the map.
-    // Simpler: since sanitize() is a near-identity for Composio action slugs (already uppercase+underscore),
-    // we use name as-is and fall through to execute().
-    const action = name; // sanitized ≈ raw for Composio slugs
+    // Resolve the REAL Composio action from the sanitized tool name via the map built alongside these
+    // tools — sanitize() truncates names over 64 chars, so treating name as the action for long slugs
+    // would silently call the wrong (truncated) action. Falls back to name itself if unmapped (shouldn't
+    // happen for a tool the model was actually offered).
+    const action = base._rawByName?.get(name) || name;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete.`;
     // NO isWriteGatedAction check — user explicitly approved.
     if (/^GOOGLECALENDAR_/.test(action) && args && (("attendees" in args) || ("send_updates" in args))) {
@@ -824,5 +854,5 @@ export async function getAgentToolsWithPermission(userId: string): Promise<Agent
     try { return await execute(action, userId, args || {}); }
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };
-  return { tools: base.tools, call: permCall, connected: base.connected, selfBrief: base.selfBrief };
+  return { tools: base.tools, call: permCall, connected: base.connected };
 }
