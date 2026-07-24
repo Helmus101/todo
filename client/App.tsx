@@ -244,12 +244,23 @@ export function App() {
   // Server truth passes through as-is — the job layer owns execution state now; the client just displays it.
   const retryFlags = (list: WebTask[]) => list;
 
+  // Never let a background refresh (sync/sweep/manual-scan) resurrect a card the user already finished or
+  // dismissed LOCALLY — a request dispatched before that click can resolve AFTER it (slow network, a sweep
+  // that takes longer than the click round-trip) and would otherwise stomp the local decision back to
+  // "still active" until the next refresh quietly re-fixes it. Same guard the kick() loop below already
+  // applies to its own updates; this makes it consistent across every path that replaces the task list.
+  const keepLocalHandled = (prev: WebTask[], incoming: WebTask[]): WebTask[] =>
+    incoming.map((u) => {
+      const cur = prev.find((p) => p.id === u.id);
+      return cur && isHandled(cur.status) && !isHandled(u.status) ? cur : u;
+    });
+
   // Pull the server's task list (cheap GET; also reconciles cross-device state server-side). Always resolves
   // `loaded` — even on an empty/failed fetch — so the loading screen can never hang half-forever (the
   // 15-min tick + focus re-sync retry a transient miss).
   const syncTasks = useCallback(async () => {
     const t = await api.tasks().catch(() => null);
-    if (t) setTasks(retryFlags(t));
+    if (t) setTasks((prev) => keepLocalHandled(prev, retryFlags(t)));
     setLoaded(true);
   }, []);
 
@@ -269,7 +280,7 @@ export function App() {
     setScanning(true);
     try {
       const { tasks: fresh, note: serverNote } = await api.generate();
-      setTasks(retryFlags(fresh)); setLoaded(true);
+      setTasks((prev) => keepLocalHandled(prev, retryFlags(fresh))); setLoaded(true);
       // A skipped sweep must say WHY (e.g. "nothing connected") — never look like a quiet all-clear.
       if (/^(skipped:|sweep )/.test(serverNote)) setNote(sweepSkipMessage(serverNote));
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
@@ -315,11 +326,7 @@ export function App() {
         const out = await api.kick();
         setRetryingIds(Array.isArray(out.activeTaskIds) ? out.activeTaskIds : []);
         if (Array.isArray(out.tasks) && out.tasks.length) {
-          // Keep the user's local done/dismiss decisions — never resurrect a card they closed.
-          setTasks((prev) => out.tasks.map((u) => {
-            const cur = prev.find((p) => p.id === u.id);
-            return cur && isHandled(cur.status) && !isHandled(u.status) ? cur : u;
-          }));
+          setTasks((prev) => keepLocalHandled(prev, out.tasks));
         }
       } catch { /* next tick retries */ }
       finally { kicking.current = false; }
@@ -337,7 +344,7 @@ export function App() {
     try {
       const before = new Set(tasks.map((t) => t.id));
       const { tasks: t, note: serverNote } = await api.generate(true);
-      setTasks(t); setLoaded(true);
+      setTasks((prev) => keepLocalHandled(prev, t)); setLoaded(true);
       // A manual Refresh counts as a sweep — reset the watch interval so the background one doesn't repeat it.
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
       // Run summary — honest, specific feedback on what the sweep did (the trust-building layer).
@@ -549,10 +556,11 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
     <div className="connect-card">
       <div className="connect-mark"><Logo size={30} /></div>
       <h2>{who ? `Welcome, ${who}` : "Welcome to Otto"}</h2>
-      <p>Connect Gmail and Otto gets to work — reading your apps and drafting your to-dos. It never sends anything without you.</p>
+      <p>Connect Gmail and Otto gets to work — reading your inbox and calendar to draft replies and prep docs. It only ever <b>reads</b> until you approve; nothing sends, posts, or deletes without your click.</p>
       {!status.googleConfigured && <div className="warn">Integrations aren't configured on the server (COMPOSIO_API_KEY).</div>}
       {!status.aiReady && <div className="warn">Server is missing DEEPSEEK_API_KEY — task generation is disabled.</div>}
       <a className="btn primary big" href="/settings">Connect Gmail</a>
+      <p className="fineprint">Disconnect any app, or pause Otto entirely, at any time in Settings. <a href="/privacy">What Otto reads &amp; why →</a></p>
     </div>
   );
 }
@@ -1249,6 +1257,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
   const [changeText, setChangeText] = useState("");
   const [revising, setRevising] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
   const [refining, setRefining] = useState(false);
   const refine = async () => {
     setRefining(true);
@@ -1256,12 +1265,15 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
     finally { setRefining(false); }
   };
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
-  // Confirm ("Looks good") / Dismiss: play the quick exit animation WHILE the API call runs, then remove
-  // the card — so it visibly slides away instead of blinking out (or lingering).
-  const leave = async (fn: () => Promise<WebTask[]>) => {
+  // Confirm ("Looks good") gets a distinct green check-pulse (a small reward for finishing something);
+  // Dismiss keeps the plain slide-away — different actions, so they shouldn't look identical. Both play
+  // WHILE the API call runs, then remove the card, so it never blinks out or lingers waiting on the network.
+  const leave = async (fn: () => Promise<WebTask[]>, kind: "confirm" | "dismiss" = "dismiss") => {
     if (leaving) return;
+    setLeaveKind(kind);
     setLeaving(true);
-    const [list] = await Promise.all([fn(), new Promise((r) => setTimeout(r, 280))]);
+    const holdMs = kind === "confirm" ? 460 : 280; // confirm holds a beat longer so the check-pulse reads before it slides
+    const [list] = await Promise.all([fn(), new Promise((r) => setTimeout(r, holdMs))]);
     onChange(list);
   };
   // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
@@ -1371,7 +1383,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
     (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
   const chip = !isDone ? statusChip(task, retrying) : null;
   return (
-    <div ref={cardRef} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
+    <div ref={cardRef} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
       <div className="card-main" onClick={onToggle}>
         <div className="card-text">
           <div className="card-title">{task.title}</div>
@@ -1566,7 +1578,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
           <div className="actions">
             {cStatus === "needs_review" ? (
               <>
-                <button className="btn primary" title="Looks good — mark this handled" onClick={() => void leave(() => api.confirm(task.id))}>Looks good</button>
+                <button className="btn primary" title="Looks good — mark this handled" onClick={() => void leave(() => api.confirm(task.id), "confirm")}>Looks good</button>
                 <div className="actions-rest">
                   <button className="btn xs ghost" title="Remove this task" onClick={() => void leave(() => api.dismiss(task.id))}>Dismiss</button>
                 </div>

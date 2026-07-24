@@ -107,21 +107,26 @@ const mergeProfiles = tasks.mergeProfileStates;
 // account email — so it follows the account across devices and survives restarts. (Integration
 // connections live in Composio, keyed by the same account email, so there's nothing extra to store.)
 const commit = async (req: express.Request) => {
-  await saveSession(req);
+  // The session-store write and the cloud-state read are independent (different tables, neither depends
+  // on the other's result) — run them concurrently instead of back-to-back to cut one round-trip off
+  // every task-mutating request (confirm/dismiss/run/revise/step...).
+  const sessionSaved = saveSession(req);
   if (req.session.user) {
     try {
-      const current = await loadState(req.session.user);
+      const [current] = await Promise.all([loadState(req.session.user), sessionSaved]);
       const mergedTasks = mergeTasks(current.tasks || [], req.session.tasks || []);
       const mergedProfile = mergeProfiles(current.profile || emptyProfile(), req.session.profile || emptyProfile());
       req.session.tasks = mergedTasks;
       req.session.profile = mergedProfile;
       await saveState(req.session.user, { profile: mergedProfile, tasks: mergedTasks });
     } catch {
-      await saveState(req.session.user, {
+      await Promise.all([sessionSaved, saveState(req.session.user, {
         profile: req.session.profile || emptyProfile(),
         tasks: req.session.tasks || [],
-      });
+      })]);
     }
+  } else {
+    await sessionSaved;
   }
 };
 
@@ -303,7 +308,9 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
     if (req.session.user && cloudEnabled()) {
       const cloud = await loadState(req.session.user);
       req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
-      await saveSession(req);
+      // The client only needs the merged LIST — persisting the reconciled session is bookkeeping that
+      // can happen after the response goes out (saveSession never rejects, so this is safe to fire-and-forget).
+      void saveSession(req);
     }
   } catch { /* best-effort — fall back to the session copy */ }
   res.json(req.session.tasks || []);

@@ -1218,8 +1218,16 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     // guessed an address it couldn't find. Drop it so the user isn't offered to send into the void.
     .filter((s: Sendable) => !/@example\.(?:com|org|net)\b|@(?:test|placeholder|domain|email)\.\w+|\bplaceholder\b/i.test(`${s.to || ""} ${(s.attendees || []).join(" ")}`))
     .slice(0, 6);
+  // Cut at the last word boundary within the limit (never mid-word) and mark the cut with "…" so a
+  // truncated bullet reads as intentionally shortened, not like a bug that ate the rest of the sentence.
+  const truncate = (s: string, max: number): string => {
+    if (s.length <= max) return s;
+    const cut = s.slice(0, max);
+    const lastSpace = cut.lastIndexOf(" ");
+    return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+  };
   // Brevity backstop: a few lines + a hard char cap, so even a verbose run can't produce a wall of text.
-  const brief = (s: string, lines: number, chars: number) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
+  const brief = (s: string, lines: number, chars: number) => truncate(s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n"), chars);
   // Synthesis is ONLY the structured field the model submitted — NEVER its raw reply text. Falling back
   // to the transcript is how the user ended up reading the model's THINKING ("Seems like… Let me first…
   // Now I'll create…") on the card instead of a result. And planning-tense text is not a result even when
@@ -1242,7 +1250,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   const did: string[] = (Array.isArray(out?.did) ? out.did : [])
     .map((d: any) => String(d || "").trim().replace(/^\s*[-•*]\s*/, ""))
     .filter((d: string) => d.length >= 6 && !PLANNING.test(d) && !DEAD_END.test(d) && !PLACEHOLDER.test(d) && !INVESTIGATIVE.test(d))
-    .map((d: string) => d.slice(0, 130))
+    .map((d: string) => truncate(d, 140))
     .slice(0, 4);
   // A purely dead-end synthesis ("searched … found none", "couldn't find …") is the same noise we strip from
   // did — if the run PRODUCED nothing (no did, no artifact), blank it so the card leads with "what's left"
