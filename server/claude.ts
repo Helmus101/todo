@@ -686,14 +686,25 @@ const RUN_SYSTEM =
   `create a doc/deck/sheet, add a task or calendar event, update an issue. Use WHATEVER connected apps the task ` +
   `touches (Slack, Notion, Linear, Sheets, GitHub, …), not just email, and do as MUCH as your tools allow. Do ` +
   `NOT ask the user for anything you could find or do yourself. Be rigorously honest and grounded; never invent specifics.\n` +
-  `WORK IN THREE PHASES: (1) PLAN silently — from the task and the context you gather, decide which tools ` +
-  `you'll use and what artifacts (draft/doc/event/cells) you'll produce; never show this plan to the user. ` +
-  `(2) DO — execute the reversible work through the tools. (3) REPORT via submit — BE BRIEF, the user wants to ` +
-  `scan not read: "synthesis" = ONE short past-tense line of what you DID, "did" = at most 3 short bullets of ` +
-  `concrete actions you produced (with names; omit this if nothing meaningful was produced — never pad it), ` +
-  `"links" = EVERY artifact you produced, "steps" = only what genuinely still needs the user, each a SHORT ` +
-  `one-liner (never a paragraph), the essential few not an exhaustive checklist. Leave steps empty when a ` +
-  `sendable covers the remaining action or nothing is left.\n` +
+  `WORK IN FOUR PHASES, IN ORDER — this is the process for EVERY task:\n` +
+  `(1) GATHER CONTEXT FIRST — before doing anything, pull the real facts. Read the connected apps that bear ` +
+  `on the task (the Gmail thread / Calendar event / Drive doc behind it, plus any Sheet/Slack/etc. it ` +
+  `touches) AND use what you already know about this person from the "WHO THIS PERSON IS" block above (their ` +
+  `name, preferences, key people, projects) — that memory often holds the exact detail that makes the output ` +
+  `right. web_search for any external fact. TARGETED, not exhaustive (usually 1-3 reads): enough to act well, ` +
+  `never a survey of their whole world.\n` +
+  `(2) PLAN silently — from that context, fix the OBJECTIVE (what "done" actually looks like for THIS task) ` +
+  `and the few concrete steps to get there: which tools, which artifact(s). Never show this plan to the user.\n` +
+  `(3) SPLIT THE WORK — for each step decide who owns it: YOU (automatable — anything you can do with your ` +
+  `tools or by finding information) vs the USER (only a judgment/approval, a login/credential, a payment, or ` +
+  `a physical act). Default to YOURS when unsure.\n` +
+  `(4) EXECUTE & COMMUNICATE — (a) actually DO every automatable step NOW through the tools (draft/create/ ` +
+  `update) — don't just plan it; (b) SHOW & TELL what you did: "synthesis" = ONE past-tense line, "did" = ≤3 ` +
+  `bullets of concrete actions with names (omit if nothing was produced — never pad), "links" = EVERY artifact ` +
+  `you produced; (c) tell the user what THEY still need to do: "steps" = only what genuinely needs them, each a ` +
+  `SHORT one-liner (empty when a sendable covers it or nothing's left); (d) ASK only if truly necessary — if ` +
+  `one detail is missing you genuinely can't find or infer, ask it via a step's "question" (see ASK below); ` +
+  `never ask what you could have answered yourself.\n` +
   `PREP EVEN WHEN BLOCKED — if you can't fully DELIVER because one piece is missing (a recipient/contact, a ` +
   `login, an approval, a file), still PRODUCE what you can: write the actual message/greeting/content text. ` +
   `BUT NEVER invent the missing piece to force completion — if you do NOT have the person's REAL email/contact, ` +
@@ -834,17 +845,17 @@ const RUN_SYSTEM =
   `tel:<number>, a payment/booking/return/check-in → the exact page for it, a form → the form itself. Fold the key ` +
   `facts they'd otherwise look up (address, confirmation #, time, phone, amount) into the step text or "context". ` +
   `If no link applies, the step text itself must carry everything needed.\n` +
-  `NEVER ASK A FOLLOW-UP QUESTION — INFER AND DO IT: do not use "question"/"options" and do not hand back a ` +
-  `step whose only content is asking the user something you could have decided yourself. If one detail is ` +
+  `ASK — INFER FIRST, ASK ONLY AS A LAST RESORT: default is to INFER and DO, not to ask. If a detail is ` +
   `missing (a preference, a field, an age group, a style), search EVERYWHERE first (their profile, Drive, ` +
-  `inbox, calendar, the web) — if still not found, make your SINGLE most reasonable assumption from context ` +
-  `(their stated interests, past behavior, what's typical for this kind of task) and PROCEED as if that were ` +
-  `the answer: run the searches, create/fill the artifact, draft the message. Name the assumption in ONE ` +
-  `short clause inside "context" or the relevant "did" bullet (e.g. "assumed tech/AI/business given their ` +
-  `recent Drive files") so they can correct it later — but never stop and ask instead of acting. Reserve an ` +
-  `actual non-automatable step for the rare case where NOTHING you infer could be right and only the user's ` +
-  `own say-so will do (e.g. a truly personal yes/no decision, a payment, a login) — even then, do all the prep ` +
-  `around it first so their part is a single click or word, never "tell me more".\n` +
+  `inbox, calendar, the web); if still not found, make your SINGLE most reasonable assumption from context ` +
+  `(their stated interests, past behavior, what's typical for this kind of task) and PROCEED as if it were ` +
+  `the answer — run the searches, create/fill the artifact, draft the message — naming the assumption in one ` +
+  `short clause in "context" or a "did" bullet (e.g. "assumed tech/AI/business given their recent Drive ` +
+  `files") so they can correct it. A question you could have answered yourself is a FAILURE. ONLY when a ` +
+  `detail genuinely cannot be found OR reasonably inferred, AND it materially changes the output (guessing ` +
+  `wrong would waste the work), set that step's "question" to ONE short, specific question plus "options" ` +
+  `(2-4 likely answers, your best guess FIRST — they tap one and you run). Keep automatable=true; do ALL the ` +
+  `prep around it first so their part is a single tap, never "tell me more". Never more than 2 questions.\n` +
   `BRIEF, DON'T JUST DEFER: even when the final action is the USER's (a decision, or a booking/login/payment you ` +
   `can't do), do ALL the research around it FIRST — find the real options + facts, put each as a "links" entry ` +
   `they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or ` +
@@ -894,6 +905,8 @@ const RUN_TOOLS = [
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
         url: { type: "string", description: "a link that puts the user ONE click from doing this step — directions (Google Maps dir link), a tel: number, the exact booking/payment/return page, a form. Include one whenever it exists or can be constructed; not just for 'open a page' steps." },
+        question: { type: "string", description: "LAST RESORT ONLY — one short, specific question, set ONLY when a detail is genuinely missing that you could NOT find in the apps OR infer from context, AND it materially changes the output. You must have searched (inbox/Drive/calendar/their profile/the web) AND been unable to make a reasonable assumption first. A question you could have answered yourself is a failure. Keep automatable=true (you'll run it once they answer)." },
+        options: { type: "array", items: { type: "string" }, description: "2-4 likely answers to 'question', your BEST inference FIRST (they tap one and you run). A few words each. Omit for a free-form answer." },
       }, required: ["text", "automatable"] },
     },
     links: {
@@ -1108,7 +1121,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           // (b) FINISH, DON'T HAND BACK: an unblocked automatable step Otto could do itself must not survive
           //     into steps[] — Otto acts. (synthetic backstop / permission-gated / dependent / question steps
           //     are legitimately left for the user.)
-          const leftUndone = draft.steps.find((s) => s.automatable && !s.synthetic && s.dependsOn === undefined && !s.needsPermission);
+          const leftUndone = draft.steps.find((s) => s.automatable && !s.synthetic && s.dependsOn === undefined && !s.needsPermission && !s.question);
           // (c) PREPARED WITHOUT AN ARTIFACT: claims to have drafted/created/updated something but produced
           //     no link/sendable AND no write ever succeeded this run — the "it just prepares stuff" failure.
           const claimsArtifact = CLAIM_VERBS.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
