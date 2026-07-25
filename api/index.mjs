@@ -2535,7 +2535,10 @@ var rankStatus = (t) => {
   return c === "done" || c === "dismissed" ? 6 : c === "needs_review" ? 5 : c === "failed_terminal" ? 4 : c === "failed_retryable" ? 3 : c === "executing" ? 2.5 : c === "queued" ? 2 : 1;
 };
 var betterOf = (a, b) => rankStatus(b) > rankStatus(a) ? b : a;
-var sameTask = (a, b) => nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
+var sameTask = (a, b) => {
+  if (a.source === "manual" || b.source === "manual") return normTitle(a.title) === normTitle(b.title);
+  return nearDup(a.title, b.title) || a.source === b.source && nearDup(a.why, b.why);
+};
 function dedupeTasks(list) {
   const kept = [];
   for (const t of list) {

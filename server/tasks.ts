@@ -171,8 +171,16 @@ const rankStatus = (t: WebTask) => {
 const betterOf = (a: WebTask, b: WebTask) => rankStatus(b) > rankStatus(a) ? b : a; // ties keep `a` (added first)
 // Titles must near-match, or (same source AND same trigger). The old cross-field checks (title vs why)
 // were loose enough to swallow genuinely NEW tasks into old done ones — "Refresh finds nothing".
-const sameTask = (a: WebTask, b: WebTask): boolean =>
-  nearDup(a.title, b.title) || (a.source === b.source && nearDup(a.why, b.why));
+// MANUAL tasks are exempt from the fuzzy path: a manual add is a deliberate, explicit user action, not the
+// AI's own rewording of one real-world item across sweeps — fuzzy title overlap is for the latter. Without
+// this, typing a second task with wording similar to an old dismissed/done manual task (e.g. retesting with
+// "buy milk" after an earlier "buy milk" attempt) got silently absorbed by dedupeTasks — betterOf keeps the
+// OLDER (already-handled, higher-ranked) one and the brand new task vanishes on the very first save, with
+// no error anywhere since this is "working as designed" dedup, just wrongly applied to a manual add.
+const sameTask = (a: WebTask, b: WebTask): boolean => {
+  if (a.source === "manual" || b.source === "manual") return normTitle(a.title) === normTitle(b.title);
+  return nearDup(a.title, b.title) || (a.source === b.source && nearDup(a.why, b.why));
+};
 
 /**
  * Collapse duplicate to-dos in ANY task list by THREE signals: a normalized anchor (the thread/event id),

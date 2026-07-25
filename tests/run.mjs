@@ -40,8 +40,18 @@ const activeOld = { ...doneOld, id: "ac1", status: "needs_review" };
 check("active same-title cards still merge", dedupeTasks([activeOld, newEmail]).length === 1);
 // …same anchor (formatting drift) always merges, regardless of status.
 check("same anchor still merges", dedupeTasks([doneOld, { ...newEmail, anchorKey: "GMAIL_OLD1" }]).length === 1);
-// …and anchorless title dups still merge (manual tasks / agent-sweep fallback).
+// …and anchorless title dups still merge (agent-sweep fallback, non-manual source).
 check("anchorless title dup still merges", dedupeTasks([{ ...doneOld, anchorKey: undefined }, { ...newEmail, anchorKey: undefined }]).length === 1);
+// MANUAL tasks are a deliberate user action — fuzzy title similarity must NEVER swallow a fresh manual add
+// into an old dismissed/done one just because the wording is similar (regression: "add task, it instantly
+// disappears" when retesting with a similarly-worded title after an earlier dismissed/done attempt).
+const oldManualDone = { ...base, id: "m1", title: "Buy milk", why: "Added by you", source: "manual", status: "done" };
+const newManualSimilar = { ...base, id: "m2", title: "Buy milk and eggs", why: "Added by you", source: "manual", status: "ready" };
+check("similarly-worded manual tasks do NOT merge (a deliberate add must always survive)", dedupeTasks([oldManualDone, newManualSimilar]).length === 2);
+// A truly identical re-add (exact same normalized title) still collapses — that's a real duplicate, not two
+// different to-dos, and the more-progressed copy correctly wins.
+const newManualExact = { ...base, id: "m3", title: "buy milk", why: "Added by you", source: "manual", status: "ready" };
+check("an EXACT-title manual re-add still merges (keeps the more-progressed copy)", dedupeTasks([oldManualDone, newManualExact]).length === 1 && dedupeTasks([oldManualDone, newManualExact])[0].status === "done");
 
 // ── Stale idle tasks auto-archive (keeps the active list a genuine "now" list) ─
 section("stale ready tasks auto-archive");
