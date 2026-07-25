@@ -1,5 +1,5 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled } from "../server/tasks.ts";
 import { parseGenerated, finalize } from "../server/claude.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
@@ -55,6 +55,23 @@ check("idle ready task older than 14d archives to dismissed", foldGenerated([sta
 check("idle ready task under 14d stays active", foldGenerated([staleTask({ id: "sr2", anchorKey: "gmail:sr2", createdAt: old10d })], [], [], now).find((t) => t.id === "sr2")?.status === "ready");
 check("a real upcoming deadline keeps an old card alive regardless of age", foldGenerated([staleTask({ id: "sr3", anchorKey: "gmail:sr3", createdAt: old15d, when: new Date(now.getTime() + 86_400_000).toISOString() })], [], [], now).find((t) => t.id === "sr3")?.status === "ready");
 check("non-ready statuses are never auto-archived (only untouched 'ready' cards)", foldGenerated([staleTask({ id: "sr4", anchorKey: "gmail:sr4", createdAt: old15d, status: "needs_review" })], [], [], now).find((t) => t.id === "sr4")?.status === "needs_review");
+
+// ── pruneHandled keeps the most recently ACTIONED records, not the most recently CREATED ──
+// Bug: sorting by createdAt meant a task dismissed TODAY (but generated weeks ago) could be evicted in
+// favor of an OLDER dismissal that just happened to be generated more recently — so a just-dismissed
+// item's suppression record could vanish the same sweep it was dismissed in, and the item would resurface
+// on the very next sweep. This is the "I dismissed this and it came right back" bug.
+section("pruneHandled: dismissed-recency, not created-recency");
+const weeksAgo = new Date(now.getTime() - 20 * 86_400_000).toISOString();
+const justNow = now.toISOString();
+// Generated weeks ago (old inbox item), but the user only just dismissed it moments ago.
+const staleCreateFreshDismiss = { ...base, id: "birthday1", title: "Wish Sonya Nyrop a happy birthday", why: "her birthday is on the calendar", source: "calendar", anchorKey: "calendar:sonya-bday-2026", status: "dismissed", createdAt: weeksAgo, updatedAt: justNow };
+// A pile of OTHER dismissals, each actioned (updatedAt) progressively longer ago than staleCreateFreshDismiss's
+// just-now dismissal, though all created MORE recently than its weeks-old createdAt.
+const filler = Array.from({ length: 5 }, (_, i) => ({ ...base, id: `filler${i}`, title: `Filler task ${i}`, why: "noise", source: "gmail", anchorKey: `gmail:filler${i}`, status: "dismissed", createdAt: new Date(now.getTime() - 10 * 86_400_000).toISOString(), updatedAt: new Date(now.getTime() - (i + 1) * 86_400_000).toISOString() }));
+const pruned = pruneHandled([staleCreateFreshDismiss, ...filler], 3);
+check("a just-dismissed record survives pruning even if it was CREATED long ago", pruned.some((t) => t.id === "birthday1"));
+check("older-by-dismissal-time records are the ones dropped when over the cap", pruned.length === 3 && !pruned.some((t) => t.id === "filler4"));
 
 // ── Cross-device merge ────────────────────────────────────────────────────────
 section("mergeTaskLists");

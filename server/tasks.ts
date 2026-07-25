@@ -137,12 +137,17 @@ function looseDup(a: string, b: string): boolean {
   return jaccard >= 0.4 || (inter >= 2 && containment >= 0.6);
 }
 
-/** Keep at most `keep` done/dismissed records (most recent) — enough to still block regeneration of handled
- *  items, but bounded so the saved task list (and every cloud write) doesn't grow forever. Active tasks stay. */
-function pruneHandled(list: WebTask[], keep: number): WebTask[] {
+/** Keep at most `keep` done/dismissed records (most recently ACTIONED) — enough to still block regeneration
+ *  of handled items, but bounded so the saved task list (and every cloud write) doesn't grow forever. Active
+ *  tasks stay. Sorted by `updatedAt` (when it was dismissed/completed), NOT `createdAt` (when it was first
+ *  generated) — those can differ by weeks (a task sits unactioned, then finally gets dismissed), and sorting
+ *  by creation time was evicting a record the user JUST dismissed in favor of an older-but-freshly-generated
+ *  one, so a just-dismissed item's suppression could vanish within the same sweep that removed it — the
+ *  exact "I dismissed this and it came right back" failure mode. */
+export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
   const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
   const handled = list.filter((t) => t.status === "done" || t.status === "dismissed")
-    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+    .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""))
     .slice(0, keep);
   return [...active, ...handled];
 }
