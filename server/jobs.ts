@@ -62,7 +62,7 @@ async function commitUser(email: string, profile: Profile, list: WebTask[]): Pro
   const current = await store.loadState(email);
   const mergedTasks = tasks.mergeTaskLists(current.tasks || [], list);
   const mergedProfile = tasks.mergeProfileStates(current.profile || emptyProfile(), profile);
-  await store.saveState(email, { profile: mergedProfile, tasks: mergedTasks, google: current.google });
+  await store.saveState(email, { profile: mergedProfile, tasks: mergedTasks, google: current.google, pronote: current.pronote });
 }
 
 async function processSweep(job: store.Job): Promise<string> {

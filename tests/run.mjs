@@ -239,13 +239,22 @@ const small = { ...bigSet, tools: bigSet.tools.slice(0, 20) };
 check("small toolsets pass through untouched", scopeTools(small, { title: "x", why: "y" }).tools.length === 20);
 
 // ── Artifact registry ─────────────────────────────────────────────────────────
-section("artifact registry");
-const arts = extractArtifacts({
-  links: [{ label: "Trip doc", url: "https://docs.google.com/document/d/1xVdKvq8GjwskuuAmuAbCdEfGhIjKlMnOp/edit" }],
+section("artifact registry + guardrail: never edit a document Otto didn't create");
+const tripDocId = "1xVdKvq8GjwskuuAmuAbCdEfGhIjKlMnOp";
+const artInput = {
+  links: [{ label: "Trip doc", url: `https://docs.google.com/document/d/${tripDocId}/edit` }],
   sendables: [{ app: "gmail", label: "Send reply", draftId: "r777777777" }, { app: "gcal", label: "Invites", eventId: "evt123456" }],
-});
-check("doc + draft + event extracted", arts.length === 3 && arts[0].kind === "doc" && arts[1].kind === "draft" && arts[2].kind === "event");
-const merged = unionArtifacts(arts, [{ kind: "doc", id: "1xVdKvq8GjwskuuAmuAbCdEfGhIjKlMnOp", label: "Trip doc v2" }]);
+};
+// GUARDRAIL — "Otto may only edit what Otto created": a doc link is only an ARTIFACT (grants the
+// no-approval edit carve-out later) when its id is independently VERIFIED as created this run. The
+// model's self-reported link alone is never enough — see the fail-closed cases below.
+const arts = extractArtifacts(artInput, [tripDocId]);
+check("verified doc + draft + event extracted", arts.length === 3 && arts[0].kind === "doc" && arts[1].kind === "draft" && arts[2].kind === "event");
+const noVerify = extractArtifacts(artInput);
+check("fails closed: no verifiedDocIds → doc dropped (draft/event unaffected)", noVerify.length === 2 && !noVerify.some((a) => a.kind === "doc"));
+const wrongVerify = extractArtifacts(artInput, ["someOtherDocIdEntirely1234567"]);
+check("fails closed: a link to a DIFFERENT (unverified) doc id is dropped, not trusted", wrongVerify.length === 2 && !wrongVerify.some((a) => a.kind === "doc"));
+const merged = unionArtifacts(arts, [{ kind: "doc", id: tripDocId, label: "Trip doc v2" }]);
 check("union dedupes by id, keeps latest label", merged.length === 3 && merged.find((a) => a.kind === "doc")?.label === "Trip doc v2");
 
 // ── Discovery: past events + replied threads ──────────────────────────────────

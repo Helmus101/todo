@@ -10,9 +10,10 @@
  * hallucinated reference is structurally impossible.
  */
 import { readAction, getConnectedAccounts } from "./integrations.ts";
+import { pronoteConnected, pronoteHomework } from "./pronote.ts";
 
 export interface SourceItem {
-  sourceApp: "gmail" | "calendar" | "drive" | "github";
+  sourceApp: "gmail" | "calendar" | "drive" | "github" | "pronote";
   externalId: string;
   anchorKey: string;      // "gmail:<threadId>" / "calendar:<eventId>" / "drive:<fileId>" — the dedupe identity
   url?: string;
@@ -126,6 +127,19 @@ function githubToItems(data: any, label: string): SourceItem[] {
   }).filter((x): x is SourceItem => !!x);
 }
 
+function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean }[]): SourceItem[] {
+  return items.map((a): SourceItem => ({
+    sourceApp: "pronote",
+    externalId: a.id,
+    anchorKey: `pronote:${a.id}`,
+    // No stable deep-link into a specific assignment — Pronote's read API doesn't expose one.
+    title: `${a.subject} homework`.slice(0, 140),
+    snippet: a.description || `Due ${a.deadline}`,
+    timestamp: a.deadline,
+    labels: ["homework"],
+  }));
+}
+
 /**
  * Pull candidates from the fixed Google sources. Per-source failures are tolerated (one bad call must
  * not kill the sweep); `attempted` reports whether ANY source responded, so the caller can fall back
@@ -142,7 +156,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
     try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
   };
-  const [gmailAccounts, calAccounts, driveAccounts] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive")]);
+  const [gmailAccounts, calAccounts, driveAccounts, pronoteOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), pronoteConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
@@ -180,6 +194,11 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
     grab(async () => githubToItems(await readAction(userEmail, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS", {
       q: "is:open is:pr review-requested:@me", per_page: 10,
     }), "review-requested")),
+    // Pronote (if connected) — outside the Composio/getConnectedAccounts path entirely; checked separately.
+    // Gated OUTSIDE grab() deliberately: grab() marks `attempted` true on any non-throwing call, and a
+    // "not connected" check always succeeds — that would make `attempted` true for a user with NOTHING
+    // connected at all (not even Pronote), wrongly skipping the agent-sweep fallback for them.
+    ...(pronoteOn.connected ? [grab(async () => pronoteToItems(await pronoteHomework(userEmail)))] : []),
   ]);
   return { items: dedupeByThread(items), attempted };
 }

@@ -612,8 +612,11 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
 
       <section className="settings-sec">
         <h3>Apps</h3>
-        <p className="settings-hint">Otto reads your apps and does reversible work — it <b>never sends, posts, or deletes</b> on its own.</p>
+        <p className="settings-hint">Otto reads your apps and does reversible work — it <b>never sends, posts, or deletes</b> on its own, and only ever edits a document it created itself, never one of yours.</p>
         <Integrations onChanged={onChanged} primaryAccounts={profile?.primaryAccounts} onProfile={setProfile} />
+        {/* TEMPORARY note explaining why only Google (+ Pronote below) show right now. */}
+        <p className="settings-hint">Other integrations are temporarily hidden while Pronote support is rolled out.</p>
+        <PronoteTile />
       </section>
 
       <section className="settings-sec">
@@ -709,8 +712,10 @@ function Integrations({ onChanged, primaryAccounts, onProfile }: { onChanged?: (
   const [items, setItems] = useState<IntegrationItem[] | null>(null);
   const [ready, setReady] = useState(true);
   const [busy, setBusy] = useState("");
+  // TEMPORARY: only Google integrations are shown while Pronote is the other active integration effort —
+  // flip this back to `r.items` once the rest are ready to be re-offered.
   const load = useCallback(async () => {
-    try { const r = await api.integrations(); setItems(r.items); setReady(r.ready); onChanged?.(); }
+    try { const r = await api.integrations(); setItems(r.items.filter((i) => i.category === "Google")); setReady(r.ready); onChanged?.(); }
     catch { setItems([]); }
   }, [onChanged]);
   useEffect(() => { void load(); }, [load]);
@@ -773,6 +778,73 @@ function Integrations({ onChanged, primaryAccounts, onProfile }: { onChanged?: (
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Pronote (French school portal) — no OAuth exists for it, so this is a credential form instead of a
+ *  redirect link. The password is sent once to connect and never stored (see server/pronote.ts); only a
+ *  rotating token comes back. Reads homework due dates into the to-do list — nothing is ever written back. */
+function PronoteTile() {
+  const [status, setStatus] = useState<{ connected: boolean; username?: string } | null>(null);
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [kind, setKind] = useState<"student" | "parent">("student");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const load = useCallback(async () => { try { setStatus(await api.pronoteStatus()); } catch { setStatus({ connected: false }); } }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const connect = async () => {
+    if (!url.trim() || !username.trim() || !password) { setErr("URL, username and password are required."); return; }
+    setBusy(true); setErr("");
+    try {
+      const r = await api.connectPronote(url.trim(), username.trim(), password, kind === "parent" ? 7 : 6);
+      if (!r.ok) { setErr(r.error || "Couldn't connect."); return; }
+      setPassword(""); setOpen(false);
+      await load();
+    } finally { setBusy(false); }
+  };
+  const disconnect = async () => { setBusy(true); try { await api.disconnectPronote(); await load(); } finally { setBusy(false); } };
+
+  if (!status) return null;
+  return (
+    <div className="int-group">
+      <div className="int-cat">School</div>
+      <div className="int-grid">
+        <div className={`int-tile ${status.connected ? "on" : ""}`}>
+          <div className="int-info">
+            <div className="int-name">Pronote{status.connected && <span className="int-dot" title="Connected" />}</div>
+            <div className="int-blurb">Homework due dates. Read-only — Otto never marks anything done in Pronote. Unofficial integration (no official API exists).</div>
+          </div>
+          {status.connected
+            ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : "Disconnect"}</button>
+            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? "Cancel" : "Connect"}</button>}
+        </div>
+      </div>
+      {status.connected && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
+      {open && !status.connected && (
+        <div className="pronote-form">
+          <input className="addinput sm" placeholder="Pronote URL (from your school, e.g. https://0000000a.index-education.net/pronote/eleve.html)"
+            value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
+          <div className="pronote-form-row">
+            <input className="addinput sm" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} disabled={busy} />
+            <input className="addinput sm" type="password" placeholder="Password" value={password}
+              onChange={(e) => setPassword(e.target.value)} disabled={busy}
+              onKeyDown={(e) => { if (e.key === "Enter") void connect(); }} />
+          </div>
+          <div className="pronote-form-row">
+            <div className="seg" role="group" aria-label="Account type">
+              <button type="button" className={`seg-btn ${kind === "student" ? "on" : ""}`} onClick={() => setKind("student")}>Student</button>
+              <button type="button" className={`seg-btn ${kind === "parent" ? "on" : ""}`} onClick={() => setKind("parent")}>Parent</button>
+            </div>
+            <button className="btn primary xs" disabled={busy} onClick={() => void connect()}>{busy ? "Connecting…" : "Connect"}</button>
+          </div>
+          {err && <div className="autherr">{err}</div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1082,10 +1154,11 @@ function PrivacyBody() {
       <ul>
         <li><b>Gmail</b> — to read recent threads and prepare draft replies. Otto creates drafts; it never sends, deletes, or modifies mail on its own.</li>
         <li><b>Google Calendar</b> — to read events and prepare drafts of new events for your review.</li>
-        <li><b>Google Drive / Docs / Sheets / Slides</b> — to read relevant files and create or update documents it makes for you.</li>
+        <li><b>Google Drive / Docs / Sheets / Slides</b> — to read relevant files and create documents it makes for you. Otto only ever edits a document it created itself — it never modifies a file that's already yours.</li>
+        <li><b>Pronote</b> (optional, unofficial — no official Pronote API exists) — read-only, to see homework due dates. Otto never writes anything back to Pronote.</li>
         <li><b>Other integrations you connect</b> — accessed only for the tasks they relate to.</li>
       </ul>
-      <p>Otto performs <b>reversible</b> work autonomously (drafts, documents, research). Anything irreversible — sending an email, posting, inviting, deleting, or paying — is <b>never</b> done without your explicit confirmation.</p>
+      <p>Otto performs <b>reversible</b> work autonomously (drafts, documents, research). Anything irreversible — sending an email, posting, inviting, deleting, or paying — is <b>never</b> done without your explicit confirmation. It also never edits a document, sheet, or slide deck that it didn't create — only your own files, never Otto's.</p>
 
       <h2>What we store</h2>
       <ul>
@@ -1108,7 +1181,7 @@ function PrivacyBody() {
       <p>Your data is kept while your account is active. You can clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time, or request full account deletion by contacting us at {LEGAL_EMAIL}. Disconnecting an app immediately revokes Otto's access to it.</p>
 
       <h2>Security</h2>
-      <p>Connections use OAuth (we never see your app passwords). Data is transmitted over HTTPS and access is scoped to your account. No system is perfectly secure, but we take reasonable measures to protect your information.</p>
+      <p>Google and other OAuth-based connections mean we never see your app passwords. Pronote is the one exception — it has no OAuth, so its username/password pass through our server once to connect; the password itself is never stored or logged, only a rotating token Pronote issues in its place. Data is transmitted over HTTPS and access is scoped to your account. No system is perfectly secure, but we take reasonable measures to protect your information.</p>
 
       <h2>Google API disclosure</h2>
       <p>Otto's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
@@ -1166,6 +1239,7 @@ const SOURCE: Record<string, string> = {
   todoist: "Todoist", asana: "Asana", trello: "Trello", clickup: "ClickUp",
   perplexity: "Perplexity", calendly: "Calendly", hubspot: "HubSpot", airtable: "Airtable",
   googledocs: "Docs", googledrive: "Drive", googlesheets: "Sheets", googleslides: "Slides",
+  pronote: "Pronote",
 };
 /** A friendly label for a task's source app — known apps get an emoji/name, anything else is Title-cased. */
 const sourceLabel = (s: string) => SOURCE[s] || (s ? s[0].toUpperCase() + s.slice(1) : "Task");
@@ -1286,6 +1360,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
   const [changeIdx, setChangeIdx] = useState<number | null>(null);   // which sendable's "what to change" box is open
   const [changeText, setChangeText] = useState("");
   const [revising, setRevising] = useState(false);
+  const [reviseError, setReviseError] = useState<string | null>(null);
   // Manual edits to a draft's own text — separate from changeText (that's a PROMPT for Otto to rewrite it;
   // this is the user directly typing the replacement). Keyed by sendable index; only the open one is edited.
   const [draftEdits, setDraftEdits] = useState<Record<number, { subject?: string; body?: string }>>({});
@@ -1336,10 +1411,14 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
   const doRevise = async () => {
     const note = changeText.trim();
     if (!note || revising) return;
-    setRevising(true);
+    setRevising(true); setReviseError(null);
     // The re-draft replaces the sendables list, so clear any open draft preview (its index may now be stale).
     try { onTask(await api.revise(task.id, note)); setChangeIdx(null); setChangeText(""); setViewDraft(null); }
-    catch { /* surfaced via task state */ } finally { setRevising(false); }
+    // Was previously swallowed silently ("surfaced via task state" — it wasn't: a paused/over-budget/
+    // rate-limited/still-running-elsewhere rejection never touches the task at all, so nothing ever showed).
+    // Note is deliberately KEPT in the box on failure so a rejected revision isn't lost — just retry it.
+    catch (e: any) { setReviseError(e?.message || "Couldn't revise — try again."); }
+    finally { setRevising(false); }
   };
 
   const steps = task.steps || [];
@@ -1478,16 +1557,14 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
                       </div>
                     ) : null}
                     <div className="sendable-row">
-                      <button className="btn xs ghost" onClick={() => setViewDraft((v) => (v === i ? null : i))}>{viewDraft === i ? "Hide details" : s.app === "gcal" ? "View event" : "View draft"}</button>
-                      {/* One prompt, Otto rewrites it — direct access, not buried behind declining a send. */}
-                      {!s.sent && s.app !== "gcal" ? (
-                        <button className="btn xs ghost" disabled={revising} onClick={() => { setConfirmIdx(null); setChangeText(""); setChangeIdx(changeIdx === i ? null : i); }}>Rewrite</button>
-                      ) : null}
+                      {/* Only ONE panel open at a time (draft view, or the send confirm) — stacking both was
+                          the "messy" part: opening one now always closes the other. */}
+                      <button className="btn xs ghost" onClick={() => { setConfirmIdx(null); setViewDraft((v) => (v === i ? null : i)); if (viewDraft !== i) { setChangeIdx(null); setChangeText(""); } }}>{viewDraft === i ? "Hide details" : s.app === "gcal" ? "View event" : "View draft"}</button>
                       {s.sent
                         ? <button className="btn primary send-btn sent" disabled>Sent</button>
                         : sending === i
                           ? <button className="btn primary send-btn" disabled>Sending…</button>
-                          : <button className="btn primary send-btn" onClick={() => { setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{`${sendIcon} ${s.label}`}</button>}
+                          : <button className="btn primary send-btn" onClick={() => { setViewDraft(null); setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{`${sendIcon} ${s.label}`}</button>}
                     </div>
                     {/* Confirm step — the recipient is spelled out in full before anything sends. */}
                     {confirmIdx === i && !s.sent && sending !== i ? (
@@ -1495,25 +1572,13 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
                         <div className="confirm-q">Send this {noun} to <b>{recipients || "the recipient"}</b>?</div>
                         <div className="confirm-acts">
                           <button className="btn primary xs" onClick={() => void doSend(i)}>Yes, send</button>
-                          <button className="btn xs" onClick={() => { setConfirmIdx(null); setChangeText(""); setChangeIdx(i); }}>No — change something</button>
+                          <button className="btn xs" onClick={() => { setConfirmIdx(null); setViewDraft(i); setChangeText(""); setChangeIdx(i); }}>No — change something</button>
                           <button className="btn xs ghost" onClick={() => setConfirmIdx(null)}>Cancel</button>
                         </div>
                       </div>
                     ) : null}
-                    {/* Declined → say what to change; Otto re-drafts (updates the existing draft) and re-offers it. */}
-                    {changeIdx === i && !s.sent ? (
-                      <div className="confirm">
-                        <div className="confirm-q">What should change before sending?</div>
-                        <div className="change-row">
-                          <input className="addinput sm" autoFocus disabled={revising}
-                            placeholder="e.g. add my flight times, make it shorter, fix the date"
-                            value={changeText} onChange={(e) => setChangeText(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") void doRevise(); }} />
-                          <button className="btn primary xs" disabled={revising || !changeText.trim()} onClick={() => void doRevise()}>{revising ? "Revising…" : "Revise"}</button>
-                          <button className="btn xs ghost" disabled={revising} onClick={() => { setChangeIdx(null); setChangeText(""); }}>Cancel</button>
-                        </div>
-                      </div>
-                    ) : null}
+                    {/* ONE panel for everything about the draft's content — view it, edit it directly, or ask
+                        Otto to rewrite it with a prompt. No separate stacked boxes for each. */}
                     {viewDraft === i ? (
                       <div className="draft">
                         {s.app === "gcal" ? (
@@ -1529,24 +1594,43 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
                             <pre className="draft-body">{s.body || s.text || "Sent."}</pre>
                           </>
                         ) : (
-                          // Unsent: editable directly — type right in the box, or use "Rewrite" above for
-                          // a one-prompt AI pass. Edits save to the real Gmail draft (send pulls from there).
+                          // Unsent: editable directly — type right in the box. "Ask Otto to rewrite it"
+                          // below opens an inline prompt IN this same panel instead of a separate box.
                           <>
                             {(s.to || s.channel) ? <div className="draft-row"><span className="draft-label">To</span><span>{s.to || s.channel}</span></div> : null}
                             {s.app === "gmail" ? (
-                              <input className="addinput sm draft-subject" placeholder="Subject"
+                              <input className="addinput sm draft-subject" placeholder="Subject" disabled={revising}
                                 value={draftEdits[i]?.subject ?? s.subject ?? ""}
                                 onChange={(e) => setDraftEdits((d) => ({ ...d, [i]: { ...d[i], subject: e.target.value } }))} />
                             ) : null}
-                            <textarea className="draft-body-edit" rows={6}
+                            {/* Auto-grows to fit the WHOLE text (up to a cap) instead of a small fixed
+                                box that clips a real email and forces scrolling inside a scrollbox.
+                                Disabled while Otto is rewriting — a manual edit landing mid-rewrite would
+                                just get silently overwritten the moment the AI pass finishes. */}
+                            <textarea className="draft-body-edit" rows={12} disabled={revising}
+                              ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 600)}px`; } }}
                               value={draftEdits[i]?.body ?? s.body ?? s.text ?? ""}
-                              onChange={(e) => setDraftEdits((d) => ({ ...d, [i]: { ...d[i], body: e.target.value } }))} />
-                            {draftEdits[i] ? (
+                              onChange={(e) => { setDraftEdits((d) => ({ ...d, [i]: { ...d[i], body: e.target.value } })); e.target.style.height = "auto"; e.target.style.height = `${Math.min(e.target.scrollHeight, 600)}px`; }} />
+                            {draftEdits[i] && !revising ? (
                               <div className="draft-edit-acts">
                                 <button className="btn primary xs" disabled={savingDraft === i} onClick={() => void saveDraftEdit(i)}>{savingDraft === i ? "Saving…" : "Save changes"}</button>
                                 <button className="btn xs ghost" disabled={savingDraft === i} onClick={() => setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; })}>Discard</button>
                               </div>
                             ) : null}
+                            {changeIdx === i ? (
+                              <div className="rewrite-row">
+                                <input className="addinput sm" autoFocus disabled={revising}
+                                  placeholder="Tell Otto what to change — e.g. add my flight times, make it shorter, fix the date"
+                                  value={changeText} onChange={(e) => setChangeText(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === "Enter") void doRevise(); }} />
+                                {!revising && <button className="btn primary xs" disabled={!changeText.trim()} onClick={() => void doRevise()}>Revise</button>}
+                                <button className="btn xs ghost" disabled={revising} onClick={() => { setChangeIdx(null); setChangeText(""); setReviseError(null); }}>Cancel</button>
+                                {reviseError ? <div className="rewrite-error">{reviseError}</div> : null}
+                              </div>
+                            ) : !revising ? (
+                              <button className="btn xs ghost rewrite-toggle" onClick={() => { setChangeText(""); setReviseError(null); setChangeIdx(i); }}>Ask Otto to rewrite it →</button>
+                            ) : null}
+                            {revising && changeIdx === i ? <div className="rewrite-progress" title="Otto is rewriting the draft…" /> : null}
                           </>
                         )}
                       </div>

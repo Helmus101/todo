@@ -7,12 +7,14 @@ create table if not exists weave_web_state (
   profile jsonb not null default '{}'::jsonb,
   tasks   jsonb not null default '[]'::jsonb,
   google  jsonb,                                   -- persisted Google connection (incl. refresh token)
+  pronote jsonb,                                   -- persisted Pronote connection (a rotating token, not the password)
   updated_at timestamptz not null default now()
 );
 
 -- If you created this table from an earlier version, add the newer columns:
 alter table weave_web_state add column if not exists profile jsonb not null default '{}'::jsonb;
 alter table weave_web_state add column if not exists google jsonb;
+alter table weave_web_state add column if not exists pronote jsonb;
 
 -- SECURE BY DEFAULT: `weave_web_users.pass_hash` and the `google`/`profile` columns are SECRETS. This file
 -- enables RLS with NO public policy, so the anon key can read/write NOTHING. Production runs the server with

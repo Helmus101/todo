@@ -443,7 +443,8 @@ export async function classifyCandidates(
     `items are commitments THEY made ("I'll send you X") — create a task to FULFILL unfulfilled ones. Events: only ` +
     `if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if ` +
     `someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs ` +
-    `are actionable while open. Skip FYIs, receipts, automated mail, and anything already on ` +
+    `are actionable while open. Pronote homework: actionable while not yet marked done; urgency scales with how ` +
+    `close the deadline is (≥0.7 within ~48h). Skip FYIs, receipts, automated mail, and anything already on ` +
     `their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank ` +
     `HIGHER (importance ≥ 0.7); things their preferences deprioritize rank lower or get skipped. Quality over ` +
     `quantity — the handful that matter. ALWAYS include: a direct question or request from a real person awaiting ` +
@@ -500,7 +501,7 @@ export async function classifyCandidates(
           title: String(r.title).slice(0, 90),
           why: String(r.why).slice(0, 400),
           when: r.when ? String(r.when).slice(0, 40) : undefined,
-          source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : "gmail",
+          source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : it.sourceApp === "pronote" ? "pronote" : "gmail",
           risk: r.risk === "high" ? "high" : "low",
           urgency: clamp01(r.urgency ?? 0.5),
           importance: clamp01(r.importance ?? 0.6),
@@ -592,7 +593,7 @@ export async function pickOneTask(
       title: String(r.title).slice(0, 90),
       why: String(r.why || "Worth doing today.").slice(0, 400),
       when: r.when ? String(r.when).slice(0, 40) : undefined,
-      source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : "gmail",
+      source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : it.sourceApp === "pronote" ? "pronote" : "gmail",
       risk: r.risk === "high" ? "high" : "low",
       urgency: clamp01(r.urgency ?? 0.4),
       importance: clamp01(r.importance ?? 0.5),
@@ -661,6 +662,11 @@ export interface RunOutput {
   profileUpdates: ProfileUpdate[];
   followUps?: { title: string; why: string }[]; // distinct NEW obligations discovered → each becomes its own task
   tokens?: { in: number; out: number }; // cost telemetry — recorded on the task's timeline per run
+  /** Doc/Sheet/Slide ids VERIFIED created THIS run, from real tool results — never from the model's
+   *  self-reported "links" (nothing stops it claiming a doc it merely read, not created). This is the
+   *  guardrail input for extractArtifacts(): only ids in here may ever be edited without the user's
+   *  explicit approval on a later revision — "Otto may only edit what Otto created," enforced, not assumed. */
+  createdDocIds?: string[];
 }
 
 const RUN_SYSTEM =
@@ -952,6 +958,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // synthesis, but forgets to populate the structured "sendables" entry — leaving no Send button for
   // something that genuinely exists. Track the last successful draft call so withTokens can patch it in.
   let lastGmailDraft: { to?: string; subject?: string; body?: string; draftId?: string } | undefined;
+  // Doc/Sheet/Slide ids VERIFIED created this run (from real tool results, never the model's say-so) —
+  // the only ids extractArtifacts() is allowed to treat as "Otto's own", see the guardrail comment below.
+  const createdDocIds = new Set<string>();
   const withTokens = (o: RunOutput): RunOutput => {
     let sendables = o.sendables;
     if (lastGmailDraft?.draftId && lastGmailDraft.to && !sendables.some((s) => s.app === "gmail")) {
@@ -964,7 +973,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // something (submit still requires synthesis, which then carries the same information) — fall back to
     // the one-line synthesis rather than showing an empty "What Otto did" section for real work.
     const did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
-    return { ...o, did, sendables, tokens: { in: tokIn, out: tokOut } };
+    return { ...o, did, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] };
   };
   try {
   for (let i = 0; i < MAX; i++) {
@@ -1091,6 +1100,15 @@ export async function runTask(task: { title: string; why: string; source?: strin
           if (isRealWrite && /GMAIL_(CREATE|UPDATE)_EMAIL_DRAFT/i.test(toolName)) {
             const idMatch = /"(?:draft_?id|id)"\s*:\s*"([\w-]{6,})"/i.exec(String(r));
             if (idMatch) lastGmailDraft = { to: String(input?.recipient_email || input?.to || "").trim() || undefined, subject: input?.subject ? String(input.subject) : undefined, body: input?.body ? String(input.body) : undefined, draftId: idMatch[1] };
+          }
+          // GUARDRAIL — "Otto may only edit what Otto created": extractArtifacts() later grants the
+          // no-approval-needed edit carve-out to whatever doc ids land in this set. The model's own
+          // self-reported "links" are NOT proof of creation (nothing stops it claiming a doc it merely
+          // read) — only a REAL successful CREATE call's response id counts. Verified here from the actual
+          // tool result, never from the model's narration of what it did.
+          if (isRealWrite && /^GOOGLE(DOCS|SHEETS|SLIDES)_CREATE/i.test(toolName)) {
+            const idMatch = /"(?:document|spreadsheet|presentation)?Id"\s*:\s*"([\w-]{15,})"/i.exec(String(r));
+            if (idMatch) createdDocIds.add(idMatch[1]);
           }
         }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }

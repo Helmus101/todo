@@ -7,6 +7,12 @@ import { emptyProfile, normalizeProfile } from "../shared/types.ts";
 /** A persisted Google connection for an account (incl. the refresh token, so it stays connected). */
 export interface StoredGoogle { tokens: Credentials; email?: string; }
 
+/** A persisted Pronote (French school portal) connection. `token` is a rotating credential the pawnote
+ *  library issues in place of the password after the first login — NOT the password itself, which is used
+ *  once to connect and never stored (see server/pronote.ts). Protected the same way as `google.tokens`:
+ *  RLS + the service-role-only write path in supabase.sql, not app-level encryption. */
+export interface StoredPronote { url: string; username: string; kind: number; token: string; deviceUUID: string; navigatorIdentifier?: string; }
+
 // Cloud persistence, keyed by the user's Google email — so memory + tasks survive restarts and follow
 // the ACCOUNT, not the browser cookie. Reuses the repo's existing Supabase project. Prefers a service
 // key (bypasses RLS) if provided; otherwise the anon key + the permissive policy in web/supabase.sql.
@@ -93,7 +99,7 @@ export async function createUser(email: string, passHash: string): Promise<boole
   } catch (e) { console.warn("[store] createUser threw:", (e as any)?.message || e); return false; }
 }
 
-export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; }
+export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; }
 
 // A transient network drop (undici "terminated"/"fetch failed", a reset socket) is NOT the same as "no
 // data" — but Supabase surfaces it both as a thrown error AND, sometimes, as a returned {error}. Treating
@@ -124,22 +130,27 @@ async function withRetry<T>(label: string, op: () => Promise<{ data: T; error: {
 export async function loadState(email?: string): Promise<AccountState> {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
   const { data, error } = await withRetry("load", async () =>
-    client!.from(TABLE).select("profile,tasks,google").eq("email", email).maybeSingle());
+    client!.from(TABLE).select("profile,tasks,google,pronote").eq("email", email).maybeSingle());
   if (error) { console.warn("[store] load failed:", error.message); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
-  return { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google };
+  const pronote = d?.pronote && d.pronote.token ? (d.pronote as StoredPronote) : undefined;
+  return { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote };
 }
 
-/** Persist an account's profile + tasks + Google connection (best-effort; never throws into the request
- *  path). Transient network failures are retried so a blip doesn't silently drop a write. */
+/** Persist an account's profile + tasks + Google/Pronote connection (best-effort; never throws into the
+ *  request path). Transient network failures are retried so a blip doesn't silently drop a write. */
 export async function saveState(email: string | undefined, state: AccountState): Promise<void> {
   if (!client || !email) return;
+  const row: Record<string, unknown> = { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], updated_at: new Date().toISOString() };
+  // Only touch google/pronote when the CALLER explicitly manages that connection. Most callers (commit()
+  // on every confirm/dismiss/run/revise) only ever deal with profile+tasks and never pass these — including
+  // them unconditionally as `?? null` would silently NULL OUT a live connection on the very next unrelated
+  // save. Omitting the key from the upsert payload leaves the existing column value alone.
+  if ("google" in state) row.google = state.google ?? null;
+  if ("pronote" in state) row.pronote = state.pronote ?? null;
   const { error } = await withRetry("save", async () =>
-    client!.from(TABLE).upsert(
-      { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], google: state.google ?? null, updated_at: new Date().toISOString() },
-      { onConflict: "email" }
-    ).then((r) => ({ data: null, error: r.error })));
+    client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
   if (error) console.warn("[store] save failed:", error.message);
 }
 

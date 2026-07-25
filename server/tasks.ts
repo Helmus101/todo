@@ -487,12 +487,22 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
  * send/delete), then the task shows its context, a synthesis of what it did, and a checklist of what's left.
  */
 type Artifact = NonNullable<WebTask["artifacts"]>[number];
-/** Pull artifact ids out of a run's output: doc/sheet/slides links + gmail draft / calendar event sendables. */
-export function extractArtifacts(out: { links?: TaskLink[]; sendables?: Sendable[] }): Artifact[] {
+/** Pull artifact ids out of a run's output: doc/sheet/slides links + gmail draft / calendar event sendables.
+ *
+ * GUARDRAIL — "Otto may only ever edit a document it itself created": these doc/sheet/slides ids are what
+ * later grants the no-approval-needed edit carve-out in integrations.ts (see isDriveDocAction there). The
+ * model's self-reported "links" are NOT proof it created that document — nothing stops it listing a doc it
+ * merely read. So a doc-kind link is only kept as an ARTIFACT (editable-without-asking later) when its id
+ * is also in `verifiedDocIds` — ids confirmed from a REAL successful CREATE tool call this run (see
+ * createdDocIds in claude.ts's runTask). Fails closed: no `verifiedDocIds` passed → no doc artifacts at
+ * all, never "trust the link." Gmail drafts / calendar events are unaffected (they never get that
+ * carve-out regardless — see the isDriveDocAction check — so they don't need this verification). */
+export function extractArtifacts(out: { links?: TaskLink[]; sendables?: Sendable[] }, verifiedDocIds?: Iterable<string>): Artifact[] {
+  const verified = new Set(verifiedDocIds || []);
   const found: Artifact[] = [];
   for (const l of out.links || []) {
     const m = DOC_LINK.exec(l.url);
-    if (m) found.push({ kind: m[1] === "spreadsheets" ? "sheet" : m[1] === "presentation" ? "slides" : "doc", id: m[2], url: l.url, label: l.label });
+    if (m && verified.has(m[2])) found.push({ kind: m[1] === "spreadsheets" ? "sheet" : m[1] === "presentation" ? "slides" : "doc", id: m[2], url: l.url, label: l.label });
   }
   for (const s of out.sendables || []) {
     if (s.app === "gmail" && s.draftId) found.push({ kind: "draft", id: s.draftId, label: s.label });
@@ -543,7 +553,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     });
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
-    task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out));
+    task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out, out.createdDocIds));
     task.lastRunTokens = out.tokens;
     addUsage(profile, out.tokens);
     // Spin off DISTINCT new obligations the run discovered as their OWN tasks — so Otto plans + works each

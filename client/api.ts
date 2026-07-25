@@ -56,6 +56,11 @@ export const api = {
   integrationAccounts: (app: string): Promise<{ accounts: ConnectedAccount[] }> => req(`/api/integrations/${app}/accounts`).then(j),
   disconnectIntegration: (app: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect`),
   disconnectAccount: (app: string, accountId: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect/${accountId}`),
+  // Pronote — no OAuth, so this is a credential form rather than a redirect (see server/pronote.ts).
+  pronoteStatus: (): Promise<{ connected: boolean; username?: string }> => req("/api/integrations/pronote/status").then(j),
+  connectPronote: (url: string, username: string, password: string, kind?: number): Promise<{ ok: boolean; error?: string }> =>
+    post("/api/integrations/pronote/connect", { url, username, password, kind }).catch((e) => ({ ok: false, error: e?.message || "Couldn't connect." })),
+  disconnectPronote: (): Promise<{ ok: boolean }> => post("/api/integrations/pronote/disconnect"),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
   // Returns the fresh list + the sweep's own result line ("swept: 3 new tasks…" / "skipped: nothing
   // connected") so the UI reports what actually happened rather than inferring it.

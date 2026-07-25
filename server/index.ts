@@ -12,6 +12,7 @@ import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionSto
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
+import * as pronoteSvc from "./pronote.ts";
 import { updateConfidence } from "./tasks.ts";
 
 declare module "express-session" {
@@ -228,6 +229,24 @@ app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
 // Composio sends the user back here after OAuth — bounce to Settings, where status re-checks live.
 app.get("/integrations/callback", (_req, res) => res.redirect("/settings"));
 
+// ── Pronote — parallel to the Composio-routed integrations above: no OAuth exists, so this is a plain
+// credential form instead of a redirect. READ-ONLY (homework); never wired into the agent's toolset.
+app.get("/api/integrations/pronote/status", requireAuth, async (req, res) => {
+  res.json(await pronoteSvc.pronoteConnected(req.session.user!));
+});
+app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_000), async (req, res) => {
+  const { url, username, password, kind } = req.body || {};
+  if (typeof url !== "string" || typeof username !== "string" || typeof password !== "string") {
+    res.status(400).json({ error: "URL, username and password are required." }); return;
+  }
+  const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
+  res.status(result.ok ? 200 : 400).json(result);
+});
+app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
+  await pronoteSvc.disconnectPronote(req.session.user!);
+  res.json({ ok: true });
+});
+
 app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
   const app2 = String(req.params.app);
   const result = integrations.integrationsReady() ? await integrations.disconnect(app2, req.session.user!) : { ok: true };
@@ -390,6 +409,14 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
   const id = String(req.params.id);
   try {
     const job = await jobs.enqueueAndDrain(user, type, id, input);
+    // enqueueJob is idempotent PER TASK, not per job type — if a job of a DIFFERENT kind is already active
+    // for this task (e.g. an auto-queued execute_task still running when the user asks to revise), it
+    // returns THAT job as-is, silently discarding the new input (the revise note never gets applied).
+    // That used to look exactly like "revise does nothing" — no error, no effect. Say so honestly instead.
+    if (job.type !== type) {
+      res.status(409).json({ error: "Otto is still working on this task — try again in a moment." });
+      return;
+    }
     // ALWAYS fold the cloud copy in and answer with the task's REAL state — a requeued-after-failure or
     // another-worker-owns-it job is not an error; the task's own status (queued/executing/failed_retryable)
     // tells the truth on the card and the client's kick loop keeps it moving.
