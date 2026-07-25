@@ -1783,7 +1783,7 @@ var TOOLKIT_HINTS = [
   [/\b(linear|ticket)\b/i, "linear"],
   [/\b(todoist)\b/i, "todoist"]
 ];
-var CORE_TOOLKITS = ["gmail", "googledocs", "googledrive"];
+var CORE_TOOLKITS = ["gmail", "googledocs", "googledrive", "googlesheets"];
 function scopeTools(t, task) {
   if (t.tools.length <= 30) return t;
   const text = `${task.title} ${task.why || ""}`;
@@ -3477,18 +3477,32 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
     res.status(400).json({ error: "title required" });
     return;
   }
-  const refined = aiReady() && !isPaused(req) && !overBudget(req) ? await refineManualTask(title, req.session.profile) : null;
-  req.session.tasks = addManual(req.session.tasks || [], title, refined);
-  const added = req.session.tasks[0];
-  if (added && aiReady() && !isPaused(req) && !overBudget(req) && !added.unrefined && canonStatus(added.status) === "ready") {
-    added.status = "queued";
-    try {
-      await enqueueJob(req.session.user, "execute_task", added.id);
-    } catch {
-    }
-  }
+  req.session.tasks = addManual(req.session.tasks || [], title, null);
+  const addedId = req.session.tasks[0].id;
+  const user = req.session.user;
+  const profile = req.session.profile;
   await commit(req);
   res.json(req.session.tasks);
+  if (aiReady() && !isPaused(req) && !overBudget(req)) {
+    void (async () => {
+      try {
+        const refined = await refineManualTask(title, profile);
+        const current = await loadState(user);
+        const merged = mergeTasks(current.tasks || [], req.session.tasks || []);
+        const added = applyRefinement(merged, addedId, refined);
+        if (added && canonStatus(added.status) === "ready") {
+          added.status = "queued";
+          try {
+            await enqueueJob(user, "execute_task", added.id);
+          } catch {
+          }
+        }
+        await saveState(user, { profile: mergeProfiles(current.profile || emptyProfile(), profile || emptyProfile()), tasks: merged });
+      } catch (e) {
+        console.error("[tasks] background refine failed:", e);
+      }
+    })();
+  }
 });
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {

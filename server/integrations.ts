@@ -522,7 +522,13 @@ const TOOLKIT_HINTS: [RegExp, string][] = [
   [/\b(linear|ticket)\b/i, "linear"],
   [/\b(todoist)\b/i, "todoist"],
 ];
-const CORE_TOOLKITS = ["gmail", "googledocs", "googledrive"]; // read the world, make docs, find files — every task
+// googlesheets is core too, not just a keyword-hint toolkit: the run prompt tells the agent to pick Sheets
+// over a Doc for ANY tabular/tracking artifact, but the task's title/why (fixed at generation time, before
+// the agent decides the artifact shape) often doesn't literally say "sheet"/"spreadsheet" — a task titled
+// "Find summer programs" needs a Sheets tool available even though scoping only saw "programs" in the text.
+// Leaving it hint-only silently stripped the create-sheet tool from most research/tracking tasks, so the
+// agent fell back to a Doc (or nothing) — observed live as "docs and sheets are not creating".
+const CORE_TOOLKITS = ["gmail", "googledocs", "googledrive", "googlesheets"]; // read the world, make docs/sheets, find files — every task
 export function scopeTools(t: AgentTools, task: { title: string; why?: string; source?: string }): AgentTools {
   if (t.tools.length <= 30) return t; // already small — nothing to win
   const text = `${task.title} ${task.why || ""}`;

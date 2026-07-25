@@ -259,7 +259,7 @@ section("scopeTools");
 const mkTool = (kit, n) => ({ name: `${kit.toUpperCase()}_ACTION_${n}`, description: `[${kit}] does thing ${n}`, input_schema: { type: "object", properties: {} } });
 const bigSet = { tools: ["gmail", "googledocs", "googledrive", "googlecalendar", "googlesheets", "googleslides", "github", "notion"].flatMap((k) => Array.from({ length: 8 }, (_, i) => mkTool(k, i))), call: async () => null, connected: [] };
 const scopedMail = scopeTools(bigSet, { title: "Reply to Sarah about the offsite venue", why: "she asked yesterday", source: "gmail" });
-check("email task drops calendar/sheets/github/notion kits", scopedMail.tools.length === 24 && !scopedMail.tools.some((t) => /^\[(googlecalendar|googlesheets|github|notion)\]/.test(t.description)));
+check("email task drops calendar/slides/github/notion kits (sheets is core, stays)", scopedMail.tools.length === 32 && !scopedMail.tools.some((t) => /^\[(googlecalendar|googleslides|github|notion)\]/.test(t.description)) && scopedMail.tools.some((t) => /^\[googlesheets\]/.test(t.description)));
 const scopedCal = scopeTools(bigSet, { title: "Schedule a call with the vendor", why: "meeting needed", source: "gmail" });
 check("meeting keywords pull calendar back in", scopedCal.tools.some((t) => /^\[googlecalendar\]/.test(t.description)));
 const small = { ...bigSet, tools: bigSet.tools.slice(0, 20) };

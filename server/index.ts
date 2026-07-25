@@ -376,20 +376,33 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
 app.post("/api/tasks", requireAuth, async (req, res) => {
   const title = String(req.body?.title || "").trim();
   if (!title) { res.status(400).json({ error: "title required" }); return; }
-  // AI-refine the user's rough note into a crisp task (falls back to the raw text if refinement fails,
-  // or if AI usage is paused / over the monthly budget — the task still gets added, just unrefined).
-  const refined = aiReady() && !isPaused(req) && !overBudget(req) ? await refineManualTask(title, req.session.profile) : null;
-  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined);
-  // AUTO-RUN: a manually-added task should just start working — no "Run" click needed. Queue it for
-  // execution (unless AI is off/paused/over budget or it went in unrefined) and mark it queued so the
-  // client's kick loop drains it. addManual unshifts, so the new task is at index 0.
-  const added = req.session.tasks[0];
-  if (added && aiReady() && !isPaused(req) && !overBudget(req) && !added.unrefined && canonStatus(added.status) === "ready") {
-    added.status = "queued";
-    try { await enqueueJob(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
-  }
+  // Add it unrefined and respond IMMEDIATELY — refining is a DeepSeek round-trip (can be a couple seconds)
+  // and a manual add should feel instant, like any to-do list. Refine + auto-queue happen right after, in
+  // the background, on the SAME request (not the next sweep) so "Cleaning up…" clears in ~1-2s instead of
+  // waiting for the next cron/kick cycle.
+  req.session.tasks = tasks.addManual(req.session.tasks || [], title, null);
+  const addedId = req.session.tasks[0].id;
+  const user = req.session.user!;
+  const profile = req.session.profile;
   await commit(req);
   res.json(req.session.tasks);
+  if (aiReady() && !isPaused(req) && !overBudget(req)) {
+    void (async () => {
+      try {
+        const refined = await refineManualTask(title, profile);
+        // Re-load the latest cloud copy so this background write merges onto whatever happened since the
+        // response above (another edit, a sweep) instead of clobbering it with the stale in-request snapshot.
+        const current = await loadState(user);
+        const merged = mergeTasks(current.tasks || [], req.session.tasks || []);
+        const added = tasks.applyRefinement(merged, addedId, refined);
+        if (added && canonStatus(added.status) === "ready") {
+          added.status = "queued";
+          try { await enqueueJob(user, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
+        }
+        await saveState(user, { profile: mergeProfiles(current.profile || emptyProfile(), profile || emptyProfile()), tasks: merged });
+      } catch (e) { console.error("[tasks] background refine failed:", e); /* stays unrefined — next sweep cleans it up */ }
+    })();
+  }
 });
 
 // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
