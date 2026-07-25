@@ -295,6 +295,15 @@ const fin6 = finalize({ context: "c", synthesis: "Gathered the trip details.", d
   { text: "Decide which hotel you prefer", automatable: false },
 ], links: [], sendables: [] }, "", []);
 check("doable step flipped to automatable, judgment step stays", fin6.steps[0].automatable === true && fin6.steps[1].automatable === false);
+// Regression: "Research X and compile a list" was leaving the model's own research work as a hand-back
+// step instead of triggering the FINISH-DON'T-HAND-BACK enforcement, because "research"/"find" weren't
+// recognized as doable verbs — Otto has web_search + doc tools and should just do this itself.
+const fin6b = finalize({ context: "c", synthesis: "Looked into it.", did: [], steps: [
+  { text: "Research summer programs for next summer and compile a list of options", automatable: false },
+  { text: "Find a time that works for the team", automatable: false },
+], links: [], sendables: [] }, "", []);
+check("'Research ... compile a list' flipped to automatable", fin6b.steps[0].automatable === true);
+check("'Find a time' (coordination, not research) also treated as doable", fin6b.steps[1].automatable === true);
 const fin7 = finalize({ context: "c", synthesis: "Created the checklist doc.", did: ["Created the packing checklist doc with all sections"], steps: [
   { text: "Create the packing checklist doc with all sections", automatable: false },
   { text: "Print the checklist for the trip", automatable: false },

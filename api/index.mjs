@@ -851,7 +851,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
   const createdDocIds = /* @__PURE__ */ new Set();
   const withTokens = (o) => {
     let sendables = o.sendables;
-    if (lastGmailDraft?.draftId && lastGmailDraft.to && !sendables.some((s) => s.app === "gmail")) {
+    if (lastGmailDraft?.draftId && !sendables.some((s) => s.app === "gmail")) {
       sendables = [...sendables, {
         app: "gmail",
         label: "Send reply",
@@ -1052,7 +1052,7 @@ function finalize(out, fallbackText, profileUpdates) {
   if (!synthesis && !steps.length && !links.length && !sendables.length) {
     throw new Error("The run produced no output \u2014 it will retry.");
   }
-  const DOABLE = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make)\b/i;
+  const DOABLE = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make|research|find|look up|look into|gather|collect|identify|explore|investigate|list)\b/i;
   const JUDGMENT = /\b(choose|decide|pick|confirm|approve|review|prefer|want|which|verify|check with|sign|pay)\b/i;
   for (const s of steps) {
     if (!s.automatable && DOABLE.test(s.text) && !JUDGMENT.test(s.text) && !s.question) s.automatable = true;

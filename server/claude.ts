@@ -970,7 +970,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const createdDocIds = new Set<string>();
   const withTokens = (o: RunOutput): RunOutput => {
     let sendables = o.sendables;
-    if (lastGmailDraft?.draftId && lastGmailDraft.to && !sendables.some((s) => s.app === "gmail")) {
+    // NOTE: does NOT require lastGmailDraft.to — a REPLY draft often has no explicit recipient argument
+    // (Gmail infers it from the thread being replied to), so requiring one here used to mean a genuine
+    // reply draft with an empty "to" silently got NO sendable at all: the did-bullet said "created a
+    // draft reply to X" but no View-draft/Send button ever appeared. The confirm dialog already has a
+    // "the recipient" fallback for a blank `to`, so it's safe to surface the draft either way.
+    if (lastGmailDraft?.draftId && !sendables.some((s) => s.app === "gmail")) {
       sendables = [...sendables, {
         app: "gmail" as const, label: "Send reply", to: lastGmailDraft.to,
         subject: lastGmailDraft.subject, body: lastGmailDraft.body, draftId: lastGmailDraft.draftId,
@@ -1294,7 +1299,10 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // Otto-work leak check (observed live: "Create a new Google Doc…" listed as a USER step): a step that
   // starts with a doable verb and carries no judgment for the user gets flipped to automatable — Auto-do
   // then executes it instead of dumping Otto's own work on the user.
-  const DOABLE = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make)\b/i;
+  // "Research X and compile a list" / "Find options for Y" / "Look into Z" are exactly the open-ended
+  // research Otto can do itself (web_search + a doc) — missing these verbs was letting the model dodge
+  // the FINISH-DON'T-HAND-BACK enforcement below by phrasing real work as a step instead of doing it.
+  const DOABLE = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make|research|find|look up|look into|gather|collect|identify|explore|investigate|list)\b/i;
   const JUDGMENT = /\b(choose|decide|pick|confirm|approve|review|prefer|want|which|verify|check with|sign|pay)\b/i;
   for (const s of steps) {
     if (!s.automatable && DOABLE.test(s.text) && !JUDGMENT.test(s.text) && !s.question) s.automatable = true;
