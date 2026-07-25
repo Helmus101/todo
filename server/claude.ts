@@ -717,8 +717,17 @@ const RUN_SYSTEM =
   `reading is not the work: DO NOT survey the user's whole world before acting.\n` +
   `CREATE EARLY — if the task produces an artifact (a doc, sheet, deck, draft reply, event, research summary), ` +
   `CREATE it within your FIRST THREE tool calls, then refine/fill it with what you learn. For research tasks: ` +
-  `web_search for the facts, then CREATE A GOOGLE DOC with the findings — a research task without a produced ` +
-  `artifact is NOT done. An imperfect created artifact beats a perfect plan every time.\n` +
+  `web_search for the facts, then CREATE A GOOGLE DOC OR SHEET with the findings — a research task without a ` +
+  `produced artifact is NOT done. An imperfect created artifact beats a perfect plan every time.\n` +
+  `RESEARCH MEANS SEVERAL SEARCHES, NOT ONE — "find/research X" is not satisfied by a single web_search and a ` +
+  `container. Search enough to name SPECIFIC real options (actual program/vendor/product names, not ` +
+  `categories), each with the concrete facts that matter (deadline, price, link, eligibility — whatever the ` +
+  `task needs). Do multiple searches if the first is generic or thin. THE ARTIFACT MUST HOLD THE FINDINGS ` +
+  `THEMSELVES, not just structure waiting to be filled: a tracking sheet with column headers and no rows, or ` +
+  `a doc that says "see search results" without listing what you found, is an EMPTY SHELL, not a completed ` +
+  `research task — every specific thing you found goes IN as a row/paragraph before you submit. A step like ` +
+  `"review the results" is only legitimate if the results are actually written into the artifact for them to ` +
+  `review; never leave the findings ONLY in your own head/synthesis with a step pointing at nothing.\n` +
   `AUTO-EXECUTION — If the user has auto-approved certain actions (e.g., "schedule_meetings_under_30min"), you can ` +
   `execute those WITHOUT adding them to sendables for approval. Check their profile for autoApprove patterns. ` +
   `For example, if they've approved scheduling meetings under 30min, you can create the calendar event directly ` +
@@ -978,6 +987,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // Doc/Sheet/Slide ids VERIFIED created this run (from real tool results, never the model's say-so) —
   // the only ids extractArtifacts() is allowed to treat as "Otto's own", see the guardrail comment below.
   const createdDocIds = new Set<string>();
+  // Backstop for the same class of bug as lastGmailDraft, but for Docs/Sheets/Slides: the model creates a
+  // real spreadsheet/doc, mentions it in a "did" bullet, but forgets to add a "links" entry — so the card
+  // shows text describing an artifact with no way to actually open it. Tracks only the LAST one created;
+  // good enough since a single research/tracking task typically produces one primary artifact.
+  let lastCreatedDoc: { kind: "document" | "spreadsheets" | "presentation"; id: string; label?: string } | undefined;
   const withTokens = (o: RunOutput): RunOutput => {
     let sendables = o.sendables;
     // NOTE: does NOT require lastGmailDraft.to — a REPLY draft often has no explicit recipient argument
@@ -995,7 +1009,15 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // something (submit still requires synthesis, which then carries the same information) — fall back to
     // the one-line synthesis rather than showing an empty "What Otto did" section for real work.
     const did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
-    return { ...o, did, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] };
+    // Links backstop: if the last doc/sheet/slide it created isn't already linked, add it — a "did" bullet
+    // describing an artifact with no way to open it is a broken card, the same failure class as a drafted
+    // reply with no Send button (see lastGmailDraft above).
+    let links = o.links;
+    if (lastCreatedDoc && !links.some((l) => l.url.includes(lastCreatedDoc!.id))) {
+      const kindName = lastCreatedDoc.kind === "spreadsheets" ? "Sheet" : lastCreatedDoc.kind === "presentation" ? "Slides" : "Doc";
+      links = [...links, { label: lastCreatedDoc.label || `Open ${kindName}`, url: `https://docs.google.com/${lastCreatedDoc.kind}/d/${lastCreatedDoc.id}/edit` }].slice(0, 3);
+    }
+    return { ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] };
   };
   try {
   for (let i = 0; i < MAX; i++) {
@@ -1130,7 +1152,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
           // tool result, never from the model's narration of what it did.
           if (isRealWrite && /^GOOGLE(DOCS|SHEETS|SLIDES)_CREATE/i.test(toolName)) {
             const idMatch = /"(?:document|spreadsheet|presentation)?Id"\s*:\s*"([\w-]{15,})"/i.exec(String(r));
-            if (idMatch) createdDocIds.add(idMatch[1]);
+            if (idMatch) {
+              createdDocIds.add(idMatch[1]);
+              const kind = /^GOOGLESHEETS_/i.test(toolName) ? "spreadsheets" : /^GOOGLESLIDES_/i.test(toolName) ? "presentation" : "document";
+              const label = input?.title ? String(input.title).slice(0, 80) : undefined;
+              lastCreatedDoc = { kind, id: idMatch[1], label };
+            }
           }
         }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }

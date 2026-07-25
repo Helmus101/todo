@@ -726,7 +726,8 @@ You can also use web_search for any external fact or context you need (a person,
 PICK THE RIGHT ARTIFACT TYPE: a task that says "spreadsheet", "sheet", "tracker", or asks for rows/columns of structured data belongs in GOOGLE SHEETS, not a Doc \u2014 even though a Doc can hold a table, a sheet is what the user asked for and is what they can filter/sort/total. Only use a Doc for prose/lists/plans.
 GOOGLE SHEETS \u2014 YOU MUST ACTUALLY WRITE: if the task involves updating a spreadsheet (e.g. filling in restaurant names, meal ideas, trip data, any cells), you MUST call the Sheets write tools (GOOGLESHEETS_BATCH_UPDATE_VALUES, GOOGLESHEETS_UPDATE_VALUES, GOOGLESHEETS_APPEND_VALUES, etc.) to ACTUALLY write the data into the cells \u2014 do NOT just produce a plan or list in synthesis. Read the sheet first to find the exact cells/ranges that need filling, then call the write tool with real content. Sheet cell writes are FULLY PERMITTED and reversible \u2014 you do NOT need user approval to write cells. Do it now.
 GATHER WHAT THE TASK NEEDS \u2014 TARGETED, NOT EXHAUSTIVE: typically 1-3 reads (the Gmail thread behind the task, the relevant Calendar event or Drive doc, a web_search for external facts). NEVER leave placeholders like "[hotel name]" \u2014 find the real detail with ONE targeted search. But your round budget is TIGHT and reading is not the work: DO NOT survey the user's whole world before acting.
-CREATE EARLY \u2014 if the task produces an artifact (a doc, sheet, deck, draft reply, event, research summary), CREATE it within your FIRST THREE tool calls, then refine/fill it with what you learn. For research tasks: web_search for the facts, then CREATE A GOOGLE DOC with the findings \u2014 a research task without a produced artifact is NOT done. An imperfect created artifact beats a perfect plan every time.
+CREATE EARLY \u2014 if the task produces an artifact (a doc, sheet, deck, draft reply, event, research summary), CREATE it within your FIRST THREE tool calls, then refine/fill it with what you learn. For research tasks: web_search for the facts, then CREATE A GOOGLE DOC OR SHEET with the findings \u2014 a research task without a produced artifact is NOT done. An imperfect created artifact beats a perfect plan every time.
+RESEARCH MEANS SEVERAL SEARCHES, NOT ONE \u2014 "find/research X" is not satisfied by a single web_search and a container. Search enough to name SPECIFIC real options (actual program/vendor/product names, not categories), each with the concrete facts that matter (deadline, price, link, eligibility \u2014 whatever the task needs). Do multiple searches if the first is generic or thin. THE ARTIFACT MUST HOLD THE FINDINGS THEMSELVES, not just structure waiting to be filled: a tracking sheet with column headers and no rows, or a doc that says "see search results" without listing what you found, is an EMPTY SHELL, not a completed research task \u2014 every specific thing you found goes IN as a row/paragraph before you submit. A step like "review the results" is only legitimate if the results are actually written into the artifact for them to review; never leave the findings ONLY in your own head/synthesis with a step pointing at nothing.
 AUTO-EXECUTION \u2014 If the user has auto-approved certain actions (e.g., "schedule_meetings_under_30min"), you can execute those WITHOUT adding them to sendables for approval. Check their profile for autoApprove patterns. For example, if they've approved scheduling meetings under 30min, you can create the calendar event directly without asking. Otherwise, follow the normal approval flow.
 HARD LIMIT \u2014 you can READ and WRITE, but you can NEVER do an irreversible OUTBOUND or DESTRUCTIVE action: no sending/forwarding email, no sending/posting messages, no publishing, no deleting (those tools are not even available to you). For email you ONLY ever leave a DRAFT; for Slack you only COMPOSE the message. You never send/post \u2014 instead OFFER the send as a one-click button via "sendables" (see submit), which the user reviews and fires. Never say you "sent", "emailed", "posted", or "messaged" \u2014 say you DRAFTED/PREPARED it. Never claim an action you didn't take.
 NEWSLETTERS & PROMOTIONAL EMAIL \u2014 NEVER DRAFT A REPLY: before drafting any email reply, check whether the thread is a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender (unsubscribe footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something \u2014 note in "synthesis" that it's mass mail and needs no reply, and stop there.
@@ -851,6 +852,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
   let finishBacks = 0;
   let lastGmailDraft;
   const createdDocIds = /* @__PURE__ */ new Set();
+  let lastCreatedDoc;
   const withTokens = (o) => {
     let sendables = o.sendables;
     if (lastGmailDraft?.draftId && !sendables.some((s) => s.app === "gmail")) {
@@ -864,7 +866,12 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
       }].slice(0, 6);
     }
     const did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
-    return { ...o, did, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] };
+    let links = o.links;
+    if (lastCreatedDoc && !links.some((l) => l.url.includes(lastCreatedDoc.id))) {
+      const kindName = lastCreatedDoc.kind === "spreadsheets" ? "Sheet" : lastCreatedDoc.kind === "presentation" ? "Slides" : "Doc";
+      links = [...links, { label: lastCreatedDoc.label || `Open ${kindName}`, url: `https://docs.google.com/${lastCreatedDoc.kind}/d/${lastCreatedDoc.id}/edit` }].slice(0, 3);
+    }
+    return { ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] };
   };
   try {
     for (let i = 0; i < MAX; i++) {
@@ -952,7 +959,12 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
             }
             if (isRealWrite && /^GOOGLE(DOCS|SHEETS|SLIDES)_CREATE/i.test(toolName)) {
               const idMatch = /"(?:document|spreadsheet|presentation)?Id"\s*:\s*"([\w-]{15,})"/i.exec(String(r));
-              if (idMatch) createdDocIds.add(idMatch[1]);
+              if (idMatch) {
+                createdDocIds.add(idMatch[1]);
+                const kind = /^GOOGLESHEETS_/i.test(toolName) ? "spreadsheets" : /^GOOGLESLIDES_/i.test(toolName) ? "presentation" : "document";
+                const label = input?.title ? String(input.title).slice(0, 80) : void 0;
+                lastCreatedDoc = { kind, id: idMatch[1], label };
+              }
             }
           }
         } catch (e) {
