@@ -43,6 +43,19 @@ check("same anchor still merges", dedupeTasks([doneOld, { ...newEmail, anchorKey
 // …and anchorless title dups still merge (manual tasks / agent-sweep fallback).
 check("anchorless title dup still merges", dedupeTasks([{ ...doneOld, anchorKey: undefined }, { ...newEmail, anchorKey: undefined }]).length === 1);
 
+// ── Stale idle tasks auto-archive (keeps the active list a genuine "now" list) ─
+section("stale ready tasks auto-archive");
+const now = new Date("2026-07-25T12:00:00Z");
+const old15d = new Date(now.getTime() - 15 * 86_400_000).toISOString();
+const old10d = new Date(now.getTime() - 10 * 86_400_000).toISOString();
+// foldGenerated mutates its `existing` items in place, so each fixture below is its own fresh object —
+// spreading an already-checked one would silently inherit whatever status the PRIOR call mutated it to.
+const staleTask = (over) => ({ ...base, title: "Reply to old outreach thread", why: "asked 3 weeks ago", source: "gmail", status: "ready", ...over });
+check("idle ready task older than 14d archives to dismissed", foldGenerated([staleTask({ id: "sr1", anchorKey: "gmail:sr1", createdAt: old15d })], [], [], now).find((t) => t.id === "sr1")?.status === "dismissed");
+check("idle ready task under 14d stays active", foldGenerated([staleTask({ id: "sr2", anchorKey: "gmail:sr2", createdAt: old10d })], [], [], now).find((t) => t.id === "sr2")?.status === "ready");
+check("a real upcoming deadline keeps an old card alive regardless of age", foldGenerated([staleTask({ id: "sr3", anchorKey: "gmail:sr3", createdAt: old15d, when: new Date(now.getTime() + 86_400_000).toISOString() })], [], [], now).find((t) => t.id === "sr3")?.status === "ready");
+check("non-ready statuses are never auto-archived (only untouched 'ready' cards)", foldGenerated([staleTask({ id: "sr4", anchorKey: "gmail:sr4", createdAt: old15d, status: "needs_review" })], [], [], now).find((t) => t.id === "sr4")?.status === "needs_review");
+
 // ── Cross-device merge ────────────────────────────────────────────────────────
 section("mergeTaskLists");
 const older = new Date(Date.now() - 60000).toISOString(), newer = new Date().toISOString();

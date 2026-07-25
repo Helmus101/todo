@@ -249,6 +249,18 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 .card-main { display: flex; align-items: center; gap: 12px; padding: 17px 6px 17px 26px; cursor: pointer; min-height: 58px; border-radius: 8px; transition: background 120ms var(--ease); }
 .card-main:hover { background: rgba(0, 0, 0, 0.022); }
+/* The direct check-off control — a normal to-do checkbox. Click fills it and marks the task done in one
+   step, no need to open the card first (opening it still works too, via "Looks good"). */
+.card-check {
+  flex: none; width: 22px; height: 22px; margin: -2px 0; border-radius: 50%;
+  border: 1.5px solid var(--line); background: transparent; color: transparent;
+  font-size: 12px; font-weight: 650; line-height: 1; cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color 140ms var(--ease), background 140ms var(--ease), transform 140ms var(--ease);
+}
+.card-check:hover { border-color: var(--accent); transform: scale(1.08); }
+.card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; }
+.card-check:disabled { cursor: default; }
 .card-text { flex: 1; min-width: 0; }
 .card-title { font-size: 15.5px; font-weight: 560; letter-spacing: -0.01em; line-height: 1.35; }
 .card-sub { font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -362,6 +374,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .confirm-acts { display: flex; gap: 8px; flex-wrap: wrap; }
 .change-row { display: flex; gap: 8px; margin-top: 8px; }
 .change-row input { flex: 1; }
+.draft-subject { margin-top: 8px; }
+.draft-body-edit {
+  width: 100%; font-family: inherit; font-size: 13px; line-height: 1.6; resize: vertical;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 12px; margin-top: 8px;
+}
+.draft-body-edit:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.draft-edit-acts { display: flex; gap: 8px; margin-top: 8px; }
 
 /* Context drawer + actions */
 .ctx-toggle {

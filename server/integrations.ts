@@ -371,6 +371,23 @@ async function execute(action: string, userId: string, args: Record<string, unkn
   return JSON.stringify(result ?? {}, null, 2).slice(0, 4000);
 }
 
+/** Push a user's MANUAL edit to a Gmail draft's subject/body back to the real draft in Gmail — so what the
+ *  user typed is what actually goes out when they later click Send (GMAIL_SEND_DRAFT sends whatever the
+ *  live Gmail draft contains, not our local copy of it). GMAIL_UPDATE_EMAIL_DRAFT is already an "auto"
+ *  policy action (safe, non-gated) — this is a direct, user-triggered call, not something the agent decides. */
+export async function updateGmailDraft(userId: string, draftId: string, patch: { to?: string; subject?: string; body?: string }): Promise<{ ok: boolean; error?: string }> {
+  if (!integrationsReady() || !userId || !draftId) return { ok: false, error: "Not available." };
+  try {
+    const args: Record<string, unknown> = { draft_id: draftId };
+    if (patch.to) args.recipient_email = patch.to;
+    if (patch.subject !== undefined) args.subject = patch.subject;
+    if (patch.body !== undefined) args.body = patch.body;
+    const r: any = await sdk().tools.execute("GMAIL_UPDATE_EMAIL_DRAFT", { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+    if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Update failed.") };
+    return { ok: true };
+  } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
+}
+
 /** Fire a USER-CONFIRMED one-click send (a reviewed Gmail draft / a composed Slack message). This is the ONLY
  *  place an irreversible send happens — always from an explicit user click, NEVER the agent (the agent's gated
  *  toolset can't reach these). Server hardcodes the send action; the agent only ever supplies the data. */

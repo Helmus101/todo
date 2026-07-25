@@ -393,8 +393,22 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
 /** Pure post-processing of a sweep's output: absorb duplicates into the existing list, cap genuinely NEW
  *  cards at MAX_NEW_PER_SWEEP (top by score), prune old handled records. Split out so it's unit-testable
  *  without an AI call. */
-export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string; accountId?: string }[], highPriorityPeople: string[] = []): WebTask[] {
-  const now = new Date().toISOString();
+export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string; accountId?: string }[], highPriorityPeople: string[] = [], now_: Date = new Date()): WebTask[] {
+  const now = now_.toISOString();
+  // Idle "ready" cards — Otto surfaced them, but nothing ever happened: never opened, never run, no step
+  // touched. After ~2 weeks whatever made them relevant has almost certainly passed (the thread got handled
+  // another way, the moment for that reply is gone). Auto-archive them as dismissed rather than deleting —
+  // they still show up in the record and count against future dedup, exactly like a real dismiss — so the
+  // ACTIVE list stays a genuine "what matters now" list instead of an ever-growing pile of stale leftovers
+  // that erodes trust that the list means something. A real upcoming deadline (`when` still in the future)
+  // keeps a card alive regardless of age.
+  const STALE_READY_MS = 14 * 24 * 60 * 60_000;
+  for (const t of existing) {
+    if (t.status !== "ready") continue;
+    const stillUpcoming = t.when && (Date.parse(t.when) || 0) > now_.getTime();
+    const age = now_.getTime() - (Date.parse(t.createdAt || "") || now_.getTime());
+    if (!stillUpcoming && age > STALE_READY_MS) { t.status = "dismissed"; t.updatedAt = now; }
+  }
   // DISMISSED = "I don't want this" — suppress not just the exact item but anything SIMILAR to it, with a
   // deliberately looser match (incl. cross-field title↔why) than the live-task dedupe. A false positive
   // here only hides a card resembling one the user already rejected; a false negative resurfaces it.

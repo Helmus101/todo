@@ -515,6 +515,29 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
   }
   res.json(t);
 });
+// Manual edit of an unsent draft — the user typing directly into the draft box, not an AI rewrite (that's
+// /revise). For Gmail this pushes the edit to the REAL draft (GMAIL_SEND_DRAFT sends whatever's live in
+// Gmail, not our local copy); Slack has no server-side draft, so the local text IS what gets posted.
+app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_000), async (req, res) => {
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
+  const s = t?.sendables?.[Number(req.params.index)];
+  if (!t || !s) { res.status(404).json({ error: "not found" }); return; }
+  if (s.sent) { res.status(400).json({ error: "already sent" }); return; }
+  const subject = typeof req.body?.subject === "string" ? req.body.subject.slice(0, 300) : undefined;
+  const body = typeof req.body?.body === "string" ? req.body.body.slice(0, 20_000) : undefined;
+  const text = typeof req.body?.text === "string" ? req.body.text.slice(0, 20_000) : undefined;
+  if (s.app === "gmail" && s.draftId) {
+    const r = await integrations.updateGmailDraft(req.session.user!, s.draftId, { subject, body, to: s.to });
+    if (!r.ok) { res.status(500).json({ error: r.error || "couldn't save your edit to the draft" }); return; }
+    if (subject !== undefined) s.subject = subject;
+    if (body !== undefined) s.body = body;
+  } else if (s.app === "slack") {
+    if (text !== undefined) s.text = text;
+  } else { res.status(400).json({ error: "this draft can't be edited here" }); return; }
+  t!.updatedAt = new Date().toISOString();
+  await commit(req);
+  res.json(t);
+});
 
 // ── Jobs + timeline (the durable execution layer's public surface) ────────────
 app.get("/api/jobs/:id", requireAuth, async (req, res) => {

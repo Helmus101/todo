@@ -1286,6 +1286,21 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
   const [changeIdx, setChangeIdx] = useState<number | null>(null);   // which sendable's "what to change" box is open
   const [changeText, setChangeText] = useState("");
   const [revising, setRevising] = useState(false);
+  // Manual edits to a draft's own text — separate from changeText (that's a PROMPT for Otto to rewrite it;
+  // this is the user directly typing the replacement). Keyed by sendable index; only the open one is edited.
+  const [draftEdits, setDraftEdits] = useState<Record<number, { subject?: string; body?: string }>>({});
+  const [savingDraft, setSavingDraft] = useState<number | null>(null);
+  const saveDraftEdit = async (i: number) => {
+    const edit = draftEdits[i];
+    if (!edit || savingDraft != null) return;
+    // The textarea is generically bound to "body" client-side; Slack has no subject and stores its
+    // message under "text" server-side — map to whichever field this sendable's app actually uses.
+    const patch = task.sendables?.[i]?.app === "slack" ? { text: edit.body } : { subject: edit.subject, body: edit.body };
+    setSavingDraft(i);
+    try { onTask(await api.editDraft(task.id, i, patch)); setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; }); }
+    catch { /* edit stays pending — the box keeps the user's text so nothing is lost */ }
+    finally { setSavingDraft(null); }
+  };
   const [leaving, setLeaving] = useState(false);
   const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
   const [refining, setRefining] = useState(false);
@@ -1417,6 +1432,15 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
   return (
     <div ref={cardRef} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
       <div className="card-main" onClick={onToggle}>
+        {/* Direct check-off, like a normal to-do list — no need to open the task first. Still one deliberate
+            click (not automatic): it fires the same confirm as "Looks good" inside the detail view. */}
+        {!isDone ? (
+          <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
+            title="Mark done" aria-label="Mark task done" disabled={leaving}
+            onClick={(e) => { e.stopPropagation(); void leave(() => api.confirm(task.id), "confirm"); }}>
+            {leaving && leaveKind === "confirm" ? "✓" : ""}
+          </button>
+        ) : null}
         <div className="card-text">
           <div className="card-title">{task.title}</div>
           {(() => { const sub = subtitle(task); const w = task.when ? fmtWhen(task.when) : ""; return (w || sub) ? <div className="card-sub">{w && <span className="when">{w}</span>}{sub}</div> : null; })()}
@@ -1455,6 +1479,10 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
                     ) : null}
                     <div className="sendable-row">
                       <button className="btn xs ghost" onClick={() => setViewDraft((v) => (v === i ? null : i))}>{viewDraft === i ? "Hide details" : s.app === "gcal" ? "View event" : "View draft"}</button>
+                      {/* One prompt, Otto rewrites it — direct access, not buried behind declining a send. */}
+                      {!s.sent && s.app !== "gcal" ? (
+                        <button className="btn xs ghost" disabled={revising} onClick={() => { setConfirmIdx(null); setChangeText(""); setChangeIdx(changeIdx === i ? null : i); }}>Rewrite</button>
+                      ) : null}
                       {s.sent
                         ? <button className="btn primary send-btn sent" disabled>Sent</button>
                         : sending === i
@@ -1494,11 +1522,31 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
                             {s.when ? <div className="draft-row"><span className="draft-label">When</span><span>{s.when}</span></div> : null}
                             {recipients ? <div className="draft-row"><span className="draft-label">Invites</span><span>{recipients}</span></div> : null}
                           </>
-                        ) : (
+                        ) : s.sent ? (
                           <>
                             {(s.to || s.channel) ? <div className="draft-row"><span className="draft-label">To</span><span>{s.to || s.channel}</span></div> : null}
                             {s.subject ? <div className="draft-row"><span className="draft-label">Subject</span><span>{s.subject}</span></div> : null}
-                            <pre className="draft-body">{s.body || s.text || "Draft is ready in Gmail — open it there to read the full text."}</pre>
+                            <pre className="draft-body">{s.body || s.text || "Sent."}</pre>
+                          </>
+                        ) : (
+                          // Unsent: editable directly — type right in the box, or use "Rewrite" above for
+                          // a one-prompt AI pass. Edits save to the real Gmail draft (send pulls from there).
+                          <>
+                            {(s.to || s.channel) ? <div className="draft-row"><span className="draft-label">To</span><span>{s.to || s.channel}</span></div> : null}
+                            {s.app === "gmail" ? (
+                              <input className="addinput sm draft-subject" placeholder="Subject"
+                                value={draftEdits[i]?.subject ?? s.subject ?? ""}
+                                onChange={(e) => setDraftEdits((d) => ({ ...d, [i]: { ...d[i], subject: e.target.value } }))} />
+                            ) : null}
+                            <textarea className="draft-body-edit" rows={6}
+                              value={draftEdits[i]?.body ?? s.body ?? s.text ?? ""}
+                              onChange={(e) => setDraftEdits((d) => ({ ...d, [i]: { ...d[i], body: e.target.value } }))} />
+                            {draftEdits[i] ? (
+                              <div className="draft-edit-acts">
+                                <button className="btn primary xs" disabled={savingDraft === i} onClick={() => void saveDraftEdit(i)}>{savingDraft === i ? "Saving…" : "Save changes"}</button>
+                                <button className="btn xs ghost" disabled={savingDraft === i} onClick={() => setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; })}>Discard</button>
+                              </div>
+                            ) : null}
                           </>
                         )}
                       </div>
