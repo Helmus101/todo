@@ -1,5 +1,6 @@
 import { StrictMode, Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { Analytics } from "@vercel/analytics/react";
 import { App } from "./App.tsx";
 import "./styles.css";
 
@@ -38,6 +39,8 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary>
       <App />
+      {/* No-ops safely when not served from Vercel (self-hosted deploys) — collects page views only. */}
+      <Analytics />
     </ErrorBoundary>
   </StrictMode>
 );

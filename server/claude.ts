@@ -58,7 +58,12 @@ function deadlineBlock(text: string): string {
   return `EXPLICIT DEADLINE PHRASE FROM THE TASK: "${snippet}". Treat that deadline/date as exact and preserve it unless the source data clearly contradicts it.\n`;
 }
 
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+// DeepSeek retired "deepseek-chat"/"deepseek-reasoner" in favor of "deepseek-v4-flash" (fast/cheap) and
+// "deepseek-v4-pro" (heavier reasoning) — calls with an old name now fail outright with a 400. Map the old
+// names forward so an existing deployment's DEEPSEEK_MODEL=deepseek-chat env var doesn't start hard-failing
+// every AI call the moment the old names stop working; new deployments should just set the new names directly.
+const LEGACY_DEEPSEEK_MODEL_MAP: Record<string, string> = { "deepseek-chat": "deepseek-v4-flash", "deepseek-reasoner": "deepseek-v4-pro" };
+const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || ""] || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -336,7 +341,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       `ends on my projects/people above — then call submit_tasks with the NEW actionable items. Respect my ` +
       `stated preferences above when choosing, ranking, and phrasing tasks.`,
   }];
-  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.
   // The prompt tells the agent to BATCH searches as parallel calls in one round, so 6 is plenty; the forced
   // final round below is the safety net for a straggler.
@@ -471,7 +476,7 @@ export async function classifyCandidates(
     `items reveal (a key relationship, an ongoing project) — only lasting identity facts, not task content. ` +
     `Empty arrays are fine.`;
   const client = deepseekClient();
-  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   let tokIn = 0, tokOut = 0, calls = 0;
   const ask = async (extra?: string) => {
     calls++;
@@ -575,7 +580,7 @@ export async function pickOneTask(
     `naming the concrete trigger","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,` +
     `"risk":"low"|"high"}`;
   const client = deepseekClient();
-  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   try {
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: actualModel, max_tokens: 500, temperature: 0.2, response_format: { type: "json_object" },
@@ -617,7 +622,7 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
   if (!raw) return null;
   try {
     const client = deepseekClient();
-    const model = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const res = await retryRequest(() => client.chat.completions.create({
       model,
       max_tokens: 500,
@@ -826,12 +831,14 @@ const RUN_SYSTEM =
   `they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or ` +
   `click — NEVER "go figure it out". E.g. "book a Boston restaurant" → research a few fitting spots, link each ` +
   `(Resy/the restaurant site), recommend one with a one-line why; the step is just "Pick one & book".\n` +
-  `ALWAYS SURFACE WHAT YOU MADE: whenever you create or draft something (a Gmail draft, a Google Doc/Sheet/Slides ` +
-  `deck, a calendar event, a task, an issue/PR or comment), put a LINK to it in submit's "links" so the user can ` +
-  `open and review it. Build the URL from the id the tool returned — Doc: https://docs.google.com/document/d/<id>/edit, ` +
+  `ALWAYS SURFACE WHAT YOU MADE: whenever you create or draft something (a Google Doc/Sheet/Slides deck, a ` +
+  `calendar event, a task, an issue/PR or comment), put a LINK to it in submit's "links" so the user can open ` +
+  `and review it. Build the URL from the id the tool returned — Doc: https://docs.google.com/document/d/<id>/edit, ` +
   `Sheet: https://docs.google.com/spreadsheets/d/<id>/edit, Slides: https://docs.google.com/presentation/d/<id>/edit, ` +
-  `Gmail draft: https://mail.google.com/mail/u/0/#drafts, calendar event: the htmlLink it returned. If a result ` +
-  `already includes a URL / webViewLink, use that. Never invent a link — only include one you actually got back.\n` +
+  `calendar event: the htmlLink it returned. If a result already includes a URL / webViewLink, use that. Never ` +
+  `invent a link — only include one you actually got back. EXCEPTION — Gmail drafts: do NOT add a "links" entry ` +
+  `for a draft you created (Gmail has no URL that opens one specific draft, only the whole drafts folder, which ` +
+  `is useless here). The "sendables" entry below is how the user reviews and sends it — that's enough.\n` +
   `ONE-CLICK SEND (the ONLY way anything goes out — always with the recipient shown): for every email you ` +
   `DRAFTED, add a "sendables" entry {app:"gmail", label, to (the recipient, ALWAYS set it), subject, body, ` +
   `draftId} — include the EXACT subject + body you wrote (so the user can review the draft IN THE APP) plus the ` +
@@ -947,7 +954,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
       : head + deadlineHint + manualHint + `\nGather what you need, then ACTUALLY DO the reversible work now with your tools (draft/create/update) — don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`,
   }];
 
-  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   const MAX = 8; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
   let tokIn = 0, tokOut = 0, rounds = 0;
   // Has the agent performed ANY write/create yet? Drives the deterministic act-now enforcement below.
@@ -1208,6 +1215,10 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     // Artifact verification: a Google Docs/Sheets/Slides link must carry a REAL document id (25+ chars of
     // id alphabet) — a made-up or truncated link would render a polished card pointing at a 404.
     .filter((l: TaskLink) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url))
+    // Never a "Gmail draft" link — Gmail has no URL for one specific draft, only the generic drafts
+    // folder (mail.google.com/…/#drafts), which is useless/confusing next to the real "View draft"/Send
+    // UI the sendables entry already gives. Belt-and-suspenders in case the model adds one out of habit.
+    .filter((l: TaskLink) => !/mail\.google\.com.*#drafts/i.test(l.url))
     .slice(0, 3); // max 3 open links per task — the essentials, not a link dump
   const sendables: Sendable[] = (Array.isArray(out?.sendables) ? out.sendables : [])
     .map((s: any): Sendable => ({

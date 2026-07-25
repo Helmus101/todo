@@ -53,7 +53,7 @@ That's enough to run locally. Add Supabase (below) to persist across restarts.
 | `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | Anon-key fallback for local dev only |
 | `MONTHLY_AI_BUDGET_USD` | Per-account monthly AI spend cap (default `3`) |
 | `CRON_SECRET` | Protects `/api/cron/drain` (required on Vercel) |
-| `DEEPSEEK_MODEL` | Default `deepseek-chat` |
+| `DEEPSEEK_MODEL` | Default `deepseek-v4-flash` (or `deepseek-v4-pro` for heavier reasoning) |
 | `PORT` | Default `8788` |
 
 See [`.env.example`](.env.example) for the annotated list.

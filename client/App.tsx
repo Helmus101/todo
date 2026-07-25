@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, useCallback, useRef } from "react";
+import { Fragment, useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
@@ -1326,14 +1326,27 @@ function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string
   );
 }
 
-function AddTask({ onAdded }: { onAdded: (t: WebTask[]) => void }) {
+function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     const v = text.trim();
     if (!v || busy) return;
-    setBusy(true);
-    try { onAdded(await api.add(v)); setText(""); } finally { setBusy(false); }
+    setBusy(true); setText("");
+    // Show it in the list RIGHT AWAY instead of waiting on the round-trip — which includes a blocking AI
+    // refinement call server-side and can take a couple seconds. A real "Add" should feel instant, like
+    // any to-do list. The server's actual response (refined title, possibly auto-queued) replaces this
+    // stub the moment it lands; a failure rolls the stub back and returns your text so nothing is lost.
+    const stubId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const stub: WebTask = {
+      id: stubId, title: v, why: "Added by you", source: "manual", risk: "low",
+      urgency: 0.5, importance: 0.5, quadrant: "do", score: 1,
+      status: "ready", createdAt: new Date().toISOString(), unrefined: true,
+    };
+    onAdded((prev) => [stub, ...prev]);
+    try { onAdded(await api.add(v)); }
+    catch { onAdded((prev) => prev.filter((t) => t.id !== stubId)); setText(v); }
+    finally { setBusy(false); }
   };
   return (
     <div className="add-task-row">

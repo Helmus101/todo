@@ -51,7 +51,8 @@ function normalizeProfile(p) {
       monthKey: typeof p.usage.monthKey === "string" ? p.usage.monthKey : void 0,
       monthIn: Number(p.usage.monthIn) || 0,
       monthOut: Number(p.usage.monthOut) || 0
-    } : void 0
+    } : void 0,
+    primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object" ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e) => typeof e[1] === "string")) : void 0
   };
 }
 function isValidTz(tz) {
@@ -64,6 +65,10 @@ function isValidTz(tz) {
 }
 function tzOf(profile) {
   return profile?.timezone || profile?.workingHours?.timezone || "UTC";
+}
+function isPeakHourUtc(now = /* @__PURE__ */ new Date()) {
+  const h = now.getUTCHours();
+  return h >= 1 && h < 4 || h >= 6 && h < 10;
 }
 function monthKeyOf(tz, now = /* @__PURE__ */ new Date()) {
   try {
@@ -274,7 +279,8 @@ function deadlineBlock(text) {
   return `EXPLICIT DEADLINE PHRASE FROM THE TASK: "${snippet}". Treat that deadline/date as exact and preserve it unless the source data clearly contradicts it.
 `;
 }
-var DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+var LEGACY_DEEPSEEK_MODEL_MAP = { "deepseek-chat": "deepseek-v4-flash", "deepseek-reasoner": "deepseek-v4-pro" };
+var DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || ""] || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
 function aiReady() {
   return !!process.env.DEEPSEEK_API_KEY;
 }
@@ -460,7 +466,7 @@ ALREADY ON THEIR LIST (active) \u2014 do NOT re-report these; submit ONLY items 
 ${connectedLine}
 Sweep across all of them for everything genuinely awaiting me that is NOT already covered above \u2014 including what I promised others and haven't done yet (check my sent mail), and loose ends on my projects/people above \u2014 then call submit_tasks with the NEW actionable items. Respect my stated preferences above when choosing, ranking, and phrasing tasks.`
   }];
-  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   const MAX = 6;
   let tokIn = 0, tokOut = 0, rounds = 0;
   let didRead = false;
@@ -563,13 +569,13 @@ async function classifyCandidates(items, profile, activeTitles) {
 ALREADY ON THEIR LIST (skip anything covering these):
 ${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}
 ` : "";
-  const sys = `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER items are commitments THEY made ("I'll send you X") \u2014 create a task to FULFILL unfulfilled ones. Events: only if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs are actionable while open. Skip FYIs, receipts, automated mail, and anything already on their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank HIGHER (importance \u2265 0.7); things their preferences deprioritize rank lower or get skipped. Quality over quantity \u2014 the handful that matter. ALWAYS include: a direct question or request from a real person awaiting their reply; a SENT-BY-USER commitment ("I'll send/do/call\u2026") with no later fulfilment visible; an event in the next 48h that plainly needs prep. When such an item exists, an empty tasks list is WRONG.
+  const sys = `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER items are commitments THEY made ("I'll send you X") \u2014 create a task to FULFILL unfulfilled ones. Events: only if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs are actionable while open. Pronote homework: actionable while not yet marked done; urgency scales with how close the deadline is (\u22650.7 within ~48h). Skip FYIs, receipts, automated mail, and anything already on their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank HIGHER (importance \u2265 0.7); things their preferences deprioritize rank lower or get skipped. Quality over quantity \u2014 the handful that matter. ALWAYS include: a direct question or request from a real person awaiting their reply; a SENT-BY-USER commitment ("I'll send/do/call\u2026") with no later fulfilment visible; an event in the next 48h that plainly needs prep. When such an item exists, an empty tasks list is WRONG.
 CONSOLIDATE \u2014 one real-world obligation = ONE task. If several candidates concern the SAME thing (a calendar event AND the email thread that set it up; several copies of one outreach the user sent), emit a SINGLE task and pick the candidate the user must ACT on to anchor it (prefer the email/thread they need to handle; else the event). NEVER emit two tasks for one meeting, thread, or commitment. Each task's title must name a DISTINCT obligation \u2014 if two of your tasks would start with the same verb+object, merge them.
 SCORING: an item you judge actionable is, by definition, NOT trivial \u2014 score a genuine reply/commitment at importance \u2265 0.5, and higher (\u2265 0.7) for high-priority people or stated projects. urgency reflects the deadline: \u2265 0.7 within ~48h, ~0.5 this week, lower if open-ended. Never score an actionable item you're returning below 0.4 on BOTH axes \u2014 if it's that trivial, omit it instead.
 TITLES MUST BE SPECIFIC \u2014 name the actual person/company AND the actual subject, so the task is clear without opening anything. GOOD: "Reply to Chloe at BOND about the demo", "Send media-coverage docs to Paris Model Congress", "Confirm attendance to Guillaume's Aug call". BAD (too vague \u2014 never do this): "Follow up on sent email", "Reply to email", "Respond to message", "Handle request". If you can't name the person or subject from the candidate, you don't understand it well enough to include it \u2014 omit it.
 Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imperative naming who+what, \u226411 words","why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item \u2014 NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about","fact":"one short sentence"}]} \u2014 profileUpdates: 0-3 DURABLE facts about who this person is that these items reveal (a key relationship, an ongoing project) \u2014 only lasting identity facts, not task content. Empty arrays are fine.`;
   const client2 = deepseekClient();
-  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   let tokIn = 0, tokOut = 0, calls = 0;
   const ask = async (extra) => {
     calls++;
@@ -601,7 +607,7 @@ ${extra}` : "") }
         title: String(r.title).slice(0, 90),
         why: String(r.why).slice(0, 400),
         when: r.when ? String(r.when).slice(0, 40) : void 0,
-        source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : "gmail",
+        source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : it.sourceApp === "pronote" ? "pronote" : "gmail",
         risk: r.risk === "high" ? "high" : "low",
         urgency: clamp01(r.urgency ?? 0.5),
         importance: clamp01(r.importance ?? 0.6),
@@ -642,7 +648,7 @@ ${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}
 The title MUST be specific \u2014 name the actual person/company AND subject ("Wish Sonya a happy birthday", "Reply to Chloe at BOND about the demo"), NEVER vague ("Follow up on email", "Handle message").
 Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative naming who+what, \u226411 words","why":"one clause naming the concrete trigger","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,"risk":"low"|"high"}`;
   const client2 = deepseekClient();
-  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   try {
     const res = await retryRequest(() => client2.chat.completions.create({
       model: actualModel,
@@ -665,7 +671,7 @@ ${list}` }
       title: String(r.title).slice(0, 90),
       why: String(r.why || "Worth doing today.").slice(0, 400),
       when: r.when ? String(r.when).slice(0, 40) : void 0,
-      source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : "gmail",
+      source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : it.sourceApp === "pronote" ? "pronote" : "gmail",
       risk: r.risk === "high" ? "high" : "low",
       urgency: clamp01(r.urgency ?? 0.4),
       importance: clamp01(r.importance ?? 0.5),
@@ -684,7 +690,7 @@ async function refineManualTask(text, profile) {
   if (!raw) return null;
   try {
     const client2 = deepseekClient();
-    const model = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: 500,
@@ -747,7 +753,7 @@ When UNSURE, it's OTTO's \u2014 attempt it. "Tedious", "specific", "numeric", or
 PREP EVERY USER STEP TO THE MAX (universal rule): a user step must arrive READY-TO-DO, never bare. Attach a "url" that lands them ONE click from done whenever such a link exists or can be constructed \u2014 driving/transit \u2192 a Google Maps directions link (https://www.google.com/maps/dir/?api=1&origin=<from>&destination=<to>), a call \u2192 tel:<number>, a payment/booking/return/check-in \u2192 the exact page for it, a form \u2192 the form itself. Fold the key facts they'd otherwise look up (address, confirmation #, time, phone, amount) into the step text or "context". If no link applies, the step text itself must carry everything needed.
 ASK ONLY WHEN TRULY STUCK: if a step is automatable EXCEPT for one detail you could not find or infer (a choice between real options, a preference, a date only the user knows), keep automatable=true and set "question" \u2014 ONE short, specific question \u2014 plus "options": 2-4 LIKELY answers with your best inference FIRST (they tap one and you run). Search EVERYTHING first (inbox, Drive, calendar, their profile, the web); a question you could have answered yourself is a failure. Prep everything around it so their answer is the only missing piece. Never ask more than 2 questions per task.
 BRIEF, DON'T JUST DEFER: even when the final action is the USER's (a decision, or a booking/login/payment you can't do), do ALL the research around it FIRST \u2014 find the real options + facts, put each as a "links" entry they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or click \u2014 NEVER "go figure it out". E.g. "book a Boston restaurant" \u2192 research a few fitting spots, link each (Resy/the restaurant site), recommend one with a one-line why; the step is just "Pick one & book".
-ALWAYS SURFACE WHAT YOU MADE: whenever you create or draft something (a Gmail draft, a Google Doc/Sheet/Slides deck, a calendar event, a task, an issue/PR or comment), put a LINK to it in submit's "links" so the user can open and review it. Build the URL from the id the tool returned \u2014 Doc: https://docs.google.com/document/d/<id>/edit, Sheet: https://docs.google.com/spreadsheets/d/<id>/edit, Slides: https://docs.google.com/presentation/d/<id>/edit, Gmail draft: https://mail.google.com/mail/u/0/#drafts, calendar event: the htmlLink it returned. If a result already includes a URL / webViewLink, use that. Never invent a link \u2014 only include one you actually got back.
+ALWAYS SURFACE WHAT YOU MADE: whenever you create or draft something (a Google Doc/Sheet/Slides deck, a calendar event, a task, an issue/PR or comment), put a LINK to it in submit's "links" so the user can open and review it. Build the URL from the id the tool returned \u2014 Doc: https://docs.google.com/document/d/<id>/edit, Sheet: https://docs.google.com/spreadsheets/d/<id>/edit, Slides: https://docs.google.com/presentation/d/<id>/edit, calendar event: the htmlLink it returned. If a result already includes a URL / webViewLink, use that. Never invent a link \u2014 only include one you actually got back. EXCEPTION \u2014 Gmail drafts: do NOT add a "links" entry for a draft you created (Gmail has no URL that opens one specific draft, only the whole drafts folder, which is useless here). The "sendables" entry below is how the user reviews and sends it \u2014 that's enough.
 ONE-CLICK SEND (the ONLY way anything goes out \u2014 always with the recipient shown): for every email you DRAFTED, add a "sendables" entry {app:"gmail", label, to (the recipient, ALWAYS set it), subject, body, draftId} \u2014 include the EXACT subject + body you wrote (so the user can review the draft IN THE APP) plus the draft_id the create-draft tool returned. For every Slack message you COMPOSED, add {app:"slack", label, channel, text} \u2014 do NOT post it. For a calendar event that should invite people, add {app:"gcal", label, eventId, attendees:[the invitees' emails], summary, when} \u2014 do NOT notify them. Each gives the user a Send button that names the recipient(s) first; you still never send. Don't ALSO add a "send it" step \u2014 the button is the send.
 Use "remember" for a durable fact about WHO THIS PERSON IS (a preference, a key person, an ongoing project, or a one-line "about") \u2014 save NEW facts AND corrected versions of profile lines that turned out outdated or wrong (a corrected fact REPLACES the old one). Be selective.
 QUALITY BAR \u2014 self-check BEFORE calling submit, fix anything that fails: (1) every draft/doc contains the REAL specifics (dates, times, numbers, names, addresses) \u2014 zero placeholders; (2) drafts match the user's actual voice per the VOICE rules \u2014 reread one sent email if unsure; (3) each sendable's subject/body is EXACTLY what you wrote into the created draft (same draftId); (4) every link came from a tool result \u2014 never constructed from guesswork. A polished half is worth more than a sloppy whole.
@@ -835,13 +841,14 @@ ${task.why}`);
 Do ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) \u2014 don't describe it, DO it \u2014 then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.` : head + deadlineHint + manualHint + `
 Gather what you need, then ACTUALLY DO the reversible work now with your tools (draft/create/update) \u2014 don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`
   }];
-  const actualModel = DEEPSEEK_MODEL === "deepseek-reasoner" ? "deepseek-chat" : DEEPSEEK_MODEL;
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   const MAX = 8;
   let tokIn = 0, tokOut = 0, rounds = 0;
   const WRITE_NAME = /(CREATE|UPDATE|APPEND|PATCH|MODIFY|BATCH|DRAFT|INSERT|WRITE|REPLACE|QUICK_ADD|MOVE|COPY|ADD_)/i;
   let wroteAny = false;
   let finishBacks = 0;
   let lastGmailDraft;
+  const createdDocIds = /* @__PURE__ */ new Set();
   const withTokens = (o) => {
     let sendables = o.sendables;
     if (lastGmailDraft?.draftId && lastGmailDraft.to && !sendables.some((s) => s.app === "gmail")) {
@@ -855,7 +862,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
       }].slice(0, 6);
     }
     const did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
-    return { ...o, did, sendables, tokens: { in: tokIn, out: tokOut } };
+    return { ...o, did, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] };
   };
   try {
     for (let i = 0; i < MAX; i++) {
@@ -940,6 +947,10 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
               const idMatch = /"(?:draft_?id|id)"\s*:\s*"([\w-]{6,})"/i.exec(String(r));
               if (idMatch) lastGmailDraft = { to: String(input?.recipient_email || input?.to || "").trim() || void 0, subject: input?.subject ? String(input.subject) : void 0, body: input?.body ? String(input.body) : void 0, draftId: idMatch[1] };
             }
+            if (isRealWrite && /^GOOGLE(DOCS|SHEETS|SLIDES)_CREATE/i.test(toolName)) {
+              const idMatch = /"(?:document|spreadsheet|presentation)?Id"\s*:\s*"([\w-]{15,})"/i.exec(String(r));
+              if (idMatch) createdDocIds.add(idMatch[1]);
+            }
           }
         } catch (e) {
           content = "ERROR: " + (e?.message || e);
@@ -1007,7 +1018,7 @@ function finalize(out, fallbackText, profileUpdates) {
     const url2 = String(l?.url || "").trim();
     const raw = String(l?.label || "").slice(0, 80);
     return { label: isJunkLabel(raw) ? kindLabel(url2) : raw, url: url2 };
-  }).filter((l) => /^https?:\/\//i.test(l.url)).filter((l) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url)).slice(0, 3);
+  }).filter((l) => /^https?:\/\//i.test(l.url)).filter((l) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url)).filter((l) => !/mail\.google\.com.*#drafts/i.test(l.url)).slice(0, 3);
   const sendables = (Array.isArray(out?.sendables) ? out.sendables : []).map((s) => ({
     app: s?.app === "slack" ? "slack" : s?.app === "gcal" ? "gcal" : "gmail",
     label: String(s?.label || (s?.app === "slack" ? "Send message" : s?.app === "gcal" ? "Send invites" : "Send email")).slice(0, 80),
@@ -1022,14 +1033,20 @@ function finalize(out, fallbackText, profileUpdates) {
     summary: s?.summary ? String(s.summary).slice(0, 300) : void 0,
     when: s?.when ? String(s.when).slice(0, 120) : void 0
   })).filter((s) => s.app === "gmail" && !!s.draftId && !!s.to && !!(s.subject || s.body) || s.app === "slack" && !!s.channel && !!s.text || s.app === "gcal" && !!s.eventId && !!s.attendees?.length && !!(s.summary || s.when)).filter((s) => !/@example\.(?:com|org|net)\b|@(?:test|placeholder|domain|email)\.\w+|\bplaceholder\b/i.test(`${s.to || ""} ${(s.attendees || []).join(" ")}`)).slice(0, 6);
-  const brief = (s, lines, chars) => s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n").slice(0, chars);
+  const truncate = (s, max) => {
+    if (s.length <= max) return s;
+    const cut = s.slice(0, max);
+    const lastSpace = cut.lastIndexOf(" ");
+    return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + "\u2026";
+  };
+  const brief = (s, lines, chars) => truncate(s.split("\n").map((l) => l.trimEnd()).filter(Boolean).slice(0, lines).join("\n"), chars);
   let synthesis = brief(String(out?.synthesis || ""), 2, 260);
   const PLANNING = /\b(let me|i'?ll (?:first|now|then|use|create|draft|check)|i will (?:first|now|then)|now i(?:'?ll)? |first,? i(?:'?ll)? |seems like|my plan is|i need to|i should)\b/i;
   if (PLANNING.test(synthesis)) synthesis = "";
   const DEAD_END = /\bno (results?|matches?|contacts?|entries|records|response|reply|emails?|luck|info(?:rmation)?)\b|\bnothing (?:found|available|to)\b|\bcouldn'?t\b|\bcould not\b|\bunable to\b|\bnot? found\b|\bno .{0,20}\bfound\b|\bfailed to\b|\bwithout success\b/i;
   const PLACEHOLDER = /@example\.(?:com|org|net)\b|@(?:test|placeholder|domain|email)\.\w+|\[[^\]]*\b(?:email|address|name|phone|contact)\b[^\]]*\]|\bplaceholder\b/i;
   const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted)\b/i;
-  const did = (Array.isArray(out?.did) ? out.did : []).map((d) => String(d || "").trim().replace(/^\s*[-•*]\s*/, "")).filter((d) => d.length >= 6 && !PLANNING.test(d) && !DEAD_END.test(d) && !PLACEHOLDER.test(d) && !INVESTIGATIVE.test(d)).map((d) => d.slice(0, 130)).slice(0, 4);
+  const did = (Array.isArray(out?.did) ? out.did : []).map((d) => String(d || "").trim().replace(/^\s*[-•*]\s*/, "")).filter((d) => d.length >= 6 && !PLANNING.test(d) && !DEAD_END.test(d) && !PLACEHOLDER.test(d) && !INVESTIGATIVE.test(d)).map((d) => truncate(d, 140)).slice(0, 4);
   if (synthesis && !did.length && !links.length && !sendables.length && (DEAD_END.test(synthesis) || INVESTIGATIVE.test(synthesis))) synthesis = "";
   void fallbackText;
   if (!synthesis && !steps.length && !links.length && !sendables.length) {
@@ -1172,21 +1189,22 @@ async function withRetry(label, op, tries = 3) {
 }
 async function loadState(email) {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
-  const { data, error } = await withRetry("load", async () => client.from(TABLE).select("profile,tasks,google").eq("email", email).maybeSingle());
+  const { data, error } = await withRetry("load", async () => client.from(TABLE).select("profile,tasks,google,pronote").eq("email", email).maybeSingle());
   if (error) {
     console.warn("[store] load failed:", error.message);
     return { profile: emptyProfile(), tasks: [] };
   }
   const d = data;
   const google = d?.google && d.google.tokens ? d.google : void 0;
-  return { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google };
+  const pronote2 = d?.pronote && d.pronote.token ? d.pronote : void 0;
+  return { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote: pronote2 };
 }
 async function saveState(email, state) {
   if (!client || !email) return;
-  const { error } = await withRetry("save", async () => client.from(TABLE).upsert(
-    { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], google: state.google ?? null, updated_at: (/* @__PURE__ */ new Date()).toISOString() },
-    { onConflict: "email" }
-  ).then((r) => ({ data: null, error: r.error })));
+  const row = { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], updated_at: (/* @__PURE__ */ new Date()).toISOString() };
+  if ("google" in state) row.google = state.google ?? null;
+  if ("pronote" in state) row.pronote = state.pronote ?? null;
+  const { error } = await withRetry("save", async () => client.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
   if (error) console.warn("[store] save failed:", error.message);
 }
 async function listAccountEmails(limit = 200) {
@@ -1365,7 +1383,7 @@ async function eventsForTask(userEmail, taskId, limit = 20) {
 }
 
 // server/tasks.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID2 } from "node:crypto";
 
 // server/integrations.ts
 import { Composio } from "@composio/core";
@@ -1401,6 +1419,7 @@ var TOOLKIT_OF = (app2) => CATALOG.find((c) => c.key === app2.toLowerCase())?.to
 var norm = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 var MULTI_APPS = /* @__PURE__ */ new Set(["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"]);
 var SOURCE_TOOLKIT = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE" };
+var MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
 var logoFor = (toolkit) => `https://logos.composio.dev/api/${String(toolkit).toLowerCase()}`;
 function integrationsReady() {
   return !!process.env.COMPOSIO_API_KEY;
@@ -1579,10 +1598,18 @@ async function resolveAccountEmail(userId, app2, accountId) {
     return void 0;
   }
 }
+var acctListCache = /* @__PURE__ */ new Map();
+async function rawConnectedAccounts(userId) {
+  const hit = acctListCache.get(userId);
+  if (hit && Date.now() - hit.at < 3e4) return hit.items;
+  const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
+  const items = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+  acctListCache.set(userId, { at: Date.now(), items });
+  return items;
+}
 async function getConnectedAccounts(userId, app2, resolveEmails = false) {
   try {
-    const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
-    const items = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+    const items = await rawConnectedAccounts(userId);
     const targetToolkit = norm(TOOLKIT_OF(app2));
     const accounts = items.filter((i) => acctToolkit(i) === targetToolkit).map((i) => ({
       id: acctId(i),
@@ -1645,6 +1672,20 @@ async function listConnectedToolkits(userId) {
 async function execute(action, userId, args, connectedAccountId) {
   const result = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...connectedAccountId ? { connectedAccountId } : {} });
   return JSON.stringify(result ?? {}, null, 2).slice(0, 4e3);
+}
+async function updateGmailDraft(userId, draftId, patch) {
+  if (!integrationsReady() || !userId || !draftId) return { ok: false, error: "Not available." };
+  try {
+    const args = { draft_id: draftId };
+    if (patch.to) args.recipient_email = patch.to;
+    if (patch.subject !== void 0) args.subject = patch.subject;
+    if (patch.body !== void 0) args.body = patch.body;
+    const r = await sdk().tools.execute("GMAIL_UPDATE_EMAIL_DRAFT", { userId, arguments: args, dangerouslySkipVersionCheck: true });
+    if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Update failed.") };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e?.message ?? String(e) };
+  }
 }
 async function sendSendable(userId, s) {
   if (!integrationsReady() || !userId) return { ok: false, error: "Integrations not configured." };
@@ -1951,6 +1992,21 @@ async function getAgentTools(userId, opts) {
     cache.set(userId, { at: Date.now(), data: data2 });
     return data2;
   }
+  const implicitAccountId = /* @__PURE__ */ new Map();
+  for (const app2 of connected) {
+    if (!MULTI_ACCOUNT_APPS.includes(app2)) continue;
+    const toolkit = norm(TOOLKIT_OF(app2));
+    if (routeToolkit && toolkit === routeToolkit) continue;
+    try {
+      const accts = await getConnectedAccounts(userId, app2, false);
+      if (accts.length > 1) {
+        const primary = opts?.primaryAccounts?.[app2];
+        const pick = primary && accts.find((a) => a.id === primary) || accts[0];
+        if (pick) implicitAccountId.set(toolkit, pick.id);
+      }
+    } catch {
+    }
+  }
   const tools = [];
   const map = /* @__PURE__ */ new Map();
   const MAX = 90;
@@ -1990,11 +2046,11 @@ async function getAgentTools(userId, opts) {
       added++;
     }
   }
-  const makeCall = (allowIds) => async (name, args) => {
+  const makeCall = (allowIds, skipWriteGate = false) => async (name, args) => {
     const action = map.get(name);
     if (!action) return null;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete \u2014 leave it as a step for the user instead.`;
-    if (isWriteGatedAction(action)) {
+    if (!skipWriteGate && isWriteGatedAction(action)) {
       const isDriveDocAction = /^(GOOGLEDOCS|GOOGLESHEETS|GOOGLESLIDES)_/.test(action);
       const argStr = JSON.stringify(args || {});
       const matchedId = isDriveDocAction && allowIds ? [...allowIds].find((id) => id.length >= 8 && argStr.includes(id)) : void 0;
@@ -2006,14 +2062,22 @@ async function getAgentTools(userId, opts) {
     if (/^GOOGLECALENDAR_/.test(action) && args && ("attendees" in args || "send_updates" in args)) {
       args = { ...args, send_updates: "none" };
     }
+    const upper = action.toUpperCase();
+    let acctId2 = routeAccountId && upper.startsWith(routeToolkit + "_") ? routeAccountId : void 0;
+    if (!acctId2) for (const [toolkit, id] of implicitAccountId) {
+      if (upper.startsWith(toolkit + "_")) {
+        acctId2 = id;
+        break;
+      }
+    }
     try {
-      return await execute(action, userId, args || {}, routeAccountId && action.toUpperCase().startsWith(routeToolkit + "_") ? routeAccountId : void 0);
+      return await execute(action, userId, args || {}, acctId2);
     } catch (e) {
       return `Tool error (${action}): ${e?.message ?? e}`;
     }
   };
-  const data = { tools, call: makeCall(), connected, _rawByName: map };
-  data.withAllowedArtifacts = (ids) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts, _rawByName: map });
+  const data = { tools, call: makeCall(), connected, _rawByName: map, _permCall: makeCall(void 0, true) };
+  data.withAllowedArtifacts = (ids) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts, _rawByName: map, _permCall: data._permCall });
   cache.set(cacheKey, { at: Date.now(), data });
   return data;
 }
@@ -2029,23 +2093,93 @@ async function connectionStatusesCached(userId, apps) {
 function invalidateTools(userId) {
   cache.delete(userId);
   statusCache.delete(userId);
+  acctListCache.delete(userId);
 }
-async function getAgentToolsWithPermission(userId) {
-  const base = await getAgentTools(userId);
-  if (!base.tools.length) return base;
-  const permCall = async (name, args) => {
-    const action = base._rawByName?.get(name) || name;
-    if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete.`;
-    if (/^GOOGLECALENDAR_/.test(action) && args && ("attendees" in args || "send_updates" in args)) {
-      args = { ...args, send_updates: "none" };
-    }
+async function getAgentToolsWithPermission(userId, opts) {
+  const base = await getAgentTools(userId, opts);
+  if (!base.tools.length || !base._permCall) return base;
+  return { tools: base.tools, call: base._permCall, connected: base.connected };
+}
+
+// server/pronote.ts
+import { randomUUID } from "node:crypto";
+import * as pronote from "pawnote";
+var PRONOTE_KIND = { STUDENT: pronote.AccountKind.STUDENT, PARENT: pronote.AccountKind.PARENT };
+function humanizeError(e) {
+  if (e instanceof pronote.BadCredentialsError) return "Wrong Pronote username or password.";
+  if (e instanceof pronote.AccountDisabledError) return "This Pronote account is disabled.";
+  if (e instanceof pronote.SuspendedIPError) return "Pronote has temporarily blocked this server's IP \u2014 try again later.";
+  if (e instanceof pronote.RateLimitedError) return "Pronote rate-limited this request \u2014 try again in a moment.";
+  if (e instanceof pronote.SecurityError) return "Pronote requires an extra security step this integration doesn't support (double authentication / CAPTCHA).";
+  if (e instanceof pronote.SessionExpiredError) return "Pronote session expired \u2014 reconnect in Settings.";
+  const msg = e?.message || String(e);
+  return `Couldn't reach Pronote: ${msg}`.slice(0, 200);
+}
+async function connectPronote(email, opts) {
+  const url2 = opts.url.trim(), username = opts.username.trim();
+  if (!url2 || !username || !opts.password) return { ok: false, error: "URL, username and password are required." };
+  const kind = opts.kind === pronote.AccountKind.PARENT ? pronote.AccountKind.PARENT : pronote.AccountKind.STUDENT;
+  const deviceUUID = randomUUID();
+  try {
+    const session3 = pronote.createSessionHandle();
+    const refresh = await pronote.loginCredentials(session3, { url: url2, kind, username, password: opts.password, deviceUUID });
+    const stored = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier };
+    const current = await loadState(email);
+    await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored });
+    return { ok: true };
+  } catch (e) {
+    console.warn("[pronote] connect failed:", e?.message || e);
+    return { ok: false, error: humanizeError(e) };
+  }
+}
+async function disconnectPronote(email) {
+  const current = await loadState(email);
+  await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: void 0 });
+}
+async function pronoteConnected(email) {
+  const { pronote: stored } = await loadState(email);
+  return stored ? { connected: true, username: stored.username } : { connected: false };
+}
+async function withPronoteSession(email, fn) {
+  const { pronote: stored } = await loadState(email);
+  if (!stored) return void 0;
+  try {
+    const session3 = pronote.createSessionHandle();
+    const refresh = await pronote.loginToken(session3, {
+      url: stored.url,
+      username: stored.username,
+      kind: stored.kind,
+      token: stored.token,
+      deviceUUID: stored.deviceUUID,
+      navigatorIdentifier: stored.navigatorIdentifier
+    });
+    const rotated = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID: stored.deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier };
+    const current = await loadState(email);
+    await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: rotated });
     try {
-      return await execute(action, userId, args || {});
-    } catch (e) {
-      return `Tool error (${action}): ${e?.message ?? e}`;
+      return await fn(session3);
+    } finally {
+      if (session3.presence) pronote.clearPresenceInterval(session3);
     }
-  };
-  return { tools: base.tools, call: permCall, connected: base.connected };
+  } catch (e) {
+    console.warn("[pronote] session failed:", e?.message || e);
+    return void 0;
+  }
+}
+async function pronoteHomework(email, daysAhead = 10) {
+  const out = await withPronoteSession(email, async (session3) => {
+    const now = /* @__PURE__ */ new Date();
+    const end = new Date(now.getTime() + daysAhead * 864e5);
+    const assignments = await pronote.assignmentsFromIntervals(session3, now, end);
+    return assignments.filter((a) => !a.done).map((a) => ({
+      id: a.id,
+      subject: a.subject?.name || "Homework",
+      description: String(a.description || "").replace(/\s+/g, " ").trim().slice(0, 400),
+      deadline: a.deadline.toISOString(),
+      done: a.done
+    }));
+  });
+  return out || [];
 }
 
 // server/discover.ts
@@ -2140,6 +2274,18 @@ function githubToItems(data, label) {
     };
   }).filter((x) => !!x);
 }
+function pronoteToItems(items) {
+  return items.map((a) => ({
+    sourceApp: "pronote",
+    externalId: a.id,
+    anchorKey: `pronote:${a.id}`,
+    // No stable deep-link into a specific assignment — Pronote's read API doesn't expose one.
+    title: `${a.subject} homework`.slice(0, 140),
+    snippet: a.description || `Due ${a.deadline}`,
+    timestamp: a.deadline,
+    labels: ["homework"]
+  }));
+}
 async function discoverSourceItems(userEmail) {
   const items = [];
   let attempted = false;
@@ -2159,7 +2305,7 @@ async function discoverSourceItems(userEmail) {
       return [{}];
     }
   };
-  const [gmailAccounts, calAccounts, driveAccounts] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive")]);
+  const [gmailAccounts, calAccounts, driveAccounts, pronoteOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), pronoteConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social",
@@ -2205,7 +2351,12 @@ async function discoverSourceItems(userEmail) {
     grab(async () => githubToItems(await readAction(userEmail, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS", {
       q: "is:open is:pr review-requested:@me",
       per_page: 10
-    }), "review-requested"))
+    }), "review-requested")),
+    // Pronote (if connected) — outside the Composio/getConnectedAccounts path entirely; checked separately.
+    // Gated OUTSIDE grab() deliberately: grab() marks `attempted` true on any non-throwing call, and a
+    // "not connected" check always succeeds — that would make `attempted` true for a user with NOTHING
+    // connected at all (not even Pronote), wrongly skipping the agent-sweep fallback for them.
+    ...pronoteOn.connected ? [grab(async () => pronoteToItems(await pronoteHomework(userEmail)))] : []
   ]);
   return { items: dedupeByThread(items), attempted };
 }
@@ -2371,7 +2522,7 @@ function looseDup(a, b) {
 }
 function pruneHandled(list, keep) {
   const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
-  const handled = list.filter((t) => t.status === "done" || t.status === "dismissed").sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).slice(0, keep);
+  const handled = list.filter((t) => t.status === "done" || t.status === "dismissed").sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || "")).slice(0, keep);
   return [...active, ...handled];
 }
 var normKey2 = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -2443,6 +2594,7 @@ function mergeProfileStates(p1, p2) {
     autoApprove: p2.autoApprove ?? p1.autoApprove,
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
+    primaryAccounts: p1.primaryAccounts || p2.primaryAccounts ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : void 0,
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
     // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.
@@ -2536,8 +2688,18 @@ async function generate(existing, profile, extras, userEmail) {
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   return foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
 }
-function foldGenerated(existing, genTasks, highPriorityPeople = []) {
-  const now = (/* @__PURE__ */ new Date()).toISOString();
+function foldGenerated(existing, genTasks, highPriorityPeople = [], now_ = /* @__PURE__ */ new Date()) {
+  const now = now_.toISOString();
+  const STALE_READY_MS = 14 * 24 * 60 * 6e4;
+  for (const t of existing) {
+    if (t.status !== "ready") continue;
+    const stillUpcoming = t.when && (Date.parse(t.when) || 0) > now_.getTime();
+    const age = now_.getTime() - (Date.parse(t.createdAt || "") || now_.getTime());
+    if (!stillUpcoming && age > STALE_READY_MS) {
+      t.status = "dismissed";
+      t.updatedAt = now;
+    }
+  }
   const dismissed = existing.filter((t) => t.status === "dismissed");
   const resemblesDismissed = (g) => dismissed.some((d) => !!g.anchorKey && !!d.anchorKey && normKey2(g.anchorKey) === normKey2(d.anchorKey) || !!g.link && linkOf(d) === g.link || looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) || g.source === d.source && looseDup(g.why, d.why));
   genTasks = genTasks.filter((g) => !resemblesDismissed(g));
@@ -2546,7 +2708,7 @@ function foldGenerated(existing, genTasks, highPriorityPeople = []) {
   for (const g of genTasks) {
     const e = eisenhower(g.urgency, g.importance);
     const evidence = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : g.source === "github" ? "Open on GitHub" : "Open source", url: g.link }] : void 0;
-    const id = randomUUID();
+    const id = randomUUID2();
     freshIds.add(id);
     candidates.push({
       id,
@@ -2579,7 +2741,7 @@ function addManual(list, title, refined) {
   const e = eisenhower(urgency, importance);
   const now = (/* @__PURE__ */ new Date()).toISOString();
   list.unshift({
-    id: randomUUID(),
+    id: randomUUID2(),
     title: (refined?.title || title).trim().slice(0, 120),
     why: refined?.why || "Added by you.",
     when: refined?.when,
@@ -2611,11 +2773,12 @@ function applyRefinement(list, id, refined) {
   t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
   return t;
 }
-function extractArtifacts(out) {
+function extractArtifacts(out, verifiedDocIds) {
+  const verified = new Set(verifiedDocIds || []);
   const found = [];
   for (const l of out.links || []) {
     const m = DOC_LINK.exec(l.url);
-    if (m) found.push({ kind: m[1] === "spreadsheets" ? "sheet" : m[1] === "presentation" ? "slides" : "doc", id: m[2], url: l.url, label: l.label });
+    if (m && verified.has(m[2])) found.push({ kind: m[1] === "spreadsheets" ? "sheet" : m[1] === "presentation" ? "slides" : "doc", id: m[2], url: l.url, label: l.label });
   }
   for (const s of out.sendables || []) {
     if (s.app === "gmail" && s.draftId) found.push({ kind: "draft", id: s.draftId, label: s.label });
@@ -2653,14 +2816,14 @@ async function runById(list, id, profile, extras, revision) {
     });
     task.links = out.links?.length ? out.links : void 0;
     task.sendables = out.sendables?.length ? out.sendables : void 0;
-    task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out));
+    task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out, out.createdDocIds));
     task.lastRunTokens = out.tokens;
     addUsage(profile, out.tokens);
     for (const f of out.followUps || []) {
       if (!f.title || list.some((x) => !isHandled(x.status) && nearDup(x.title, f.title))) continue;
       const e = eisenhower(0.5, 0.6);
       list.push({
-        id: randomUUID(),
+        id: randomUUID2(),
         title: f.title.slice(0, 120),
         why: f.why || `Follow-up from "${task.title}"`,
         source: task.source,
@@ -2767,14 +2930,14 @@ async function commitUser(email, profile, list) {
   const current = await loadState(email);
   const mergedTasks = mergeTaskLists(current.tasks || [], list);
   const mergedProfile = mergeProfileStates(current.profile || emptyProfile(), profile);
-  await saveState(email, { profile: mergedProfile, tasks: mergedTasks, google: current.google });
+  await saveState(email, { profile: mergedProfile, tasks: mergedTasks, google: current.google, pronote: current.pronote });
 }
 async function processSweep(job) {
   const email = job.user_email;
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
   if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
-  const extras = await getAgentTools(email);
+  const extras = await getAgentTools(email, { primaryAccounts: profile.primaryAccounts });
   if (!extras?.tools?.length) return "skipped: nothing connected";
   const before = new Set(list.map((t) => t.id));
   const factsBefore = /* @__PURE__ */ new Set([...profile.preferences, ...profile.people, ...profile.projects]);
@@ -2824,7 +2987,10 @@ async function processExecuteTask(job) {
   if (c === "needs_review" && !job.input?.note) return "skipped: already executed";
   if (c === "failed_terminal" && !job.input?.manual) return "skipped: failed terminally \u2014 waiting for the user's Retry";
   await recordEvent(email, "run_started", { taskId, jobId: job.id, message: job.input?.note ? "Revising per your note" : "Reading context and doing the reversible work" });
-  const extras = await getAgentTools(email, t.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : void 0);
+  const extras = await getAgentTools(email, {
+    ...t.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {},
+    primaryAccounts: profile.primaryAccounts
+  });
   t.autoRan = true;
   const idsBefore = new Set(list.map((x) => x.id));
   try {
@@ -2864,7 +3030,11 @@ async function processExecuteStep(job) {
   if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   if (!Number.isInteger(index)) return "skipped: bad step index";
   await recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
-  const permTools = await getAgentToolsWithPermission(email).catch(() => void 0);
+  const t = list.find((x) => x.id === taskId);
+  const permTools = await getAgentToolsWithPermission(email, {
+    ...t?.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {},
+    primaryAccounts: profile.primaryAccounts
+  }).catch(() => void 0);
   const updated = await runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : void 0);
   if (updated && (updated.links?.length || updated.sendables?.length)) {
     const droppedArtifacts = await verifyTaskArtifacts(email, updated).catch(() => []);
@@ -2930,8 +3100,12 @@ async function cronTick() {
       const last = await getLatestJob(email, "sweep");
       const sweepActive = last && (last.status === "queued" || last.status === "running");
       if (!sweepActive && sweepDue(profile, now)) {
-        await enqueueJob(email, "sweep");
-        enqueued++;
+        const dayFloorDue = sweepDueForDay(profile.lastSweepAt, profile, now);
+        if (isPeakHourUtc(now) && !dayFloorDue) {
+        } else {
+          await enqueueJob(email, "sweep");
+          enqueued++;
+        }
       }
       const ready = list.filter((t) => canonStatus(t.status) === "ready" && !t.autoRan).slice(0, 2);
       for (const t of ready) {
@@ -3015,21 +3189,23 @@ var saveSession = (req) => new Promise((r) => req.session.save((err) => {
 var mergeTasks = mergeTaskLists;
 var mergeProfiles = mergeProfileStates;
 var commit = async (req) => {
-  await saveSession(req);
+  const sessionSaved = saveSession(req);
   if (req.session.user) {
     try {
-      const current = await loadState(req.session.user);
+      const [current] = await Promise.all([loadState(req.session.user), sessionSaved]);
       const mergedTasks = mergeTasks(current.tasks || [], req.session.tasks || []);
       const mergedProfile = mergeProfiles(current.profile || emptyProfile(), req.session.profile || emptyProfile());
       req.session.tasks = mergedTasks;
       req.session.profile = mergedProfile;
       await saveState(req.session.user, { profile: mergedProfile, tasks: mergedTasks });
     } catch {
-      await saveState(req.session.user, {
+      await Promise.all([sessionSaved, saveState(req.session.user, {
         profile: req.session.profile || emptyProfile(),
         tasks: req.session.tasks || []
-      });
+      })]);
     }
+  } else {
+    await sessionSaved;
   }
 };
 var requireAuth = (req, res, next) => {
@@ -3056,7 +3232,7 @@ var rateLimit = (max, windowMs) => (req, res, next) => {
   }
   next();
 };
-var toolsFor = (req) => getAgentTools(req.session.user).catch(() => void 0);
+var toolsFor = (req) => getAgentTools(req.session.user, { primaryAccounts: req.session.profile?.primaryAccounts }).catch(() => void 0);
 var normEmail = (s) => String(s || "").trim().toLowerCase();
 var validEmail = (e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 app.post("/api/auth/signup", rateLimit(6, 60 * 6e4), async (req, res) => {
@@ -3139,6 +3315,22 @@ app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
   }
 });
 app.get("/integrations/callback", (_req, res) => res.redirect("/settings"));
+app.get("/api/integrations/pronote/status", requireAuth, async (req, res) => {
+  res.json(await pronoteConnected(req.session.user));
+});
+app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 6e4), async (req, res) => {
+  const { url: url2, username, password, kind } = req.body || {};
+  if (typeof url2 !== "string" || typeof username !== "string" || typeof password !== "string") {
+    res.status(400).json({ error: "URL, username and password are required." });
+    return;
+  }
+  const result = await connectPronote(req.session.user, { url: url2, username, password, kind: Number(kind) || void 0 });
+  res.status(result.ok ? 200 : 400).json(result);
+});
+app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
+  await disconnectPronote(req.session.user);
+  res.json({ ok: true });
+});
 app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
   const app2 = String(req.params.app);
   const result = integrationsReady() ? await disconnect(app2, req.session.user) : { ok: true };
@@ -3210,7 +3402,7 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
     if (req.session.user && cloudEnabled()) {
       const cloud = await loadState(req.session.user);
       req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
-      await saveSession(req);
+      void saveSession(req);
     }
   } catch {
   }
@@ -3299,6 +3491,10 @@ var runViaJob = async (req, res, type, input) => {
   const id = String(req.params.id);
   try {
     const job = await enqueueAndDrain(user, type, id, input);
+    if (job.type !== type) {
+      res.status(409).json({ error: "Otto is still working on this task \u2014 try again in a moment." });
+      return;
+    }
     const cloud = await loadState(user);
     req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
@@ -3436,6 +3632,38 @@ app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
   }
   res.json(t);
 });
+app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 6e4), async (req, res) => {
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
+  const s = t?.sendables?.[Number(req.params.index)];
+  if (!t || !s) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  if (s.sent) {
+    res.status(400).json({ error: "already sent" });
+    return;
+  }
+  const subject = typeof req.body?.subject === "string" ? req.body.subject.slice(0, 300) : void 0;
+  const body = typeof req.body?.body === "string" ? req.body.body.slice(0, 2e4) : void 0;
+  const text = typeof req.body?.text === "string" ? req.body.text.slice(0, 2e4) : void 0;
+  if (s.app === "gmail" && s.draftId) {
+    const r = await updateGmailDraft(req.session.user, s.draftId, { subject, body, to: s.to });
+    if (!r.ok) {
+      res.status(500).json({ error: r.error || "couldn't save your edit to the draft" });
+      return;
+    }
+    if (subject !== void 0) s.subject = subject;
+    if (body !== void 0) s.body = body;
+  } else if (s.app === "slack") {
+    if (text !== void 0) s.text = text;
+  } else {
+    res.status(400).json({ error: "this draft can't be edited here" });
+    return;
+  }
+  t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+  await commit(req);
+  res.json(t);
+});
 app.get("/api/jobs/:id", requireAuth, async (req, res) => {
   const job = await getJob(String(req.params.id), req.session.user);
   if (!job) {
@@ -3566,6 +3794,8 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     p.highPriorityPeople = value.map(String);
   } else if (key2 === "autoArchivePatterns" && Array.isArray(value)) {
     p.autoArchivePatterns = value.map(String);
+  } else if (key2 === "primaryAccount" && value && typeof value === "object" && typeof value.app === "string" && typeof value.accountId === "string") {
+    (p.primaryAccounts ||= {})[value.app] = value.accountId;
   }
   await commit(req);
   res.json(p);
