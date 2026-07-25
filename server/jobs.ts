@@ -75,11 +75,22 @@ async function processSweep(job: store.Job): Promise<string> {
   const before = new Set(list.map((t) => t.id));
   const factsBefore = new Set([...profile.preferences, ...profile.people, ...profile.projects]);
   // Auto-refine raw manual task names (added while AI was off) — no button needed; the next sweep cleans
-  // them up. Bounded per sweep; a failed refine just stays raw for the next one.
+  // them up. Bounded per sweep; a failed refine just stays raw for the next one. ALSO auto-queues it for
+  // execution right here: without this, a manual task added while paused/over-budget would sit refined-
+  // but-idle until the separate "ready tasks the browser never got to" catch-all in cronTick ran — which
+  // on Vercel's Hobby plan is once a day. No button, no next-day wait — refine and run in the same pass.
   for (const t of list.filter((x) => x.unrefined && !isHandled(x.status)).slice(0, 3)) {
     try {
       const refined = await claude.refineManualTask(t.title, profile);
-      if (refined) { tasks.applyRefinement(list, t.id, refined); void store.recordEvent(email, "refined", { taskId: t.id, message: `Refined to "${t.title}"` }); }
+      if (refined) {
+        tasks.applyRefinement(list, t.id, refined);
+        void store.recordEvent(email, "refined", { taskId: t.id, message: `Refined to "${t.title}"` });
+        if (canonStatus(t.status) === "ready" && !t.autoRan) {
+          t.status = "queued";
+          await store.enqueueJob(email, "execute_task", t.id);
+          void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" });
+        }
+      }
     } catch { /* stays unrefined */ }
   }
   const next = await tasks.generate(list, profile, extras, email);

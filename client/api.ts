@@ -90,7 +90,6 @@ export const api = {
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
   usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string }> => req("/api/usage").then(j),
-  refine: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/refine`),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
   // Drain one queued job server-side and return the fresh task list + how many jobs remain active.
   kick: (): Promise<{ processed: number; failed: number; active: number; activeTaskIds?: string[]; tasks: WebTask[] }> => post("/api/jobs/kick"),

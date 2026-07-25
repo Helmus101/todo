@@ -256,11 +256,22 @@ export function App() {
   // that takes longer than the click round-trip) and would otherwise stomp the local decision back to
   // "still active" until the next refresh quietly re-fixes it. Same guard the kick() loop below already
   // applies to its own updates; this makes it consistent across every path that replaces the task list.
-  const keepLocalHandled = (prev: WebTask[], incoming: WebTask[]): WebTask[] =>
-    incoming.map((u) => {
+  const keepLocalHandled = (prev: WebTask[], incoming: WebTask[]): WebTask[] => {
+    const incomingIds = new Set(incoming.map((t) => t.id));
+    const merged = incoming.map((u) => {
       const cur = prev.find((p) => p.id === u.id);
       return cur && isHandled(cur.status) && !isHandled(u.status) ? cur : u;
     });
+    // A LOCAL task missing from `incoming` used to just vanish — but incoming isn't necessarily "the whole
+    // truth as of now," it can be a slightly-stale fetch that raced a task added moments ago (dispatched
+    // before the add, resolved after — the same class of race as the dismiss/confirm case above, just for
+    // creation instead of status). Bounded to the last 2 minutes so a task that's ACTUALLY gone (a rare far
+    // future prune of very old handled records) doesn't get resurrected forever by this fallback.
+    const RECENT_MS = 2 * 60_000;
+    const now = Date.now();
+    const recentlyMissing = prev.filter((p) => !incomingIds.has(p.id) && now - (Date.parse(p.createdAt || "") || 0) < RECENT_MS);
+    return [...recentlyMissing, ...merged];
+  };
 
   // Pull the server's task list (cheap GET; also reconciles cross-device state server-side). Always resolves
   // `loaded` — even on an empty/failed fetch — so the loading screen can never hang half-forever (the
@@ -1394,12 +1405,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
   };
   const [leaving, setLeaving] = useState(false);
   const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
-  const [refining, setRefining] = useState(false);
-  const refine = async () => {
-    setRefining(true);
-    try { onChange(await api.refine(task.id)); } catch { /* stays unrefined; can retry */ }
-    finally { setRefining(false); }
-  };
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
   // Confirm ("Looks good") gets a distinct green check-pulse (a small reward for finishing something);
   // Dismiss keeps the plain slide-away — different actions, so they shouldn't look identical. Both play
@@ -1540,7 +1545,9 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
           <div className="card-title">{task.title}</div>
           {(() => { const sub = subtitle(task); const w = task.when ? fmtWhen(task.when) : ""; return (w || sub) ? <div className="card-sub">{w && <span className="when">{w}</span>}{sub}</div> : null; })()}
         </div>
-        {!isDone && task.unrefined ? <span className="chip chip-muted" title="Added while AI was off — tap Refine to clean it up">Unrefined</span> : null}
+        {/* No button — refinement is fully automatic (immediately if AI's available, else the next background
+            sweep cleans it up and queues it to run, no action needed). This just shows it's in that state. */}
+        {!isDone && task.unrefined ? <span className="chip chip-muted" title="Added while AI was off — Otto will clean this up and run it automatically">Cleaning up…</span> : null}
         {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
         {cStatus === "executing" ? <span className="card-spin" title="Working…" /> : null}
         {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
@@ -1782,9 +1789,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
                   <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? "Working…" : "Run now"}</button>
                 )}
                 <div className="actions-rest">
-                  {task.unrefined && !isInFlight(task.status) ? (
-                    <button className="btn xs" title="Have Otto clean up this task's title and priority" disabled={refining} onClick={() => void refine()}>{refining ? "Refining…" : "Refine"}</button>
-                  ) : null}
                   <button className="btn xs ghost" title="Remove this task" onClick={() => void leave(() => api.dismiss(task.id))}>Dismiss</button>
                 </div>
               </>

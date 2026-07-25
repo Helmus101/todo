@@ -2950,6 +2950,11 @@ async function processSweep(job) {
       if (refined) {
         applyRefinement(list, t.id, refined);
         void recordEvent(email, "refined", { taskId: t.id, message: `Refined to "${t.title}"` });
+        if (canonStatus(t.status) === "ready" && !t.autoRan) {
+          t.status = "queued";
+          await enqueueJob(email, "execute_task", t.id);
+          void recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" });
+        }
       }
     } catch {
     }
