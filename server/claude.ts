@@ -1168,7 +1168,17 @@ export async function runTask(task: { title: string; why: string; source?: strin
           const targetsExisting = [...priorArtifactIds].some((id) => id.length >= 8 && argStr.includes(id));
           if (isRealWrite && (!hasArtifactIds || targetsExisting)) wroteAny = true;
           if (isRealWrite && /GMAIL_(CREATE|UPDATE)_EMAIL_DRAFT/i.test(toolName)) {
-            const idMatch = /"(?:draft_?id|id)"\s*:\s*"([\w-]{6,})"/i.exec(String(r));
+            // Grab the DRAFT id specifically — not the message/thread id that also appears in the response.
+            // Composio's GMAIL_CREATE_EMAIL_DRAFT returns the draft under an explicit draft-id key AND a
+            // generic "id"; the generic one can be the nested message id. Gmail DRAFT ids are distinctive
+            // (they start with "r", e.g. "r-4589..."), so we try, in order: an explicit draft-id key → an
+            // id whose value looks like a draft id → the first id as a last resort. Getting this wrong means
+            // the Send button points at a non-draft id and the send fails, so the ORDER matters.
+            const rs = String(r);
+            const idMatch =
+              /"draft_?id"\s*:\s*"([\w-]{4,})"/i.exec(rs) ||
+              /"id"\s*:\s*"(r-?[\w-]{6,})"/i.exec(rs) ||
+              /"id"\s*:\s*"([\w-]{6,})"/i.exec(rs);
             if (idMatch) lastGmailDraft = { to: String(input?.recipient_email || input?.to || "").trim() || undefined, subject: input?.subject ? String(input.subject) : undefined, body: input?.body ? String(input.body) : undefined, draftId: idMatch[1] };
           }
           // GUARDRAIL — "Otto may only edit what Otto created": extractArtifacts() later grants the

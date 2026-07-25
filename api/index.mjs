@@ -959,7 +959,8 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
             const targetsExisting = [...priorArtifactIds].some((id) => id.length >= 8 && argStr.includes(id));
             if (isRealWrite && (!hasArtifactIds || targetsExisting)) wroteAny = true;
             if (isRealWrite && /GMAIL_(CREATE|UPDATE)_EMAIL_DRAFT/i.test(toolName)) {
-              const idMatch = /"(?:draft_?id|id)"\s*:\s*"([\w-]{6,})"/i.exec(String(r));
+              const rs = String(r);
+              const idMatch = /"draft_?id"\s*:\s*"([\w-]{4,})"/i.exec(rs) || /"id"\s*:\s*"(r-?[\w-]{6,})"/i.exec(rs) || /"id"\s*:\s*"([\w-]{6,})"/i.exec(rs);
               if (idMatch) lastGmailDraft = { to: String(input?.recipient_email || input?.to || "").trim() || void 0, subject: input?.subject ? String(input.subject) : void 0, body: input?.body ? String(input.body) : void 0, draftId: idMatch[1] };
             }
             if (isRealWrite && /^GOOGLE(DOCS|SHEETS|SLIDES)_CREATE/i.test(toolName)) {
