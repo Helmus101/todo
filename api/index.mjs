@@ -845,7 +845,9 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
   const MAX = 8;
   let tokIn = 0, tokOut = 0, rounds = 0;
   const WRITE_NAME = /(CREATE|UPDATE|APPEND|PATCH|MODIFY|BATCH|DRAFT|INSERT|WRITE|REPLACE|QUICK_ADD|MOVE|COPY|ADD_)/i;
+  const CLAIM_VERBS = /\b(drafted|created|updated|filled|composed|wrote|added a|built|compiled|researched|gathered|collected|found (?:a|the|\d)|identified|prepared)\b/i;
   let wroteAny = false;
+  let searchedWeb = false;
   let finishBacks = 0;
   let lastGmailDraft;
   const createdDocIds = /* @__PURE__ */ new Set();
@@ -866,7 +868,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
   };
   try {
     for (let i = 0; i < MAX; i++) {
-      if (i >= 5 && !wroteAny && !focus && !hasArtifactIds) break;
+      if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb) break;
       if (i >= (priorArtifacts.length ? 1 : 2) && !wroteAny && !focus) {
         const nudge = priorArtifacts.length ? `ENFORCEMENT (round ${i + 1}/${MAX}): you have written NOTHING yet. Your NEXT tool call MUST update the EXISTING artifact listed above under "ALREADY CREATED FOR THIS TASK" (its id is listed \u2014 use an UPDATE/PATCH/APPEND tool with that id) with the requested change. Do NOT create a new one. Do NOT make another read call.` : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet \u2014 only reads. Your NEXT tool call MUST be a create/write tool (GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, \u2026) that produces the task's artifact with the content you already have. Do NOT make another read call. If the task truly requires no artifact, call submit now.`;
         messages.push({ role: "user", content: nudge });
@@ -915,7 +917,7 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
             const draft = finalize(input, "", profileUpdates);
             const fabricatedRevision = hasArtifactIds && !wroteAny;
             const leftUndone = draft.steps.find((s) => s.automatable && !s.synthetic && s.dependsOn === void 0 && !s.question && !s.needsPermission);
-            const claimsArtifact = /\b(drafted|created|updated|filled|composed|wrote|added a|built)\b/i.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
+            const claimsArtifact = CLAIM_VERBS.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
             const hasArtifact = draft.links.length > 0 || draft.sendables.length > 0 || wroteAny;
             if (fabricatedRevision) {
               content = "REJECTED: you're revising an artifact that already exists, but you have not made any update/write tool call this run. Call the update tool on the id listed under 'ALREADY CREATED FOR THIS TASK' now \u2014 THEN submit. Do not resubmit the same claim without writing first.";
@@ -926,11 +928,12 @@ Gather what you need, then ACTUALLY DO the reversible work now with your tools (
               finishBacks++;
               content = "REJECTED: your report claims you drafted/created/updated something, but no artifact (draft, doc, sheet, event) was actually produced and no write succeeded this run. Either DO it now with the real tool, or report honestly what you found without claiming work you didn't do.";
             } else {
-              if (!wroteAny) draft.did = draft.did.filter((d) => !/\b(drafted|created|updated|filled|composed|wrote|added a|built)\b/i.test(d));
+              if (!wroteAny) draft.did = draft.did.filter((d) => !CLAIM_VERBS.test(d));
               submitted = draft;
               content = "submitted";
             }
           } else if (toolName === "web_search") {
+            searchedWeb = true;
             content = await runWebSearch(input);
           } else if (toolName === "send_self_brief") {
             content = "Blocked: autonomous email is disabled \u2014 put this in synthesis/context instead.";

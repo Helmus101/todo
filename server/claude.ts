@@ -959,7 +959,17 @@ export async function runTask(task: { title: string; why: string; source?: strin
   let tokIn = 0, tokOut = 0, rounds = 0;
   // Has the agent performed ANY write/create yet? Drives the deterministic act-now enforcement below.
   const WRITE_NAME = /(CREATE|UPDATE|APPEND|PATCH|MODIFY|BATCH|DRAFT|INSERT|WRITE|REPLACE|QUICK_ADD|MOVE|COPY|ADD_)/i;
+  // Verbs that claim PRODUCED work — used to catch a report that says it did something with no artifact/
+  // write to back it up (the "it just says it did the research" failure). Kept in sync with the DOABLE
+  // verb list in finalize(): if a phrasing counts as doable-therefore-enforce-it-now, a claim using that
+  // same phrasing after the fact must also count as a claim needing proof.
+  const CLAIM_VERBS = /\b(drafted|created|updated|filled|composed|wrote|added a|built|compiled|researched|gathered|collected|found (?:a|the|\d)|identified|prepared)\b/i;
   let wroteAny = false;
+  // A task genuinely doing open-ended research (web_search called at least once) is NOT "read-only drift"
+  // even though it hasn't written anything yet — it needs a few rounds of searching BEFORE it has enough
+  // to compile into a doc/reply. Exempts it from the early-bail below, which used to cut research tasks
+  // off right when they were making real progress, producing the "just read stuff, gave up" failure.
+  let searchedWeb = false;
   let finishBacks = 0; // times we've bounced a submit for leaving work undone / claiming a phantom artifact
   // Backstop for a drafted-but-unreported reply: the model sometimes drafts a real Gmail reply, says so in
   // synthesis, but forgets to populate the structured "sendables" entry — leaving no Send button for
@@ -997,7 +1007,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // a focus run does one specific thing, and a revision's non-write is caught by the fabricated-revision
     // gate. Observed live: a vacuous "follow up on sent email" task ran a full 8 rounds / 137k tokens only
     // to conclude nothing was needed — this caps that at ~5 rounds.
-    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds) break;
+    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb) break;
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
     // Write-aware enforcement: prompts alone don't stop read-forever drift (observed live: 8 rounds of
@@ -1066,7 +1076,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           const leftUndone = draft.steps.find((s) => s.automatable && !s.synthetic && s.dependsOn === undefined && !s.question && !s.needsPermission);
           // (c) PREPARED WITHOUT AN ARTIFACT: claims to have drafted/created/updated something but produced
           //     no link/sendable AND no write ever succeeded this run — the "it just prepares stuff" failure.
-          const claimsArtifact = /\b(drafted|created|updated|filled|composed|wrote|added a|built)\b/i.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
+          const claimsArtifact = CLAIM_VERBS.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
           const hasArtifact = draft.links.length > 0 || draft.sendables.length > 0 || wroteAny;
           if (fabricatedRevision) {
             content = "REJECTED: you're revising an artifact that already exists, but you have not made any " +
@@ -1084,11 +1094,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
               "now with the real tool, or report honestly what you found without claiming work you didn't do.";
           } else {
             // did[] must be backed by a real write: if nothing was written, drop bullets that claim creation.
-            if (!wroteAny) draft.did = draft.did.filter((d) => !/\b(drafted|created|updated|filled|composed|wrote|added a|built)\b/i.test(d));
+            if (!wroteAny) draft.did = draft.did.filter((d) => !CLAIM_VERBS.test(d));
             submitted = draft; content = "submitted";
           }
         }
-        else if (toolName === "web_search") { content = await runWebSearch(input); }
+        else if (toolName === "web_search") { searchedWeb = true; content = await runWebSearch(input); }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
         // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.
         else if (toolName === "send_self_brief") { content = "Blocked: autonomous email is disabled — put this in synthesis/context instead."; }
