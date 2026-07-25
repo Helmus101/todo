@@ -467,8 +467,11 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
   return pruneHandled(sortWithinQuadrant(calmed, highPriorityPeople), 120);
 }
 
-/** Add a task the user typed; AI-refined when possible (else raw), classified through the same matrix. */
-export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null): WebTask[] {
+/** Add a task the user typed. No separate "clean up" pass anymore — it goes in with the raw title and runs
+ *  immediately; the run itself tightens a vague title as a side effect (see the "title" field runById
+ *  applies from RunOutput). `markUnrefined` is ONLY for the true fallback case — AI unavailable/paused/over
+ *  budget at add time — so the background sweep's auto-refine (jobs.ts) still knows to pick it up later. */
+export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, markUnrefined = false): WebTask[] {
   const urgency = refined ? refined.urgency : 0.6;
   const importance = refined ? refined.importance : 0.75;
   const e = eisenhower(urgency, importance);
@@ -480,7 +483,7 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
     when: refined?.when,
     source: "manual", risk: "low", urgency, importance, quadrant: e.quadrant, score: e.score,
     status: "ready", createdAt: now,
-    ...(refined ? {} : { unrefined: true }), // AI paused/unavailable — raw text in, offer Refine later
+    ...(markUnrefined ? { unrefined: true } : {}), // AI paused/unavailable — raw text in, background sweep cleans it up
   });
   return list;
 }
@@ -562,6 +565,9 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts }, profile, focus, scoped);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
+    // A manually-added task's raw title gets tightened as a side effect of THIS run (no separate "clean
+    // up" pass before it) — only for manual tasks, and only when the model actually returned one.
+    if (task.source === "manual" && out.title) task.title = out.title;
     task.context = out.context;
     task.synthesis = out.synthesis;
     task.did = out.did?.length ? out.did : undefined;

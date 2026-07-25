@@ -672,6 +672,11 @@ export interface RunOutput {
    *  guardrail input for extractArtifacts(): only ids in here may ever be edited without the user's
    *  explicit approval on a later revision — "Otto may only edit what Otto created," enforced, not assumed. */
   createdDocIds?: string[];
+  /** A tightened title for a raw user-typed task (source==="manual" only) — set ONLY when the model actually
+   *  refined it; runById applies it to task.title. Replaces the old separate "refine before queueing" pass:
+   *  the title now gets crisped as a side effect of the SAME run that does the work, instead of a distinct
+   *  step the user had to wait through before anything started. */
+  title?: string;
 }
 
 const RUN_SYSTEM =
@@ -876,6 +881,7 @@ const RUN_SYSTEM =
 const RUN_TOOLS = [
   { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
+    title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (≤9 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
     context: { type: "string", description: "what this is about — 1-2 SHORT bullets, each a line beginning with '- '. Brief; the user only sees this if they expand it." },
     synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' NO caveats, NO explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
     did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run, past tense with the specific names/artifacts, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
@@ -939,7 +945,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
     ? `\nConnected apps you can use (read + reversible writes; never send/post/delete): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
   const manualHint = task.source === "manual"
-    ? `\nThe USER added this to-do themselves. Treat the title as their intent: use your tools (search their Gmail/Drive, etc.) and what you know about them to find the real, specific context behind it BEFORE acting.`
+    ? `\nThe USER added this to-do themselves, typed as a rough note. Treat the title as their intent: use your ` +
+      `tools (search their Gmail/Drive, etc.) and what you know about them to find the real, specific context ` +
+      `behind it BEFORE acting. If the raw title is vague, sloppy, or could be tighter (e.g. "milk" → "Buy milk", ` +
+      `"wharton comp" → "Prepare for the Wharton Investment Competition"), also set submit's "title" to a crisp, ` +
+      `specific imperative (≤9 words, name the real subject you found) — omit it if the title is already fine.`
     : "";
   // Artifacts this task already produced on a previous run — the agent MUST reuse + UPDATE these, never make
   // a fresh copy (this is what stops "5 road-trip packing lists"). A deterministic anti-duplication signal.
@@ -1368,6 +1378,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     .map((f: any) => ({ title: String(f?.title || "").trim().slice(0, 90), why: String(f?.why || "").trim().slice(0, 200) }))
     .filter((f: { title: string; why: string }) => f.title.length >= 4)
     .slice(0, 2);
+  const title = out?.title ? String(out.title).trim().slice(0, 90) : undefined;
   return {
     context: brief(String(out?.context || ""), 2, 380),
     // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
@@ -1379,6 +1390,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     sendables,
     profileUpdates,
     ...(followUps.length ? { followUps } : {}),
+    ...(title ? { title } : {}),
   };
 }
 

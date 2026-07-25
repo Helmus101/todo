@@ -762,6 +762,7 @@ Call "submit" ONLY after you've actually done the reversible work \u2014 not bef
 var RUN_TOOLS = [
   { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them \u2014 save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
+    title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (\u22649 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
     context: { type: "string", description: "what this is about \u2014 1-2 SHORT bullets, each a line beginning with '- '. Brief; the user only sees this if they expand it." },
     synthesis: { type: "string", description: "what you accomplished \u2014 ONE short plain sentence (\u2264 ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' NO caveats, NO explaining what you couldn't do or why \u2014 anything the user must handle goes in 'steps', not here." },
     did: { type: "array", items: { type: "string" }, description: `2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run, past tense with the specific names/artifacts, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created "Q3 budget" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do.` },
@@ -821,7 +822,7 @@ Connected apps you can use (read + reversible writes; never send/post/delete): $
 No apps are connected yet \u2014 if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.
 `;
   const manualHint = task.source === "manual" ? `
-The USER added this to-do themselves. Treat the title as their intent: use your tools (search their Gmail/Drive, etc.) and what you know about them to find the real, specific context behind it BEFORE acting.` : "";
+The USER added this to-do themselves, typed as a rough note. Treat the title as their intent: use your tools (search their Gmail/Drive, etc.) and what you know about them to find the real, specific context behind it BEFORE acting. If the raw title is vague, sloppy, or could be tighter (e.g. "milk" \u2192 "Buy milk", "wharton comp" \u2192 "Prepare for the Wharton Investment Competition"), also set submit's "title" to a crisp, specific imperative (\u22649 words, name the real subject you found) \u2014 omit it if the title is already fine.` : "";
   const hasArtifactIds = !!task.artifacts?.length;
   const priorArtifactIds = new Set((task.artifacts || []).map((a) => a.id));
   const priorArtifacts = hasArtifactIds ? task.artifacts.map((a) => ({ label: a.label || a.kind, url: a.url, extra: `${a.kind} id ${a.id}` })) : (task.links || []).filter((l) => l?.url);
@@ -1083,6 +1084,7 @@ function finalize(out, fallbackText, profileUpdates) {
     for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
   }
   const followUps = (Array.isArray(out?.follow_ups) ? out.follow_ups : Array.isArray(out?.followUps) ? out.followUps : []).map((f) => ({ title: String(f?.title || "").trim().slice(0, 90), why: String(f?.why || "").trim().slice(0, 200) })).filter((f) => f.title.length >= 4).slice(0, 2);
+  const title = out?.title ? String(out.title).trim().slice(0, 90) : void 0;
   return {
     context: brief(String(out?.context || ""), 2, 380),
     // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
@@ -1093,7 +1095,8 @@ function finalize(out, fallbackText, profileUpdates) {
     links,
     sendables,
     profileUpdates,
-    ...followUps.length ? { followUps } : {}
+    ...followUps.length ? { followUps } : {},
+    ...title ? { title } : {}
   };
 }
 function clamp01(n) {
@@ -2755,7 +2758,7 @@ function foldGenerated(existing, genTasks, highPriorityPeople = [], now_ = /* @_
   const calmed = deduped.filter((t) => !freshIds.has(t.id) || keepNew.has(t.id));
   return pruneHandled(sortWithinQuadrant(calmed, highPriorityPeople), 120);
 }
-function addManual(list, title, refined) {
+function addManual(list, title, refined, markUnrefined = false) {
   const urgency = refined ? refined.urgency : 0.6;
   const importance = refined ? refined.importance : 0.75;
   const e = eisenhower(urgency, importance);
@@ -2773,8 +2776,8 @@ function addManual(list, title, refined) {
     score: e.score,
     status: "ready",
     createdAt: now,
-    ...refined ? {} : { unrefined: true }
-    // AI paused/unavailable — raw text in, offer Refine later
+    ...markUnrefined ? { unrefined: true } : {}
+    // AI paused/unavailable — raw text in, background sweep cleans it up
   });
   return list;
 }
@@ -2826,6 +2829,7 @@ async function runById(list, id, profile, extras, revision) {
     if (extras && scoped) console.log(`[tasks] run "${task.title.slice(0, 40)}": ${scoped.tools.length}/${extras.tools.length} tools after scoping`);
     const out = await runTask({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts }, profile, focus, scoped);
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
+    if (task.source === "manual" && out.title) task.title = out.title;
     task.context = out.context;
     task.synthesis = out.synthesis;
     task.did = out.did?.length ? out.did : void 0;
@@ -3479,32 +3483,18 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
     res.status(400).json({ error: "title required" });
     return;
   }
-  req.session.tasks = addManual(req.session.tasks || [], title, null);
-  const addedId = req.session.tasks[0].id;
-  const user = req.session.user;
-  const profile = req.session.profile;
+  const ready = aiReady() && !isPaused(req) && !overBudget(req);
+  req.session.tasks = addManual(req.session.tasks || [], title, null, !ready);
+  const added = req.session.tasks[0];
+  if (ready) {
+    added.status = "queued";
+    try {
+      await enqueueJob(req.session.user, "execute_task", added.id);
+    } catch {
+    }
+  }
   await commit(req);
   res.json(req.session.tasks);
-  if (aiReady() && !isPaused(req) && !overBudget(req)) {
-    void (async () => {
-      try {
-        const refined = await refineManualTask(title, profile);
-        const current = await loadState(user);
-        const merged = mergeTasks(current.tasks || [], req.session.tasks || []);
-        const added = applyRefinement(merged, addedId, refined);
-        if (added && canonStatus(added.status) === "ready") {
-          added.status = "queued";
-          try {
-            await enqueueJob(user, "execute_task", added.id);
-          } catch {
-          }
-        }
-        await saveState(user, { profile: mergeProfiles(current.profile || emptyProfile(), profile || emptyProfile()), tasks: merged });
-      } catch (e) {
-        console.error("[tasks] background refine failed:", e);
-      }
-    })();
-  }
 });
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
