@@ -815,6 +815,9 @@ function PronoteTile() {
       <div className="int-cat">School</div>
       <div className="int-grid">
         <div className={`int-tile ${status.connected ? "on" : ""}`}>
+          {/* Index Éducation's official PRONOTE logo, via Wikimedia Commons (CC BY-SA 4.0, credited to
+              Index Éducation) — self-hosted at public/logos/pronote.png, see public/logos/ATTRIBUTION.md. */}
+          <span className="int-logo pronote-logo"><img src="/logos/pronote.png" alt="" loading="lazy" /></span>
           <div className="int-info">
             <div className="int-name">Pronote{status.connected && <span className="int-dot" title="Connected" />}</div>
             <div className="int-blurb">Homework due dates. Read-only — Otto never marks anything done in Pronote. Unofficial integration (no official API exists).</div>
