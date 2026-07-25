@@ -367,7 +367,15 @@ async function listConnectedToolkits(userId: string): Promise<string[]> {
 /** Run a Composio action for a user. `connectedAccountId` disambiguates WHICH connected account to use —
  *  required for Gmail once the user has more than one (otherwise Composio can't tell which inbox). */
 async function execute(action: string, userId: string, args: Record<string, unknown>, connectedAccountId?: string): Promise<string> {
-  const result = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
+  const result: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
+  // Composio signals a failed action with { successful: false, error: "..." } — it does NOT throw. Left
+  // unchecked, this JSON gets stringified and handed back as a normal-looking tool result: the agent loop's
+  // isRealWrite check only looks for a string starting with "ERROR"/"PERMISSION_REQUIRED", so a failed write
+  // (bad scope, stale connection, invalid id, ...) was silently counted as a REAL write — clearing the
+  // fabrication guardrail and letting the model report "created the sheet" when nothing was actually created.
+  if (result && (result.successful === false || result.error)) {
+    return `ERROR: ${action} failed — ${String(result.error || "no further detail")}`;
+  }
   return JSON.stringify(result ?? {}, null, 2).slice(0, 4000);
 }
 
@@ -878,7 +886,7 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
     let acctId = routeAccountId && upper.startsWith(routeToolkit + "_") ? routeAccountId : undefined;
     if (!acctId) for (const [toolkit, id] of implicitAccountId) { if (upper.startsWith(toolkit + "_")) { acctId = id; break; } }
     try { return await execute(action, userId, args || {}, acctId); }
-    catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
+    catch (e: any) { return `ERROR: Tool error (${action}): ${e?.message ?? e}`; }
   };
   const data: AgentTools = { tools, call: makeCall(), connected, _rawByName: map, _permCall: makeCall(undefined, true) };
   data.withAllowedArtifacts = (ids: string[]) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts, _rawByName: map, _permCall: data._permCall });

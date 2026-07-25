@@ -1684,6 +1684,9 @@ async function listConnectedToolkits(userId) {
 }
 async function execute(action, userId, args, connectedAccountId) {
   const result = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...connectedAccountId ? { connectedAccountId } : {} });
+  if (result && (result.successful === false || result.error)) {
+    return `ERROR: ${action} failed \u2014 ${String(result.error || "no further detail")}`;
+  }
   return JSON.stringify(result ?? {}, null, 2).slice(0, 4e3);
 }
 async function updateGmailDraft(userId, draftId, patch) {
@@ -2086,7 +2089,7 @@ async function getAgentTools(userId, opts) {
     try {
       return await execute(action, userId, args || {}, acctId2);
     } catch (e) {
-      return `Tool error (${action}): ${e?.message ?? e}`;
+      return `ERROR: Tool error (${action}): ${e?.message ?? e}`;
     }
   };
   const data = { tools, call: makeCall(), connected, _rawByName: map, _permCall: makeCall(void 0, true) };
