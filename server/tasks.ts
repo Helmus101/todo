@@ -247,6 +247,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     autoApprove: p2.autoApprove ?? p1.autoApprove,
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
+    primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
     // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.

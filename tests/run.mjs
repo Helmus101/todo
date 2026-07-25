@@ -3,7 +3,7 @@ import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergePr
 import { parseGenerated, finalize } from "../server/claude.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, usageCostUsd, tzOf, isValidTz } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, usageCostUsd, tzOf, isValidTz, isPeakHourUtc } from "../shared/types.ts";
 import { sweepDueForDay, localDay, genIntervalMs, sweepDue } from "../server/jobs.ts";
 
 let pass = 0, fail = 0;
@@ -67,6 +67,11 @@ const pm = mergeProfileStates(
 );
 check("newer pause toggle wins", pm.paused === false);
 check("structured settings survive merge", pm.workingHours?.start === "09:00");
+const pmAcct = mergeProfileStates(
+  { ...emptyProfile(), primaryAccounts: { gmail: "acct-a" } },
+  { ...emptyProfile(), primaryAccounts: { googlecalendar: "acct-b" } },
+);
+check("primaryAccounts merge across devices instead of one side clobbering the other", pmAcct.primaryAccounts?.gmail === "acct-a" && pmAcct.primaryAccounts?.googlecalendar === "acct-b");
 
 // ── Policy registry ───────────────────────────────────────────────────────────
 section("action policy registry");
@@ -279,6 +284,18 @@ check("1×/day: not due 2h after a same-day sweep", !sweepDue({ ...utcProfile, g
 // 4×/day: same 2h gap IS enough once >6h... 2h isn't, 7h is.
 check("4×/day: not due 2h after a sweep", !sweepDue({ ...utcProfile, genPerDay: 4, lastSweepAt: "2026-07-20T06:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
 check("4×/day: due 7h after a sweep", sweepDue({ ...utcProfile, genPerDay: 4, lastSweepAt: "2026-07-20T01:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
+
+// ── DeepSeek peak-hour pricing (UTC 01:00-04:00, 06:00-10:00 cost 2x) ─────────
+section("peak-hour pricing");
+check("02:00 UTC is peak", isPeakHourUtc(new Date("2026-07-20T02:00:00Z")));
+check("01:00 UTC boundary is peak (inclusive start)", isPeakHourUtc(new Date("2026-07-20T01:00:00Z")));
+check("04:00 UTC boundary is OFF-peak (exclusive end)", !isPeakHourUtc(new Date("2026-07-20T04:00:00Z")));
+check("08:00 UTC is peak", isPeakHourUtc(new Date("2026-07-20T08:00:00Z")));
+check("06:00 UTC boundary is peak (inclusive start)", isPeakHourUtc(new Date("2026-07-20T06:00:00Z")));
+check("10:00 UTC boundary is OFF-peak (exclusive end)", !isPeakHourUtc(new Date("2026-07-20T10:00:00Z")));
+check("12:00 UTC (the cron slot) is off-peak", !isPeakHourUtc(new Date("2026-07-20T12:00:00Z")));
+check("00:00 UTC is off-peak", !isPeakHourUtc(new Date("2026-07-20T00:00:00Z")));
+check("23:00 UTC is off-peak", !isPeakHourUtc(new Date("2026-07-20T23:00:00Z")));
 
 // ── Timezone resolution ───────────────────────────────────────────────────────
 section("timezone");

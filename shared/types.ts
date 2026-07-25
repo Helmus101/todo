@@ -57,6 +57,13 @@ export interface Profile {
   // are monotonic (merged by MAX across devices); the month* counters roll over each calendar month and back
   // the monthly spend cap. Approximate — for visibility + a cost ceiling, not exact billing.
   usage?: { in: number; out: number; runs: number; since: string; monthKey?: string; monthIn?: number; monthOut?: number };
+  // Which connected account to use for a multi-account app (Gmail, Calendar, Docs, Sheets, Slides, Drive)
+  // when a task ISN'T tied to a specific discovered item (a manual task, a brand-new doc) — keyed by the
+  // app's catalog key ("gmail", "googlecalendar", …) → Composio connectedAccountId. Defaults to whichever
+  // account was connected first when unset. Tasks discovered FROM a specific account (a real email thread,
+  // a real calendar event) always route back to THAT account regardless of this setting — this only
+  // resolves the otherwise-ambiguous "which inbox does this new draft/doc belong to" case.
+  primaryAccounts?: Record<string, string>;
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -93,6 +100,9 @@ export function normalizeProfile(p: any): Profile {
       monthKey: typeof p.usage.monthKey === "string" ? p.usage.monthKey : undefined,
       monthIn: Number(p.usage.monthIn) || 0, monthOut: Number(p.usage.monthOut) || 0,
     } : undefined,
+    primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object"
+      ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
+      : undefined,
   };
 }
 
@@ -103,6 +113,15 @@ export function isValidTz(tz: string): boolean {
 /** The user's timezone for all "local day" math — their captured zone, then legacy workingHours, then UTC. */
 export function tzOf(profile?: Profile | null): string {
   return profile?.timezone || profile?.workingHours?.timezone || "UTC";
+}
+
+/** DeepSeek's peak-pricing windows (UTC): 01:00-04:00 and 06:00-10:00 — every billing item costs 2x during
+ *  these hours. Background work that isn't blocking a user (an unattended sweep, an offline auto-run) should
+ *  prefer to run outside them; anything the user is actively waiting on must still run immediately regardless
+ *  of price — only the deferrable, autonomous paths consult this. */
+export function isPeakHourUtc(now: Date = new Date()): boolean {
+  const h = now.getUTCHours();
+  return (h >= 1 && h < 4) || (h >= 6 && h < 10);
 }
 
 /** The current calendar month key ("YYYY-MM") in a given timezone — the monthly cap's rollover boundary. */

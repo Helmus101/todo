@@ -61,6 +61,9 @@ export const MULTI_APPS = new Set(["gmail", "googlecalendar", "googledocs", "goo
 // A task's `source` (gmail/calendar/drive) → the Composio toolkit prefix, so execution routes that toolkit's
 // actions to the SAME account the task came from.
 const SOURCE_TOOLKIT: Record<string, string> = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE" };
+// Google apps Composio lets a user connect more than once (personal + work inbox, etc.) — same list Settings
+// uses to decide whether to offer "Add account". Everything else is effectively single-account per user.
+export const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
 
 /** Real brand logo for a toolkit — served straight from Composio's logo CDN (SVG). Used by the Settings grid
  *  so each app shows its actual logo (not a hand-drawn icon). Verified to resolve for every catalog slug. */
@@ -271,13 +274,27 @@ async function resolveAccountEmail(userId: string, app: string, accountId: strin
   } catch (e: any) { console.warn(`[integrations] email resolve failed (${app}):`, e?.message ?? e); return undefined; }
 }
 
+// The FULL (un-filtered) connected-accounts list, cached briefly. getConnectedAccounts is called once per
+// app (Settings shows 6+ Google tiles; getAgentTools resolves a primary per multi-account toolkit) — without
+// this, each of those calls would refetch the identical account list from Composio. 30s is short enough that
+// a fresh connect/disconnect (which also calls invalidateTools → doesn't touch this cache) is still caught by
+// the existing focus/visibility re-load on the client; long enough to collapse a burst of per-app calls into one.
+const acctListCache = new Map<string, { at: number; items: any[] }>();
+async function rawConnectedAccounts(userId: string): Promise<any[]> {
+  const hit = acctListCache.get(userId);
+  if (hit && Date.now() - hit.at < 30_000) return hit.items;
+  const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
+  const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+  acctListCache.set(userId, { at: Date.now(), items });
+  return items;
+}
+
 /** Get all connected accounts for a specific app (returns multiple accounts if connected). Pass
  *  resolveEmails=true (UI only — it's N extra calls) to fill in each Gmail account's real address via
  *  GMAIL_GET_PROFILE when Composio's list doesn't include it, so the user sees which inbox is which. */
 export async function getConnectedAccounts(userId: string, app: string, resolveEmails = false): Promise<ConnectedAccount[]> {
   try {
-    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
-    const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+    const items = await rawConnectedAccounts(userId);
     const targetToolkit = norm(TOOLKIT_OF(app));
     const accounts = items
       .filter((i) => acctToolkit(i) === targetToolkit)
@@ -385,6 +402,10 @@ export interface AgentTools {
    *  over 64 chars, which would otherwise silently execute the wrong/truncated action). Not part of the
    *  public contract consumers rely on; only read within this module. */
   _rawByName?: Map<string, string>;
+  /** INTERNAL — the same call() but with the write-gate skipped (irreversible-send gate still applies).
+   *  Reuses the SAME account-routing (source-tied + resolved-primary) as call() instead of re-deriving it —
+   *  getAgentToolsWithPermission() just swaps to this closure. Not part of the public contract. */
+  _permCall?: (name: string, args: Record<string, unknown>) => Promise<string | null>;
 }
 const EMPTY: AgentTools = { tools: [], call: async () => null, connected: [] };
 
@@ -717,7 +738,7 @@ export async function verifyTaskArtifacts(
  * out (isGatedAction) and never reach the agent. Returns empty fast when nothing's connected or Composio
  * isn't configured, so it adds at most one list() call.
  */
-export async function getAgentTools(userId: string, opts?: { accountApp?: string; accountId?: string }): Promise<AgentTools> {
+export async function getAgentTools(userId: string, opts?: { accountApp?: string; accountId?: string; primaryAccounts?: Record<string, string> }): Promise<AgentTools> {
   if (!integrationsReady() || !userId) return EMPTY;
   // Multi-account routing: send THIS toolkit's actions to the specific connected account the task came from
   // (e.g. a calendar task's GOOGLECALENDAR_* calls go to the calendar account it was discovered in).
@@ -729,6 +750,27 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
 
   const connected = await listConnectedToolkits(userId);
   if (!connected.length) { const data = { ...EMPTY, connected }; cache.set(userId, { at: Date.now(), data }); return data; }
+
+  // For multi-account toolkits this run ISN'T already routed to a specific account (routeToolkit covers
+  // that case) — resolve which connected account write actions should implicitly target. Without this,
+  // creating a doc or drafting an email with 2 Gmail accounts connected would execute with NO account
+  // specified, leaving Composio to guess. Prefers the user's designated primary (Settings), falling back to
+  // whichever account was connected first. Read-only discovery already covers every account explicitly
+  // (discover.ts iterates them all) — this only matters for actions with no source-tied account.
+  const implicitAccountId = new Map<string, string>(); // toolkit slug ("GMAIL") → connectedAccountId
+  for (const app of connected) {
+    if (!MULTI_ACCOUNT_APPS.includes(app)) continue;
+    const toolkit = norm(TOOLKIT_OF(app));
+    if (routeToolkit && toolkit === routeToolkit) continue; // already explicitly routed
+    try {
+      const accts = await getConnectedAccounts(userId, app, false);
+      if (accts.length > 1) {
+        const primary = opts?.primaryAccounts?.[app];
+        const pick = (primary && accts.find((a) => a.id === primary)) || accts[0];
+        if (pick) implicitAccountId.set(toolkit, pick.id);
+      }
+    } catch { /* best-effort — falls through to Composio's own default for this toolkit */ }
+  }
 
   const tools: AgentTool[] = [];
   const map = new Map<string, string>(); // sanitized tool name → raw Composio action slug
@@ -777,7 +819,7 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
       added++;
     }
   }
-  const makeCall = (allowIds?: Set<string>) => async (name: string, args: Record<string, unknown>): Promise<string | null> => {
+  const makeCall = (allowIds?: Set<string>, skipWriteGate = false) => async (name: string, args: Record<string, unknown>): Promise<string | null> => {
     const action = map.get(name);
     if (!action) return null;
     if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete — leave it as a step for the user instead.`;
@@ -788,7 +830,9 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
     // affects what THEY see too, not just a private draft. This carve-out is DOCUMENT-ONLY, by design, not
     // by accident: Calendar events never qualify, even if Otto created the event — a change to a calendar
     // event (time, attendees, location) always needs the user's explicit OK, full stop.
-    if (isWriteGatedAction(action)) {
+    // skipWriteGate: the user already clicked "Approve & Run" for this exact step — getAgentToolsWithPermission
+    // uses this closure directly so the account-routing below is never re-derived/duplicated.
+    if (!skipWriteGate && isWriteGatedAction(action)) {
       const isDriveDocAction = /^(GOOGLEDOCS|GOOGLESHEETS|GOOGLESLIDES)_/.test(action);
       const argStr = JSON.stringify(args || {});
       const matchedId = isDriveDocAction && allowIds ? [...allowIds].find((id) => id.length >= 8 && argStr.includes(id)) : undefined;
@@ -805,12 +849,16 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
       args = { ...args, send_updates: "none" };
     }
     // Route THIS toolkit's actions to the specific connected account the run belongs to (when the user has
-    // more than one for it). Other toolkits are single-account, so they don't need it.
-    try { return await execute(action, userId, args || {}, routeAccountId && action.toUpperCase().startsWith(routeToolkit + "_") ? routeAccountId : undefined); }
+    // more than one for it). Falls back to the resolved PRIMARY/first account for any other multi-account
+    // toolkit with no source-tied routing, so a create/draft never runs with the account left unspecified.
+    const upper = action.toUpperCase();
+    let acctId = routeAccountId && upper.startsWith(routeToolkit + "_") ? routeAccountId : undefined;
+    if (!acctId) for (const [toolkit, id] of implicitAccountId) { if (upper.startsWith(toolkit + "_")) { acctId = id; break; } }
+    try { return await execute(action, userId, args || {}, acctId); }
     catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
   };
-  const data: AgentTools = { tools, call: makeCall(), connected, _rawByName: map };
-  data.withAllowedArtifacts = (ids: string[]) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts, _rawByName: map });
+  const data: AgentTools = { tools, call: makeCall(), connected, _rawByName: map, _permCall: makeCall(undefined, true) };
+  data.withAllowedArtifacts = (ids: string[]) => ({ ...data, call: makeCall(new Set(ids.filter(Boolean))), withAllowedArtifacts: data.withAllowedArtifacts, _rawByName: map, _permCall: data._permCall });
   cache.set(cacheKey, { at: Date.now(), data });
   return data;
 }
@@ -827,32 +875,22 @@ export async function connectionStatusesCached(userId: string, apps: string[]): 
 }
 
 /** Drop cached tools + statuses for a user (after they connect/disconnect something). */
-export function invalidateTools(userId: string): void { cache.delete(userId); statusCache.delete(userId); }
+export function invalidateTools(userId: string): void { cache.delete(userId); statusCache.delete(userId); acctListCache.delete(userId); }
 
 /**
  * Like getAgentTools() but WITHOUT the write-gate — used ONLY for user-approved step runs.
  * The /api/tasks/:id/step/:index/run route calls this because the user explicitly clicked "Approve & Run".
  * Editing existing docs and creating calendar events are permitted on this path.
  *
+ * Reuses base's _permCall closure (same account-routing — source-tied task account, else the resolved
+ * primary/first for any other multi-account toolkit — as the normal path) rather than re-deriving it with
+ * no routing at all, which used to mean an approved step could silently execute against the wrong Gmail
+ * account when more than one was connected.
+ *
  * NEVER use this for the autonomous task-run or generation paths — those must go through getAgentTools().
  */
-export async function getAgentToolsWithPermission(userId: string): Promise<AgentTools> {
-  const base = await getAgentTools(userId);
-  if (!base.tools.length) return base;
-  // Build a permissioned call closure that skips the write gate but keeps the irreversible-send gate.
-  const permCall = async (name: string, args: Record<string, unknown>): Promise<string | null> => {
-    // Resolve the REAL Composio action from the sanitized tool name via the map built alongside these
-    // tools — sanitize() truncates names over 64 chars, so treating name as the action for long slugs
-    // would silently call the wrong (truncated) action. Falls back to name itself if unmapped (shouldn't
-    // happen for a tool the model was actually offered).
-    const action = base._rawByName?.get(name) || name;
-    if (isGatedAction(action)) return `Blocked: "${action}" is an irreversible send/delete.`;
-    // NO isWriteGatedAction check — user explicitly approved.
-    if (/^GOOGLECALENDAR_/.test(action) && args && (("attendees" in args) || ("send_updates" in args))) {
-      args = { ...args, send_updates: "none" };
-    }
-    try { return await execute(action, userId, args || {}); }
-    catch (e: any) { return `Tool error (${action}): ${e?.message ?? e}`; }
-  };
-  return { tools: base.tools, call: permCall, connected: base.connected };
+export async function getAgentToolsWithPermission(userId: string, opts?: { accountApp?: string; accountId?: string; primaryAccounts?: Record<string, string> }): Promise<AgentTools> {
+  const base = await getAgentTools(userId, opts);
+  if (!base.tools.length || !base._permCall) return base;
+  return { tools: base.tools, call: base._permCall, connected: base.connected };
 }

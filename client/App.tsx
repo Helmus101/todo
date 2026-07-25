@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useCallback, useRef } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, sortWithinQuadrant } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 
 /** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
@@ -198,6 +198,13 @@ export function App() {
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
   const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
+  // Briefly highlights the row a just-confirmed task lands on in "Completed" — gives finishing something a
+  // visible destination instead of the card just vanishing from the active list with nothing to show for it.
+  const [justDoneId, setJustDoneId] = useState<string | null>(null);
+  const flagJustDone = useCallback((id: string) => {
+    setJustDoneId(id);
+    setTimeout(() => setJustDoneId((cur) => (cur === id ? null : cur)), 1500);
+  }, []);
   // The staggered card entrance runs ONCE on first paint; later list updates (a step ticked, a background
   // sweep folding in) must not replay the whole cascade — that's what made loads feel janky.
   const [settled, setSettled] = useState(false);
@@ -275,7 +282,15 @@ export function App() {
   const sweeping = useRef(false);
   const sweepIfDue = useCallback(async () => {
     if (!connected || status?.paused || status?.overBudget || sweeping.current) return;
-    try { if (Date.now() - Number(localStorage.getItem("otto-lastgen") || 0) < SWEEP_EVERY_MS) return; } catch { /* sweep anyway */ }
+    let last = 0;
+    try { last = Number(localStorage.getItem("otto-lastgen") || 0); } catch { /* sweep anyway */ }
+    if (Date.now() - last < SWEEP_EVERY_MS) return;
+    // Cost-aware: DeepSeek prices peak UTC hours (01:00-04:00, 06:00-10:00) at 2x. If today's once-a-day
+    // minimum is already covered (this is an EXTRA cadence sweep from a >1x/day setting), it's fine to
+    // hold off for an off-peak window — the 15-min/focus retry picks it up. Never delay the ONE sweep
+    // that guarantees daily coverage: a fresh day (or no prior sweep) always runs immediately.
+    const sameLocalDayAsLast = last > 0 && new Date(last).toDateString() === new Date().toDateString();
+    if (isPeakHourUtc() && sameLocalDayAsLast && genPerDay > 1) return;
     sweeping.current = true;
     setScanning(true);
     try {
@@ -491,6 +506,7 @@ export function App() {
                     onToggle={() => navigate(t.id === openId ? "" : `task/${t.id}`)}
                     onChange={setTasks}
                     onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                    onConfirmed={flagJustDone}
                   />
                 ))}</div>;
           })()}
@@ -500,7 +516,7 @@ export function App() {
               {/* Minimalist done-list: checked rows like a to-do app, not full cards. Click to expand details. */}
               <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
                 <Fragment key={t.id}>
-                  <div className="done-row" onClick={() => navigate(t.id === openId ? "" : `task/${t.id}`)} title={t.synthesis || t.why}>
+                  <div className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(t.id === openId ? "" : `task/${t.id}`)} title={t.synthesis || t.why}>
                     <span className="done-check">✓</span>
                     <span className="done-title">{t.title}</span>
                     <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
@@ -597,7 +613,7 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
       <section className="settings-sec">
         <h3>Apps</h3>
         <p className="settings-hint">Otto reads your apps and does reversible work — it <b>never sends, posts, or deletes</b> on its own.</p>
-        <Integrations onChanged={onChanged} />
+        <Integrations onChanged={onChanged} primaryAccounts={profile?.primaryAccounts} onProfile={setProfile} />
       </section>
 
       <section className="settings-sec">
@@ -654,20 +670,34 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
 const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
 
 /** Connected accounts for a multi-account app — one row per account with its address + an individual Disconnect. */
-function AppAccounts({ app, onChanged }: { app: string; onChanged?: () => void }) {
+function AppAccounts({ app, onChanged, primary, onProfile }: { app: string; onChanged?: () => void; primary?: string; onProfile?: (p: Profile) => void }) {
   const [accts, setAccts] = useState<ConnectedAccount[] | null>(null);
   const [busy, setBusy] = useState("");
   const load = useCallback(async () => { try { setAccts((await api.integrationAccounts(app)).accounts); } catch { setAccts([]); } }, [app]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { const on = () => { if (!document.hidden) void load(); }; window.addEventListener("focus", on); return () => window.removeEventListener("focus", on); }, [load]);
   const disc = async (id: string) => { setBusy(id); try { await api.disconnectAccount(app, id); await load(); onChanged?.(); } finally { setBusy(""); } };
+  const makePrimary = async (id: string) => {
+    setBusy(id);
+    try { onProfile?.(await api.setProfilePreference("primaryAccount", { app, accountId: id })); }
+    finally { setBusy(""); }
+  };
   if (!accts?.length) return null;
+  // Un-set (or stale — e.g. that account was disconnected) primary defaults to whichever connected first.
+  const primaryId = (primary && accts.some((a) => a.id === primary)) ? primary : accts[0]?.id;
   return (
     <div className="int-accounts">
       {accts.map((a, i) => (
         <div key={a.id} className="int-acct">
           <span className="int-acct-email">{a.email || (accts.length > 1 ? `Account ${i + 1}` : "Connected")}</span>
-          <button className="btn xs ghost" disabled={busy === a.id} onClick={() => void disc(a.id)}>{busy === a.id ? "…" : "Disconnect"}</button>
+          <div className="int-acct-actions">
+            {accts.length > 1 && (
+              a.id === primaryId
+                ? <span className="chip chip-muted" title="New drafts/docs not tied to a specific account use this one">Primary</span>
+                : <button className="btn xs ghost" disabled={busy === a.id} title="Use this account for new drafts/docs not tied to a specific one" onClick={() => void makePrimary(a.id)}>{busy === a.id ? "…" : "Make primary"}</button>
+            )}
+            <button className="btn xs ghost" disabled={busy === a.id} onClick={() => void disc(a.id)}>{busy === a.id ? "…" : "Disconnect"}</button>
+          </div>
         </div>
       ))}
     </div>
@@ -675,7 +705,7 @@ function AppAccounts({ app, onChanged }: { app: string; onChanged?: () => void }
 }
 
 /** Integrations grid (Composio): one tile per app, grouped by category. Connect = OAuth; Disconnect = revoke. */
-function Integrations({ onChanged }: { onChanged?: () => void }) {
+function Integrations({ onChanged, primaryAccounts, onProfile }: { onChanged?: () => void; primaryAccounts?: Record<string, string>; onProfile?: (p: Profile) => void }) {
   const [items, setItems] = useState<IntegrationItem[] | null>(null);
   const [ready, setReady] = useState(true);
   const [busy, setBusy] = useState("");
@@ -737,7 +767,7 @@ function Integrations({ onChanged }: { onChanged?: () => void }) {
                     <a className="btn xs" href={`/integrations/${i.key}/connect`} target="_blank" rel="noreferrer">Add account ↗</a>
                   ) : null}
                 </div>
-                {i.connected && <AppAccounts app={i.key} onChanged={load} />}
+                {i.connected && <AppAccounts app={i.key} onChanged={load} primary={primaryAccounts?.[i.key]} onProfile={onProfile} />}
               </Fragment>
             ))}
           </div>
@@ -1244,7 +1274,7 @@ function AddTask({ onAdded }: { onAdded: (t: WebTask[]) => void }) {
   );
 }
 
-function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean }) {
+function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void }) {
   const [running, setRunning] = useState(false);
   const [stepBusy, setStepBusy] = useState<number | null>(null);
   const [failed, setFailed] = useState<number[]>([]); // steps whose auto-do errored — don't auto-retry
@@ -1274,6 +1304,8 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
     setLeaving(true);
     const holdMs = kind === "confirm" ? 460 : 280; // confirm holds a beat longer so the check-pulse reads before it slides
     const [list] = await Promise.all([fn(), new Promise((r) => setTimeout(r, holdMs))]);
+    if (kind === "confirm") onConfirmed?.(task.id); // flags the row it lands on in "Completed" for a beat, so
+    // finishing something has a visible destination instead of just vanishing from the list.
     onChange(list);
   };
   // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
@@ -1392,10 +1424,12 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
         {!isDone && task.unrefined ? <span className="chip chip-muted" title="Added while AI was off — tap Refine to clean it up">Unrefined</span> : null}
         {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
         {cStatus === "executing" ? <span className="card-spin" title="Working…" /> : null}
-        {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean. */}
-        {!isDone && <button className="card-x" title="Dismiss" aria-label="Dismiss task" onClick={(e) => { e.stopPropagation(); void leave(() => api.dismiss(task.id)); }}>×</button>}
+        {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
+            Hidden once the row is already leaving (dismissing or confirming) — a second click has nothing to do. */}
+        {!isDone && !leaving && <button className="card-x" title="Dismiss" aria-label="Dismiss task" onClick={(e) => { e.stopPropagation(); void leave(() => api.dismiss(task.id)); }}>×</button>}
         <span className="caret">›</span>
       </div>
+      {leaving && leaveKind === "confirm" ? <span className="confirm-check" aria-hidden="true">✓</span> : null}
 
       {open && (
         <div className="detail">
@@ -1576,7 +1610,12 @@ function Card({ task, open, onToggle, onChange, onTask, retrying }: { task: WebT
             </section>
           )}
           <div className="actions">
-            {cStatus === "needs_review" ? (
+            {isDone ? (
+              // A finished task is CLOSED, not just another item with the usual buttons — "Run now" here
+              // read as an invitation to re-do already-done work (drafting a duplicate, re-creating a doc),
+              // and "Dismiss" doesn't mean anything for something that already happened. Just say when.
+              <span className="done-footer">{task.status === "dismissed" ? "Dismissed" : "Completed"}{task.updatedAt ? ` ${relTime(task.updatedAt)}` : ""}</span>
+            ) : cStatus === "needs_review" ? (
               <>
                 <button className="btn primary" title="Looks good — mark this handled" onClick={() => void leave(() => api.confirm(task.id), "confirm")}>Looks good</button>
                 <div className="actions-rest">

@@ -7,7 +7,10 @@
     }
   },
   "crons": [
-    { "path": "/api/cron/drain", "schedule": "0 7 * * *" }
+    // 12:00 UTC — the Hobby plan's one guaranteed daily background tick (sweeps + queued executions), placed
+    // squarely in DeepSeek's off-peak window (peak is 01:00-04:00 and 06:00-10:00 UTC, priced 2x). The old
+    // 07:00 slot landed IN the morning peak window, doubling the cost of every unattended user's daily run.
+    { "path": "/api/cron/drain", "schedule": "0 12 * * *" }
   ],
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api" },

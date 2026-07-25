@@ -207,17 +207,30 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @keyframes cardIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 .card.dismissed { animation: cardOut 0.28s var(--ease) forwards; }
 @keyframes cardOut { to { opacity: 0; transform: translateX(24px) scale(0.98); } }
-/* "Looks good" gets its own beat — a brief accent flash + scale before it slides away — so finishing a
-   task reads as a small reward, distinct from a plain dismiss. Same accent color as the rest of the UI. */
-.card.confirming { animation: cardConfirm 0.46s var(--ease) forwards; border-radius: 8px; }
+/* "Looks good" gets its own beat — a checkmark pops in (the same ✓ motif used everywhere else done is
+   shown: step-mark, done-check, the empty-state check) over a clear accent wash, THEN it slides away — so
+   finishing a task reads as a small, legible reward instead of a barely-there color flicker. */
+.card.confirming { animation: cardConfirm 0.5s cubic-bezier(0.34, 1.4, 0.64, 1) forwards; border-radius: 8px; z-index: 1; }
 @keyframes cardConfirm {
-  0% { background: transparent; transform: none; }
-  30% { background: var(--accent-soft); transform: scale(1.012); }
-  65% { background: var(--accent-soft); transform: scale(1.012); }
+  0% { background: transparent; transform: scale(1); }
+  20% { background: var(--accent-soft); transform: scale(1.012); }
+  60% { background: var(--accent-soft); transform: scale(1.012); }
   100% { opacity: 0; background: transparent; transform: translateX(24px) scale(0.98); }
 }
-.card.confirming::before { background: var(--accent); box-shadow: none; animation: confirmDot 0.46s var(--ease) forwards; }
-@keyframes confirmDot { 0% { transform: scale(1); } 40% { transform: scale(1.6); } 100% { transform: scale(1); } }
+.card.confirming::before { background: var(--accent); box-shadow: none; animation: confirmDot 0.5s cubic-bezier(0.34, 1.4, 0.64, 1) forwards; }
+@keyframes confirmDot { 0% { transform: scale(1); } 30% { transform: scale(2); } 55% { transform: scale(1.4); } 100% { transform: scale(1.4); opacity: 0; } }
+/* The checkmark itself — pops in with a slight overshoot, holds just long enough to read, fades with the row. */
+.confirm-check {
+  position: absolute; right: 44px; top: 50%; transform: translateY(-50%) scale(0.4); opacity: 0;
+  font-size: 17px; font-weight: 750; color: var(--accent); pointer-events: none;
+  animation: confirmCheck 0.5s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
+}
+@keyframes confirmCheck {
+  0% { opacity: 0; transform: translateY(-50%) scale(0.4); }
+  35% { opacity: 1; transform: translateY(-50%) scale(1.15); }
+  55% { opacity: 1; transform: translateY(-50%) scale(1); }
+  100% { opacity: 0; transform: translateY(-50%) scale(1); }
+}
 
 .card.open { background: transparent; }
 .card.is-done { opacity: 0.5; }
@@ -461,7 +474,8 @@ label.set-row { cursor: pointer; }
 /* Multi-Gmail: the connected accounts under the Gmail tile */
 .int-accounts { display: flex; flex-direction: column; margin: 2px 0 8px 36px; }
 .int-acct { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--line-soft); }
-.int-acct-email { font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.int-acct-email { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.int-acct-actions { flex: none; display: flex; align-items: center; gap: 8px; }
 
 .prof-group { margin-top: 12px; }
 .prof-label { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
@@ -726,8 +740,16 @@ label.set-row { cursor: pointer; }
 
 /* Minimalist completed list — checked to-do rows, not cards */
 .done-list { display: flex; flex-direction: column; }
-.done-row { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; cursor: pointer; border-bottom: 1px solid rgba(127,127,127,.12); }
-.done-row:hover { background: rgba(127,127,127,.06); border-radius: 6px; }
+.done-row { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; cursor: pointer; border-bottom: 1px solid rgba(127,127,127,.12); border-radius: 6px; }
+.done-row:hover { background: rgba(127,127,127,.06); }
 .done-check { color: var(--ink-3); font-weight: 700; }
 .done-title { flex: 1; text-decoration: line-through; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .done-when { font-size: 12px; opacity: .5; flex-shrink: 0; }
+/* The row a just-confirmed task lands on gets a brief accent wash + its check tinted in — the visible
+   "destination" for the card that just slid out of the active list above. */
+.done-row.just-done { animation: justDone 1.5s var(--ease); }
+.done-row.just-done .done-check { animation: justDoneCheck 1.5s var(--ease); }
+@keyframes justDone { 0% { background: var(--accent-soft); } 70% { background: var(--accent-soft); } 100% { background: transparent; } }
+@keyframes justDoneCheck { 0% { color: var(--accent); } 70% { color: var(--accent); } 100% { color: var(--ink-3); } }
+/* A finished task's closed-out footer — replaces the usual action buttons (no "Run now" on done work). */
+.done-footer { font-size: 12.5px; color: var(--ink-3); }

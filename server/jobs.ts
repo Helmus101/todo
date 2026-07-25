@@ -8,7 +8,7 @@
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
-import { emptyProfile, canonStatus, isHandled, tzOf, overMonthlyBudget } from "../shared/types.ts";
+import { emptyProfile, canonStatus, isHandled, tzOf, overMonthlyBudget, isPeakHourUtc } from "../shared/types.ts";
 import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
@@ -70,7 +70,7 @@ async function processSweep(job: store.Job): Promise<string> {
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
   if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
-  const extras = await integrations.getAgentTools(email);
+  const extras = await integrations.getAgentTools(email, { primaryAccounts: profile.primaryAccounts });
   if (!extras?.tools?.length) return "skipped: nothing connected";
   const before = new Set(list.map((t) => t.id));
   const factsBefore = new Set([...profile.preferences, ...profile.people, ...profile.projects]);
@@ -123,7 +123,12 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   if (c === "failed_terminal" && !job.input?.manual) return "skipped: failed terminally — waiting for the user's Retry";
   await store.recordEvent(email, "run_started", { taskId, jobId: job.id, message: job.input?.note ? "Revising per your note" : "Reading context and doing the reversible work" });
   // Multi-Gmail: run against the SAME Gmail account the task came from (drafts land in the right inbox).
-  const extras = await integrations.getAgentTools(email, t.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : undefined);
+  // Any OTHER multi-account toolkit this run touches with no source-tied account (e.g. creating a fresh
+  // Doc on an unrelated manual task) falls back to the user's designated primary account for it.
+  const extras = await integrations.getAgentTools(email, {
+    ...(t.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {}),
+    primaryAccounts: profile.primaryAccounts,
+  });
   t.autoRan = true; // whether this attempt succeeds or not, don't loop on it automatically
   const idsBefore = new Set(list.map((x) => x.id)); // to detect follow-up tasks the run spins off
   try {
@@ -171,8 +176,13 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   if (!Number.isInteger(index)) return "skipped: bad step index";
   await store.recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
-  // The user explicitly clicked Approve & Run — the permissioned toolset is correct here.
-  const permTools = await integrations.getAgentToolsWithPermission(email).catch(() => undefined);
+  // The user explicitly clicked Approve & Run — the permissioned toolset is correct here. Same multi-account
+  // routing as a full task run: the task's own source account when it has one, else the resolved primary.
+  const t = list.find((x) => x.id === taskId);
+  const permTools = await integrations.getAgentToolsWithPermission(email, {
+    ...(t?.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {}),
+    primaryAccounts: profile.primaryAccounts,
+  }).catch(() => undefined);
   const updated = await tasks.runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : undefined);
   if (updated && (updated.links?.length || updated.sendables?.length)) {
     const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);
@@ -248,7 +258,17 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       const last = await store.getLatestJob(email, "sweep");
       const sweepActive = last && (last.status === "queued" || last.status === "running");
       if (!sweepActive && sweepDue(profile, now)) {
-        await store.enqueueJob(email, "sweep"); enqueued++;
+        // Cost-aware scheduling: DeepSeek's peak window is 2x price. When this sweep is due only because
+        // of the >1x/day cadence interval (the once-a-day FLOOR hasn't been crossed), it's safe to hold
+        // off during peak hours — the cadence check fires again soon, likely once we're off-peak, and
+        // today's coverage isn't at risk. The once-a-day guarantee itself (sweepDueForDay) is NEVER
+        // deferred — missing that would break "at least one sweep a day".
+        const dayFloorDue = sweepDueForDay(profile.lastSweepAt, profile, now);
+        if (isPeakHourUtc(now) && !dayFloorDue) {
+          // skip this tick — cheaper to wait for an off-peak opportunity within the same day
+        } else {
+          await store.enqueueJob(email, "sweep"); enqueued++;
+        }
       }
 
       // (2) EXECUTE ready tasks the browser never got to (offline auto-run), bounded per user per tick.

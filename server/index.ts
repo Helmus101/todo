@@ -153,7 +153,7 @@ const rateLimit = (max: number, windowMs: number): RequestHandler => (req, res, 
   next();
 };
 // The agent's toolset for this account's connected apps (Composio). Empty if Composio's unset/nothing linked.
-const toolsFor = (req: express.Request) => integrations.getAgentTools(req.session.user!).catch(() => undefined);
+const toolsFor = (req: express.Request) => integrations.getAgentTools(req.session.user!, { primaryAccounts: req.session.profile?.primaryAccounts }).catch(() => undefined);
 
 // ── Email account auth ─────────────────────────────────────────────────────────
 const normEmail = (s: unknown) => String(s || "").trim().toLowerCase();
@@ -632,6 +632,10 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     p.highPriorityPeople = value.map(String);
   } else if (key === "autoArchivePatterns" && Array.isArray(value)) {
     p.autoArchivePatterns = value.map(String);
+  } else if (key === "primaryAccount" && value && typeof value === "object" && typeof value.app === "string" && typeof value.accountId === "string") {
+    // Which connected account a multi-account app (Gmail, Calendar, Docs…) defaults to when a task isn't
+    // tied to a specific one (a manual task, a brand-new doc) — see integrations.getAgentTools.
+    (p.primaryAccounts ||= {})[value.app] = value.accountId;
   }
   await commit(req);
   res.json(p);
