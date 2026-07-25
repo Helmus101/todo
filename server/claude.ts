@@ -829,12 +829,17 @@ const RUN_SYSTEM =
   `tel:<number>, a payment/booking/return/check-in → the exact page for it, a form → the form itself. Fold the key ` +
   `facts they'd otherwise look up (address, confirmation #, time, phone, amount) into the step text or "context". ` +
   `If no link applies, the step text itself must carry everything needed.\n` +
-  `ASK ONLY WHEN TRULY STUCK: if a step is automatable EXCEPT for one detail you could not find or infer ` +
-  `(a choice between real options, a preference, a date only the user knows), keep automatable=true and set ` +
-  `"question" — ONE short, specific question — plus "options": 2-4 LIKELY answers with your best inference ` +
-  `FIRST (they tap one and you run). Search EVERYTHING first (inbox, Drive, calendar, their profile, the web); ` +
-  `a question you could have answered yourself is a failure. Prep everything around it so their answer is the ` +
-  `only missing piece. Never ask more than 2 questions per task.\n` +
+  `NEVER ASK A FOLLOW-UP QUESTION — INFER AND DO IT: do not use "question"/"options" and do not hand back a ` +
+  `step whose only content is asking the user something you could have decided yourself. If one detail is ` +
+  `missing (a preference, a field, an age group, a style), search EVERYWHERE first (their profile, Drive, ` +
+  `inbox, calendar, the web) — if still not found, make your SINGLE most reasonable assumption from context ` +
+  `(their stated interests, past behavior, what's typical for this kind of task) and PROCEED as if that were ` +
+  `the answer: run the searches, create/fill the artifact, draft the message. Name the assumption in ONE ` +
+  `short clause inside "context" or the relevant "did" bullet (e.g. "assumed tech/AI/business given their ` +
+  `recent Drive files") so they can correct it later — but never stop and ask instead of acting. Reserve an ` +
+  `actual non-automatable step for the rare case where NOTHING you infer could be right and only the user's ` +
+  `own say-so will do (e.g. a truly personal yes/no decision, a payment, a login) — even then, do all the prep ` +
+  `around it first so their part is a single click or word, never "tell me more".\n` +
   `BRIEF, DON'T JUST DEFER: even when the final action is the USER's (a decision, or a booking/login/payment you ` +
   `can't do), do ALL the research around it FIRST — find the real options + facts, put each as a "links" entry ` +
   `they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or ` +
@@ -883,8 +888,6 @@ const RUN_TOOLS = [
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
         url: { type: "string", description: "a link that puts the user ONE click from doing this step — directions (Google Maps dir link), a tel: number, the exact booking/payment/return page, a form. Include one whenever it exists or can be constructed; not just for 'open a page' steps." },
-        question: { type: "string", description: "ONLY if this automatable step is missing ONE detail you could not find or infer anywhere (a choice, a preference, a date only the user knows): one short, direct question. Search everything first — a question you could have answered yourself is a failure." },
-        options: { type: "array", items: { type: "string" }, description: "2-4 likely answers to 'question', your best inference FIRST (the user taps one and you run). Short — a few words each. Omit for free-form answers." },
       }, required: ["text", "automatable"] },
     },
     links: {
@@ -1095,7 +1098,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           // (b) FINISH, DON'T HAND BACK: an unblocked automatable step Otto could do itself must not survive
           //     into steps[] — Otto acts. (synthetic backstop / permission-gated / dependent / question steps
           //     are legitimately left for the user.)
-          const leftUndone = draft.steps.find((s) => s.automatable && !s.synthetic && s.dependsOn === undefined && !s.question && !s.needsPermission);
+          const leftUndone = draft.steps.find((s) => s.automatable && !s.synthetic && s.dependsOn === undefined && !s.needsPermission);
           // (c) PREPARED WITHOUT AN ARTIFACT: claims to have drafted/created/updated something but produced
           //     no link/sendable AND no write ever succeeded this run — the "it just prepares stuff" failure.
           const claimsArtifact = CLAIM_VERBS.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
