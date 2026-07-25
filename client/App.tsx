@@ -257,6 +257,13 @@ export function App() {
   // "still active" until the next refresh quietly re-fixes it. Same guard the kick() loop below already
   // applies to its own updates; this makes it consistent across every path that replaces the task list.
   const keepLocalHandled = (prev: WebTask[], incoming: WebTask[]): WebTask[] => {
+    // Defensive: on a 401 (session expired mid-session) the API layer resolves with the error BODY instead
+    // of throwing (see api.ts's j() — 401 is deliberately swallowed so status() can read `loggedIn:false`
+    // without a try/catch), so a task-array endpoint can resolve to a plain {error} object here at runtime
+    // despite its TS return type. Without this guard that crashed the whole app (incoming.map is not a
+    // function) — which, from the outside, looked exactly like "my task got deleted" when the error
+    // boundary reset the tree. Treat anything non-array as "no update," never crash the app over it.
+    if (!Array.isArray(incoming)) return prev;
     const incomingIds = new Set(incoming.map((t) => t.id));
     const merged = incoming.map((u) => {
       const cur = prev.find((p) => p.id === u.id);
@@ -1355,8 +1362,14 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
       status: "ready", createdAt: new Date().toISOString(), unrefined: true,
     };
     onAdded((prev) => [stub, ...prev]);
-    try { onAdded(await api.add(v)); }
-    catch { onAdded((prev) => prev.filter((t) => t.id !== stubId)); setText(v); }
+    try {
+      const fresh = await api.add(v);
+      // Defensive: a 401 (session expired) resolves instead of throwing (see api.ts's j()), returning the
+      // error BODY where an array was expected. Setting `tasks` state to that non-array object crashed the
+      // whole app on the next render — which, from the outside, looked exactly like the new task vanishing.
+      if (!Array.isArray(fresh)) throw new Error("not logged in");
+      onAdded(fresh);
+    } catch { onAdded((prev) => prev.filter((t) => t.id !== stubId)); setText(v); }
     finally { setBusy(false); }
   };
   return (

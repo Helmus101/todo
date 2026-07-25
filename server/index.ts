@@ -175,6 +175,10 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
 app.post("/api/auth/login", rateLimit(10, 15 * 60_000), async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
+  // Without this, getUser() always returns null when Supabase isn't configured (e.g. local dev with no
+  // .env set up) and login falls straight through to "Wrong email or password" — sending you down the
+  // wrong path (retyping/resetting a password that was never the actual problem). Same check signup has.
+  if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase) — sign-in can't work until that's set." }); return; }
   const u = await getUser(email);
   if (!u || !bcrypt.compareSync(password, u.pass_hash)) { res.status(401).json({ error: "Wrong email or password." }); return; }
   req.session.user = email;

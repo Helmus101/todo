@@ -3269,6 +3269,10 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 6e4), async (req, res) => {
 app.post("/api/auth/login", rateLimit(10, 15 * 6e4), async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
+  if (!cloudEnabled()) {
+    res.status(500).json({ error: "Account storage isn't configured on the server (Supabase) \u2014 sign-in can't work until that's set." });
+    return;
+  }
   const u = await getUser(email);
   if (!u || !bcrypt.compareSync(password, u.pass_hash)) {
     res.status(401).json({ error: "Wrong email or password." });
