@@ -2561,6 +2561,7 @@ function dedupeTasks(list) {
       if (!!ak && kak === ak) return true;
       if (!!link && linkOf(k) === link) return true;
       if (!!ak && !!kak && kak !== ak && (k.status === "done" || k.status === "dismissed")) return false;
+      if ((t.source === "manual" || k.source === "manual") && (isHandled(k.status) || isHandled(t.status))) return false;
       return sameTask(k, t);
     });
     if (i >= 0) kept[i] = betterOf(kept[i], t);

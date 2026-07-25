@@ -48,10 +48,16 @@ check("anchorless title dup still merges", dedupeTasks([{ ...doneOld, anchorKey:
 const oldManualDone = { ...base, id: "m1", title: "Buy milk", why: "Added by you", source: "manual", status: "done" };
 const newManualSimilar = { ...base, id: "m2", title: "Buy milk and eggs", why: "Added by you", source: "manual", status: "ready" };
 check("similarly-worded manual tasks do NOT merge (a deliberate add must always survive)", dedupeTasks([oldManualDone, newManualSimilar]).length === 2);
-// A truly identical re-add (exact same normalized title) still collapses — that's a real duplicate, not two
-// different to-dos, and the more-progressed copy correctly wins.
+// Even an EXACT-title re-add of a HANDLED task must survive as a NEW active task — re-typing a to-do you
+// finished or dismissed before is a deliberate request to do it again, never a duplicate to hide. (This is
+// the "add a task, it instantly auto-deletes" bug: a handled copy was swallowing the fresh manual add.)
 const newManualExact = { ...base, id: "m3", title: "buy milk", why: "Added by you", source: "manual", status: "ready" };
-check("an EXACT-title manual re-add still merges (keeps the more-progressed copy)", dedupeTasks([oldManualDone, newManualExact]).length === 1 && dedupeTasks([oldManualDone, newManualExact])[0].status === "done");
+const exactRes = dedupeTasks([oldManualDone, newManualExact]);
+check("an EXACT-title manual re-add of a DONE task still survives as a new active task", exactRes.length === 2 && exactRes.some((t) => t.id === "m3" && t.status === "ready"));
+// Two ACTIVE identical manual cards DO still merge — that's a genuine visual duplicate, not two to-dos.
+const activeA = { ...base, id: "m4", title: "buy milk", why: "Added by you", source: "manual", status: "ready" };
+const activeB = { ...base, id: "m5", title: "buy milk", why: "Added by you", source: "manual", status: "queued" };
+check("two ACTIVE identical manual cards still merge (no visual duplicate)", dedupeTasks([activeA, activeB]).length === 1);
 
 // ── Stale idle tasks auto-archive (keeps the active list a genuine "now" list) ─
 section("stale ready tasks auto-archive");

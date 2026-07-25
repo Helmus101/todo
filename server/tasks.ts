@@ -203,6 +203,14 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       // DISMISSED task title-suppress a new one. But two ACTIVE same-title cards ARE worth merging (the
       // user shouldn't see visual duplicates), and anchorless tasks (manual/agent-sweep) still title-dedupe.
       if (!!ak && !!kak && kak !== ak && (k.status === "done" || k.status === "dismissed")) return false;
+      // A MANUAL task is a deliberate, explicit user action. It must NEVER be suppressed by — or absorbed
+      // into — an already-HANDLED (done/dismissed) task: re-typing a to-do you finished or dismissed before
+      // is a clear request to do it AGAIN now, not a duplicate to hide. (Two ACTIVE identical manual cards
+      // still merge via sameTask below, so a true visual duplicate never appears.) Without this, adding a
+      // task whose title matched an old handled one made it VANISH on the very first save — the "I add a
+      // task and it auto-deletes" bug — with no error anywhere, because betterOf legitimately keeps the
+      // higher-ranked handled copy and the fresh manual card is dropped into it.
+      if ((t.source === "manual" || k.source === "manual") && (isHandled(k.status) || isHandled(t.status))) return false;
       return sameTask(k, t);
     });
     if (i >= 0) kept[i] = betterOf(kept[i], t);
