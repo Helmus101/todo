@@ -1,5 +1,5 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday } from "../server/tasks.ts";
 import { parseGenerated, finalize } from "../server/claude.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
@@ -336,6 +336,14 @@ check("swept yesterday IS due", sweepDueForDay("2026-07-19T23:00:00Z", utcProfil
 // 2026-07-20T02:00Z is still Jul 19 in New York (22:00 EDT) — a "morning" sweep the next NY day is due.
 check("timezone day boundary respected", sweepDueForDay("2026-07-20T02:00:00Z", nyProfile, new Date("2026-07-20T13:00:00Z")));
 check("localDay in NY vs UTC differ across midnight", localDay("2026-07-20T02:00:00Z", "America/New_York") === "2026-07-19" && localDay("2026-07-20T02:00:00Z", "UTC") === "2026-07-20");
+
+// ── Daily-minimum "≥1 task/day" force gate (once per local day) ───────────────
+section("daily-minimum force gate");
+check("never forced before → due", forcedDueToday({ ...utcProfile }, new Date("2026-07-20T08:00:00Z")));
+check("forced earlier the SAME local day → NOT due (no double-force)", !forcedDueToday({ ...utcProfile, lastForcedAt: "2026-07-20T06:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
+check("forced YESTERDAY → due again today", forcedDueToday({ ...utcProfile, lastForcedAt: "2026-07-19T23:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
+// Timezone: 2026-07-20T02:00Z is still Jul 19 in NY, so a force the next NY day is due — the gate is per LOCAL day.
+check("force gate respects the user's timezone", forcedDueToday({ ...nyProfile, lastForcedAt: "2026-07-20T02:00:00Z" }, new Date("2026-07-20T13:00:00Z")));
 
 // ── Sweep cadence (genPerDay 1–4) ─────────────────────────────────────────────
 section("sweep cadence");

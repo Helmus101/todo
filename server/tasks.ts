@@ -335,8 +335,9 @@ function localDayOf(iso: string, timezone?: string): string {
   try { return new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
   catch { return d.toISOString().slice(0, 10); }
 }
-/** Have we NOT yet forced a daily-minimum task in the user's current local day? */
-function forcedDueToday(profile: Profile, now: Date = new Date()): boolean {
+/** Have we NOT yet forced a daily-minimum task in the user's current local day? Exported for the daily-
+ *  minimum regression test — the "≥1 task/day" guarantee hinges on this gate firing exactly once per local day. */
+export function forcedDueToday(profile: Profile, now: Date = new Date()): boolean {
   if (!profile.lastForcedAt) return true;
   const tz = tzOf(profile);
   return localDayOf(profile.lastForcedAt, tz) !== localDayOf(now.toISOString(), tz);
