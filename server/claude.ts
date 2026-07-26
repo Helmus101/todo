@@ -65,6 +65,15 @@ function deadlineBlock(text: string): string {
 const LEGACY_DEEPSEEK_MODEL_MAP: Record<string, string> = { "deepseek-chat": "deepseek-v4-flash", "deepseek-reasoner": "deepseek-v4-pro" };
 const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || ""] || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
 
+// CRITICAL: deepseek-v4-flash (and -pro) are REASONING models — they emit hidden reasoning tokens that
+// count against `max_tokens` BEFORE the visible answer. Confirmed live: a classify call spends ~400-1500+
+// tokens reasoning, so the old 1800 cap left too little for the JSON, which got truncated mid-object →
+// unparseable → ZERO tasks over a full inbox (then two empty retries burned it again). Every completion
+// budget below must therefore fit reasoning + the actual structured output. `reserve()` gives a generous
+// headroom so the model never runs out mid-JSON; it caps waste, it doesn't force spend (the model emits
+// only the reasoning it needs). If a future non-reasoning model is used, these caps are simply never hit.
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000 } as const;
+
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
 }
@@ -357,7 +366,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     const apiMessages = lastRoundHint ? [...base, { role: "user" as const, content: lastRoundHint }] : base;
     const res = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
-      max_tokens: 4000,
+      max_tokens: OUT.generate,
       messages: [
         { role: "system", content: GEN_SYSTEM },
         ...apiMessages,
@@ -406,7 +415,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
     const client = deepseekClient();
     const res = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
-      max_tokens: 4000,
+      max_tokens: OUT.generate,
       messages: [
         { role: "system", content: GEN_SYSTEM },
         ...trimOldToolResults(messages),
@@ -482,7 +491,7 @@ export async function classifyCandidates(
     calls++;
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
-      max_tokens: 1800,
+      max_tokens: OUT.classify,
       // Determinism guards: JSON mode + near-zero temperature. Without them the same candidate list
       // sometimes classified to ZERO tasks (the "swept — no new tasks over a full inbox" bug).
       temperature: 0.1,
@@ -583,7 +592,7 @@ export async function pickOneTask(
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   try {
     const res: any = await retryRequest(() => client.chat.completions.create({
-      model: actualModel, max_tokens: 500, temperature: 0.2, response_format: { type: "json_object" },
+      model: actualModel, max_tokens: OUT.pick, temperature: 0.2, response_format: { type: "json_object" },
       messages: [
         { role: "system", content: sys },
         { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` },
@@ -625,7 +634,7 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const res = await retryRequest(() => client.chat.completions.create({
       model,
-      max_tokens: 500,
+      max_tokens: OUT.refine,
       temperature: 0.2,
       response_format: { type: "json_object" },
       messages: [
@@ -1080,7 +1089,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     const apiMessages = lastRoundHint ? [...base, { role: "user" as const, content: lastRoundHint }] : base;
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
-      max_tokens: 2500,
+      max_tokens: OUT.run,
       messages: [
         { role: "system", content: RUN_SYSTEM },
         ...apiMessages,
@@ -1213,7 +1222,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     }).join("\n\n").slice(-24000);
     const rescue: any = await client.chat.completions.create({
       model: actualModel,
-      max_tokens: 1400,
+      max_tokens: OUT.rescue,
       response_format: { type: "json_object" }, // FORCE parseable JSON — without this the rescue sometimes
       // returned prose, so finalize threw and the run fell to the defeatist fallback. JSON mode makes the
       // rescue reliably usable, so a run that gathered ANY context produces a real result.
