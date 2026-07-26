@@ -185,7 +185,19 @@ export function App() {
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
   const [scanning, setScanning] = useState(false); // the daily background sweep is running
   const [busy, setBusy] = useState(false);
+  // A single transient notification (the ↻ Refresh summary, a "nothing found", an action error). Rendered
+  // as a toast at the top of the dashboard so feedback is visible WHETHER OR NOT the list already has cards —
+  // the old `note` only showed on an empty list, so a Refresh over a non-empty list looked like it did nothing.
   const [note, setNote] = useState("");
+  const [noteKind, setNoteKind] = useState<"info" | "error">("info");
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notify = useCallback((msg: string, kind: "info" | "error" = "info") => {
+    setNote(msg); setNoteKind(kind);
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    // Errors linger longer (the user needs time to read + act); info auto-clears.
+    if (msg) noteTimer.current = setTimeout(() => setNote(""), kind === "error" ? 12_000 : 7_000);
+  }, []);
+  const dismissNote = useCallback(() => { if (noteTimer.current) clearTimeout(noteTimer.current); setNote(""); }, []);
   const [extOn, setExtOn] = useState(extPresent()); // is the Otto Tabs extension present? (it sets data-weave-ext)
   const [onboard, setOnboard] = useState(() => { try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
   const [loadError, setLoadError] = useState(false); // backend unreachable after retries → show a retry screen
@@ -315,7 +327,7 @@ export function App() {
       const { tasks: fresh, note: serverNote } = await api.generate();
       setTasks((prev) => keepLocalHandled(prev, retryFlags(fresh))); setLoaded(true);
       // A skipped sweep must say WHY (e.g. "nothing connected") — never look like a quiet all-clear.
-      if (/^(skipped:|sweep )/.test(serverNote)) setNote(sweepSkipMessage(serverNote));
+      if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
     } catch { /* marker stays unset — next focus/interval tick retries */ }
     finally { sweeping.current = false; setScanning(false); }
@@ -373,7 +385,7 @@ export function App() {
   // sweepIfDue above — once per day, retried on focus/interval until it succeeds, never more.
 
   const generate = async () => {
-    setBusy(true); setNote("");
+    setBusy(true); dismissNote();
     try {
       const before = new Set(tasks.map((t) => t.id));
       const { tasks: t, note: serverNote } = await api.generate(true);
@@ -385,13 +397,13 @@ export function App() {
       const fresh = t.filter((x) => !before.has(x.id) && !isHandled(x.status));
       const queuedN = fresh.filter((x) => isInFlight(x.status)).length;
       const needsYou = t.filter((x) => canonStatus(x.status) === "needs_review" && (x.steps?.some((s) => !s.done && !s.automatable) || x.sendables?.some((s) => !s.sent))).length;
-      if (/^(skipped:|sweep )/.test(serverNote)) setNote(sweepSkipMessage(serverNote));
-      else if (!t.length) setNote("Nothing actionable in your recent inbox + calendar right now.");
-      else if (!fresh.length) setNote(`Swept your apps — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything actionable is already on your list"}.`);
-      else setNote(`Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} queued to run` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`);
+      if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
+      else if (!t.length) notify("Nothing found — nothing actionable in your recent inbox + calendar right now.");
+      else if (!fresh.length) notify(`Swept your apps — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything actionable is already on your list"}.`);
+      else notify(`Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} queued to run` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`);
       void loadBudget();
     }
-    catch (e: any) { setNote(`Couldn't generate tasks: ${e?.message || "error"}`); }
+    catch (e: any) { notify(`Couldn't refresh: ${e?.message || "something went wrong — try again."}`, "error"); }
     finally { setBusy(false); }
   };
   const signOut = async () => { await api.logout(); setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus(); };
@@ -466,6 +478,12 @@ export function App() {
               {scanning && <span className="scan-note"><span className="scan-dot" /> checking for new tasks…</span>}
             </div>
           </div>
+          {note && (
+            <div className={`toast ${noteKind}`} role="status" aria-live="polite">
+              <span className="toast-msg">{note}</span>
+              <button className="toast-x" aria-label="Dismiss" onClick={dismissNote}>✕</button>
+            </div>
+          )}
           {status.paused && (
             <div className="intro paused-banner">
               <div className="intro-body">
@@ -496,7 +514,8 @@ export function App() {
             if (shown.length === 0) {
               const who = status.name || firstName(status.user);
               // First run (nothing ever completed) reads differently from a genuinely cleared list.
-              if (note) return <div className="empty">{note}</div>;
+              // (The refresh summary / "nothing found" now shows in the toast above, visible with or
+              // without cards — so the empty state always shows its own contextual message here.)
               if (handled === 0) return (
                 <div className="empty-state">
                   <div className="empty-mark"><Logo size={28} /></div>
@@ -525,6 +544,7 @@ export function App() {
                     onChange={setTasks}
                     onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
                     onConfirmed={flagJustDone}
+                    onNotify={notify}
                   />
                 ))}</div>;
           })()}
@@ -1388,7 +1408,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
   );
 }
 
-function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void }) {
+function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onNotify }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void }) {
   const [running, setRunning] = useState(false);
   const [stepBusy, setStepBusy] = useState<number | null>(null);
   const [failed, setFailed] = useState<number[]>([]); // steps whose auto-do errored — don't auto-retry
@@ -1434,12 +1454,23 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed }:
   };
   // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
   const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
-  const run = async () => { setRunning(true); try { onTask(await api.run(task.id)); } finally { setRunning(false); } };
+  const run = async () => {
+    setRunning(true);
+    try { onTask(await api.run(task.id)); }
+    // A run rejection (paused / over-budget / rate-limited / still-running-elsewhere / a server error) never
+    // touched the task before, so it failed silently. Surface it — the card also reflects any failed state.
+    catch (e: any) { onNotify?.(e?.message || "Couldn't run this task — try again.", "error"); }
+    finally { setRunning(false); }
+  };
   // Confirmed send (user clicked through the inline confirm) — the ONLY thing that actually sends.
   const doSend = async (i: number) => {
     if (sending != null) return; // guard against a double-send race
     setConfirmIdx(null); setSending(i);
-    try { onTask(await api.sendDraft(task.id, i)); } catch { /* retried by api */ } finally { setSending(null); }
+    // A failed send used to be swallowed entirely — the button just reset and the user had no idea whether
+    // their email/message went out. For an irreversible action that's the worst possible silence: surface it.
+    try { onTask(await api.sendDraft(task.id, i)); }
+    catch (e: any) { onNotify?.(e?.message || "Couldn't send — nothing was sent. Try again.", "error"); }
+    finally { setSending(null); }
   };
   // The user declined and said what to change → re-run the task with that note so Otto revises the draft.
   const doRevise = async () => {

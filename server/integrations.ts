@@ -780,7 +780,7 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
 
   const connected = await listConnectedToolkits(userId);
-  if (!connected.length) { const data = { ...EMPTY, connected }; cache.set(userId, { at: Date.now(), data }); return data; }
+  if (!connected.length) { const data = { ...EMPTY, connected }; cache.set(cacheKey, { at: Date.now(), data }); return data; }
 
   // For multi-account toolkits this run ISN'T already routed to a specific account (routeToolkit covers
   // that case) — resolve which connected account write actions should implicitly target. Without this,

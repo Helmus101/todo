@@ -385,11 +385,15 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
   req.session.tasks = tasks.addManual(req.session.tasks || [], title, null, !ready);
   const added = req.session.tasks[0];
+  if (ready) added.status = "queued";
+  // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from
+  // the cloud (jobs.ts loadUser); enqueuing first opened a race where a concurrent drainer (another tab's
+  // kick, or a cron tick) could claim the job before the commit landed and get "task not found" — which
+  // marks the job succeeded and strands the task at "queued". Commit-then-enqueue closes that window.
+  await commit(req);
   if (ready) {
-    added.status = "queued";
     try { await enqueueJob(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
   }
-  await commit(req);
   res.json(req.session.tasks);
 });
 

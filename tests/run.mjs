@@ -4,7 +4,7 @@ import { parseGenerated, finalize } from "../server/claude.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, usageCostUsd, tzOf, isValidTz, isPeakHourUtc } from "../shared/types.ts";
-import { sweepDueForDay, localDay, genIntervalMs, sweepDue } from "../server/jobs.ts";
+import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue } from "../server/jobs.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -356,6 +356,27 @@ check("1×/day: not due 2h after a same-day sweep", !sweepDue({ ...utcProfile, g
 // 4×/day: same 2h gap IS enough once >6h... 2h isn't, 7h is.
 check("4×/day: not due 2h after a sweep", !sweepDue({ ...utcProfile, genPerDay: 4, lastSweepAt: "2026-07-20T06:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
 check("4×/day: due 7h after a sweep", sweepDue({ ...utcProfile, genPerDay: 4, lastSweepAt: "2026-07-20T01:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
+
+// ── Cron catch-all: offline auto-run + stuck-queued recovery ──────────────────
+section("cron enqueue + stuck-queued recovery");
+const tsk = (over) => ({ ...base, id: over.id, title: over.id, why: "w", source: "manual", status: over.status, ...over });
+// A plain ready + never-attempted task is picked up (the normal offline auto-run).
+check("ready task enqueued", tasksToEnqueue([tsk({ id: "r1", status: "ready" })], []).map((t) => t.id).join() === "r1");
+// A ready task already attempted (autoRan) is NOT re-run by the catch-all.
+check("ready+autoRan skipped", tasksToEnqueue([tsk({ id: "r2", status: "ready", autoRan: true })], []).length === 0);
+// The core regression: a task stranded at "queued" with NO live job (its job was consumed by a
+// pause/over-budget skip or a task-not-found race) gets recovered — nothing else would re-queue it.
+check("orphaned queued task recovered", tasksToEnqueue([tsk({ id: "q1", status: "queued" })], []).map((t) => t.id).join() === "q1");
+// …but a queued task that STILL has a live job is left alone (no double-run).
+check("queued task with live job left alone", tasksToEnqueue([tsk({ id: "q2", status: "queued" })], ["q2"]).length === 0);
+// In-flight "executing" is never touched, and handled tasks are never enqueued.
+check("executing task not enqueued", tasksToEnqueue([tsk({ id: "x1", status: "executing" })], []).length === 0);
+check("done task not enqueued", tasksToEnqueue([tsk({ id: "d9", status: "done" })], []).length === 0);
+check("failed_terminal not enqueued (waits for Retry)", tasksToEnqueue([tsk({ id: "f1", status: "failed_terminal" })], []).length === 0);
+// Bounded per tick.
+check("cron enqueue is bounded", tasksToEnqueue(Array.from({ length: 10 }, (_, i) => tsk({ id: `m${i}`, status: "ready" })), []).length === 3);
+// Legacy "running" alias counts as in-flight (canonicalized), not orphaned-queued.
+check("legacy running alias not enqueued", tasksToEnqueue([tsk({ id: "lr", status: "running" })], []).length === 0);
 
 // ── DeepSeek peak-hour pricing (UTC 01:00-04:00, 06:00-10:00 cost 2x) ─────────
 section("peak-hour pricing");

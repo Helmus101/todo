@@ -8,7 +8,7 @@
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
-import { emptyProfile, canonStatus, isHandled, tzOf, overMonthlyBudget, isPeakHourUtc } from "../shared/types.ts";
+import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, isPeakHourUtc } from "../shared/types.ts";
 import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
@@ -48,6 +48,20 @@ export function sweepDue(profile: Profile, now: Date = new Date()): boolean {
   if (sweepDueForDay(profile.lastSweepAt, profile, now)) return true;
   const last = Date.parse(profile.lastSweepAt || "") || 0;
   return now.getTime() - last >= genIntervalMs(profile);
+}
+
+/** Which tasks the cron catch-all should enqueue for execution (bounded, cron's offline auto-run):
+ *   - plain READY + never-attempted (the normal offline auto-run — failed_* retry via their own job,
+ *     failed_terminal waits for the user's Retry, so cron never loops on a broken task); PLUS
+ *   - ORPHANED queued tasks — set to "queued" but with no live job (their job was consumed by a
+ *     pause/over-budget skip or a task-not-found race), which nothing else would ever re-queue.
+ *  enqueueJob is idempotent per task, so a queued task that still has a live job is filtered out here.
+ *  Pure + exported for the stuck-queued regression test. */
+export function tasksToEnqueue(list: WebTask[], activeTaskIds: string[], limit = 3): WebTask[] {
+  const active = new Set(activeTaskIds);
+  const ready = list.filter((t) => canonStatus(t.status) === "ready" && !t.autoRan);
+  const orphaned = list.filter((t) => canonStatus(t.status) === "queued" && !active.has(t.id));
+  return [...ready, ...orphaned].slice(0, limit);
 }
 
 /** Load the account's durable state (the job runner's ONLY source of truth — no sessions here). */
@@ -124,8 +138,15 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   const email = job.user_email;
   const taskId = String(job.task_id || "");
   const { profile, list } = await loadUser(email);
-  if (profile.paused) return "skipped: AI paused";
-  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
+  // Pause / over-budget: this job is consumed (marked succeeded) by the drain, so DON'T leave the task
+  // stranded at "queued" — a queued task has no way back into the runnable set (cron's catch-all only
+  // re-enqueues "ready"), so it would look like it's "working" forever. Revert it to "ready" and commit,
+  // so the honest state shows AND the next sweep / cron ready-path picks it up once the block clears.
+  if (profile.paused || overMonthlyBudget(profile)) {
+    const t = list.find((x) => x.id === taskId);
+    if (t && isInFlight(t.status)) { t.status = "ready"; t.updatedAt = new Date().toISOString(); await commitUser(email, profile, list); }
+    return profile.paused ? "skipped: AI paused" : "skipped: monthly AI budget reached";
+  }
   const t = list.find((x) => x.id === taskId);
   if (!t) return "skipped: task not found";
   const c = canonStatus(t.status);
@@ -285,8 +306,12 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       // (2) EXECUTE ready tasks the browser never got to (offline auto-run), bounded per user per tick.
       // ONLY plain ready+never-attempted: failed_retryable retries through its own job's attempts;
       // failed_terminal waits for the user's explicit Retry — cron never loops on a broken task.
-      const ready = list.filter((t) => canonStatus(t.status) === "ready" && !t.autoRan).slice(0, 2);
-      for (const t of ready) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
+      // ALSO recover ORPHANED queued tasks — ones set to "queued" whose execution job was consumed without
+      // running them (a pause/over-budget skip, or a task-not-found race between enqueue and the state
+      // commit). Nothing else re-queues a non-"ready" task, so without this they'd sit "working" forever.
+      // enqueueJob is idempotent per task, so a queued task that still HAS a live job is a no-op here.
+      const activeIds = await store.activeJobTaskIds(email);
+      for (const t of tasksToEnqueue(list, activeIds)) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
     } catch (e: any) { console.warn(`[jobs] cron skip ${email}:`, e?.message || e); }
   }
   // Hobby-plan cron fires once daily, so this tick is the only guaranteed background turn:
