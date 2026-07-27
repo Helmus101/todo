@@ -1470,7 +1470,14 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // a result — drop it. Real wins start with produce-verbs (drafted/created/wrote/updated/added/prepared/…).
   const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted|retrieved|retrieve|fetched|fetch|pulled up|located)\b/i;
   const did: string[] = (Array.isArray(out?.did) ? out.did : [])
-    .map((d: any) => String(d || "").trim().replace(/^\s*[-•*]\s*/, ""))
+    .map((d: any) => {
+      // Handle objects that might be returned by the AI instead of strings
+      if (typeof d === 'object' && d !== null) {
+        return String(d.text || d.message || d.description || JSON.stringify(d)).trim();
+      }
+      return String(d || "").trim();
+    })
+    .map((d: string) => d.replace(/^\s*[-•*]\s*/, ""))
     .filter((d: string) => d.length >= 6 && !PLANNING.test(d) && !DEAD_END.test(d) && !PLACEHOLDER.test(d) && !INVESTIGATIVE.test(d))
     .map((d: string) => truncate(d, 140))
     .slice(0, 4);

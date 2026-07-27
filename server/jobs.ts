@@ -227,10 +227,21 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   // The user explicitly clicked Approve & Run — the permissioned toolset is correct here. Same multi-account
   // routing as a full task run: the task's own source account when it has one, else the resolved primary.
   const t = list.find((x) => x.id === taskId);
-  const permTools = await integrations.getAgentToolsWithPermission(email, {
-    ...(t?.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {}),
-    primaryAccounts: profile.primaryAccounts,
-  }).catch(() => undefined);
+  let permTools;
+  try {
+    permTools = await integrations.getAgentToolsWithPermission(email, {
+      ...(t?.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {}),
+      primaryAccounts: profile.primaryAccounts,
+    });
+  } catch (e) {
+    console.error(`[jobs] getAgentToolsWithPermission failed for step ${index} on task ${taskId}:`, e);
+    // Fall back to regular tools if permissioned tools fail - this allows the step to still run
+    // even if the permission check fails, though it may hit the write gate again
+    permTools = await integrations.getAgentTools(email, {
+      ...(t?.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {}),
+      primaryAccounts: profile.primaryAccounts,
+    }).catch(() => undefined);
+  }
   const updated = await tasks.runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : undefined);
   if (updated && (updated.links?.length || updated.sendables?.length)) {
     const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);
