@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { Fragment, useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction, type ReactNode } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
@@ -352,9 +352,15 @@ export function App() {
     const on = () => { if (!document.hidden) { void syncTasks(); void loadBudget(); void sweepIfDue(); } };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
-    const tick = setInterval(on, 15 * 60_000); // long-lived tab: keep watching without any user action
-    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(tick); };
-  }, [connected, syncTasks, sweepIfDue]);
+    // A backend-generated task (from cron, another device, or a queued-but-not-auto-run item) is only ever
+    // shown by a task re-fetch. The old 15-min tick meant such a task could sit INVISIBLE on an open, idle
+    // tab for up to 15 minutes ("it generated but doesn't show"). Poll the cheap /api/tasks GET every 45s so
+    // new tasks surface quickly; the heavier sweep it also triggers stays gated by the user's cadence
+    // (sweepIfDue is a fast no-op until due), so this doesn't sweep more often.
+    const syncTick = setInterval(() => { if (!document.hidden) { void syncTasks(); } }, 45_000);
+    const fullTick = setInterval(on, 5 * 60_000); // periodic budget refresh + cadence-gated sweep check
+    return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
+  }, [connected, syncTasks, sweepIfDue, loadBudget]);
 
   // THE SERVER OWNS EXECUTION. The browser no longer decides what runs — sweeps queue execution jobs
   // server-side, cron drains them offline. While anything is queued/executing, the OPEN client "kicks"
@@ -510,9 +516,9 @@ export function App() {
           <AddTask onAdded={setTasks} />
           {/* If a deep link points at a task that's already handled (not in the live list), surface it so the URL still resolves. */}
           {(() => {
-            const shown = openId && !live.some((t) => t.id === openId)
-              ? [...live, ...tasks.filter((t) => t.id === openId)]
-              : live;
+            // A deep-linked task (even a completed one) opens in the modal below, so the live list is just
+            // the live tasks — no need to inject the opened id here anymore.
+            const shown = live;
             // Until the first server response, an empty list means "still loading", not "all clear" —
             // show the skeleton instead of flashing the empty state.
             if (shown.length === 0 && (busy || !loaded)) return <TaskSkeleton />;
@@ -539,13 +545,14 @@ export function App() {
             }
             // No priority bands — the list is simply ranked most-important first (sortWithinQuadrant). One
             // clean list, no section headers.
+            // Rows stay collapsed in the list; clicking one opens the full task in a modal (below).
             return <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => (
                   <Card
                     key={t.id}
                     task={t}
                     retrying={retryingIds.includes(t.id)}
-                    open={t.id === openId}
-                    onToggle={() => navigate(t.id === openId ? "" : `task/${t.id}`)}
+                    open={false}
+                    onToggle={() => navigate(`task/${t.id}`)}
                     onChange={setTasks}
                     onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
                     onConfirmed={flagJustDone}
@@ -558,25 +565,58 @@ export function App() {
               <h3 className="completed-head">Completed</h3>
               {/* Minimalist done-list: checked rows like a to-do app, not full cards. Click to expand details. */}
               <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
-                <Fragment key={t.id}>
-                  <div className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(t.id === openId ? "" : `task/${t.id}`)} title={t.synthesis || t.why}>
-                    <span className="done-check">✓</span>
-                    <span className="done-title">{t.title}</span>
-                    <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
-                  </div>
-                  {t.id === openId && (
-                    <Card task={t} open onToggle={() => navigate("")} onChange={setTasks}
-                      onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
-                  )}
-                </Fragment>
+                <div key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
+                  <span className="done-check">✓</span>
+                  <span className="done-title">{t.title}</span>
+                  <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
+                </div>
               ))}</div>
               {completed.length > 8 && !showCompleted && (
                 <button className="btn xs ghost" onClick={() => setShowCompleted(true)}>Show all {completed.length}</button>
               )}
             </div>
           )}
+          {/* Task detail opens as a modal over the list — click a row (live or completed) to open it. */}
+          {(() => {
+            const openTask = openId ? tasks.find((t) => t.id === openId) : null;
+            if (!openTask) return null;
+            return (
+              <TaskModal onClose={() => navigate("")}>
+                <Card
+                  task={openTask}
+                  open
+                  inModal
+                  retrying={retryingIds.includes(openTask.id)}
+                  onToggle={() => navigate("")}
+                  onChange={setTasks}
+                  onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                  onConfirmed={(id) => { flagJustDone(id); navigate(""); }}
+                  onNotify={notify}
+                />
+              </TaskModal>
+            );
+          })()}
         </main>
       )}
+    </div>
+  );
+}
+
+/** Modal shell for the task detail — backdrop-click, ✕, and Esc all close; locks body scroll while open. */
+function TaskModal({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+  return (
+    <div className="task-modal-overlay" onClick={onClose} role="dialog" aria-modal="true">
+      <div className="task-modal" onClick={(e) => e.stopPropagation()}>
+        <button className="task-modal-x" onClick={onClose} aria-label="Close">✕</button>
+        {children}
+      </div>
     </div>
   );
 }
@@ -1401,7 +1441,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
   );
 }
 
-function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onNotify }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void }) {
+function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onNotify, inModal }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean }) {
   const [running, setRunning] = useState(false);
   const [stepBusy, setStepBusy] = useState<number | null>(null);
   const [failed, setFailed] = useState<number[]>([]); // steps whose auto-do errored — don't auto-retry
@@ -1568,7 +1608,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const chip = !isDone ? statusChip(task, retrying) : null;
   return (
     <div ref={cardRef} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
-      <div className="card-main" onClick={onToggle}>
+      <div className="card-main" onClick={inModal ? undefined : onToggle} style={inModal ? { cursor: "default" } : undefined}>
         {/* Direct check-off, like a normal to-do list — no need to open the task first. Still one deliberate
             click (not automatic): it fires the same confirm as "Looks good" inside the detail view. */}
         {!isDone ? (

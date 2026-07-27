@@ -279,6 +279,31 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 
 .card.open { background: transparent; }
+
+/* ─── Task detail modal ─────────────────────────────────────────────────────── */
+.task-modal-overlay {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center;
+  padding: 6vh 16px 16px; background: rgba(16, 19, 23, 0.42); backdrop-filter: blur(2px);
+  animation: fadeIn 0.16s var(--ease); overflow-y: auto;
+}
+.task-modal {
+  position: relative; width: 100%; max-width: 640px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-pop);
+  padding: 8px 20px 20px; animation: modalPop 0.18s var(--ease);
+}
+.task-modal-x {
+  position: absolute; top: 12px; right: 12px; z-index: 2; width: 30px; height: 30px; border: none;
+  background: transparent; color: var(--ink-3); font-size: 14px; border-radius: var(--radius-sm); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+.task-modal-x:hover { background: var(--bg-2); color: var(--ink); }
+/* Inside the modal the whole card IS the detail — drop the collapsed-row chrome (caret, hover, the ✕). */
+.task-modal .card, .task-modal .card.open { background: transparent; }
+.task-modal .card-main { cursor: default; padding-left: 6px; }
+.task-modal .card-main:hover { background: transparent; }
+.task-modal .caret, .task-modal .card-x { display: none; }
+@keyframes modalPop { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
+@media (max-width: 560px) { .task-modal-overlay { padding: 0; align-items: stretch; } .task-modal { max-width: none; border-radius: 0; min-height: 100%; } }
 .card.is-done { opacity: 0.5; }
 .card.is-done:hover { opacity: 0.8; }
 
