@@ -284,9 +284,16 @@ export function App() {
     // before the add, resolved after — the same class of race as the dismiss/confirm case above, just for
     // creation instead of status). Bounded to the last 2 minutes so a task that's ACTUALLY gone (a rare far
     // future prune of very old handled records) doesn't get resurrected forever by this fallback.
+    // IMPORTANT: Only preserve MANUALLY added tasks (source === "manual") — backend-generated tasks
+    // that are missing from the response should NOT be resurrected, as this causes the bug where tasks
+    // generated in the backend don't appear in the frontend.
     const RECENT_MS = 2 * 60_000;
     const now = Date.now();
-    const recentlyMissing = prev.filter((p) => !incomingIds.has(p.id) && now - (Date.parse(p.createdAt || "") || 0) < RECENT_MS);
+    const recentlyMissing = prev.filter((p) => 
+      !incomingIds.has(p.id) && 
+      p.source === "manual" && 
+      now - (Date.parse(p.createdAt || "") || 0) < RECENT_MS
+    );
     return [...recentlyMissing, ...merged];
   };
 
