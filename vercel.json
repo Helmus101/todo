@@ -7,7 +7,7 @@
     }
   },
   "crons": [
-    { "path": "/api/cron/drain", "schedule": "0 12 * * *" }
+    { "path": "/api/cron/drain", "schedule": "0 * * * *" }
   ],
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api" },

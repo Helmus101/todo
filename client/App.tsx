@@ -1043,7 +1043,7 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
 
 /** Marketing landing (signed out, route /). CTAs route to the dedicated login / sign-up page. */
 function Landing() {
-  const DRAFT = "sounds good — thursday works. i'll bring the updated numbers and we can walk through the deltas together";
+  const DRAFT = "thank you, professor — friday works. i'll submit the final essay before class and bring the two sources we discussed";
   const [typed, setTyped] = useState("");
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -1079,72 +1079,60 @@ function Landing() {
 
       <main className="hero">
         <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>The to-do list that <em>does itself</em>.</h1>
-        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Otto reads your inbox, calendar and Drive — then gets ahead of the work. It drafts the replies, preps the docs, and clears your list before you have to ask.</p>
+        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Otto reads your school email, calendar and Drive — tracks what's due, drafts the emails to your professors, and preps your assignments. You just review and hit send.</p>
         <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.25s" }}>
-          <a className="btn primary big" href="/signup">Get started — it's free</a>
+          <a className="btn primary big" href="/signup">Start free — with your student email</a>
           <a className="btn ghost" href="/login">Log in</a>
         </div>
-        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>Only ever drafts &amp; docs — Otto never sends anything without you.</div>
-        {/* One product visual: the live drafting demo, nothing else. */}
+        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>Only ever drafts &amp; docs — Otto never emails a professor without you.</div>
+        {/* One product visual: the live drafting demo — a reply to a professor, drafted in the student's voice. */}
         <div className="hero-demo hero-in" style={{ ["--d" as any]: "0.42s" }} aria-hidden="true">
           <div className="hero-demo-label"><span className="live-dot" /> Live — drafting in your voice</div>
           <div className="demo-window">
             <div className="demo-titlebar"><span /><span /><span /></div>
             <div className="demo-body">
-              <p className="demo-line"><b>To:</b> sarah@acme.com</p>
-              <p className="demo-line"><b>Subject:</b> Re: Q3 budget review</p>
-              <p className="demo-line gap">hi sarah,</p>
+              <p className="demo-line"><b>To:</b> prof.laurent@university.edu</p>
+              <p className="demo-line"><b>Subject:</b> Re: Extension on the policy essay</p>
+              <p className="demo-line gap">hi professor laurent,</p>
               <p className="demo-line">{typed}<span className="demo-caret" /></p>
             </div>
           </div>
         </div>
       </main>
 
-      {/* Second product visual — the actual list, already handled. Shows the three states in context. */}
-      <section className="landing-sec">
-        <h2 className="reveal">Open Otto. It's already done.</h2>
-        <p className="lead reveal">No blank inbox to wade through. The replies are drafted, the docs are prepped — only the calls that need you are left.</p>
-        <div className="landing-tasks reveal" style={{ ["--d" as any]: "0.08s" }} aria-hidden="true">
-          <div className="lt-row"><span className="lt-dot need" /><div className="lt-text"><span className="lt-title">Reply to Sarah about the Q3 budget</span><span className="lt-sub">Draft ready in your voice</span></div><span className="lt-chip">Review</span></div>
-          <div className="lt-row"><span className="lt-dot done" /><div className="lt-text"><span className="lt-title">Prep the vendor comparison doc</span><span className="lt-sub">Built from three email threads</span></div><span className="lt-chip">Done for you</span></div>
-          <div className="lt-row"><span className="lt-dot need" /><div className="lt-text"><span className="lt-title">Approve the invoice from Northwind</span><span className="lt-sub">Needs your OK before it's paid</span></div><span className="lt-chip">Needs you</span></div>
-          <div className="lt-row is-done"><span className="lt-dot check">✓</span><div className="lt-text"><span className="lt-title">Send the signed contract to legal</span></div><span className="lt-when">2h ago</span></div>
-        </div>
-      </section>
-
       <section className="landing-sec">
         <h2 className="reveal">What you get back</h2>
         <div className="outcomes">
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.0s" }}><span className="outcome-mark">✓</span><div><h3>Your inbox, triaged</h3><p>Otto reads every thread and surfaces only the handful that genuinely need you — the rest never reaches your list.</p></div></div>
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.1s" }}><span className="outcome-mark">✓</span><div><h3>Replies drafted in your voice</h3><p>It learns how you write from your sent mail, then drafts the response — matched to the thread, ready to send.</p></div></div>
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.2s" }}><span className="outcome-mark">✓</span><div><h3>Nothing sent without you</h3><p>Every draft waits for your OK. Otto never sends, posts, invites, or pays on its own — you're always the last step.</p></div></div>
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.0s" }}><span className="outcome-mark">✓</span><div><h3>Every deadline in one place</h3><p>Otto pulls due dates out of your inbox, calendar and Drive — the assignment, the exam, the group-project handoff — so nothing slips through at 2am.</p></div></div>
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.1s" }}><span className="outcome-mark">✓</span><div><h3>Emails to professors, drafted</h3><p>Asking for an extension, joining office hours, chasing a grade — Otto learns how you write and drafts the reply, in the right tone, ready to send.</p></div></div>
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.2s" }}><span className="outcome-mark">✓</span><div><h3>Assignments prepped for you</h3><p>It gathers the sources, builds the outline or the doc, and pulls in what the task needs — so you start from something, never a blank page.</p></div></div>
         </div>
       </section>
 
       <section className="landing-sec">
         <h2 className="reveal">How it works</h2>
-        <p className="lead reveal">Connect once. From then on Otto watches the things that actually need you — and quietly gets ahead of them.</p>
+        <p className="lead reveal">Connect your student email once. From then on Otto stays ahead of your classes — quietly, in the background.</p>
         <div className="how">
-          <div className="how-step reveal" style={{ ["--d" as any]: "0.0s" }}><div className="n">01</div><h3>It reads your world</h3><p>Inbox, calendar and Drive — pulling out the few things that genuinely need a reply, a decision, or prep.</p></div>
-          <div className="how-step reveal" style={{ ["--d" as any]: "0.1s" }}><div className="n">02</div><h3>It does the work</h3><p>Drafts the reply in your voice, builds the doc, gathers the context — then shows you exactly what it did.</p></div>
-          <div className="how-step reveal" style={{ ["--d" as any]: "0.2s" }}><div className="n">03</div><h3>You just confirm</h3><p>Open a draft, tweak it, send. Anything only you can do is laid out as a short, tickable checklist.</p></div>
+          <div className="how-step reveal" style={{ ["--d" as any]: "0.0s" }}><div className="n">01</div><h3>It reads your school world</h3><p>Inbox, calendar and Drive — pulling out what actually needs you: a professor's reply, a due date, an assignment to prep.</p></div>
+          <div className="how-step reveal" style={{ ["--d" as any]: "0.1s" }}><div className="n">02</div><h3>It does the busywork</h3><p>Drafts the email in your voice, tracks the deadline, builds the doc, gathers the sources — then shows you exactly what it did.</p></div>
+          <div className="how-step reveal" style={{ ["--d" as any]: "0.2s" }}><div className="n">03</div><h3>You just confirm</h3><p>Open a draft, tweak it, send. Everything only you can do is laid out as a short, tickable checklist.</p></div>
         </div>
       </section>
 
       <section className="landing-sec">
         <h2 className="reveal">Built to be trusted</h2>
         <div className="features">
-          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>Drafts, never sends</h3><p>Every email is a draft you review. Nothing leaves your account without your explicit OK.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Learns who you are</h3><p>It remembers your people, projects and preferences, so its work sounds like you — and sharpens over time.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>Your account, your data</h3><p>Saved privately to your account. It reads your apps and creates drafts &amp; docs — nothing destructive.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>Drafts, never sends</h3><p>Every email to a professor or classmate is a draft you review. Nothing leaves your account without your explicit OK.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Read the code that reads your mail</h3><p>Otto is open source (MIT). The rule that it never sends, posts or deletes on its own is enforced in code you can read — not just a promise.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>Free while you study</h3><p>Free to start, with a monthly AI budget included. Bring your own keys or self-host if you'd rather — your data stays yours.</p></div></div>
         </div>
       </section>
 
       <section className="cta-band reveal">
-        <h2>Stop managing your to-do list.</h2>
-        <p>Connect Gmail and let Otto clear what it can — you just confirm the rest. Free to start, ready in a minute.</p>
-        <a className="btn big cta-band-btn" href="/signup">Get started — it's free</a>
-        <div className="cta-fine">No credit card · Otto never sends without you</div>
+        <h2>Spend less time on busywork, more on the work that counts.</h2>
+        <p>Connect your student Gmail and let Otto get ahead of your deadlines — you just review the rest. Free to start, ready in a minute.</p>
+        <a className="btn big cta-band-btn" href="/signup">Start free — with your student email</a>
+        <div className="cta-fine">No credit card · Otto never emails a professor without you</div>
       </section>
 
       <div className="landing-foot">

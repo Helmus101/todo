@@ -78,6 +78,15 @@ export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
 }
 
+/** Pull token usage from a DeepSeek response, INCLUDING the cache-hit portion of the prompt tokens
+ *  (dramatically cheaper — see callCostUsd). DeepSeek exposes it as `prompt_cache_hit_tokens` and/or the
+ *  OpenAI-shaped `prompt_tokens_details.cached_tokens`; read both defensively. `in` is the FULL prompt count. */
+function usageOf(res: any): { in: number; out: number; cachedIn: number } {
+  const u = res?.usage || {};
+  const cachedIn = Number(u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0) || 0;
+  return { in: Number(u.prompt_tokens) || 0, out: Number(u.completion_tokens) || 0, cachedIn };
+}
+
 function deepseekClient(): OpenAI {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("Set DEEPSEEK_API_KEY in web/.env.");
@@ -140,7 +149,11 @@ function firstJson<T>(raw: string): T | null {
 /** Older tool results have served their purpose (the model already acted on them). Truncating them hard
  *  before each round stops the transcript growing quadratically over a long run — the biggest token sink.
  *  The most recent results stay full so current work is never degraded. */
-const TRIM_KEEP = 4, TRIM_TO = 250;
+// Keep the last N tool results FULL, truncate older ones. The old 4/250 was too aggressive — by round 6 of
+// 8 the model was drafting from a transcript where most of its evidence (a Gmail search's threads, a doc's
+// text) had been cut to a single line, a live driver of thin/subtly-wrong drafts. 6/1000 keeps far more of
+// the gathered facts in view; the per-run token logging + circuit breaker bound the extra cost.
+const TRIM_KEEP = 6, TRIM_TO = 1000;
 function trimOldToolResults(messages: any[]): any[] {
   if (messages.length <= TRIM_KEEP) return messages;
   const cut = messages.length - TRIM_KEEP;
@@ -319,7 +332,7 @@ export function parseGenerated(arr: any): GeneratedTask[] {
  * it reads the recent inbox + upcoming events itself, then submits tasks. Returns [] if nothing is connected
  * to read (the client then prompts the user to connect Gmail/Calendar in Settings).
  */
-export interface GenerationResult { tasks: GeneratedTask[]; profileUpdates: ProfileUpdate[]; tokens?: { in: number; out: number }; }
+export interface GenerationResult { tasks: GeneratedTask[]; profileUpdates: ProfileUpdate[]; tokens?: { in: number; out: number; cachedIn?: number }; }
 
 export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[], active?: { title: string; anchorKey?: string }[]): Promise<GenerationResult> {
   const empty: GenerationResult = { tasks: [], profileUpdates: [] };
@@ -355,7 +368,8 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   // The prompt tells the agent to BATCH searches as parallel calls in one round, so 6 is plenty; the forced
   // final round below is the safety net for a straggler.
   const MAX = 6;
-  let tokIn = 0, tokOut = 0, rounds = 0;
+  let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
+  const tok = () => ({ in: tokIn, out: tokOut, cachedIn: tokCached }); // so the fallback sweep is metered too
   let didRead = false;        // has the model actually called ANY read tool yet?
   let lazyRejected = false;   // reject an unread empty submit only ONCE, then take whatever comes
   try {
@@ -373,7 +387,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
     }));
-    rounds++; tokIn += (res as any).usage?.prompt_tokens || 0; tokOut += (res as any).usage?.completion_tokens || 0;
+    rounds++; { const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn; }
     const toolUses = res.choices[0]?.message?.tool_calls || [];
     if (!toolUses.length) {
       const assistantText = res.choices[0]?.message?.content || "";
@@ -407,7 +421,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       // for; anything you need beyond that, search again. This cap applies to every tool call, every round.
       messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
     }
-    if (submitted) { if (!submitted.tasks.length) console.warn("[claude] generateTasks submitted 0 tasks"); return submitted; }
+    if (submitted) { if (!submitted.tasks.length) console.warn("[claude] generateTasks submitted 0 tasks"); return { ...submitted, tokens: tok() }; }
   }
   // Round budget exhausted without a submit — a sweep that read everything but never reported is why
   // "Refresh finds nothing". Force ONE final call where the model MUST call submit_tasks with what it has.
@@ -424,14 +438,14 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       tools: [{ type: "function" as const, function: { name: SUBMIT_TASKS_TOOL.name, description: SUBMIT_TASKS_TOOL.description, parameters: SUBMIT_TASKS_TOOL.input_schema } }],
       tool_choice: { type: "function", function: { name: "submit_tasks" } },
     }));
-    rounds++; tokIn += (res as any).usage?.prompt_tokens || 0; tokOut += (res as any).usage?.completion_tokens || 0;
+    rounds++; { const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn; }
     const tu = res.choices[0]?.message?.tool_calls?.[0];
     if (tu) {
       const input = parseToolArgs((tu as any).function?.arguments);
-      return { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates) };
+      return { tasks: parseGenerated(input?.tasks), profileUpdates: parseProfileUpdates(input?.profileUpdates), tokens: tok() };
     }
   } catch (e: any) { console.warn("[claude] forced submit failed:", e?.message || e); }
-  return empty;
+  return { ...empty, tokens: tok() };
   } finally {
     console.log(`${new Date().toISOString()} [ai] generateTasks: ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
@@ -486,7 +500,7 @@ export async function classifyCandidates(
     `Empty arrays are fine.`;
   const client = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-  let tokIn = 0, tokOut = 0, calls = 0;
+  let tokIn = 0, tokOut = 0, tokCached = 0, calls = 0;
   const ask = async (extra?: string) => {
     calls++;
     const res: any = await retryRequest(() => client.chat.completions.create({
@@ -501,7 +515,7 @@ export async function classifyCandidates(
         { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` + (extra ? `\n\n${extra}` : "") },
       ],
     }));
-    tokIn += res.usage?.prompt_tokens || 0; tokOut += res.usage?.completion_tokens || 0;
+    const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn;
     return firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
   };
   const parse = (out: any) => {
@@ -555,7 +569,7 @@ export async function classifyCandidates(
       const retried = parse(retry);
       if (retried.length) { out = retry; tasks = retried; break; }
     }
-    return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates), tokens: { in: tokIn, out: tokOut } };
+    return { tasks, profileUpdates: parseProfileUpdates(out?.profileUpdates), tokens: { in: tokIn, out: tokOut, cachedIn: tokCached } };
   } finally {
     console.log(`${new Date().toISOString()} [ai] classifyCandidates: ${items.length} in → ${calls} call${calls === 1 ? "" : "s"}, ${tokIn} in / ${tokOut} out tokens`);
   }
@@ -571,7 +585,7 @@ export async function pickOneTask(
   items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string }[],
   profile?: Profile,
   activeTitles?: string[],
-): Promise<{ task: GeneratedTask; tokens: { in: number; out: number } } | null> {
+): Promise<{ task: GeneratedTask; tokens: { in: number; out: number; cachedIn?: number } } | null> {
   if (!items.length) return null;
   const list = items.slice(0, 30).map((it, i) =>
     `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
@@ -598,7 +612,7 @@ export async function pickOneTask(
         { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` },
       ],
     }));
-    const tokens = { in: res.usage?.prompt_tokens || 0, out: res.usage?.completion_tokens || 0 };
+    const tokens = usageOf(res);
     const r: any = firstJson(String(res.choices?.[0]?.message?.content || ""));
     const idx = Number(r?.i);
     if (!Number.isInteger(idx) || idx < 0 || idx >= items.length || String(r?.title || "").trim().length < 4) return null;
@@ -675,7 +689,7 @@ export interface RunOutput {
   sendables: Sendable[];      // drafted email / composed Slack message the user can fire with one click
   profileUpdates: ProfileUpdate[];
   followUps?: { title: string; why: string }[]; // distinct NEW obligations discovered → each becomes its own task
-  tokens?: { in: number; out: number }; // cost telemetry — recorded on the task's timeline per run
+  tokens?: { in: number; out: number; cachedIn?: number }; // cost telemetry — recorded on the task's timeline per run
   /** Doc/Sheet/Slide ids VERIFIED created THIS run, from real tool results — never from the model's
    *  self-reported "links" (nothing stops it claiming a doc it merely read, not created). This is the
    *  guardrail input for extractArtifacts(): only ids in here may ever be edited without the user's
@@ -1012,7 +1026,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
 
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   const MAX = 8; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
-  let tokIn = 0, tokOut = 0, rounds = 0;
+  let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
+  // Circuit breaker: round count alone doesn't bound cost — a pathological task (a huge thread, tool errors
+  // burning rounds, retries) can cost 10-20× a normal run. Cap the TOTAL tokens a single run may spend; once
+  // crossed, stop looping and let the rescue pass turn whatever was gathered into an honest result.
+  const RUN_TOKEN_CEILING = 220_000;
+  const overTokenCeiling = () => tokIn + tokOut > RUN_TOKEN_CEILING;
   // Has the agent performed ANY write/create yet? Drives the deterministic act-now enforcement below.
   const WRITE_NAME = /(CREATE|UPDATE|APPEND|PATCH|MODIFY|BATCH|DRAFT|INSERT|WRITE|REPLACE|QUICK_ADD|MOVE|COPY|ADD_)/i;
   // Verbs that claim PRODUCED work — used to catch a report that says it did something with no artifact/
@@ -1067,7 +1086,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // FINAL integrity pass — reconcile the narrative with the artifacts that actually survived (runs LAST,
     // after both backstops above have had their chance to re-attach a real draft/doc). A "Drafted a reply…"
     // claim with no sendable to show is a fabrication to the user, so it must not survive to the card.
-    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] });
+    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds] });
   };
   try {
   for (let i = 0; i < MAX; i++) {
@@ -1080,6 +1099,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // gate. Observed live: a vacuous "follow up on sent email" task ran a full 8 rounds / 137k tokens only
     // to conclude nothing was needed — this caps that at ~5 rounds.
     if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb) break;
+    // Circuit breaker: a run that has already burned the token ceiling stops here — another round only
+    // deepens the overspend. The rescue pass below salvages whatever was gathered into an honest result.
+    if (overTokenCeiling()) { console.warn(`${new Date().toISOString()} [ai] runTask hit token ceiling (${tokIn + tokOut}) — stopping at round ${i}`); break; }
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
     // Write-aware enforcement: prompts alone don't stop read-forever drift (observed live: 8 rounds of
@@ -1111,7 +1133,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
     }));
-    rounds++; tokIn += res.usage?.prompt_tokens || 0; tokOut += res.usage?.completion_tokens || 0;
+    rounds++; { const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn; }
     const toolUses = res.choices[0]?.message?.tool_calls || [];
     if (!toolUses.length) {
       const textContent = res.choices[0]?.message?.content || "";

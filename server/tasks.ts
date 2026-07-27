@@ -274,7 +274,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.
     usage: (p1.usage || p2.usage) ? (() => {
       const mk = [p1.usage?.monthKey, p2.usage?.monthKey].filter(Boolean).sort().pop();
-      const monthOf = (u?: Profile["usage"], field: "monthIn" | "monthOut" = "monthIn") => (u?.monthKey === mk ? (u?.[field] || 0) : 0);
+      const monthOf = (u?: Profile["usage"], field: "monthIn" | "monthOut" | "monthCost" = "monthIn") => (u?.monthKey === mk ? (u?.[field] || 0) : 0);
       return {
         in: Math.max(p1.usage?.in || 0, p2.usage?.in || 0),
         out: Math.max(p1.usage?.out || 0, p2.usage?.out || 0),
@@ -283,6 +283,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         monthKey: mk,
         monthIn: Math.max(monthOf(p1.usage, "monthIn"), monthOf(p2.usage, "monthIn")),
         monthOut: Math.max(monthOf(p1.usage, "monthOut"), monthOf(p2.usage, "monthOut")),
+        // Monotonic like the token counters — MAX within the same month so a stale copy can't reset spend.
+        monthCost: Math.max(monthOf(p1.usage, "monthCost"), monthOf(p2.usage, "monthCost")),
       };
     })() : undefined,
   };

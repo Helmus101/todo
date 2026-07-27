@@ -192,7 +192,14 @@ export interface Job {
 
 const JOBS = "weave_web_jobs";
 const EVENTS = "weave_web_job_events";
-const LOCK_MS = 5 * 60_000; // a claim expires after 5min — a crashed worker's job becomes claimable again
+// A claim's lease. This MUST exceed the longest realistic single-job wall time, or a still-running job's
+// lock expires and a second worker claims + RE-RUNS it — duplicate drafts/docs, double spend, the worst
+// possible bug for a "never behind your back" product. A task run is up to 8 rounds × (90s request × 3
+// retries) plus Composio latency, which can pass 12 min. So the lease is generous AND a heartbeat
+// (renewLock, called from the drain while a job runs) extends it in-flight, so only a genuinely dead
+// worker ever loses its lock.
+const LOCK_MS = 15 * 60_000;
+const HEARTBEAT_MS = 4 * 60_000; // re-extend the lease this often while a job runs
 
 // In-memory fallback (dev without a reachable jobs table).
 const memJobs: Job[] = [];
@@ -242,15 +249,18 @@ export async function enqueueJob(userEmail: string, type: JobType, taskId?: stri
 }
 
 /** Atomically claim ONE runnable job: oldest queued, or a running job whose lock expired (crashed worker).
- *  Exactly-one-winner via a conditional UPDATE on the previous status. Returns null when nothing to do. */
-export async function claimJob(workerId: string): Promise<Job | null> {
+ *  Exactly-one-winner via a conditional UPDATE on the previous status. Returns null when nothing to do.
+ *  `userEmail` scopes the claim to ONE account — the cron uses this for per-user round-robin so a single
+ *  heavy account can't monopolise a global-oldest-first drain and starve everyone else. */
+export async function claimJob(workerId: string, userEmail?: string): Promise<Job | null> {
   const db = await jobsDb();
   const now = new Date();
   const lockUntil = new Date(now.getTime() + LOCK_MS).toISOString();
   if (db) {
     // Two passes: fresh queued jobs first, then expired-lock running jobs (retry of a crashed claim).
     for (const pass of ["queued", "expired"] as const) {
-      const q = db.from(JOBS).select("id,status,attempt_count,max_attempts").order("created_at", { ascending: true }).limit(5);
+      let q = db.from(JOBS).select("id,status,attempt_count,max_attempts").order("created_at", { ascending: true }).limit(5);
+      if (userEmail) q = q.eq("user_email", userEmail);
       const { data: candidates } = pass === "queued"
         ? await q.eq("status", "queued")
         : await q.eq("status", "running").lt("locked_until", now.toISOString());
@@ -268,12 +278,31 @@ export async function claimJob(workerId: string): Promise<Job | null> {
     }
     return null;
   }
-  const job = memJobs.find((j) => j.status === "queued" || (j.status === "running" && j.locked_until && j.locked_until < now.toISOString()));
+  const job = memJobs.find((j) => (!userEmail || j.user_email === userEmail) && (j.status === "queued" || (j.status === "running" && j.locked_until && j.locked_until < now.toISOString())));
   if (!job) return null;
-  if (job.attempt_count >= job.max_attempts) { job.status = "failed_terminal"; job.last_error = "max attempts exceeded"; return claimJob(workerId); }
+  if (job.attempt_count >= job.max_attempts) { job.status = "failed_terminal"; job.last_error = "max attempts exceeded"; return claimJob(workerId, userEmail); }
   job.status = "running"; job.locked_until = lockUntil; job.started_at = now.toISOString(); job.attempt_count++;
   return job;
 }
+
+/** Heartbeat: extend a running job's lease while its worker is still alive, so a long (but healthy) run
+ *  never has its lock expire out from under it and get re-claimed by a second worker. Guarded on
+ *  locked_by = this worker + status running, so it can't revive a job that already finished or was stolen.
+ *  Returns false when the row is no longer ours (finished, or lease already lost) — the caller can stop. */
+export async function renewLock(id: string, workerId: string): Promise<boolean> {
+  const until = new Date(Date.now() + LOCK_MS).toISOString();
+  const db = await jobsDb();
+  if (db) {
+    const { data } = await db.from(JOBS).update({ locked_until: until })
+      .eq("id", id).eq("locked_by", workerId).eq("status", "running").select("id");
+    return !!(data && data.length);
+  }
+  const job = memJobs.find((j) => j.id === id);
+  if (!job || job.status !== "running") return false;
+  job.locked_until = until;
+  return true;
+}
+export const heartbeatIntervalMs = HEARTBEAT_MS;
 
 /** Mark a claimed job finished — success, retryable failure (goes back to queued-like claimable state), or terminal. */
 export async function finishJob(id: string, outcome: "succeeded" | "failed", error?: string, output?: any): Promise<void> {

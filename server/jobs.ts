@@ -8,7 +8,7 @@
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
-import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, isPeakHourUtc } from "../shared/types.ts";
+import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, overInteractiveBudget, isPeakHourUtc } from "../shared/types.ts";
 import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
@@ -138,11 +138,16 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   const email = job.user_email;
   const taskId = String(job.task_id || "");
   const { profile, list } = await loadUser(email);
+  // A manual run / revision is user-present, so it gets the interactive reserve (cap ×1.1); a background
+  // auto-run stops hard at the cap. Either way the check must MATCH the interactive route that enqueued it,
+  // or a run the route allowed would be silently skipped here.
+  const interactive = !!(job.input?.manual || job.input?.note);
+  const budgetBlocked = interactive ? overInteractiveBudget(profile) : overMonthlyBudget(profile);
   // Pause / over-budget: this job is consumed (marked succeeded) by the drain, so DON'T leave the task
   // stranded at "queued" — a queued task has no way back into the runnable set (cron's catch-all only
   // re-enqueues "ready"), so it would look like it's "working" forever. Revert it to "ready" and commit,
   // so the honest state shows AND the next sweep / cron ready-path picks it up once the block clears.
-  if (profile.paused || overMonthlyBudget(profile)) {
+  if (profile.paused || budgetBlocked) {
     const t = list.find((x) => x.id === taskId);
     if (t && isInFlight(t.status)) { t.status = "ready"; t.updatedAt = new Date().toISOString(); await commitUser(email, profile, list); }
     return profile.paused ? "skipped: AI paused" : "skipped: monthly AI budget reached";
@@ -215,7 +220,8 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   const index = Number(job.input?.index);
   const { profile, list } = await loadUser(email);
   if (profile.paused) return "skipped: AI paused";
-  if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
+  // Approve & Run is always user-present → interactive reserve, matching the route that enqueued it.
+  if (overInteractiveBudget(profile)) return "skipped: monthly AI budget reached";
   if (!Number.isInteger(index)) return "skipped: bad step index";
   await store.recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
   // The user explicitly clicked Approve & Run — the permissioned toolset is correct here. Same multi-account
@@ -248,13 +254,17 @@ export async function processJob(job: store.Job): Promise<string> {
 
 /** Claim + process up to `limit` jobs, stopping when the time budget is spent (serverless functions have
  *  hard ceilings — persist progress per job, never hold work hostage to the batch). */
-export async function drain(limit = 3, budgetMs = 240_000): Promise<{ processed: number; failed: number }> {
+export async function drain(limit = 3, budgetMs = 240_000, userEmail?: string): Promise<{ processed: number; failed: number }> {
   const t0 = Date.now();
   let processed = 0, failed = 0;
   for (let i = 0; i < limit; i++) {
     if (Date.now() - t0 > budgetMs) break;
-    const job = await store.claimJob(workerId);
+    const job = await store.claimJob(workerId, userEmail);
     if (!job) break;
+    // Heartbeat: keep extending THIS job's lease while it runs, so a long-but-healthy run never has its
+    // lock expire and get re-claimed + re-executed by a second worker (the duplicate-draft P0). Stops the
+    // moment renewLock reports the row is no longer ours (finished / stolen).
+    const beat = setInterval(() => { void store.renewLock(job.id, workerId).then((ok) => { if (!ok) clearInterval(beat); }); }, store.heartbeatIntervalMs);
     try {
       const note = await processJob(job);
       await store.finishJob(job.id, "succeeded", undefined, { note });
@@ -264,6 +274,8 @@ export async function drain(limit = 3, budgetMs = 240_000): Promise<{ processed:
       await store.finishJob(job.id, "failed", e?.message || String(e));
       if (job.task_id) void store.recordEvent(job.user_email, "run_failed", { taskId: job.task_id, jobId: job.id, message: String(e?.message || e).slice(0, 200) });
       failed++;
+    } finally {
+      clearInterval(beat);
     }
   }
   return { processed, failed };
@@ -284,7 +296,7 @@ export async function enqueueAndDrain(email: string, type: store.JobType, taskId
 /** Cron entry: give every recently-active account its background turn — enqueue a sweep if none has
  *  succeeded within the watch window, enqueue execution for ready tasks, then drain a bounded batch. */
 export async function cronTick(): Promise<{ users: number; enqueued: number; processed: number; failed: number }> {
-  const emails = await store.listAccountEmails(50);
+  const emails = await store.listAccountEmails(500);
   let enqueued = 0;
   const now = new Date();
 
@@ -324,8 +336,20 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       for (const t of tasksToEnqueue(list, activeIds)) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
     } catch (e: any) { console.warn(`[jobs] cron skip ${email}:`, e?.message || e); }
   }
-  // Hobby-plan cron fires once daily, so this tick is the only guaranteed background turn:
-  // drain a bigger batch within the function's 300s ceiling.
-  const { processed, failed } = await drain(10, 270_000);
+  // Drain FAIRLY: round-robin a small per-user quota so one heavy account can't monopolise the batch and
+  // starve the tail (global-oldest-first did exactly that). Each pass gives every user up to 2 jobs; repeat
+  // passes until the function's time ceiling is near or a whole pass does nothing. Bounded by the 300s cap.
+  const t0 = Date.now(), budgetMs = 260_000;
+  let processed = 0, failed = 0;
+  for (let pass = 0; pass < 6 && Date.now() - t0 < budgetMs; pass++) {
+    let didWork = false;
+    for (const email of emails) {
+      if (Date.now() - t0 >= budgetMs) break;
+      const r = await drain(2, budgetMs - (Date.now() - t0), email);
+      processed += r.processed; failed += r.failed;
+      if (r.processed || r.failed) didWork = true;
+    }
+    if (!didWork) break; // nothing left anywhere this pass → stop
+  }
   return { users: emails.length, enqueued, processed, failed };
 }

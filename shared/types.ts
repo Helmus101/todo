@@ -56,7 +56,12 @@ export interface Profile {
   // Cumulative AI token usage across sweeps + task runs (for the Settings "usage" view). Cumulative counters
   // are monotonic (merged by MAX across devices); the month* counters roll over each calendar month and back
   // the monthly spend cap. Approximate — for visibility + a cost ceiling, not exact billing.
-  usage?: { in: number; out: number; runs: number; since: string; monthKey?: string; monthIn?: number; monthOut?: number };
+  usage?: { in: number; out: number; runs: number; since: string; monthKey?: string; monthIn?: number; monthOut?: number;
+    /** Month-to-date spend in USD, accumulated PER CALL at the true price (cache-hit vs miss input priced
+     *  separately, ×2 during DeepSeek peak hours) — NOT re-derived from token totals, which can't recover
+     *  either factor. This is the number the cap enforces and Settings shows. Pre-upgrade rows lack it and
+     *  fall back to the flat-rate token estimate. */
+    monthCost?: number };
   // Which connected account to use for a multi-account app (Gmail, Calendar, Docs, Sheets, Slides, Drive)
   // when a task ISN'T tied to a specific discovered item (a manual task, a brand-new doc) — keyed by the
   // app's catalog key ("gmail", "googlecalendar", …) → Composio connectedAccountId. Defaults to whichever
@@ -99,6 +104,7 @@ export function normalizeProfile(p: any): Profile {
       since: typeof p.usage.since === "string" ? p.usage.since : new Date().toISOString(),
       monthKey: typeof p.usage.monthKey === "string" ? p.usage.monthKey : undefined,
       monthIn: Number(p.usage.monthIn) || 0, monthOut: Number(p.usage.monthOut) || 0,
+      monthCost: Number(p.usage.monthCost) || 0,
     } : undefined,
     primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object"
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
@@ -130,12 +136,26 @@ export function monthKeyOf(tz?: string, now: Date = new Date()): string {
   catch { return now.toISOString().slice(0, 7); }
 }
 
-// DeepSeek pricing in USD per 1M tokens (approximate; output ≈4× input). Single source of truth so the
-// Settings cost display and the server-side monthly cap always agree.
-export const USD_PER_1M_IN = 0.27;
+// DeepSeek pricing in USD per 1M tokens. Cache-HIT input is dramatically cheaper than a miss, and we resend
+// a large system prompt every round, so hit rates are high — pricing all input at the miss rate (the old
+// behaviour) over-charged the meter. Output ≈4× a miss. Single source of truth so the Settings display and
+// the server-side cap always agree with the invoice.
+export const USD_PER_1M_IN = 0.27;        // cache-MISS input
+export const USD_PER_1M_CACHED_IN = 0.07; // cache-HIT input (~¼ the miss price)
 export const USD_PER_1M_OUT = 1.10;
+/** Flat-rate estimate from token totals — used only for display of PRE-upgrade data that lacks a per-call
+ *  cost. New spend is metered by callCostUsd (cache- and peak-aware) at the point of each call. */
 export function usageCostUsd(inTok: number, outTok: number): number {
   return (Number(inTok) || 0) / 1e6 * USD_PER_1M_IN + (Number(outTok) || 0) / 1e6 * USD_PER_1M_OUT;
+}
+/** The TRUE cost of one AI call: cache-hit input priced separately from miss, and the whole call ×2 during
+ *  DeepSeek's peak window (per isPeakHourUtc). `inTok` is the FULL prompt-token count; `cachedIn` is the
+ *  cache-hit portion of it (the rest is charged at the miss rate). This is what the cap must count. */
+export function callCostUsd(inTok: number, outTok: number, cachedIn = 0, at: Date = new Date()): number {
+  const total = Math.max(0, Number(inTok) || 0), cached = Math.min(total, Math.max(0, Number(cachedIn) || 0));
+  const miss = total - cached;
+  const base = miss / 1e6 * USD_PER_1M_IN + cached / 1e6 * USD_PER_1M_CACHED_IN + (Number(outTok) || 0) / 1e6 * USD_PER_1M_OUT;
+  return base * (isPeakHourUtc(at) ? 2 : 1);
 }
 /** Month-to-date AI spend (USD) for this account, honoring the calendar-month rollover. */
 export function monthCostUsd(profile?: Profile | null, tz?: string, now: Date = new Date()): number {
@@ -143,16 +163,26 @@ export function monthCostUsd(profile?: Profile | null, tz?: string, now: Date = 
   if (!u) return 0;
   // A stale monthKey means the stored month* counters belong to a past month — treat this month as $0.
   if (u.monthKey && u.monthKey !== monthKeyOf(tz ?? tzOf(profile), now)) return 0;
-  return usageCostUsd(u.monthIn || 0, u.monthOut || 0);
+  // Prefer the per-call metered cost (cache- and peak-aware); fall back to the flat token estimate only for
+  // pre-upgrade rows that never accumulated it.
+  return typeof u.monthCost === "number" ? u.monthCost : usageCostUsd(u.monthIn || 0, u.monthOut || 0);
 }
 /** The monthly AI budget (USD). Override with MONTHLY_AI_BUDGET_USD (server-side); default $3. */
 export function monthlyBudgetUsd(): number {
   const raw = typeof process !== "undefined" ? Number(process.env?.MONTHLY_AI_BUDGET_USD) : NaN;
   return Number.isFinite(raw) && raw >= 0 ? raw : 3;
 }
-/** Has this account crossed its monthly AI budget? Gates generation + execution when true. */
+/** Has this account crossed its monthly AI budget? Gates BACKGROUND generation + execution when true. */
 export function overMonthlyBudget(profile?: Profile | null, now: Date = new Date()): boolean {
   return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd();
+}
+/** A small reserve above the cap kept for INTERACTIVE, user-present actions — the Approve & Run click, a
+ *  manual run, a revision. The whole point of the product is that a human is the last step, so the last step
+ *  must not be the thing the cap kills; it can spill slightly past the cap to let the user finish. Background
+ *  work (sweeps, offline auto-run) still stops hard at the cap via overMonthlyBudget. */
+export const INTERACTIVE_RESERVE = 1.1;
+export function overInteractiveBudget(profile?: Profile | null, now: Date = new Date()): boolean {
+  return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd() * INTERACTIVE_RESERVE;
 }
 /** When the budget resets — the 1st of next month in the user's timezone, as an ISO date ("YYYY-MM-DD"). */
 export function budgetRenewsOn(profile?: Profile | null, now: Date = new Date()): string {
@@ -163,17 +193,20 @@ export function budgetRenewsOn(profile?: Profile | null, now: Date = new Date())
 
 /** Add one AI call's token cost to a profile's usage counters (mutates in place) — cumulative for the
  *  Settings view, plus month-to-date (with calendar-month rollover) for the spend cap. Best-effort. */
-export function addUsage(profile: Profile, tokens?: { in?: number; out?: number } | null): void {
-  const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0;
+export function addUsage(profile: Profile, tokens?: { in?: number; out?: number; cachedIn?: number } | null): void {
+  const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0, cached = Number(tokens?.cachedIn) || 0;
   if (!tin && !tout) return;
   const u = profile.usage || { in: 0, out: 0, runs: 0, since: new Date().toISOString() };
   const mk = monthKeyOf(tzOf(profile));
   const sameMonth = u.monthKey === mk;
+  // Meter the TRUE cost of this call now — cache breakdown and peak multiplier can't be recovered later.
+  const cost = callCostUsd(tin, tout, cached);
   profile.usage = {
     in: u.in + tin, out: u.out + tout, runs: u.runs + 1, since: u.since,
     monthKey: mk,
     monthIn: (sameMonth ? (u.monthIn || 0) : 0) + tin,
     monthOut: (sameMonth ? (u.monthOut || 0) : 0) + tout,
+    monthCost: (sameMonth ? (u.monthCost || 0) : 0) + cost,
   };
 }
 

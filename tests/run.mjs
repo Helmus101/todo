@@ -3,7 +3,7 @@ import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergePr
 import { parseGenerated, finalize, reconcileArtifactClaims } from "../server/claude.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, usageCostUsd, tzOf, isValidTz, isPeakHourUtc } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc } from "../shared/types.ts";
 import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue } from "../server/jobs.ts";
 
 let pass = 0, fail = 0;
@@ -455,6 +455,28 @@ check("overMonthlyBudget true when way over", overMonthlyBudget(heavy) === true)
 check("overMonthlyBudget false for a fresh profile", overMonthlyBudget(emptyProfile()) === false);
 process.env.MONTHLY_AI_BUDGET_USD = "0";
 check("budget of 0 blocks any usage", overMonthlyBudget(upA) === true);
+
+// callCostUsd: cache-hit input priced separately from miss, ×2 during peak. (at = off-peak noon UTC.)
+const noon = new Date("2026-07-20T12:00:00Z"), peak = new Date("2026-07-20T02:00:00Z");
+check("callCostUsd prices a full miss at the miss rate", Math.abs(callCostUsd(1e6, 0, 0, noon) - USD_PER_1M_IN) < 1e-9);
+check("callCostUsd prices a full cache hit at the cheaper rate", Math.abs(callCostUsd(1e6, 0, 1e6, noon) - USD_PER_1M_CACHED_IN) < 1e-9);
+check("callCostUsd splits mixed input hit/miss", Math.abs(callCostUsd(1e6, 0, 4e5, noon) - (6e5/1e6*USD_PER_1M_IN + 4e5/1e6*USD_PER_1M_CACHED_IN)) < 1e-9);
+check("callCostUsd doubles during peak", Math.abs(callCostUsd(1e6, 1e6, 0, peak) - (USD_PER_1M_IN + USD_PER_1M_OUT) * 2) < 1e-9);
+check("callCostUsd clamps cachedIn to total", Math.abs(callCostUsd(1e6, 0, 5e6, noon) - USD_PER_1M_CACHED_IN) < 1e-9);
+// addUsage meters the true per-call cost into monthCost, and monthCostUsd prefers it over the token estimate.
+const costP = emptyProfile();
+addUsage(costP, { in: 1e6, out: 0, cachedIn: 1e6 }, noon); // a fully-cached call is cheap
+// (addUsage uses now() for peak; the assertion just checks the cheap-cache path landed in monthCost)
+check("addUsage records a metered monthCost", typeof costP.usage.monthCost === "number" && costP.usage.monthCost > 0 && costP.usage.monthCost < USD_PER_1M_IN);
+check("monthCostUsd prefers the metered cost", Math.abs(monthCostUsd(costP, "UTC") - costP.usage.monthCost) < 1e-12);
+
+// Interactive reserve: a user-present action is allowed a small band above the cap that background work isn't.
+process.env.MONTHLY_AI_BUDGET_USD = "3";
+const atCap = { ...emptyProfile(), usage: { in: 0, out: 0, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthCost: 3.05 } }; // just over $3, under $3.30
+check("background blocked at the cap", overMonthlyBudget(atCap) === true);
+check("interactive still allowed within the reserve", overInteractiveBudget(atCap) === false);
+const wayOver = { ...emptyProfile(), usage: { in: 0, out: 0, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthCost: 3.5 } };
+check("interactive blocked past the reserve", overInteractiveBudget(wayOver) === true);
 if (prevBudget === undefined) delete process.env.MONTHLY_AI_BUDGET_USD; else process.env.MONTHLY_AI_BUDGET_USD = prevBudget;
 
 // ── Eisenhower ranking (WS2) ──────────────────────────────────────────────────

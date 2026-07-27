@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, budgetRenewsOn } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn } from "../shared/types.ts";
 import { aiReady, refineManualTask } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
@@ -304,7 +304,10 @@ app.get("/api/status", async (req, res) => {
 const isPaused = (req: express.Request): boolean => !!req.session.profile?.paused;
 // Monthly AI spend cap — the honest 402 an interactive route returns when the account is over budget.
 const overBudget = (req: express.Request): boolean => overMonthlyBudget(req.session.profile);
-const BUDGET_MSG = "Otto's reached its monthly AI budget — it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
+// A user-present action (Approve & Run, manual run, revise) is allowed a small reserve above the cap so the
+// human's own last step isn't the thing the budget kills — background work still stops hard at the cap.
+const overInteractive = (req: express.Request): boolean => overInteractiveBudget(req.session.profile);
+const BUDGET_MSG = "Otto's reached its monthly AI budget (including the interactive reserve) — it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   p.paused = req.body?.paused === true;
@@ -401,7 +404,7 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
 // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to refine." }); return; }
-  if (overBudget(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: "not found" }); return; }
@@ -449,7 +452,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
 // `manual: true` marks a deliberate user click, which is allowed to retry a terminally-failed task.
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run tasks." }); return; }
-  if (overBudget(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   await runViaJob(req, res, "execute_task", { manual: true });
 });
 
@@ -459,7 +462,7 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
   const note = String(req.body?.note || "").trim();
   if (!note) { res.status(400).json({ error: "note required" }); return; }
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to revise tasks." }); return; }
-  if (overBudget(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   await runViaJob(req, res, "revise", { note });
 });
 
@@ -512,7 +515,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
 // same as full runs, so it's durably locked and audited.
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run steps." }); return; }
-  if (overBudget(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
   await runViaJob(req, res, "execute_step", { index: Number(req.params.index), ...(answer ? { answer } : {}) });
 });
