@@ -665,6 +665,10 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
     const seen = new Set((task.links || []).map((l) => l.url));
     task.links = [...(task.links || []), ...out.links.filter((l) => !seen.has(l.url))].slice(0, 3);
   }
+  const freshArtifacts = extractArtifacts(out, out.createdDocIds);
+  if (freshArtifacts.length) {
+    task.artifacts = unionArtifacts(task.artifacts, freshArtifacts);
+  }
   if (out.sendables?.length) {
     const key = (s: Sendable) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
     const seen = new Set((task.sendables || []).map(key));

@@ -232,7 +232,8 @@ const GEN_SYSTEM =
   `PREFERENCES ARE BINDING, not decoration — the "Preferences" lines in their profile MUST shape the list:\n` +
   `- FILTER: if a preference says they don't care about something (a topic, a sender, a kind of work), do NOT ` +
   `create tasks for it, even if it looks actionable.\n` +
-  `- RANK: raise importance for tasks matching what they've said matters (their priorities, projects, people); ` +
+  `- RANK: automatically prioritize tasks strictly by deadline proximity, high-stakes importance (people/projects), and effort required. Raise importance/urgency for tasks with firm deadlines, tasks from high-priority contacts, or open commitments.\n` +
+  `- BREAK DOWN: for large, complex projects, ensure the task title and why reflect a clear, single actionable first step so the user is never overwhelmed by a vague backlog.\n` +
   `lower it for what they've deprioritized. Two equal emails ≠ two equal tasks if a preference separates them.\n` +
   `- SHAPE: phrase titles/whys in line with how they work (e.g. "batch admin on Fridays" → set "when" accordingly; ` +
   `"prefers calls over email" → the task suggests a call). When a preference influenced a task, reflect it in "why".\n` +
@@ -481,12 +482,7 @@ export async function classifyCandidates(
     `CONSOLIDATE — one real-world obligation = ONE task. If several candidates concern the SAME thing (a ` +
     `calendar event AND the email thread that set it up; several copies of one outreach the user sent), emit a ` +
     `SINGLE task and pick the candidate the user must ACT on to anchor it (prefer the email/thread they need to ` +
-    `handle; else the event). NEVER emit two tasks for one meeting, thread, or commitment. Each task's title must ` +
-    `name a DISTINCT obligation — if two of your tasks would start with the same verb+object, merge them.\n` +
-    `SCORING: an item you judge actionable is, by definition, NOT trivial — score a genuine reply/commitment ` +
-    `at importance ≥ 0.5, and higher (≥ 0.7) for high-priority people or stated projects. urgency reflects the ` +
-    `deadline: ≥ 0.7 within ~48h, ~0.5 this week, lower if open-ended. Never score an actionable item you're ` +
-    `returning below 0.4 on BOTH axes — if it's that trivial, omit it instead.\n` +
+    `handle; else the event). NEVER emit two tasks for one meeting, thread, or commitment. SCORING & PRIORITIZATION: Score importance (0..1) and urgency (0..1) based on deadlines, effort required, and high-priority contacts/projects. Items with imminent deadlines, unfulfilled promises, or high-priority senders score urgency ≥ 0.7 and importance ≥ 0.7. For large complex requests, focus the task on the immediate, concrete next actionable step.\n` +
     `TITLES MUST BE SPECIFIC — name the actual person/company AND the actual subject, so the task is clear ` +
     `without opening anything. GOOD: "Reply to Chloe at BOND about the demo", "Send media-coverage docs to ` +
     `Paris Model Congress", "Confirm attendance to Guillaume's Aug call". BAD (too vague — never do this): ` +
@@ -704,11 +700,11 @@ export interface RunOutput {
 
 const RUN_SYSTEM =
   `MANDATORY EXECUTION SEQUENCE — FOLLOW THIS EXACT ORDER FOR EVERY TASK, NO EXCEPTIONS:\n` +
-  `  (1) GATHER: Read the actual source (the Gmail thread / Calendar event / Drive doc behind this task) BEFORE doing anything else.\n` +
-  `  (2) PLAN: Decide exactly what artifact you will produce (a draft reply, a Google Doc, a Sheet, an event) and which tool you will call.\n` +
-  `  (3) EXECUTE: Call the real tool — GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_CREATE_GOOGLE_SHEET1, etc.\n` +
-  `  (4) REPORT: In submit's "links"/"sendables", include ONLY what a real tool call returned. DO NOT CLAIM WORK YOU DIDN'T DO.\n` +
-  `  A "synthesis" that says you drafted or created something with NO corresponding tool call is a fabrication and will be REJECTED every time.\n\n` +
+  `  (1) GATHER & RESEARCH: Perform targeted, credit-efficient searches (1-3 web/app reads) to get exact facts (names, dates, links, requirements). Never waste calls on random browsing.\n` +
+  `  (2) PLAN: Formulate an explicit plan to achieve the objective — define what needs to be done, what success looks like, which tools to use, and which artifact(s) to produce. Define the concrete steps to execute that plan before starting.\n` +
+  `  (3) EXECUTE & CREATE: Call the real tool immediately — create the Google Doc/Sheet/Draft and write all research findings into it. Research without a created artifact is INCOMPLETE.\n` +
+  `  (4) REPORT: Return the created artifact in "links"/"sendables". DO NOT claim work you didn't do.\n` +
+  `  A "synthesis" that claims research or creation without an actual tool call is a fabrication and will be REJECTED.\n\n` +
   `You execute ONE task for the user, end to end, using the tools available — their CONNECTED apps via ` +
   `Composio (Gmail, Google Calendar, Docs, Slides, Drive, Sheets, and any others: Slack, GitHub, Notion, ` +
   `Linear, Todoist, …). USE them to gather the real facts AND to DO the reversible work: draft a reply, ` +
@@ -722,8 +718,8 @@ const RUN_SYSTEM =
   `name, preferences, key people, projects) — that memory often holds the exact detail that makes the output ` +
   `right. web_search for any external fact. TARGETED, not exhaustive (usually 1-3 reads): enough to act well, ` +
   `never a survey of their whole world. State the key facts you found in submit's "context" — this is proof you gathered before acting. DO NOT skip this phase.\n` +
-  `(2) PLAN silently — from that context, fix the OBJECTIVE (what "done" actually looks like for THIS task) ` +
-  `and the few concrete steps to get there: which tools, which artifact(s). Never show this plan to the user. ` +
+  `(2) PLAN — from that context, fix the OBJECTIVE (what "done" actually looks like for THIS task) ` +
+  `and map out the exact plan to achieve it: define what needs to be done, the sequence of research/writing steps, which tools to use, and which artifact(s) to produce. ` +
   `Define EXACTLY what you will create or update before you start.\n` +
   `(3) SPLIT THE WORK — for each step decide who owns it: YOU (automatable — anything you can do with your ` +
   `tools or by finding information) vs the USER (only a judgment/approval, a login/credential, a payment, or ` +
