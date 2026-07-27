@@ -266,6 +266,10 @@ catch { finThrew = true; }
 check("planning-tense-only result still fails honestly", finThrew);
 const fin4 = finalize({ context: "c", synthesis: "Created the doc.", did: ["Created the Q3 doc with the table", "Let me now check the calendar", "- Drafted a reply to Sam"], steps: [{ text: "Pick a date", automatable: false }], links: [], sendables: [] }, "", []);
 check("did bullets kept, planning prose dropped, dashes stripped", fin4.did.length === 2 && fin4.did[1] === "Drafted a reply to Sam");
+// Regression: a model that returns OBJECTS in did[] (instead of the requested strings) must never render as
+// "[object Object]" on the card — finalize coerces each entry to readable text before it reaches the client.
+const fin4b = finalize({ context: "c", synthesis: "Created the doc.", did: [{ text: "Created the Q3 doc with the table" }, { message: "Filled 12 cells in the sheet" }], steps: [], links: [], sendables: [] }, "", []);
+check("object did[] entries coerced to their text, never [object Object]", fin4b.did.every((d) => typeof d === "string" && !d.includes("[object Object]")) && fin4b.did.length === 2);
 const fin5 = finalize({ context: "c", synthesis: "Made a doc.", steps: [], links: [{ label: "Open", url: docLink.url }], sendables: [] }, "", []);
 check("junk link label relabeled by kind", /Google Doc/i.test(fin5.links[0].label));
 

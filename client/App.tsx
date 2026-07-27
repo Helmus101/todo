@@ -1554,8 +1554,13 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
       // do the real-world part, so only automatable page-opens self-complete.
       if (s.url) { openTab(s.url, TAB_GROUP); if (s.automatable) onChange(await api.stepDone(task.id, i, true, "Opened ↗")); }
       else { onTask(await api.runStep(task.id, i, answer)); }
-    } catch { setFailed((f) => (f.includes(i) ? f : [...f, i])); } // stop auto-retrying; user can click to retry
-    finally { setStepBusy(null); }
+    } catch (e: any) {
+      setFailed((f) => (f.includes(i) ? f : [...f, i])); // stop auto-retrying; user can click to retry
+      // A rejected step (paused / over budget / still running elsewhere / a server error) used to fail
+      // completely silently — the button just reset with nothing visible, which is exactly what "Approve &
+      // Run doesn't work" looks like from the outside. Surface it.
+      onNotify?.(e?.message || "Couldn't run this step — try again.", "error");
+    } finally { setStepBusy(null); }
   };
 
   // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
@@ -1808,7 +1813,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                         {busyHere ? <span className="muted small">Working…</span>
                           : s.url ? <button className="btn xs ghost" title={s.url} onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open {linkKind(s.url) || "link"} ↗</button>
                           : s.done || blk ? null
-                          : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>Approve & Run</button> : s.question ? null : <button className="btn xs ghost" onClick={() => void doStep(i)}>Auto-do</button>)
+                          : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>{failed.includes(i) ? "Retry" : "Approve & Run"}</button> : s.question ? null : <button className="btn xs ghost" onClick={() => void doStep(i)}>{failed.includes(i) ? "Retry" : "Auto-do"}</button>)
                           : null}
                       </div>
                     </li>
