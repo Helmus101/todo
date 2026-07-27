@@ -703,21 +703,28 @@ export interface RunOutput {
 }
 
 const RUN_SYSTEM =
+  `MANDATORY EXECUTION SEQUENCE — FOLLOW THIS EXACT ORDER FOR EVERY TASK, NO EXCEPTIONS:\n` +
+  `  (1) GATHER: Read the actual source (the Gmail thread / Calendar event / Drive doc behind this task) BEFORE doing anything else.\n` +
+  `  (2) PLAN: Decide exactly what artifact you will produce (a draft reply, a Google Doc, a Sheet, an event) and which tool you will call.\n` +
+  `  (3) EXECUTE: Call the real tool — GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_CREATE_GOOGLE_SHEET1, etc.\n` +
+  `  (4) REPORT: In submit's "links"/"sendables", include ONLY what a real tool call returned. DO NOT CLAIM WORK YOU DIDN'T DO.\n` +
+  `  A "synthesis" that says you drafted or created something with NO corresponding tool call is a fabrication and will be REJECTED every time.\n\n` +
   `You execute ONE task for the user, end to end, using the tools available — their CONNECTED apps via ` +
   `Composio (Gmail, Google Calendar, Docs, Slides, Drive, Sheets, and any others: Slack, GitHub, Notion, ` +
   `Linear, Todoist, …). USE them to gather the real facts AND to DO the reversible work: draft a reply, ` +
   `create a doc/deck/sheet, add a task or calendar event, update an issue. Use WHATEVER connected apps the task ` +
   `touches (Slack, Notion, Linear, Sheets, GitHub, …), not just email, and do as MUCH as your tools allow. Do ` +
   `NOT ask the user for anything you could find or do yourself. Be rigorously honest and grounded; never invent specifics.\n` +
-  `WORK IN FOUR PHASES, IN ORDER — this is the process for EVERY task:\n` +
-  `(1) GATHER CONTEXT FIRST — before doing anything, pull the real facts. Read the connected apps that bear ` +
+  `WORK IN FOUR PHASES, IN ORDER — this is MANDATORY for EVERY task. You MUST follow this exact sequence:\n` +
+  `(1) GATHER CONTEXT FIRST — BEFORE doing ANYTHING, pull the real facts. Read the connected apps that bear ` +
   `on the task (the Gmail thread / Calendar event / Drive doc behind it, plus any Sheet/Slack/etc. it ` +
   `touches) AND use what you already know about this person from the "WHO THIS PERSON IS" block above (their ` +
   `name, preferences, key people, projects) — that memory often holds the exact detail that makes the output ` +
   `right. web_search for any external fact. TARGETED, not exhaustive (usually 1-3 reads): enough to act well, ` +
-  `never a survey of their whole world.\n` +
+  `never a survey of their whole world. State the key facts you found in submit's "context" — this is proof you gathered before acting. DO NOT skip this phase.\n` +
   `(2) PLAN silently — from that context, fix the OBJECTIVE (what "done" actually looks like for THIS task) ` +
-  `and the few concrete steps to get there: which tools, which artifact(s). Never show this plan to the user.\n` +
+  `and the few concrete steps to get there: which tools, which artifact(s). Never show this plan to the user. ` +
+  `Define EXACTLY what you will create or update before you start.\n` +
   `(3) SPLIT THE WORK — for each step decide who owns it: YOU (automatable — anything you can do with your ` +
   `tools or by finding information) vs the USER (only a judgment/approval, a login/credential, a payment, or ` +
   `a physical act). Default to YOURS when unsure.\n` +
@@ -728,6 +735,9 @@ const RUN_SYSTEM =
   `SHORT one-liner (empty when a sendable covers it or nothing's left); (d) ASK only if truly necessary — if ` +
   `one detail is missing you genuinely can't find or infer, ask it via a step's "question" (see ASK below); ` +
   `never ask what you could have answered yourself.\n` +
+  `CRITICAL: NEVER CLAIM WORK YOU DIDN'T DO. If you say you "created a doc" or "drafted an email", you MUST ` +
+  `actually call the create/draft tool and include the result in "links" or "sendables". Claims without real ` +
+  `artifacts will be rejected. Only report what you ACTUALLY produced through tool calls.\n` +
   `PREP EVEN WHEN BLOCKED — if you can't fully DELIVER because one piece is missing (a recipient/contact, a ` +
   `login, an approval, a file), still PRODUCE what you can: write the actual message/greeting/content text. ` +
   `BUT NEVER invent the missing piece to force completion — if you do NOT have the person's REAL email/contact, ` +
@@ -936,9 +946,9 @@ const RUN_TOOLS = [
   { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
     title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (≤9 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
-    context: { type: "string", description: "what this is about — 1-2 SHORT bullets, each a line beginning with '- '. Brief; the user only sees this if they expand it." },
+    context: { type: "string", description: "what you FOUND — 2-3 bullets of the actual gathered facts: who sent what / what the event is / what the doc said. Name real people, dates, asks. This is proof you gathered context before acting. Each line starts with '- '." },
     synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' NO caveats, NO explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
-    did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run, past tense with the specific names/artifacts, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
+    did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
     steps: {
       type: "array",
       description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). Often empty.",
@@ -1029,7 +1039,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     content: focus
       // Focused single-step run (the user hit "Auto-do" on one automatable step).
       ? head + deadlineHint + `\nDo ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) — don't describe it, DO it — then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.`
-      : head + deadlineHint + manualHint + `\nGather what you need, then ACTUALLY DO the reversible work now with your tools (draft/create/update) — don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`,
+      : head + deadlineHint + manualHint + `\nGather what you need and record the key facts in submit's "context" (who sent what, what the ask/event/doc detail is). Then ACTUALLY DO the reversible work now with your tools (draft/create/update) — don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`,
   }];
 
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
@@ -1046,7 +1056,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // write to back it up (the "it just says it did the research" failure). Kept in sync with the DOABLE
   // verb list in finalize(): if a phrasing counts as doable-therefore-enforce-it-now, a claim using that
   // same phrasing after the fact must also count as a claim needing proof.
-  const CLAIM_VERBS = /\b(drafted|created|updated|filled|composed|wrote|added a|built|compiled|researched|gathered|collected|found (?:a|the|\d)|identified|prepared)\b/i;
+  const CLAIM_VERBS = /\b(drafted|created|updated|filled|composed|wrote|added a|built|compiled|assembled|produced|generated|populated|put together|set up|organized|researched|gathered|collected|found (?:a|the|\d)|identified|prepared)\b/i;
   // A step that describes CONSTRUCTING a new document artifact (doc/sheet/deck) — used to catch a run that
   // left artifact creation as a step (incl. the "Approve creating a Google Doc" dodge) instead of doing it.
   // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
@@ -1180,14 +1190,17 @@ export async function runTask(task: { title: string; why: string; source?: strin
           // (a) A revision that never actually wrote anything is a FABRICATED success (observed live: agent
           //     spent its whole budget reading the doc, never called update, then claimed "Updated the doc").
           const fabricatedRevision = hasArtifactIds && !wroteAny;
-          // (b) FINISH, DON'T HAND BACK: an unblocked automatable step Otto could do itself must not survive
+          // (b) PREPARED WITHOUT AN ARTIFACT: claims to have drafted/created/updated something but produced
+          //     no link/sendable AND no write ever succeeded this run — the "it just prepares stuff" failure.
+          //     IMPORTANT: this check has NO finishBacks cap — a false artifact claim is NEVER accepted,
+          //     no matter how many times the model has been rejected. A fabrication that persists twice is
+          //     still a fabrication, and accepting it on the third try defeats the entire guardrail.
+          const claimsArtifact = CLAIM_VERBS.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
+          const hasArtifact = draft.links.length > 0 || draft.sendables.length > 0 || wroteAny;
+          // (c) FINISH, DON'T HAND BACK: an unblocked automatable step Otto could do itself must not survive
           //     into steps[] — Otto acts. (synthetic backstop / permission-gated / dependent / question steps
           //     are legitimately left for the user.)
           const leftUndone = draft.steps.find((s) => s.automatable && !s.synthetic && s.dependsOn === undefined && !s.needsPermission && !s.question);
-          // (c) PREPARED WITHOUT AN ARTIFACT: claims to have drafted/created/updated something but produced
-          //     no link/sendable AND no write ever succeeded this run — the "it just prepares stuff" failure.
-          const claimsArtifact = CLAIM_VERBS.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
-          const hasArtifact = draft.links.length > 0 || draft.sendables.length > 0 || wroteAny;
           // (d) DEFERRED ARTIFACT CREATION: the task's deliverable is a doc/sheet/deck, but instead of CREATING
           //     it the model left a STEP to create it — often dodging the "do it yourself" rule by phrasing it
           //     as "Approve creating a new Google Doc" (a fake user-approval step). Creating a NEW artifact is
@@ -1200,16 +1213,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
             content = "REJECTED: you're revising an artifact that already exists, but you have not made any " +
               "update/write tool call this run. Call the update tool on the id listed under 'ALREADY CREATED " +
               "FOR THIS TASK' now — THEN submit. Do not resubmit the same claim without writing first.";
+          } else if (claimsArtifact && !hasArtifact) {
+            // No finishBacks cap here — this is an integrity violation, not a style disagreement.
+            finishBacks++;
+            content = "REJECTED: your report claims you drafted/created/assembled/produced something, but NO " +
+              "artifact (draft, doc, sheet, event) was actually produced — no write or create tool call " +
+              "succeeded this run. This is a fabrication and will be rejected every time until you either: " +
+              "(a) call the REAL tool (GMAIL_CREATE_EMAIL_DRAFT, GOOGLEDOCS_CREATE_DOCUMENT, etc.) and " +
+              "include the result in \"links\"/\"sendables\", OR (b) report honestly what you found without " +
+              "claiming work you didn't do. Do NOT resubmit the same claim.";
           } else if (leftUndone && finishBacks < 2) {
             finishBacks++;
             content = `REJECTED: "${leftUndone.text}" is something YOU can do with your tools — do it NOW, don't ` +
               `leave it for the user. steps[] must contain ONLY what genuinely needs the user (an approval, a ` +
               `decision, an answer only they have, or a login/payment/physical action). Act, then submit.`;
-          } else if (claimsArtifact && !hasArtifact && finishBacks < 2) {
-            finishBacks++;
-            content = "REJECTED: your report claims you drafted/created/updated something, but no artifact " +
-              "(draft, doc, sheet, event) was actually produced and no write succeeded this run. Either DO it " +
-              "now with the real tool, or report honestly what you found without claiming work you didn't do.";
           } else if (defersCreation && finishBacks < 2) {
             finishBacks++;
             content = "REJECTED: the deliverable here is a document, and you left CREATING it as a step instead " +
@@ -1274,9 +1291,8 @@ export async function runTask(task: { title: string; why: string; source?: strin
           }
         }
       } catch (e: any) { content = "ERROR: " + (e?.message || e); }
-      // Capped well below the old 4000 — a fresh result only needs enough to extract the fact/id you asked
-      // for; anything you need beyond that, search again. This cap applies to every tool call, every round.
-      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
+      // Capped at 6000 so full thread context / doc contents fit without being truncated.
+      messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: String(content).slice(0, 6000) });
     }
     if (submitted) return withTokens(submitted);
   }
