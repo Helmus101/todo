@@ -336,9 +336,11 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       for (const t of tasksToEnqueue(list, activeIds)) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
     } catch (e: any) { console.warn(`[jobs] cron skip ${email}:`, e?.message || e); }
   }
-  // Drain FAIRLY: round-robin a small per-user quota so one heavy account can't monopolise the batch and
-  // starve the tail (global-oldest-first did exactly that). Each pass gives every user up to 2 jobs; repeat
-  // passes until the function's time ceiling is near or a whole pass does nothing. Bounded by the 300s cap.
+  // Vercel Hobby caps cron at once/day (Pro allows finer schedules) — so THIS tick is the only guaranteed
+  // background turn for most deployments, which makes fairness within it matter more, not less. Drain
+  // FAIRLY: round-robin a small per-user quota so one heavy account can't monopolise the batch and starve
+  // the tail (global-oldest-first did exactly that). Each pass gives every user up to 2 jobs; repeat passes
+  // until the function's time ceiling is near or a whole pass does nothing. Bounded by the 300s cap.
   const t0 = Date.now(), budgetMs = 260_000;
   let processed = 0, failed = 0;
   for (let pass = 0; pass < 6 && Date.now() - t0 < budgetMs; pass++) {
