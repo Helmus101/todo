@@ -173,6 +173,16 @@ async function processExecuteTask(job: store.Job): Promise<string> {
       if (droppedArtifacts.length) void store.recordEvent(email, "verified", { taskId, jobId: job.id, message: "Remaining artifacts verified against the live account" });
       else void store.recordEvent(email, "verified", { taskId, jobId: job.id, message: "Artifacts verified against the live account" });
     }
+    // Verification may have PRUNED the sendable a "Drafted a reply…" claim pointed at (the draft didn't
+    // actually exist in the account) — so re-reconcile the narrative against what survived, or the card would
+    // claim a draft with no Send button. Mutates synthesis/did/steps in place on the task.
+    if (updated) {
+      const before = { did: updated.did?.length || 0, syn: updated.synthesis };
+      claude.reconcileArtifactClaims(updated);
+      if (before.did !== (updated.did?.length || 0) || before.syn !== updated.synthesis) {
+        void store.recordEvent(email, "reconciled", { taskId, jobId: job.id, message: "Dropped a draft claim with no surviving draft to send" });
+      }
+    }
     await commitUser(email, profile, list);
     // Auto-run any FOLLOW-UP tasks the run spun off (distinct new obligations it discovered) — queue each so
     // Otto plans + works it just like a freshly-generated task. Bounded; they run on the next drain/kick.

@@ -1064,7 +1064,10 @@ export async function runTask(task: { title: string; why: string; source?: strin
       const kindName = lastCreatedDoc.kind === "spreadsheets" ? "Sheet" : lastCreatedDoc.kind === "presentation" ? "Slides" : "Doc";
       links = [...links, { label: lastCreatedDoc.label || `Open ${kindName}`, url: `https://docs.google.com/${lastCreatedDoc.kind}/d/${lastCreatedDoc.id}/edit` }].slice(0, 3);
     }
-    return { ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] };
+    // FINAL integrity pass — reconcile the narrative with the artifacts that actually survived (runs LAST,
+    // after both backstops above have had their chance to re-attach a real draft/doc). A "Drafted a reply…"
+    // claim with no sendable to show is a fabrication to the user, so it must not survive to the card.
+    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut }, createdDocIds: [...createdDocIds] });
   };
   try {
   for (let i = 0; i < MAX; i++) {
@@ -1279,6 +1282,41 @@ export async function runTask(task: { title: string; why: string; source?: strin
   }
 }
 
+/**
+ * Reconcile a run's NARRATIVE with the artifacts that actually SURVIVED. A claim that a reply/email/message
+ * was drafted is only truthful if there is a "sendable" to review + send it — Otto never sends, so the
+ * sendable IS the draft's only access path; no sendable means the user has no draft, and a "Drafted a reply
+ * to X" line with no Send button is a fabrication (reported live: "send email to mmachi" showed "Drafted a
+ * reply to Mmachi" with nothing to send). This can happen two ways: the sendable was dropped at finalize
+ * (an unresolved recipient — a bare first name), or live artifact verification pruned it (the draft the
+ * model claimed doesn't actually exist in the account). Either way, strip the unbacked claim; if nothing
+ * truthful remains, leave an honest "needs you" step instead of a hollow "Done for you".
+ *
+ * Pure + idempotent + exported — called at the end of the run (withTokens) AND again in the job layer after
+ * live verification prunes artifacts (jobs.ts). Deliberately NARROW: only draft/reply/email claims (where a
+ * sendable is the unambiguous proof) — it does not touch research/synthesis wording or doc claims (doc links
+ * carry their own validity checks in finalize).
+ */
+// An EMAIL/MESSAGE claim specifically — NOT document drafting ("Drafted the proposal doc" is backed by a
+// link, not a sendable, and is checked elsewhere). So: an inherently-message verb (replied/emailed/messaged),
+// OR a produce verb sitting right next to a message noun (reply/email/message/response/note).
+const DRAFT_CLAIM = /\b(replied|emailed|messaged)\b|\b(draft(?:ed)?|compos(?:e|ed)|prepared|wrote|sent)\b[^.]{0,40}\b(repl(?:y|ies)|e-?mails?|messages?|responses?|notes?)\b/i;
+export function reconcileArtifactClaims<T extends { synthesis?: string; did?: string[]; links?: TaskLink[]; sendables?: Sendable[]; steps?: TaskStep[] }>(o: T): T {
+  // Tolerate the WebTask shape too, where these are optional/undefined (the job layer passes a live task).
+  if ((o.sendables?.length ?? 0) > 0) return o; // there IS a draft to send → every draft claim is backed
+  const did = o.did || [];
+  const didHadClaim = did.some((d) => DRAFT_CLAIM.test(d));
+  if (didHadClaim) o.did = did.filter((d) => !DRAFT_CLAIM.test(d));
+  const synthHadClaim = !!o.synthesis && DRAFT_CLAIM.test(o.synthesis);
+  if (synthHadClaim) o.synthesis = "";
+  // If we removed a draft claim and nothing real is left to show (no other synthesis/did/link and no genuine
+  // user step), the run has nothing to hand back — say so honestly rather than present an empty "done" card.
+  if ((didHadClaim || synthHadClaim) && !o.synthesis && !(o.did?.length) && !(o.links?.length) && !(o.steps || []).some((s) => !s.synthetic)) {
+    o.steps = [...(o.steps || []), { text: "Otto couldn't draft this — open it and take it from here.", automatable: false }];
+  }
+  return o;
+}
+
 export function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[]): RunOutput {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
   const steps: TaskStep[] = rawSteps
@@ -1334,12 +1372,15 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
       summary: s?.summary ? String(s.summary).slice(0, 300) : undefined,
       when: s?.when ? String(s.when).slice(0, 120) : undefined,
     }))
-    // Artifact verification: a sendable must be COMPLETE enough to review — a Gmail send needs the draft
-    // id AND a visible recipient AND reviewable content; a calendar invite needs its event + attendees +
-    // what/when. A half-formed sendable is dropped (the draft still exists in Gmail; the user isn't shown
-    // a Send button whose contents they can't see).
+    // Artifact verification: a sendable must be COMPLETE enough to review. A Gmail send needs the draft id
+    // AND reviewable content (subject or body) — but NOT necessarily a visible "to": a REPLY draft usually
+    // has no explicit recipient (Gmail infers it from the thread being replied to), and GMAIL_SEND_DRAFT
+    // sends whatever the live draft contains, using the draft's own recipient. Requiring `to` here was
+    // silently dropping EVERY reply draft — the "draft reply isn't showing the reply" bug — so it's gone;
+    // the confirm dialog shows the recipient when known and falls back to "the recipient" when not. A
+    // calendar invite still needs its event + attendees + what/when.
     .filter((s: Sendable) =>
-      (s.app === "gmail" && !!s.draftId && !!s.to && !!(s.subject || s.body)) ||
+      (s.app === "gmail" && !!s.draftId && !!(s.subject || s.body)) ||
       (s.app === "slack" && !!s.channel && !!s.text) ||
       (s.app === "gcal" && !!s.eventId && !!s.attendees?.length && !!(s.summary || s.when)))
     // Never surface a Send button aimed at a FABRICATED recipient (example.com / placeholder) — the model

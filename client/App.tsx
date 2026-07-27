@@ -108,18 +108,16 @@ function Bullets({ text }: { text: string }) {
   return <ul className="bullets">{items.map((b, i) => <li key={i}>{b}</li>)}</ul>;
 }
 
-/** The Otto mark — a to-do list (three dots + lines) with a check sweeping through the last item.
- *  Uses currentColor so it inherits the brand text colour (and inverts in dark mode). */
+/** The Otto mark — a ring cut by the consent line. The LEFT half is solid (work Otto already did, done); the
+ *  RIGHT half is an open stroke (work still waiting on you); the vertical cobalt line between them is the
+ *  threshold — on this side Otto acted, on that side it stopped and left the decision to you. The ring
+ *  inherits currentColor (ink, inverts in dark mode); the line is always cobalt. */
 function Logo({ size = 22 }: { size?: number }) {
   return (
-    <svg className="logo" width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="3.7" cy="6" r="1.85" fill="currentColor" />
-      <circle cx="3.7" cy="12" r="1.85" fill="currentColor" />
-      <circle cx="3.7" cy="18" r="1.85" fill="currentColor" />
-      <rect x="7.6" y="4.75" width="10.4" height="2.5" rx="1.25" fill="currentColor" />
-      <rect x="7.6" y="10.75" width="11.6" height="2.5" rx="1.25" fill="currentColor" />
-      <rect x="7.6" y="16.75" width="3.3" height="2.5" rx="1.25" fill="currentColor" />
-      <path d="M10 16 L13.7 19.7 L21.6 10.2" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
+      <path d="M24 4 A20 20 0 0 0 24 44 Z" fill="currentColor" />
+      <path d="M24 6 A18 18 0 0 1 24 42" stroke="currentColor" strokeWidth="4" fill="none" />
+      <rect x="23" y="0" width="2" height="48" fill="#2F4DE0" />
     </svg>
   );
 }

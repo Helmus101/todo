@@ -376,14 +376,15 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
 app.post("/api/tasks", requireAuth, async (req, res) => {
   const title = String(req.body?.title || "").trim();
   if (!title) { res.status(400).json({ error: "title required" }); return; }
-  // No separate "clean up the title" pass anymore — that was a whole extra DeepSeek round-trip (and a
-  // "Cleaning up…" chip) BEFORE the task even started running. It goes in with the raw title and, when AI
-  // is available, is queued for REAL execution immediately; the run itself tightens a vague title as a
-  // side effect (see manualHint / RunOutput.title in claude.ts) instead of a separate step the user waits
-  // through first. Only when AI is unavailable/paused/over budget does it fall back to the old path: added
-  // unrefined, picked up by the background sweep's auto-refine once AI is back (jobs.ts).
+  // Refine the raw note into a crisp, specific task title UP FRONT (one quick call) so the card reads well
+  // immediately — "send email to mmachi excusing that the ai service wasnt working in weave" becomes
+  // "Email Mmachi apologizing for the Weave AI outage". This was previously left to the execution run as a
+  // side effect, but that isn't reliable (the run can defer, fail, or not return a title), so a vague raw
+  // title stuck around on the card. The execution run can still further sharpen it. When AI is
+  // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
-  req.session.tasks = tasks.addManual(req.session.tasks || [], title, null, !ready);
+  const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
+  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready);
   const added = req.session.tasks[0];
   if (ready) added.status = "queued";
   // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from

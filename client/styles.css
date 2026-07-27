@@ -4,29 +4,51 @@
    tiny status dots, flat blue accent. Shadows exist ONLY on overlays.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* Otto brand system — the "consent line": Otto's own (reversible) work reads quiet/graphite; anything that
+   needs a person reads cobalt. Colour is semantic, not decorative — see the 90/8/2 budget in the brand book.
+   Self-hosted fonts (SIL OFL) — drop the woff2 files in client/public/fonts/; robust fallbacks until then. */
+@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Medium.woff2") format("woff2"); font-weight: 500 600; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("/fonts/IBMPlexMono-Regular.woff2") format("woff2"); font-weight: 400 500; font-display: swap; }
+@font-face { font-family: "Archivo Expanded"; src: url("/fonts/Archivo-Expanded.woff2") format("woff2"); font-weight: 600 700; font-stretch: 125%; font-display: swap; }
+
 :root {
-  --bg: #fafafa;            /* app background */
-  --surface: #ffffff;       /* groups, rows, inputs */
-  --ink: #1d1d1f;           /* primary text */
-  --ink-2: #6e6e73;         /* secondary */
-  --ink-3: #aeaeb2;         /* tertiary / placeholder */
-  --line: rgba(0, 0, 0, 0.08);       /* hairline borders */
-  --line-soft: rgba(0, 0, 0, 0.05);  /* row dividers */
-  /* ONE accent color for the whole app — everything else is black / white / grey. */
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: rgba(37, 99, 235, 0.08);
-  --bg-2: #f1f2f4;          /* subtle grey fill (banners, chips) */
-  /* Semantic aliases all resolve to the accent or greyscale — NO extra hues. "Success/active" reads as the
-     accent; "attention/your-turn" reads as the accent; destructive/error reads as strong ink (never red). */
+  --bg: #EDEEE9;            /* paper — cool oat, the default ground */
+  --surface: #F7F7F4;       /* card — raised panels, review column */
+  --ink: #101317;           /* primary text, the mark, dark surfaces */
+  --ink-2: #5C6270;         /* secondary body text */
+  --ink-3: #8A8FA0;         /* graphite — Otto's own output, metadata */
+  --line: #D3D5CE;          /* 1px hairlines */
+  --line-soft: rgba(16, 19, 23, 0.06);  /* row dividers */
+  /* ONE accent — cobalt — means exactly one thing: NEEDS YOU. Nothing else is blue. Vermilion is destructive
+     confirm ONLY (delete / payment), never a marketing accent. Everything else is paper / ink / graphite. */
+  --accent: #2F4DE0;        /* cobalt */
+  --accent-hover: #2740C4;
+  --accent-soft: rgba(47, 77, 224, 0.08);
+  --bg-2: #E4E5E0;          /* subtle grey fill (banners, chips) */
+  --graphite: #8A8FA0;      /* alias — Otto's completed work */
+  --vermilion: #C6462F;     /* destructive confirm ONLY */
   --ok: var(--accent);
   --amber: var(--accent);
   --warn: var(--ink);
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.12); /* overlays/modals only */
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Inter, sans-serif;
-  --ease: cubic-bezier(0.25, 1, 0.5, 1);
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow-pop: 0 8px 30px rgba(16, 19, 23, 0.12); /* overlays/modals only */
+  --display: "Archivo Expanded", "Archivo", "Helvetica Neue", Arial, sans-serif; /* headings / wordmark — 600/700 */
+  --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; /* machine output: counts, spend, state */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Dark mode ships day one — a tool people leave open at 7am and 11pm. Token-level so the whole app adapts;
+   cobalt is lifted to --accent value below for AA on ink. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0B0D10; --surface: #16191F; --ink: #EDEEE9; --ink-2: #A9AEB8; --ink-3: #8A8FA0;
+    --line: #262B33; --line-soft: rgba(255, 255, 255, 0.06);
+    --accent: #5C79FF; --accent-hover: #7089FF; --accent-soft: rgba(92, 121, 255, 0.14); --bg-2: #1B1F26;
+    --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.5);
+  }
 }
 
 /* ─── Base ─────────────────────────────────────────────────────────────────── */
@@ -65,8 +87,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 
 /* ─── Brand ────────────────────────────────────────────────────────────────── */
-.brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; font-size: 16px; letter-spacing: -0.01em; color: var(--ink); }
-.logo { color: var(--accent); flex: none; }
+.brand { display: inline-flex; align-items: center; gap: 9px; font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); }
+.logo { color: var(--ink); flex: none; } /* ring inherits ink; the consent line inside the mark is always cobalt */
 
 /* ─── Buttons — 3 flat variants: default (secondary), primary, ghost ───────── */
 .btn {
@@ -79,13 +101,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   transition: background 140ms var(--ease), border-color 140ms var(--ease), color 140ms var(--ease), opacity 140ms var(--ease);
   white-space: nowrap; text-decoration: none; user-select: none;
 }
-.btn:hover { background: #f5f5f7; }
-.btn:active { background: #ededf0; }
+.btn:hover { background: var(--bg-2); }
+.btn:active { background: var(--line); }
 .btn:disabled { opacity: 0.45; cursor: default; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; } /* the irreversible act — cobalt */
 .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--accent); }
 .btn.ghost:hover { background: var(--accent-soft); }
+/* Destructive confirm ONLY (delete / payment) — vermilion, never a marketing accent. */
+.btn.danger { background: var(--vermilion); border-color: var(--vermilion); color: #fff; }
+.btn.danger:hover { background: #b03d29; border-color: #b03d29; }
 .btn.xs { height: 30px; padding: 0 11px; font-size: 12.5px; border-radius: 7px; }
 .btn.big { height: 46px; padding: 0 22px; font-size: 15px; border-radius: 10px; transition: background 140ms var(--ease), border-color 140ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease); }
 .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(37, 99, 235, 0.28); }
@@ -101,7 +126,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   min-height: 100vh; display: flex; flex-direction: column; gap: 16px;
   align-items: center; justify-content: center; padding: 24px; text-align: center;
 }
-.screen h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.screen h1 { font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -0.015em; }
 .screen .sub { color: var(--ink-2); max-width: 420px; }
 .warn { color: var(--warn); font-size: 13px; max-width: 420px; }
 .boot { opacity: 0.85; }
@@ -154,10 +179,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
 .list-wrap { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; }
 .dash-head { margin-bottom: 36px; }
-.list-head { font-size: 34px; font-weight: 680; letter-spacing: -0.035em; line-height: 1.15; }
+.list-head { font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
 .list-head span { color: var(--ink); }
-.list-status { margin-top: 10px; font-size: 13.5px; color: var(--ink-3); }
-.list-status b { font-weight: 600; color: var(--ink-2); }
+/* Machine output — counts, queue state, spend — is mono per the brand (if a human wrote it, it isn't mono). */
+.list-status { margin-top: 10px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; color: var(--ink-3); }
+.list-status b { font-weight: 500; color: var(--ink-2); }
 .scan-note { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; color: var(--ink-3); }
 .scan-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s infinite; }
 
@@ -201,7 +227,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .empty-mark { width: 58px; height: 58px; margin-bottom: 8px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); }
 .empty-mark.done { background: var(--bg-2); }
 .empty-check { font-size: 24px; font-weight: 700; color: var(--ink-3); }
-.empty-state h3 { font-size: 18px; font-weight: 680; letter-spacing: -0.02em; }
+.empty-state h3 { font-family: var(--display); font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
 .empty-state p { font-size: 13.5px; color: var(--ink-2); line-height: 1.6; max-width: 360px; margin: 2px 0 14px; }
 
 /* ─── Add task — clean "+ Add task" row (Minimalist-style) ─────────────────── */
@@ -423,7 +449,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .ctx-toggle:hover { color: var(--ink-2); }
 .ctx { padding-top: 10px; }
-.ctx-src { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+.ctx-src { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
 
 .actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
 .actions .actions-rest { margin-left: auto; }
@@ -436,13 +462,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   animation: fadeIn 0.3s var(--ease);
 }
 .connect-mark { width: 64px; height: 64px; margin-bottom: 8px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); }
-.connect-card h2 { font-size: 22px; font-weight: 720; letter-spacing: -0.025em; }
+.connect-card h2 { font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -0.015em; }
 .connect-card p { font-size: 14px; color: var(--ink-2); line-height: 1.6; max-width: 400px; }
 .connect-card .btn { margin-top: 12px; }
 
 /* ─── Completed / skeleton ─────────────────────────────────────────────────── */
 .completed-section { margin-top: 32px; }
-.completed-head { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+.completed-head { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
 
 /* Loading screen — one clear "loading" state so the whole list arrives at once (no half-populated flash). */
 .loading-screen { animation: fadeIn 0.2s var(--ease); }
@@ -451,7 +477,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .spinner.sm { width: 16px; height: 16px; border-width: 2px; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .card.skel { pointer-events: none; }
-.skel-box { display: block; border-radius: 4px; background: linear-gradient(90deg, #f0f0f2 25%, #e7e7ea 50%, #f0f0f2 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+/* NOTE: the brand book prefers mono status text ("Reading 340 messages…") over a shimmer — swap this for
+   that when the two-column layout lands. For now, keep the shimmer ON-PALETTE so it doesn't clash in dark mode. */
+.skel-box { display: block; border-radius: 4px; background: linear-gradient(90deg, var(--bg-2) 25%, var(--line) 50%, var(--bg-2) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
 .skel-pill { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .skel-line { height: 13px; margin-bottom: 7px; }
 .skel-line.sm { height: 10px; margin: 0; }
@@ -460,7 +488,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 /* ─── Settings — flat, minimalist; sections divided by whitespace + a hairline ─ */
 .settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; }
-.settings-title { font-size: 32px; font-weight: 680; letter-spacing: -0.035em; margin-bottom: 12px; }
+.settings-title { font-family: var(--display); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
 .settings { display: flex; flex-direction: column; }
 .settings-sec { padding: 26px 0; border-top: 1px solid var(--line-soft); }
 .settings-sec:first-of-type { border-top: none; padding-top: 20px; }

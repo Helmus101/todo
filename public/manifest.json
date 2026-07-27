@@ -4,8 +4,8 @@
   "description": "Otto reads your inbox, calendar and Drive, then quietly does the to-dos it safely can — drafting replies, prepping docs, organizing tasks — and surfaces only what needs you.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0c0c0d",
-  "theme_color": "#0c0c0d",
+  "background_color": "#EDEEE9",
+  "theme_color": "#EDEEE9",
   "orientation": "portrait",
   "icons": [
     {

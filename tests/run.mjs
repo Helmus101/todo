@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday } from "../server/tasks.ts";
-import { parseGenerated, finalize } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims } from "../server/claude.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, usageCostUsd, tzOf, isValidTz, isPeakHourUtc } from "../shared/types.ts";
@@ -249,6 +249,15 @@ check("links with no steps/sendables get a Review checklist", fin1.steps.length 
 const fin2 = finalize({ context: "c", synthesis: "Drafted a reply to Sarah.", steps: [], links: [],
   sendables: [{ app: "gmail", label: "Send reply", to: "s@a.com", subject: "Re", body: "hi", draftId: "r-1234567890" }] }, "", []);
 check("sendable needs no backstop step", fin2.steps.length === 0 && fin2.sendables.length === 1);
+// A REPLY draft has no explicit "to" (Gmail infers it from the thread) — it must STILL surface as a
+// sendable, or the drafted reply never shows a Send button ("draft reply isn't showing the reply" bug).
+const finReply = finalize({ context: "c", synthesis: "Drafted a reply.", steps: [], links: [],
+  sendables: [{ app: "gmail", label: "Send reply", subject: "Re: hi", body: "thanks!", draftId: "r-99" }] }, "", []);
+check("reply draft without `to` still surfaces a sendable", finReply.sendables.length === 1 && finReply.sendables[0].draftId === "r-99");
+// But a placeholder recipient is still dropped (never offer to send into the void).
+const finPh = finalize({ context: "c", synthesis: "Drafted.", steps: [], links: [],
+  sendables: [{ app: "gmail", label: "Send", to: "someone@example.com", subject: "s", body: "b", draftId: "r-1" }] }, "", []);
+check("placeholder recipient still dropped", finPh.sendables.length === 0);
 const fin3 = finalize({ context: "c", synthesis: "Booked nothing.", steps: [{ text: "Pick a date", automatable: false }], links: [docLink], sendables: [] }, "", []);
 check("real steps are never overwritten", fin3.steps.length === 1 && fin3.steps[0].text === "Pick a date");
 let finThrew = false;
@@ -259,6 +268,33 @@ const fin4 = finalize({ context: "c", synthesis: "Created the doc.", did: ["Crea
 check("did bullets kept, planning prose dropped, dashes stripped", fin4.did.length === 2 && fin4.did[1] === "Drafted a reply to Sam");
 const fin5 = finalize({ context: "c", synthesis: "Made a doc.", steps: [], links: [{ label: "Open", url: docLink.url }], sendables: [] }, "", []);
 check("junk link label relabeled by kind", /Google Doc/i.test(fin5.links[0].label));
+
+// ── Reconcile draft claims with surviving artifacts (the "said it drafted, didn't" bug) ──
+section("reconcile artifact claims");
+// A "Drafted a reply" claim with NO sendable is a fabrication — strip it.
+const rc1 = reconcileArtifactClaims({ synthesis: "Drafted a reply to Mmachi apologizing about the AI service.", did: ["Drafted a reply to Mmachi apologizing that the AI service on Weave wasn't working"], links: [], sendables: [], steps: [] });
+check("unbacked draft claim stripped from did", rc1.did.length === 0);
+check("unbacked draft claim stripped from synthesis", rc1.synthesis === "");
+check("honest step added when nothing real remains", rc1.steps.length === 1 && !rc1.steps[0].automatable);
+// WITH a sendable, the same claim is truthful — leave it untouched.
+const rc2 = reconcileArtifactClaims({ synthesis: "Drafted a reply to Mmachi.", did: ["Drafted a reply to Mmachi"], links: [], sendables: [{ app: "gmail", label: "Send", to: "m@a.com", draftId: "r-1", body: "x" }], steps: [] });
+check("backed draft claim kept when a sendable exists", rc2.did.length === 1 && rc2.synthesis === "Drafted a reply to Mmachi.");
+// Non-draft work (a real doc with a link) is never touched by this pass.
+const rc3 = reconcileArtifactClaims({ synthesis: "Built the Q3 doc.", did: ["Built the Q3 budget doc"], links: [{ label: "Q3 doc", url: "https://docs.google.com/document/d/x" }], sendables: [], steps: [] });
+check("non-draft claim untouched", rc3.did.length === 1 && rc3.synthesis === "Built the Q3 doc.");
+// FALSE-POSITIVE GUARD: "Drafted the proposal doc" is DOCUMENT drafting (backed by a link, not a sendable) —
+// the message-claim regex must NOT strip it just because it contains the word "drafted".
+const rc3b = reconcileArtifactClaims({ synthesis: "Drafted the proposal document.", did: ["Drafted the proposal doc", "Composed a one-page summary"], links: [{ label: "Proposal", url: "https://docs.google.com/document/d/z" }], sendables: [], steps: [] });
+check("document drafting not mistaken for an email claim", rc3b.did.length === 2 && rc3b.synthesis === "Drafted the proposal document.");
+// A draft claim stripped but OTHER real output remains → no hollow step added.
+const rc4 = reconcileArtifactClaims({ synthesis: "Drafted a reply.", did: ["Drafted a reply", "Created the Q3 doc"], links: [{ label: "d", url: "https://docs.google.com/document/d/y" }], sendables: [], steps: [] });
+check("no honest step when other real output survives", rc4.did.length === 1 && rc4.did[0] === "Created the Q3 doc" && !rc4.steps.length);
+// Tolerates the WebTask shape (undefined arrays) — the job-layer call path.
+const rc5 = reconcileArtifactClaims({ synthesis: "Drafted a reply to Mmachi.", did: undefined, links: undefined, sendables: undefined, steps: undefined });
+check("tolerates undefined arrays (WebTask shape)", rc5.synthesis === "" && Array.isArray(rc5.steps) && rc5.steps.length === 1);
+// A genuine user step already present → stays honest without piling on another.
+const rc6 = reconcileArtifactClaims({ synthesis: "Drafted it.", did: ["Drafted the message"], links: [], sendables: [], steps: [{ text: "Pick the recipient", automatable: false }] });
+check("existing real step preserved, none added", rc6.steps.length === 1 && rc6.steps[0].text === "Pick the recipient");
 
 // ── Task-scoped toolset ───────────────────────────────────────────────────────
 section("scopeTools");
