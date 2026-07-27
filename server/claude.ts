@@ -758,6 +758,14 @@ const RUN_SYSTEM =
   `CREATE it within your FIRST THREE tool calls, then refine/fill it with what you learn. For research tasks: ` +
   `web_search for the facts, then CREATE A GOOGLE DOC OR SHEET with the findings — a research task without a ` +
   `produced artifact is NOT done. An imperfect created artifact beats a perfect plan every time.\n` +
+  `CREATING A NEW DOC/SHEET/SLIDES NEEDS NO APPROVAL — EVER. It is a reversible, auto-allowed action and it is ` +
+  `YOUR job. If the task's deliverable is a document (compile/gather/assemble/build a doc, sheet, deck, tracker, ` +
+  `list, brief), you MUST call the create tool and write the real content into it THIS run. NEVER leave "create ` +
+  `the doc", "compile into a doc", or — worst of all — "Approve creating a Google Doc" as a step for the user: ` +
+  `that is not a decision only they can make, it is the work itself, and asking permission to create a new ` +
+  `document is always wrong. (ONLY editing a document the user already owns needs approval — creating a brand ` +
+  `new one never does.) Reading email/Drive for context is progress toward this, not a substitute for it — ` +
+  `after you have gathered enough, CREATE the artifact; don't stop at "retrieved the context".\n` +
   `RESEARCH MEANS SEVERAL SEARCHES, NOT ONE — "find/research X" is not satisfied by a single web_search and a ` +
   `container. Search enough to name SPECIFIC real options (actual program/vendor/product names, not ` +
   `categories), each with the concrete facts that matter (deadline, price, link, eligibility — whatever the ` +
@@ -1039,6 +1047,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // verb list in finalize(): if a phrasing counts as doable-therefore-enforce-it-now, a claim using that
   // same phrasing after the fact must also count as a claim needing proof.
   const CLAIM_VERBS = /\b(drafted|created|updated|filled|composed|wrote|added a|built|compiled|researched|gathered|collected|found (?:a|the|\d)|identified|prepared)\b/i;
+  // A step that describes CONSTRUCTING a new document artifact (doc/sheet/deck) — used to catch a run that
+  // left artifact creation as a step (incl. the "Approve creating a Google Doc" dodge) instead of doing it.
+  // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
+  // doc genuinely needs approval).
+  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?)\b/i;
   let wroteAny = false;
   // A task genuinely doing open-ended research (web_search called at least once) is NOT "read-only drift"
   // even though it hasn't written anything yet — it needs a few rounds of searching BEFORE it has enough
@@ -1098,7 +1111,10 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // a focus run does one specific thing, and a revision's non-write is caught by the fabricated-revision
     // gate. Observed live: a vacuous "follow up on sent email" task ran a full 8 rounds / 137k tokens only
     // to conclude nothing was needed — this caps that at ~5 rounds.
-    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb) break;
+    // …but NOT if we've already bounced a submit this run (finishBacks): that means the model reached a
+    // conclusion and is being pushed to actually DO the work (e.g. create the doc it tried to defer) — give
+    // it the remaining rounds to comply instead of bailing it into the rescue with the work still undone.
+    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !finishBacks) break;
     // Circuit breaker: a run that has already burned the token ceiling stops here — another round only
     // deepens the overspend. The rescue pass below salvages whatever was gathered into an honest result.
     if (overTokenCeiling()) { console.warn(`${new Date().toISOString()} [ai] runTask hit token ceiling (${tokIn + tokOut}) — stopping at round ${i}`); break; }
@@ -1172,6 +1188,14 @@ export async function runTask(task: { title: string; why: string; source?: strin
           //     no link/sendable AND no write ever succeeded this run — the "it just prepares stuff" failure.
           const claimsArtifact = CLAIM_VERBS.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`);
           const hasArtifact = draft.links.length > 0 || draft.sendables.length > 0 || wroteAny;
+          // (d) DEFERRED ARTIFACT CREATION: the task's deliverable is a doc/sheet/deck, but instead of CREATING
+          //     it the model left a STEP to create it — often dodging the "do it yourself" rule by phrasing it
+          //     as "Approve creating a new Google Doc" (a fake user-approval step). Creating a NEW artifact is
+          //     an auto-allowed action that needs NO approval, so it must be done this run, never handed back.
+          //     Only fires when nothing was actually created (no link, no write) — editing an EXISTING doc
+          //     (update/edit/revise wording) is deliberately NOT matched, since that legitimately needs approval.
+          const defersCreation = !draft.links.length && !wroteAny && !hasArtifactIds &&
+            draft.steps.some((s) => !s.done && CREATE_ARTIFACT_STEP.test(s.text));
           if (fabricatedRevision) {
             content = "REJECTED: you're revising an artifact that already exists, but you have not made any " +
               "update/write tool call this run. Call the update tool on the id listed under 'ALREADY CREATED " +
@@ -1186,6 +1210,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
             content = "REJECTED: your report claims you drafted/created/updated something, but no artifact " +
               "(draft, doc, sheet, event) was actually produced and no write succeeded this run. Either DO it " +
               "now with the real tool, or report honestly what you found without claiming work you didn't do.";
+          } else if (defersCreation && finishBacks < 2) {
+            finishBacks++;
+            content = "REJECTED: the deliverable here is a document, and you left CREATING it as a step instead " +
+              "of doing it. Creating a NEW Google Doc/Sheet/Slides needs NO approval — it is YOUR job, not the " +
+              "user's (never phrase it as 'approve creating a doc'). Call the create tool NOW " +
+              "(GOOGLEDOCS_CREATE_DOCUMENT / GOOGLESHEETS_CREATE_GOOGLE_SHEET1 / GOOGLESLIDES_CREATE_PRESENTATION), " +
+              "write the actual compiled content INTO it, add a links entry with its URL, THEN submit.";
           } else {
             // did[] must be backed by a real write: if nothing was written, drop bullets that claim creation.
             if (!wroteAny) draft.did = draft.did.filter((d) => !CLAIM_VERBS.test(d));
@@ -1437,7 +1468,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // "did" = things PRODUCED, not the looking that preceded them. A bullet that merely describes investigation
   // ("Searched Gmail for X", "Checked Contacts", "Looked through Drive", "Scrolled contacts") is a MEANS, not
   // a result — drop it. Real wins start with produce-verbs (drafted/created/wrote/updated/added/prepared/…).
-  const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted)\b/i;
+  const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted|retrieved|retrieve|fetched|fetch|pulled up|located)\b/i;
   const did: string[] = (Array.isArray(out?.did) ? out.did : [])
     .map((d: any) => String(d || "").trim().replace(/^\s*[-•*]\s*/, ""))
     .filter((d: string) => d.length >= 6 && !PLANNING.test(d) && !DEAD_END.test(d) && !PLACEHOLDER.test(d) && !INVESTIGATIVE.test(d))
