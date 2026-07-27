@@ -734,6 +734,9 @@ const RUN_SYSTEM =
   `CRITICAL: NEVER CLAIM WORK YOU DIDN'T DO. If you say you "created a doc" or "drafted an email", you MUST ` +
   `actually call the create/draft tool and include the result in "links" or "sendables". Claims without real ` +
   `artifacts will be rejected. Only report what you ACTUALLY produced through tool calls.\n` +
+  `DRAFTING EMAIL SUMMARIES TO THE USER is VALID — when you research and compile findings, you SHOULD draft ` +
+  `an email addressed TO the user (their own email) with the summary. This is how you present research results. ` +
+  `Use GMAIL_CREATE_EMAIL_DRAFT with the user's email as the recipient, and include it in "sendables".\n` +
   `PREP EVEN WHEN BLOCKED — if you can't fully DELIVER because one piece is missing (a recipient/contact, a ` +
   `login, an approval, a file), still PRODUCE what you can: write the actual message/greeting/content text. ` +
   `BUT NEVER invent the missing piece to force completion — if you do NOT have the person's REAL email/contact, ` +
@@ -796,9 +799,7 @@ const RUN_SYSTEM =
   `footer, sender contains "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", a Gmail promotions/ ` +
   `social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something — ` +
   `note in "synthesis" that it's mass mail and needs no reply, and stop there.\n` +
-  `NO AUTONOMOUS EMAIL, EVER — not even to the user's own inbox. If something upcoming needs their attention ` +
-  `(a meeting/event in the next ~48h, travel/day-of logistics), put the brief (who/when/where, agenda, prep ` +
-  `points, doc links) directly in "synthesis"/"context" so they see it in the app — never send an email for it.\n` +
+  `NO AUTONOMOUS EMAIL, EVER — not even to the user's own inbox. Never draft an email addressed to the user or to summarize findings for the user — put summary briefs directly in "synthesis"/"context" or in a Google Doc/Sheet artifact. Never create steps like 'Draft an email to the user'.\n` +
   `CALENDAR INVITES: create/update the event freely — but it lands on the user's calendar SILENTLY, with NO ` +
   `emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; ` +
   `instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the ` +
@@ -1052,7 +1053,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // write to back it up (the "it just says it did the research" failure). Kept in sync with the DOABLE
   // verb list in finalize(): if a phrasing counts as doable-therefore-enforce-it-now, a claim using that
   // same phrasing after the fact must also count as a claim needing proof.
-  const CLAIM_VERBS = /\b(drafted|created|updated|filled|composed|wrote|added a|built|compiled|assembled|produced|generated|populated|put together|set up|organized|researched|gathered|collected|found (?:a|the|\d)|identified|prepared)\b/i;
+  const CLAIM_VERBS = /\b(drafted|created|updated|filled|composed|wrote|added a|built|compiled|assembled|produced|generated|populated|put together|set up|organized|researched|gathered|collected|found (?:a|the|\d)|identified|prepared|summar(?:ized|y))\b/i;
   // A step that describes CONSTRUCTING a new document artifact (doc/sheet/deck) — used to catch a run that
   // left artifact creation as a step (incl. the "Approve creating a Google Doc" dodge) instead of doing it.
   // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
@@ -1277,7 +1278,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
           // read) — only a REAL successful CREATE call's response id counts. Verified here from the actual
           // tool result, never from the model's narration of what it did.
           if (isRealWrite && /^GOOGLE(DOCS|SHEETS|SLIDES)_CREATE/i.test(toolName)) {
-            const idMatch = /"(?:document|spreadsheet|presentation)?Id"\s*:\s*"([\w-]{15,})"/i.exec(String(r));
+            // Try multiple patterns for the ID - Composio responses vary in format
+            const idMatch = /"(?:document|spreadsheet|presentation)?Id"\s*:\s*"([\w-]{15,})"/i.exec(String(r)) ||
+                            /"id"\s*:\s*"([\w-]{15,})"/i.exec(String(r)) ||
+                            /"spreadsheetId"\s*:\s*"([\w-]{15,})"/i.exec(String(r)) ||
+                            /"documentId"\s*:\s*"([\w-]{15,})"/i.exec(String(r)) ||
+                            /"presentationId"\s*:\s*"([\w-]{15,})"/i.exec(String(r));
             if (idMatch) {
               createdDocIds.add(idMatch[1]);
               const kind = /^GOOGLESHEETS_/i.test(toolName) ? "spreadsheets" : /^GOOGLESLIDES_/i.test(toolName) ? "presentation" : "document";
@@ -1397,6 +1403,8 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
       options: Array.isArray(s?.options) ? s.options.map((o: any) => String(o).trim()).filter(Boolean).slice(0, 4) : undefined,
     }))
     .filter((s: TaskStep) => s.text)
+    // Filter out illegitimate self-email steps ("Draft an email summary to the user", "Email yourself")
+    .filter((s: TaskStep) => !/\b(draft|send|write|email)\b[^.]{0,30}\b(email|summary|update|findings)\b[^.]{0,30}\b(to (the )?user|to yourself|to me)\b/i.test(s.text))
     .slice(0, 6); // fewer, tighter steps — a short list reads better than an exhaustive one
   // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.
   const kindLabel = (url: string): string =>
