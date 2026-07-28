@@ -33,6 +33,10 @@ const PLAN_ONLY_OVERRIDE =
   `facts the user would otherwise have to look up themselves — never a restated version of the task title, ` +
   `and never a vague generality ("do some research", "check the details"). If a connected app plausibly ` +
   `relates to the task and you did NOT check it, that is a gap in the plan, not a shortcut.` +
+  `\n\n"steps" MUST NEVER BE EMPTY — you never actually execute anything (no send, no calendar write, no send-to-` +
+  `user), so the user's next action is the ONLY outcome of this run. Even after creating a resource doc, still ` +
+  `list what the user should do with it (review it, decide something, take the real-world next step). Submitting ` +
+  `with zero steps is a rejected run, never a legitimate "nothing left to do".` +
   `\n\nCRITICAL: Every step in "steps" MUST be directly related to the task title. Do NOT generate unrelated ` +
   `follow-up tasks, project tasks, or separate initiatives. For example, if the task is "Find summer clothes", ` +
   `steps should be about researching styles, finding stores, checking prices — NOT about college apps, ` +
@@ -1259,6 +1263,15 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "research. Read whatever's relevant (the Gmail thread / Calendar event / Drive doc behind this, " +
                 "or any other connected app that plausibly bears on it) before you submit. If you genuinely " +
                 "checked and none apply, say so explicitly in \"context\" — but only after actually trying.";
+            } else if (!draft.steps.length && finishBacks < 2) {
+              // Otto never actually executes (plan-only), so "steps" is the ONE thing every task must leave
+              // the user — even after creating a resource doc, there's still something for them to do with
+              // it (review it, act on it, decide something). Zero steps reads as "did nothing useful" even
+              // when research happened, so never accept an empty plan.
+              finishBacks++;
+              content = "REJECTED: \"steps\" is empty. Every task must leave the user at least one concrete " +
+                "next action — even after creating a resource doc, list what they should do with it (review it, " +
+                "make a decision, take the next real-world step). An empty steps[] is never acceptable here.";
             } else {
               // A "did" bullet claiming creation is legitimate ONLY if a resource-create call actually
               // succeeded this run (wroteAny) — otherwise it's the same fabrication risk execution mode

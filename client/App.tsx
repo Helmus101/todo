@@ -1385,17 +1385,6 @@ function TermsBody() {
   );
 }
 
-const SOURCE: Record<string, string> = {
-  gmail: "Gmail", calendar: "Calendar", googlecalendar: "Calendar", manual: "You",
-  slack: "Slack", discord: "Discord", twitter: "X", linkedin: "LinkedIn",
-  github: "GitHub", linear: "Linear", jira: "Jira", notion: "Notion",
-  todoist: "Todoist", asana: "Asana", trello: "Trello", clickup: "ClickUp",
-  perplexity: "Perplexity", calendly: "Calendly", hubspot: "HubSpot", airtable: "Airtable",
-  googledocs: "Docs", googledrive: "Drive", googlesheets: "Sheets", googleslides: "Slides",
-  pronote: "Pronote",
-};
-/** A friendly label for a task's source app — known apps get an emoji/name, anything else is Title-cased. */
-const sourceLabel = (s: string) => SOURCE[s] || (s ? s[0].toUpperCase() + s.slice(1) : "Task");
 
 /** The person-profile editor (lives in the Settings page): about + preferences + people + projects.
  *  Otto fills it in as it works; it's injected into how tasks are chosen + done. Always expanded here. */
@@ -1911,16 +1900,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{d}</li>)}</ul> : null}
               {task.links?.length ? (
                 <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
-              ) : null}
-            </section>
-          ) : null}
-          {(task.context || task.why || task.evidence?.length) ? (
-            <section className="ctx">
-              <h4>Brief</h4>
-              <div className="ctx-src">{sourceLabel(task.source)}</div>
-              <Bullets text={task.context || task.why} />
-              {task.evidence?.length ? (
-                <ul className="links src-links">{task.evidence.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
               ) : null}
             </section>
           ) : null}

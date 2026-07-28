@@ -467,11 +467,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 @keyframes rewriteSweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
 
-/* Brief (task context) */
-.ctx { padding-top: 14px; }
-.ctx h4 { margin: 0 0 8px 0; }
-.ctx-src { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
-
 .actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
 .actions .actions-rest { margin-left: auto; }
 .actions-rest { display: flex; justify-content: flex-end; gap: 8px; }
