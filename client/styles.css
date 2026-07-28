@@ -476,8 +476,22 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .ctx { padding-top: 10px; }
 .ctx-src { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
 
+.subtasks { margin-top: 14px; }
+.subtasks h4 { margin: 0 0 8px 0; }
+.subtask-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.subtask-list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 14px; }
+.subtask-list input[type="checkbox"] { cursor: pointer; flex-shrink: 0; }
+.subtask-title { flex: 1; }
+.subtask-list li.done .subtask-title { text-decoration: line-through; color: var(--ink-3); }
+.badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 3px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; flex-shrink: 0; }
+.badge.user-action { background: rgba(16, 19, 23, 0.08); color: var(--ink-3); }
+
 .brief { margin-top: 14px; }
 .brief h4 { margin: 0 0 8px 0; }
+.outline { margin-top: 10px; }
+.outline-label { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+.outline-list { margin: 0 0 0 20px; padding: 0; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.outline-list li { margin-bottom: 4px; }
 .research-items { margin-top: 10px; }
 .research-label { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
 .research-snippet { font-size: 12px; color: var(--ink-3); display: inline; }

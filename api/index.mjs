@@ -3428,6 +3428,12 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
   await commit(req);
   res.json(p);
 });
+app.post("/api/settings/daily-briefing", requireAuth, async (req, res) => {
+  const p = req.session.profile ||= emptyProfile();
+  p.dailyBriefingEnabled = req.body?.enabled === true;
+  await commit(req);
+  res.json(p);
+});
 app.post("/api/settings/smoke", requireAuth, rateLimit(3, 6e4), async (req, res) => {
   try {
     const results = await runSmokeTest(req.session.user);

@@ -548,10 +548,10 @@ export function App() {
                 </div>
               );
             }
-            // Grouped by focus to eliminate overwhelm: Top 3 as "Focus Today", followed by "Later" and "Can wait".
-            const focusToday = shown.slice(0, 3);
-            const laterToday = shown.slice(3, 6);
-            const canWait = shown.slice(6);
+            // Grouped by Eisenhower quadrants: "Do" (urgent+important) → Focus Today, "Schedule" (important) → Later Today, rest → Can wait
+            const focusToday = shown.filter(t => t.quadrant === "do").slice(0, 3);
+            const laterToday = shown.filter(t => t.quadrant === "schedule").slice(0, 3);
+            const canWait = shown.filter(t => t.quadrant === "delegate" || t.quadrant === "later");
 
             return (
               <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
@@ -1918,10 +1918,22 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           ) : (cStatus === "queued" || cStatus === "executing") ? (
             <section><h4>What Otto did</h4><p className="muted">{cStatus === "queued" ? "Queued — starting shortly…" : "Working on it now…"}</p></section>
           ) : null}
-          {task.brief?.context || task.brief?.research?.length ? (
+          {task.subtasks?.length ? (
+            <section className="subtasks">
+              <h4>Next Steps</h4>
+              <ul className="subtask-list">{task.subtasks.map((s, i) => <li key={i} className={s.automatable ? "automatable" : "user"}><input type="checkbox" checked={s.done || false} onChange={() => { s.done = !s.done; setTask({ ...task }); }} /><span className="subtask-title">{s.title}</span>{s.automatable ? <span className="badge">AI can help</span> : <span className="badge user-action">You decide</span>}</li>)}</ul>
+            </section>
+          ) : null}
+          {task.brief?.context || task.brief?.research?.length || task.brief?.outline?.length ? (
             <section className="brief">
               <h4>Brief</h4>
               {task.brief.context && <Bullets text={task.brief.context} />}
+              {task.brief.outline?.length ? (
+                <div className="outline">
+                  <div className="outline-label">How to approach this</div>
+                  <ol className="outline-list">{task.brief.outline.map((o, i) => <li key={i}>{o}</li>)}</ol>
+                </div>
+              ) : null}
               {task.brief.research?.length ? (
                 <div className="research-items">
                   <div className="research-label">Research</div>

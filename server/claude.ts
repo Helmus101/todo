@@ -16,7 +16,15 @@ const PLAN_ONLY_OVERRIDE =
   `steps that describe creating/drafting/sending something (mark them automatable=true, since Otto WILL do ` +
   `them once you click), so the user has an exact plan for what Otto will do and in what order. Put the facts ` +
   `you found in "context", and a one-line "synthesis" describing the plan, e.g. "Researched X and broke it ` +
-  `into 4 steps." Do not claim to have created, drafted, sent, or updated anything — you didn't.`;
+  `into 4 steps." Do not claim to have created, drafted, sent, or updated anything — you didn't.` +
+  `\n\nCRITICAL: Every step in "steps" MUST be directly related to the task title. Do NOT generate unrelated ` +
+  `follow-up tasks, project tasks, or separate initiatives. For example, if the task is "Find summer clothes", ` +
+  `steps should be about researching styles, finding stores, checking prices — NOT about college apps, ` +
+  `restaurant partnerships, or any other unrelated project. Stay strictly focused on the specific task title.` +
+  `\n\nINCLUDE LINKS: When you recommend specific stores, brands, products, or resources in your steps or ` +
+  `context, ALWAYS include the actual URLs you found via web_search. Do not just mention names without links. ` +
+  `For example: "Research summer styles at [Zara](https://www.zara.com) and [H&M](https://www.hm.com)" or ` +
+  `"Check [Uniqlo's summer collection](https://www.uniqlo.com) for lightweight options."`;
 import { webSearch } from "./websearch";
 
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
@@ -645,7 +653,7 @@ export async function pickOneTask(
   } catch { return null; }
 }
 
-export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; }
+export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; brief?: { context?: string; research?: Array<{ title: string; url: string; snippet?: string }> } }
 
 /**
  * Turn a user's rough to-do note into a crisp, actionable task (keeps their intent — never invents
@@ -688,6 +696,105 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
       importance: clamp01(out.importance ?? 0.7),
     };
   } catch { return null; }
+}
+
+/**
+ * Generate a contextual brief for a task: research the topic and compile context + curated research.
+ * Returns null if research fails (no internet, etc).
+ */
+export async function generateBrief(task: { title: string; why: string }): Promise<{ context?: string; research?: Array<{ title: string; url: string; snippet?: string }> } | null> {
+  try {
+    const searchQuery = `${task.title} ${task.why}`.slice(0, 100);
+    const results = await webSearch(searchQuery);
+    if (!results.length) return null;
+
+    const client = deepseekClient();
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: "deepseek-v4-flash",
+      max_tokens: 300,
+      temperature: 0.5,
+      messages: [{
+        role: "user",
+        content: `Task: "${task.title}"\nWhy: "${task.why}"\n\nWrite a SHORT 2-3 sentence context explaining what the user should know to complete this task. Be specific and actionable. Do NOT repeat the task title.`,
+      }],
+    }));
+
+    const context = String(res.choices?.[0]?.message?.content || "").trim();
+    return {
+      context: context.slice(0, 300) || undefined,
+      research: results.slice(0, 3).map(r => ({ title: r.title, url: r.url, snippet: r.snippet })),
+    };
+  } catch { return null; }
+}
+
+/**
+ * Deeply research a manually-added task: search the web, understand what it means,
+ * generate subtasks (both user and AI actionable), and create a helpful outline.
+ */
+export async function enrichManualTask(task: { title: string; why: string }): Promise<{ context: string; subtasks: Array<{ title: string; why: string; automatable: boolean }>; outline: string[] } | null> {
+  try {
+    // Try web search to understand the task, but don't fail if it times out
+    let searchContext = "";
+    try {
+      const searchQuery = `${task.title} ${task.why}`.slice(0, 100);
+      const results = await Promise.race([
+        webSearch(searchQuery),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
+      ]);
+      if (results?.length) {
+        searchContext = `\n\nRELEVANT RESOURCES:\n${results.slice(0, 4).map(r => `- "${r.title}": ${r.snippet || r.url}`).join("\n")}`;
+      }
+    } catch { /* web search failed or timed out, continue without it */ }
+
+    const client = deepseekClient();
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: "deepseek-v4-flash",
+      max_tokens: 800,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [{
+        role: "user",
+        content: `Analyze this task and create a practical plan.
+
+TASK: "${task.title}"
+WHY: "${task.why}"${searchContext}
+
+Respond with ONLY this JSON (no other text):
+{
+  "context": "2-3 sentences explaining what the user needs to do. Be specific and practical.",
+  "subtasks": [
+    {"title": "Specific action (imperative, 5-10 words)", "why": "Why this step matters", "automatable": false},
+    {"title": "Next action", "why": "Why this matters", "automatable": true}
+  ],
+  "outline": ["Step 1: First thing to do", "Step 2: Second thing", "Step 3: Final step"]
+}
+
+CRITICAL: Every subtask MUST directly serve completing "${task.title}" — not related tasks or general prep.`,
+      }],
+    }));
+
+    const out = firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
+    if (!out?.context || !Array.isArray(out.subtasks) || out.subtasks.length === 0) return null;
+
+    return {
+      context: String(out.context || "").trim().slice(0, 400),
+      subtasks: out.subtasks
+        .slice(0, 5)
+        .map((s: any) => ({
+          title: String(s?.title || "").trim().slice(0, 70),
+          why: String(s?.why || "").trim().slice(0, 150),
+          automatable: Boolean(s?.automatable),
+        }))
+        .filter((s: any) => s.title && s.why),
+      outline: (out.outline || [])
+        .slice(0, 5)
+        .map((o: any) => String(o || "").trim().slice(0, 120))
+        .filter((o: string) => o),
+    };
+  } catch (e) {
+    console.warn("[tasks] enrichManualTask failed:", (e as any)?.message || e);
+    return null;
+  }
 }
 
 export interface ProfileUpdate { category: "name" | "about" | "preference" | "person" | "project"; fact: string; }
@@ -815,6 +922,8 @@ const RUN_SYSTEM =
   `social label). If so, do NOT draft a reply or add a sendable for it, even if it appears to ask something — ` +
   `note in "synthesis" that it's mass mail and needs no reply, and stop there.\n` +
   `NO AUTONOMOUS EMAIL, EVER — not even to the user's own inbox. Never draft an email addressed to the user or to summarize findings for the user — put summary briefs directly in "synthesis"/"context" or in a Google Doc/Sheet artifact. Never create steps like 'Draft an email to the user'.\n` +
+  `STEPS MUST BE TASK-SPECIFIC — Every step in "steps" MUST be directly related to the task title. Do NOT generate unrelated follow-up tasks, project tasks, or separate initiatives. For example, if the task is "Find summer clothes", steps should be about researching styles, finding stores, checking prices — NOT about college apps, restaurant partnerships, or any other unrelated project. Stay strictly focused on the specific task title.\n` +
+  `INCLUDE LINKS IN RECOMMENDATIONS — When you recommend specific stores, brands, products, or resources in your steps, context, or artifacts, ALWAYS include the actual URLs you found via web_search. Do not just mention names without links. For example: "Research summer styles at [Zara](https://www.zara.com) and [H&M](https://www.hm.com)" or "Check [Uniqlo's summer collection](https://www.uniqlo.com) for lightweight options."\n` +
   `CALENDAR INVITES: create/update the event freely — but it lands on the user's calendar SILENTLY, with NO ` +
   `emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; ` +
   `instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the ` +

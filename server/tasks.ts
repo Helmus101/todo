@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
-import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
+import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, generateBrief, enrichManualTask, type ProfileUpdate, type RefinedTask } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates } from "./discover.ts";
 
@@ -401,9 +401,11 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
             const withForced = foldGenerated(existing, [...kept, one.task], profile.highPriorityPeople || []);
             const forcedNew = withForced.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
             console.log(`${new Date().toISOString()} [tasks] daily-minimum: forced "${one.task.title}" (${forcedNew} new after fold)`);
+            enrichBriefsForNewTasks(withForced, existing).catch(() => {}); // Enrich in background
             return withForced;
           }
         }
+        enrichBriefsForNewTasks(folded, existing).catch(() => {}); // Enrich in background
         return folded;
       }
     } catch (e: any) { console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e); }
@@ -413,7 +415,9 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
   addUsage(profile, gen.tokens);
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
-  return foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
+  const result = foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
+  enrichBriefsForNewTasks(result, existing).catch(() => {}); // Enrich in background
+  return result;
 }
 
 /** Pure post-processing of a sweep's output: absorb duplicates into the existing list, cap genuinely NEW
@@ -476,12 +480,12 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
  *  immediately; the run itself tightens a vague title as a side effect (see the "title" field runById
  *  applies from RunOutput). `markUnrefined` is ONLY for the true fallback case — AI unavailable/paused/over
  *  budget at add time — so the background sweep's auto-refine (jobs.ts) still knows to pick it up later. */
-export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, markUnrefined = false): WebTask[] {
+export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, enrichment?: { context: string; subtasks: Array<{ title: string; why: string; automatable: boolean }>; outline: string[] } | null, markUnrefined = false): WebTask[] {
   const urgency = refined ? refined.urgency : 0.6;
   const importance = refined ? refined.importance : 0.75;
   const e = eisenhower(urgency, importance);
   const now = new Date().toISOString();
-  list.unshift({
+  const task: WebTask = {
     id: randomUUID(),
     title: (refined?.title || title).trim().slice(0, 120),
     why: refined?.why || "Added by you.",
@@ -489,7 +493,30 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
     source: "manual", risk: "low", urgency, importance, quadrant: e.quadrant, score: e.score,
     status: "ready", createdAt: now,
     ...(markUnrefined ? { unrefined: true } : {}), // AI paused/unavailable — raw text in, background sweep cleans it up
-  });
+    ...(refined?.brief ? { brief: refined.brief } : {}),
+    ...(enrichment ? {
+      subtasks: enrichment.subtasks,
+      brief: {
+        context: enrichment.context,
+        outline: enrichment.outline,
+        ...(refined?.brief?.research ? { research: refined.brief.research } : {}),
+      },
+    } : {}),
+  };
+  list.unshift(task);
+  // Generate/enhance brief in background if not already provided
+  if (!enrichment) {
+    enrichManualTask({ title: task.title, why: task.why }).then(enriched => {
+      if (enriched) {
+        task.subtasks = enriched.subtasks;
+        task.brief = {
+          context: enriched.context,
+          outline: enriched.outline,
+          research: task.brief?.research,
+        };
+      }
+    }).catch(() => {}); // Silently ignore research failures
+  }
   return list;
 }
 
@@ -507,7 +534,19 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
   t.score = e.score;
   delete t.unrefined;
   t.updatedAt = new Date().toISOString();
+  if (refined.brief) t.brief = refined.brief;
   return t;
+}
+
+/** Enrich newly created tasks with contextual briefs (research + context). Runs in background so new tasks surface immediately; briefs populate as they're generated. */
+export async function enrichBriefsForNewTasks(tasks: WebTask[], existing: WebTask[]): Promise<void> {
+  const newTasks = tasks.filter((t) => !existing.some((e) => e.id === t.id) && t.status === "ready" && !t.brief);
+  if (!newTasks.length) return;
+  // Generate briefs in parallel for all new tasks, but don't await them to avoid blocking the sweep.
+  Promise.all(newTasks.map(async (t) => {
+    const brief = await generateBrief({ title: t.title, why: t.why });
+    if (brief) t.brief = brief;
+  })).catch(() => {}); // Silently ignore research failures
 }
 
 /**

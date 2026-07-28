@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn } from "../shared/types.ts";
-import { aiReady, refineManualTask } from "./claude.ts";
+import { aiReady, refineManualTask, enrichManualTask } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -394,7 +394,19 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
   const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
-  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready);
+  // Research the task deeply: understand it, generate subtasks, create an outline + brief
+  // Use a timeout so enrichment doesn't block the response — it runs in background if slow
+  let enriched = null;
+  if (ready && refined) {
+    try {
+      const enrichPromise = enrichManualTask({ title: refined.title, why: refined.why });
+      enriched = await Promise.race([
+        enrichPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)), // 5s timeout
+      ]).catch(() => null);
+    } catch { /* enrichment failed, will retry in background */ }
+  }
+  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, enriched, !ready);
   const added = req.session.tasks[0];
   if (ready) added.status = "queued";
   // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from

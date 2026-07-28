@@ -376,7 +376,16 @@ export interface WebTask {
       url: string;
       snippet?: string;     // a short excerpt explaining relevance
     }>;
+    outline?: string[];     // structured steps/outline to help the user approach the task
   };
+
+  // Subtasks generated when task is manually added — either next steps for the user or AI-actionable prep
+  subtasks?: Array<{
+    title: string;
+    why: string;
+    automatable: boolean;  // true = AI can do it, false = user must do it
+    done?: boolean;
+  }>;
 
   evidence?: TaskLink[];   // the real source(s) this came from (the email thread / calendar event)
   autoRan?: boolean;       // guard so a reversible task auto-runs at most once
