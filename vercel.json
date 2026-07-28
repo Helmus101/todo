@@ -15,6 +15,12 @@
     { "source": "/integrations/:path*", "destination": "/api" },
     { "source": "/healthz", "destination": "/api" },
     { "source": "/assets/:path*", "destination": "/assets/:path*" },
+    { "source": "/fonts/:path*", "destination": "/fonts/:path*" },
+    { "source": "/logos/:path*", "destination": "/logos/:path*" },
+    { "source": "/favicon.svg", "destination": "/favicon.svg" },
+    { "source": "/manifest.json", "destination": "/manifest.json" },
+    { "source": "/sw.js", "destination": "/sw.js" },
+    { "source": "/self-heal.js", "destination": "/self-heal.js" },
     { "source": "/:path*", "destination": "/index.html" }
   ],
   "headers": [

@@ -393,23 +393,47 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         // already forced a task in the user's current local day, pick the single most useful candidate and
         // add it. Gated once-per-local-day (lastForcedAt) so repeated manual refreshes don't pile up, and
         // only when there ARE candidates to choose from. The forced pick still folds through dedupe.
+        let result = folded;
         if (newCards === 0 && candidates.length && forcedDueToday(profile)) {
           const one = await pickOneTask(candidates, profile, active.map((a) => a.title));
           if (one) {
             addUsage(profile, one.tokens);
             profile.lastForcedAt = new Date().toISOString();
-            const withForced = foldGenerated(existing, [...kept, one.task], profile.highPriorityPeople || []);
-            const forcedNew = withForced.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
+            result = foldGenerated(existing, [...kept, one.task], profile.highPriorityPeople || []);
+            const forcedNew = result.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
             console.log(`${new Date().toISOString()} [tasks] daily-minimum: forced "${one.task.title}" (${forcedNew} new after fold)`);
-            return withForced;
           }
         }
-        return folded;
+        // SUPPLEMENTARY SWEEP — discoverSourceItems only makes FIXED read calls against Gmail/Calendar/
+        // Drive/GitHub. Once that "attempted" succeeds (true for any Gmail-connected account), this whole
+        // function returns above — so a connected app OUTSIDE that fixed set (Slack, Notion, Linear,
+        // Todoist, …) was NEVER checked, ever, not even once. That's a silent, permanent recall gap: a
+        // student who connects Slack would never get a task generated from it. Run a small scoped
+        // open-ended sweep over just those OTHER toolkits (reusing the same tested agent as the full
+        // fallback below) and fold its findings in too.
+        if (extras?.tools?.length) {
+          const DETERMINISTIC_KITS = new Set(["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides", "github"]);
+          const otherTools = extras.tools.filter((t) => {
+            const kit = /^\[(\w+)\]/.exec(t.description || "")?.[1]?.toLowerCase();
+            return kit && !DETERMINISTIC_KITS.has(kit);
+          });
+          if (otherTools.length) {
+            try {
+              const otherActive = result.filter((t) => t.status !== "done" && t.status !== "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
+              const gen2 = await generateTasks(profile, readOnly({ tools: otherTools, call: extras.call, connected: extras.connected }), handled, otherActive);
+              addUsage(profile, gen2.tokens);
+              for (const u of gen2.profileUpdates) applyProfileUpdate(profile, u);
+              if (gen2.tasks.length) result = foldGenerated(result, gen2.tasks, profile.highPriorityPeople || []);
+            } catch (e: any) { console.warn("[tasks] supplementary non-Google sweep failed:", e?.message || e); }
+          }
+        }
+        return result;
       }
     } catch (e: any) { console.warn("[tasks] discovery pipeline failed, falling back to agent sweep:", e?.message || e); }
   }
 
   // FALLBACK — open-ended agent sweep over the read-only tool view (covers non-Google sources too).
+  // Only reached when the deterministic pipeline couldn't attempt anything at all (e.g. Gmail not connected).
   const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
   addUsage(profile, gen.tokens);
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);

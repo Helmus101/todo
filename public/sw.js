@@ -1,7 +1,7 @@
 // Network-first service worker. The old cache-first version served stale HTML after each
 // deploy (pointing at hashed assets that no longer existed) → blank page. Now: always try
 // the network; the cache is ONLY an offline fallback. API responses are never cached.
-const CACHE_NAME = "otto-v2";
+const CACHE_NAME = "otto-v3"; // bumped to flush any stale cached response from before the vercel.json routing fix
 
 self.addEventListener("install", (event) => {
   self.skipWaiting(); // replace the old (broken) worker immediately
@@ -31,6 +31,14 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request, { ignoreSearch: url.pathname === "/" }))
+      .catch(() =>
+        // Exact URL first (works for previously-visited static assets); for a navigation whose exact
+        // path was never cached (e.g. a client-side route like /task/<id>), fall back to the cached
+        // app shell "/" instead of resolving to undefined — respondWith() throws "Failed to convert
+        // value to 'Response'" if the promise doesn't resolve to a real Response.
+        caches.match(event.request, { ignoreSearch: url.pathname === "/" })
+          .then((cached) => cached || (event.request.mode === "navigate" ? caches.match("/") : undefined))
+          .then((res) => res || Response.error())
+      )
   );
 });

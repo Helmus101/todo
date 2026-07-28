@@ -530,10 +530,19 @@ export const isResourceCreateTool = (n: string): boolean =>
   /^GOOGLE(DOCS|SHEETS|SLIDES)_/.test(n) && /CREATE/.test(n) &&
   !/(UPDATE|MODIFY|PATCH|REPLACE|BATCH|DELETE|APPEND|INSERT)/.test(n);
 
-/** Read-only PLUS the one write action plan-only mode is allowed: creating a new Doc/Sheet/Slides to compile
- *  a resource (a research guide, a plan, a tracker) for the user. Every other write stays stripped. */
-export function readOnlyPlusResourceCreate(t: AgentTools): AgentTools {
-  return { tools: t.tools.filter((x) => isRead(x.name) || isResourceCreateTool(x.name)), call: t.call, connected: t.connected };
+/** Drafting (never sending) a Gmail email — GMAIL_CREATE/UPDATE_EMAIL_DRAFT are both policy "auto": a draft
+ *  sits in the user's own Drafts folder until THEY click Send (GMAIL_SEND_* is separately policy "never" and
+ *  isn't matched here), so it's exactly as reversible/safe as the resource-doc carve-out above. */
+export const isEmailDraftTool = (n: string): boolean => /^GMAIL_(CREATE|UPDATE)_EMAIL_DRAFT/.test(n);
+
+/** Plan-only mode's one exception's-worth of writes: creating a resource doc/sheet/slides, or drafting
+ *  (never sending) an email. Both land as reviewable artifacts the user acts on — never an autonomous send. */
+export const isPlanOnlyAllowedWrite = (n: string): boolean => isResourceCreateTool(n) || isEmailDraftTool(n);
+
+/** Read-only PLUS the two write actions plan-only mode is allowed: creating a new Doc/Sheet/Slides resource,
+ *  or drafting a Gmail email for the user to review and send. Every other write stays stripped. */
+export function readOnlyPlusPrep(t: AgentTools): AgentTools {
+  return { tools: t.tools.filter((x) => isRead(x.name) || isPlanOnlyAllowedWrite(x.name)), call: t.call, connected: t.connected };
 }
 
 /**

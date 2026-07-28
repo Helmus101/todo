@@ -7,10 +7,11 @@
 /* Otto brand system — the "consent line": Otto's own (reversible) work reads quiet/graphite; anything that
    needs a person reads cobalt. Colour is semantic, not decorative — see the 90/8/2 budget in the brand book.
    Self-hosted fonts (SIL OFL) — drop the woff2 files in client/public/fonts/; robust fallbacks until then. */
-@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+/* Temporarily disabled until font files are added to public/fonts/ */
+/* @font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Medium.woff2") format("woff2"); font-weight: 500 600; font-display: swap; }
 @font-face { font-family: "IBM Plex Mono"; src: url("/fonts/IBMPlexMono-Regular.woff2") format("woff2"); font-weight: 400 500; font-display: swap; }
-@font-face { font-family: "Archivo Expanded"; src: url("/fonts/Archivo-Expanded.woff2") format("woff2"); font-weight: 600 700; font-stretch: 125%; font-display: swap; }
+@font-face { font-family: "Archivo Expanded"; src: url("/fonts/Archivo-Expanded.woff2") format("woff2"); font-weight: 600 700; font-stretch: 125%; font-display: swap; } */
 
 :root {
   --bg: #EDEEE9;            /* paper — cool oat, the default ground */
@@ -335,6 +336,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card-text { flex: 1; min-width: 0; }
 .card-title { font-size: 15.5px; font-weight: 560; letter-spacing: -0.01em; line-height: 1.35; }
 .card-sub { font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-next { font-size: 12.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-badges { display: flex; gap: 6px; margin-top: 6px; }
+.card-badges .chip { font-size: 10.5px; padding: 2px 7px; }
 .when { color: var(--ink-2); font-weight: 550; margin-right: 8px; }
 .card-spin {
   flex: none; width: 14px; height: 14px; border-radius: 50%;

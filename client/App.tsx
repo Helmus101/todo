@@ -43,6 +43,17 @@ function sweepSkipMessage(note: string): string {
   return `Sweep didn't finish: ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}`;
 }
 
+// Short source label for the collapsed card's source badge — same apps as linkKind, just for task.source.
+const SOURCE_BADGE: Record<string, string> = {
+  gmail: "Gmail", calendar: "Calendar", googlecalendar: "Calendar", manual: "You",
+  slack: "Slack", github: "GitHub", notion: "Notion", linear: "Linear", todoist: "Todoist",
+  googledrive: "Drive", pronote: "Pronote",
+};
+function sourceBadge(s: string): string { return SOURCE_BADGE[s] || (s ? s[0].toUpperCase() + s.slice(1) : "Task"); }
+// Quadrant already encodes urgency+importance (see eisenhower()) — reuse it as a plain-English priority
+// badge instead of asking the user to parse "do/schedule/delegate/later".
+function priorityBadge(q?: string): string { return q === "do" ? "High" : q === "schedule" ? "Medium" : "Low"; }
+
 // One short context line under the title. The STATUS is carried by the chip on the right — the subtitle
 // never repeats it. So: the "why" for a fresh task, the error for a failed one, nothing when the chip says it.
 function subtitle(t: WebTask): string {
@@ -1694,6 +1705,14 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
         <div className="card-text">
           <div className="card-title">{task.title}</div>
           {(() => { const sub = subtitle(task); const w = task.when ? fmtWhen(task.when) : ""; return (w || sub) ? <div className="card-sub">{w && <span className="when">{w}</span>}{sub}</div> : null; })()}
+          {!isDone ? (() => {
+            const next = (task.steps || []).find((s) => !s.done);
+            return next ? <div className="card-next">Next action: {next.text}</div> : null;
+          })() : null}
+          <div className="card-badges">
+            <span className="chip chip-muted">{sourceBadge(task.source)}</span>
+            <span className={`chip chip-${task.quadrant === "do" ? "bad" : task.quadrant === "schedule" ? "attention" : "muted"}`}>{priorityBadge(task.quadrant)}</span>
+          </div>
         </div>
         {/* No button — refinement is fully automatic (immediately if AI's available, else the next background
             sweep cleans it up and queues it to run, no action needed). This just shows it's in that state. */}
