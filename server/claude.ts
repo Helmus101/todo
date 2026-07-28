@@ -1,6 +1,22 @@
 import OpenAI from "openai";
 import type { Profile, TaskStep, TaskLink, Sendable } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
+import { readOnly } from "./integrations.ts";
+
+// Temporary: Otto gathers context and breaks work into a plan (steps), but does not itself create, draft,
+// update, or send anything — every actionable step is left for the user to do. Flip back to true to restore
+// full auto-execution. Nothing execution-related is deleted, just gated: write tools are withheld from the
+// agent (see runTask) and the submit-time enforcement that demands a real artifact is skipped.
+export const EXECUTION_ENABLED = false;
+const PLAN_ONLY_OVERRIDE =
+  `\n\nPLAN-ONLY MODE IS ACTIVE — OVERRIDES ALL "ACT NOW"/"CREATE"/"DRAFT" INSTRUCTIONS ABOVE: you have NO ` +
+  `write/create/draft/send tools this run — only read/search tools and web_search. Do NOT attempt to call a ` +
+  `create/update/draft tool; it will not exist. Your job is ONLY to (1) gather real context via reads + ` +
+  `web_search, and (2) turn the work into a clear, ORDERED list of concrete steps in "steps" — including the ` +
+  `steps that describe creating/drafting/sending something (mark them automatable=true, since Otto WILL do ` +
+  `them once you click), so the user has an exact plan for what Otto will do and in what order. Put the facts ` +
+  `you found in "context", and a one-line "synthesis" describing the plan, e.g. "Researched X and broke it ` +
+  `into 4 steps." Do not claim to have created, drafted, sent, or updated anything — you didn't.`;
 import { webSearch } from "./websearch";
 
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
@@ -1002,7 +1018,10 @@ const RUN_TOOLS = [
  */
 export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
   const profileUpdates: ProfileUpdate[] = [];
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(extras?.tools?.length ? extras.tools : [])];
+  // Plan-only mode: withhold every write/create/draft tool structurally, so the agent physically cannot
+  // execute anything — same "deny by absence" pattern already used for irreversible sends (see isGatedAction).
+  const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnly(extras);
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
     ? `\nConnected apps you can use (read + reversible writes; never send/post/delete): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
@@ -1032,7 +1051,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const deadlineHint = deadlineBlock(`${task.title}\n${task.why}`);
   const messages: any[] = [{
     role: "user",
-    content: focus
+    content: !EXECUTION_ENABLED
+      ? head + deadlineHint + manualHint + `\nGather what you need and record the key facts in submit's "context". You have NO write/create/draft tools this run — do not attempt to act. Break the work into a clear, ordered "steps" list (see PLAN-ONLY MODE above) so the user has an exact plan of what Otto will do once executed, then call submit.`
+      : focus
       // Focused single-step run (the user hit "Auto-do" on one automatable step).
       ? head + deadlineHint + `\nDo ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) — don't describe it, DO it — then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.`
       : head + deadlineHint + manualHint + `\nGather what you need and record the key facts in submit's "context" (who sent what, what the ask/event/doc detail is). Then ACTUALLY DO the reversible work now with your tools (draft/create/update) — don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`,
@@ -1120,7 +1141,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // …but NOT if we've already bounced a submit this run (finishBacks): that means the model reached a
     // conclusion and is being pushed to actually DO the work (e.g. create the doc it tried to defer) — give
     // it the remaining rounds to comply instead of bailing it into the rescue with the work still undone.
-    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !finishBacks) break;
+    if (EXECUTION_ENABLED && i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !finishBacks) break;
     // Circuit breaker: a run that has already burned the token ceiling stops here — another round only
     // deepens the overspend. The rescue pass below salvages whatever was gathered into an honest result.
     if (overTokenCeiling()) { console.warn(`${new Date().toISOString()} [ai] runTask hit token ceiling (${tokIn + tokOut}) — stopping at round ${i}`); break; }
@@ -1130,7 +1151,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // reads, zero artifacts, "create the doc" left as a step). Track whether ANY write/create tool has
     // actually run and escalate EVERY round from round 3 until one does.
     // Revisions start closer to done (the artifact + its id are already known) — enforce a round earlier.
-    if (i >= (priorArtifacts.length ? 1 : 2) && !wroteAny && !focus) {
+    if (EXECUTION_ENABLED && i >= (priorArtifacts.length ? 1 : 2) && !wroteAny && !focus) {
       // Artifact-aware: when this is a rerun/revision, the enforcement must point at UPDATING the existing
       // artifact, never suggest CREATE — naming a create tool here was observed live steering revisions
       // into making a SECOND copy instead of editing the one listed in "ALREADY CREATED FOR THIS TASK".
@@ -1150,7 +1171,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
       model: actualModel,
       max_tokens: OUT.run,
       messages: [
-        { role: "system", content: RUN_SYSTEM },
+        { role: "system", content: EXECUTION_ENABLED ? RUN_SYSTEM : RUN_SYSTEM + PLAN_ONLY_OVERRIDE },
         ...apiMessages,
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
@@ -1183,6 +1204,14 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         else if (toolName === "submit") {
           const draft = finalize(input as RunOutput, "", profileUpdates);
+          // Plan-only mode: the agent has no write tools, so it can never satisfy "you must have written
+          // something" — accept the plan as-is instead of bouncing it against enforcement built for the
+          // execute-now mode below (which would otherwise reject every single submission).
+          if (!EXECUTION_ENABLED) {
+            draft.did = (draft.did || []).filter((d) => !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d));
+            submitted = draft; content = "submitted";
+          }
+          else {
           // (a) A revision that never actually wrote anything is a FABRICATED success (observed live: agent
           //     spent its whole budget reading the doc, never called update, then claimed "Updated the doc").
           const fabricatedRevision = hasArtifactIds && !wroteAny;
@@ -1235,6 +1264,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
             if (!wroteAny) draft.did = draft.did.filter((d) => !CLAIM_VERBS.test(d));
             submitted = draft; content = "submitted";
           }
+          }
         }
         else if (toolName === "web_search") { searchedWeb = true; content = await runWebSearch(input); }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
@@ -1246,6 +1276,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
         // gate. Block it before the tool runs, so a duplicate can't be created even by mistake.
         else if (hasArtifactIds && /CREATE/i.test(toolName) && !/CREATE.*(SUB.?ISSUE|COMMENT|LABEL|BRANCH)/i.test(toolName)) {
           content = "BLOCKED: this task already has an artifact (see 'ALREADY CREATED FOR THIS TASK') — creating a new one would duplicate it. Use the UPDATE tool on the EXISTING id instead.";
+        }
+        // Plan-only mode: even a hallucinated call to a write tool name (not offered in the schema, so
+        // unlikely, but not impossible) is blocked here too — enforcement can't rely on the model just not
+        // trying. Reads/searches still pass through below.
+        else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName))) {
+          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run. Put this in \"steps\" instead.";
         }
         else {
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.
@@ -1547,7 +1583,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     context: brief(String(out?.context || ""), 2, 380),
     // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
     // neutral placeholder (never "Done." on a task that still needs the user — that would misread as finished).
-    synthesis: synthesis || (steps.some((s) => !s.done) ? "" : "Done."),
+    synthesis: synthesis || (!EXECUTION_ENABLED && steps.length ? "Gathered context and broke this into steps." : steps.some((s) => !s.done) ? "" : "Done."),
     did,
     steps,
     links,

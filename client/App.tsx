@@ -66,6 +66,10 @@ function fmtWhen(when: string): string {
 // Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
 // relays postMessage to chrome.tabs.create, so tabs can open UNATTENDED during auto-do. Without it, falls
 // back to window.open (works on a user click).
+// Temporary: Otto still generates, ranks, and breaks tasks into steps, but does not auto-run or offer
+// one-click execution of them — the card shows the plan as a checklist for the user to work through
+// themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.
+const EXECUTION_ENABLED = false;
 const TAB_GROUP = "Otto"; // all tabs Otto opens go into this one named group
 const extPresent = () => document.documentElement.getAttribute("data-weave-ext") === "1";
 // Open one or many tabs. With the extension, they go into a NAMED tab group (per task); without it,
@@ -208,6 +212,7 @@ export function App() {
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
   const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
+  const [showAllTasks, setShowAllTasks] = useState(false);
   // Briefly highlights the row a just-confirmed task lands on in "Completed" — gives finishing something a
   // visible destination instead of the card just vanishing from the active list with nothing to show for it.
   const [justDoneId, setJustDoneId] = useState<string | null>(null);
@@ -547,7 +552,6 @@ export function App() {
             const focusToday = shown.slice(0, 3);
             const laterToday = shown.slice(3, 6);
             const canWait = shown.slice(6);
-            const [showAllTasks, setShowAllTasks] = useState(false);
 
             return (
               <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
@@ -1649,6 +1653,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   // Auto-do: silently run the next automatable, unblocked step (one at a time). Manual steps + tab-opens
   // (without the extension) wait for you; completing a manual prerequisite unblocks its dependents.
   useEffect(() => {
+    if (!EXECUTION_ENABLED) return;
     if (cStatus !== "needs_review" || stepBusy != null) return;
     const i = steps.findIndex((s, idx) => canAuto(s, idx));
     if (i >= 0) void doStep(i);
@@ -1843,7 +1848,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                         {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                         {!s.done && blk ? <span className="step-dep">waits for step {(s.dependsOn ?? 0) + 1}</span> : null}
                         {/* Otto needs ONE detail to do this step itself — tap a likely answer or type one; answering runs it. */}
-                        {s.question && !s.done && !blk && !busyHere ? (
+                        {EXECUTION_ENABLED && s.question && !s.done && !blk && !busyHere ? (
                           <div className="step-q">
                             <span className="step-q-text">{s.question}</span>
                             {s.options?.length ? (
@@ -1880,7 +1885,9 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                       <div className="step-act">
                         {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
                             stays reachable from the task. Done/blocked: just reopen the tab; otherwise open + mark done. */}
-                        {busyHere ? <span className="muted small">Working…</span>
+                        {!EXECUTION_ENABLED
+                          ? (s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>Open {linkKind(s.url) || "link"} ↗</button> : null)
+                          : busyHere ? <span className="muted small">Working…</span>
                           : s.url ? <button className="btn xs ghost" title={s.url} onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open {linkKind(s.url) || "link"} ↗</button>
                           : s.done || blk ? null
                           : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>{failed.includes(i) ? "Retry" : "Approve & Run"}</button> : s.question ? null : <button className="btn xs ghost" onClick={() => void doStep(i)}>{failed.includes(i) ? "Retry" : "Auto-do"}</button>)
