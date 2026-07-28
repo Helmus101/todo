@@ -1903,6 +1903,17 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               </ul>
           </section>
           )}
+          {/* "What Otto did" shows real output — a resource doc/sheet it created, or other concrete actions.
+              Plan-only mode's one allowed write is creating a new resource doc, so this is genuine, not a stub. */}
+          {(task.did?.length || task.links?.length) ? (
+            <section>
+              <h4>What Otto did</h4>
+              {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{d}</li>)}</ul> : null}
+              {task.links?.length ? (
+                <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
+              ) : null}
+            </section>
+          ) : null}
           {(task.context || task.why || task.evidence?.length) ? (
             <section className="ctx">
               <h4>Brief</h4>

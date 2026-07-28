@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { Profile, TaskStep, TaskLink, Sendable } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
-import { readOnly } from "./integrations.ts";
+import { readOnly, readOnlyPlusResourceCreate, isResourceCreateTool } from "./integrations.ts";
 
 // Temporary: Otto gathers context and breaks work into a plan (steps), but does not itself create, draft,
 // update, or send anything — every actionable step is left for the user to do. Flip back to true to restore
@@ -10,13 +10,19 @@ import { readOnly } from "./integrations.ts";
 export const EXECUTION_ENABLED = false;
 const PLAN_ONLY_OVERRIDE =
   `\n\nPLAN-ONLY MODE IS ACTIVE — OVERRIDES ALL "ACT NOW"/"CREATE"/"DRAFT" INSTRUCTIONS ABOVE: you have NO ` +
-  `write/create/draft/send tools this run — only read/search tools and web_search. Do NOT attempt to call a ` +
-  `create/update/draft tool; it will not exist. Your job is ONLY to (1) gather real context via reads + ` +
-  `web_search, and (2) turn the work into a clear, ORDERED list of concrete steps in "steps" — including the ` +
-  `steps that describe creating/drafting/sending something (mark them automatable=true, since Otto WILL do ` +
-  `them once you click), so the user has an exact plan for what Otto will do and in what order. Put the facts ` +
-  `you found in "context", and a one-line "synthesis" describing the plan, e.g. "Researched X and broke it ` +
-  `into 4 steps." Do not claim to have created, drafted, sent, or updated anything — you didn't.` +
+  `drafting/sending/updating/calendar-writing tools this run — only read/search tools, web_search, and ONE ` +
+  `write action: creating a brand-new Google Doc/Sheet/Slides to compile a RESOURCE for the user (a research ` +
+  `guide, a study plan, a tracker, a reference doc). That is the only thing you may create or write — never a ` +
+  `Gmail draft, a Calendar event, an update to an existing doc/sheet, or anything else. Your job is (1) gather ` +
+  `real context via reads + web_search, (2) if the task's deliverable is something worth compiling into a ` +
+  `standalone resource (a guide, plan, tracker — not every task needs one), CREATE that one Doc/Sheet/Slides ` +
+  `and write the real compiled content into it now, and (3) turn the remaining work into a clear, ORDERED list ` +
+  `of concrete steps in "steps" — including the steps that describe drafting/sending/scheduling something ` +
+  `(mark them automatable=true, since Otto WILL do them once you click), so the user has an exact plan for ` +
+  `what Otto will do and in what order. Put the facts you found in "context", list any resource you created in ` +
+  `"links", and a one-line "synthesis" describing what you did, e.g. "Researched X, created a resource doc, ` +
+  `and broke the rest into 4 steps." Do not claim to have drafted, sent, or updated anything you didn't — the ` +
+  `ONLY thing you may claim to have created is a resource doc/sheet/slides you actually called the create tool for.` +
   `\n\nGO DEEP, NOT SHALLOW — since there is no execution phase this run, research IS the entire value you ` +
   `produce; the "1-3 reads" / "targeted, not exhaustive" guidance above is for execution mode and does NOT ` +
   `apply here. Instead: check EVERY connected app that could plausibly bear on this task (not just the first ` +
@@ -1047,10 +1053,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const profileUpdates: ProfileUpdate[] = [];
   // Plan-only mode: withhold every write/create/draft tool structurally, so the agent physically cannot
   // execute anything — same "deny by absence" pattern already used for irreversible sends (see isGatedAction).
-  const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnly(extras);
+  // Plan-only mode still gets ONE write action: creating a brand-new resource doc/sheet/slides — see
+  // readOnlyPlusResourceCreate. Everything else (drafts, sends, calendar writes, edits to existing docs) stays stripped.
+  const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusResourceCreate(extras);
   const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
-    ? `\nConnected apps you can use (read + reversible writes; never send/post/delete): ${extras.connected.join(", ")}.\n`
+    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus creating a new resource doc/sheet/slides"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
   const manualHint = task.source === "manual"
     ? `\nThe USER added this to-do themselves, typed as a rough note. Treat the title as their intent: use your ` +
@@ -1252,7 +1260,10 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "or any other connected app that plausibly bears on it) before you submit. If you genuinely " +
                 "checked and none apply, say so explicitly in \"context\" — but only after actually trying.";
             } else {
-              draft.did = (draft.did || []).filter((d) => !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d));
+              // A "did" bullet claiming creation is legitimate ONLY if a resource-create call actually
+              // succeeded this run (wroteAny) — otherwise it's the same fabrication risk execution mode
+              // guards against, just with research verbs allowed through since those ARE this mode's real work.
+              draft.did = (draft.did || []).filter((d) => !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d) || (wroteAny && /creat|built|compil|assembl|produc|generat/i.test(d)));
               submitted = draft; content = "submitted";
             }
           }
@@ -1324,9 +1335,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         // Plan-only mode: even a hallucinated call to a write tool name (not offered in the schema, so
         // unlikely, but not impossible) is blocked here too — enforcement can't rely on the model just not
-        // trying. Reads/searches still pass through below.
-        else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName))) {
-          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run. Put this in \"steps\" instead.";
+        // trying. Reads/searches still pass through below. ONE exception: creating a brand-new resource
+        // doc/sheet/slides is plan-only's one allowed write (see readOnlyPlusResourceCreate) — let it fall
+        // through to the real call below instead of blocking it.
+        else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName)) && !isResourceCreateTool(String(toolName))) {
+          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run (except creating a NEW resource doc/sheet/slides). Put this in \"steps\" instead.";
         }
         else {
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.

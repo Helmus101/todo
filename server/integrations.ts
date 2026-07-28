@@ -524,6 +524,18 @@ export function readOnly(t: AgentTools): AgentTools {
   return { tools: t.tools.filter((x) => isRead(x.name)), call: t.call, connected: t.connected };
 }
 
+/** Creating a brand-new Google Doc/Sheet/Slides (never editing an existing one) — private to the user,
+ *  fully reversible via delete, same "safe to auto-allow" reasoning as isWriteGatedAction's create-new carve-out. */
+export const isResourceCreateTool = (n: string): boolean =>
+  /^GOOGLE(DOCS|SHEETS|SLIDES)_/.test(n) && /CREATE/.test(n) &&
+  !/(UPDATE|MODIFY|PATCH|REPLACE|BATCH|DELETE|APPEND|INSERT)/.test(n);
+
+/** Read-only PLUS the one write action plan-only mode is allowed: creating a new Doc/Sheet/Slides to compile
+ *  a resource (a research guide, a plan, a tracker) for the user. Every other write stays stripped. */
+export function readOnlyPlusResourceCreate(t: AgentTools): AgentTools {
+  return { tools: t.tools.filter((x) => isRead(x.name) || isResourceCreateTool(x.name)), call: t.call, connected: t.connected };
+}
+
 /**
  * Task-scoped toolset: every tool schema is resent on EVERY round, so shipping all ~78 tools to a task
  * that touches one app is the single biggest token cost (observed ~230k in/run) AND a focus problem
