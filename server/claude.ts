@@ -731,10 +731,11 @@ export async function generateBrief(task: { title: string; why: string }): Promi
  * Deeply research a manually-added task: search the web, understand what it means,
  * generate subtasks (both user and AI actionable), and create a helpful outline.
  */
-export async function enrichManualTask(task: { title: string; why: string }): Promise<{ context: string; subtasks: Array<{ title: string; why: string; automatable: boolean }>; outline: string[] } | null> {
+export async function enrichManualTask(task: { title: string; why: string }): Promise<{ context: string; subtasks: Array<{ title: string; why: string; automatable: boolean }>; outline: string[]; research?: Array<{ title: string; url: string; snippet?: string }> } | null> {
   try {
     // Try web search to understand the task, but don't fail if it times out
     let searchContext = "";
+    let research: Array<{ title: string; url: string; snippet?: string }> | undefined;
     try {
       const searchQuery = `${task.title} ${task.why}`.slice(0, 100);
       const results = await Promise.race([
@@ -743,6 +744,9 @@ export async function enrichManualTask(task: { title: string; why: string }): Pr
       ]);
       if (results?.length) {
         searchContext = `\n\nRELEVANT RESOURCES:\n${results.slice(0, 4).map(r => `- "${r.title}": ${r.snippet || r.url}`).join("\n")}`;
+        // Surface the actual links found — they were previously fed to the model as text and then
+        // discarded, leaving the user with no real resources despite research having happened.
+        research = results.slice(0, 4).map(r => ({ title: r.title, url: r.url, snippet: r.snippet }));
       }
     } catch { /* web search failed or timed out, continue without it */ }
 
@@ -761,7 +765,7 @@ WHY: "${task.why}"${searchContext}
 
 Respond with ONLY this JSON (no other text):
 {
-  "context": "2-3 sentences explaining what the user needs to do. Be specific and practical.",
+  "context": "2-3 sentences of BACKGROUND FACTS relevant to this specific task — concrete details, requirements, names, dates, or numbers the user would otherwise have to look up themselves. Do NOT restate or summarize the plan (that's covered by subtasks/outline already) and do NOT describe what the user should do.",
   "subtasks": [
     {"title": "Specific action (imperative, 5-10 words)", "why": "Why this step matters", "automatable": false},
     {"title": "Next action", "why": "Why this matters", "automatable": true}
@@ -769,7 +773,8 @@ Respond with ONLY this JSON (no other text):
   "outline": ["Step 1: First thing to do", "Step 2: Second thing", "Step 3: Final step"]
 }
 
-CRITICAL: Every subtask MUST directly serve completing "${task.title}" — not related tasks or general prep.`,
+CRITICAL: Every subtask MUST directly serve completing "${task.title}" — not related tasks or general prep.
+CRITICAL: "context" must add NEW information, not repeat the outline/subtasks in prose form. If you have no real facts to add (no search results, nothing task-specific to surface), keep it to one short sentence rather than padding it with a restated plan.`,
       }],
     }));
 
@@ -790,6 +795,7 @@ CRITICAL: Every subtask MUST directly serve completing "${task.title}" — not r
         .slice(0, 5)
         .map((o: any) => String(o || "").trim().slice(0, 120))
         .filter((o: string) => o),
+      ...(research?.length ? { research } : {}),
     };
   } catch (e) {
     console.warn("[tasks] enrichManualTask failed:", (e as any)?.message || e);

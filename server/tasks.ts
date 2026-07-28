@@ -480,7 +480,7 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
  *  immediately; the run itself tightens a vague title as a side effect (see the "title" field runById
  *  applies from RunOutput). `markUnrefined` is ONLY for the true fallback case — AI unavailable/paused/over
  *  budget at add time — so the background sweep's auto-refine (jobs.ts) still knows to pick it up later. */
-export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, enrichment?: { context: string; subtasks: Array<{ title: string; why: string; automatable: boolean }>; outline: string[] } | null, markUnrefined = false): WebTask[] {
+export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, enrichment?: { context: string; subtasks: Array<{ title: string; why: string; automatable: boolean }>; outline: string[]; research?: Array<{ title: string; url: string; snippet?: string }> } | null, markUnrefined = false): WebTask[] {
   const urgency = refined ? refined.urgency : 0.6;
   const importance = refined ? refined.importance : 0.75;
   const e = eisenhower(urgency, importance);
@@ -499,7 +499,7 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
       brief: {
         context: enrichment.context,
         outline: enrichment.outline,
-        ...(refined?.brief?.research ? { research: refined.brief.research } : {}),
+        ...(enrichment.research?.length ? { research: enrichment.research } : {}),
       },
     } : {}),
   };
