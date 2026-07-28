@@ -394,17 +394,18 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
   const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
-  // Research the task deeply: understand it, generate subtasks, create an outline + brief
-  // Use a timeout so enrichment doesn't block the response — it runs in background if slow
-  let enriched = null;
+  // Research the task deeply: understand it, generate subtasks, create an outline + brief.
+  // Awaited fully (not raced against a short timeout): the request handler is a Vercel serverless
+  // function (maxDuration 300s in vercel.json) that terminates right after res.json() — any
+  // fire-and-forget background work started here would be killed before it could persist. A generous
+  // 20s cap still protects against a truly hung call without throwing away enrichment on every slow one.
+  let enriched: Awaited<ReturnType<typeof enrichManualTask>> = null;
   if (ready && refined) {
     try {
       const enrichPromise = enrichManualTask({ title: refined.title, why: refined.why });
-      enriched = await Promise.race([
-        enrichPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)), // 5s timeout
-      ]).catch(() => null);
-    } catch { /* enrichment failed, will retry in background */ }
+      const timeout = new Promise<null>((_, reject) => setTimeout(() => reject(new Error("timeout")), 20000));
+      enriched = await Promise.race([enrichPromise, timeout]).catch(() => null);
+    } catch { /* enrichment failed — task still gets created without a brief/subtasks */ }
   }
   req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, enriched, !ready);
   const added = req.session.tasks[0];

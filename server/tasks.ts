@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
-import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, generateBrief, enrichManualTask, type ProfileUpdate, type RefinedTask } from "./claude.ts";
+import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, generateBrief, type ProfileUpdate, type RefinedTask } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates } from "./discover.ts";
 
@@ -504,19 +504,6 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
     } : {}),
   };
   list.unshift(task);
-  // Generate/enhance brief in background if not already provided
-  if (!enrichment) {
-    enrichManualTask({ title: task.title, why: task.why }).then(enriched => {
-      if (enriched) {
-        task.subtasks = enriched.subtasks;
-        task.brief = {
-          context: enriched.context,
-          outline: enriched.outline,
-          research: task.brief?.research,
-        };
-      }
-    }).catch(() => {}); // Silently ignore research failures
-  }
   return list;
 }
 

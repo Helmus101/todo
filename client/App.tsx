@@ -1533,6 +1533,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const [changeText, setChangeText] = useState("");
   const [revising, setRevising] = useState(false);
   const [reviseError, setReviseError] = useState<string | null>(null);
+  const [subtasksDone, setSubtasksDone] = useState<Set<number>>(new Set()); // which subtasks user marked done
   // Manual edits to a draft's own text — separate from changeText (that's a PROMPT for Otto to rewrite it;
   // this is the user directly typing the replacement). Keyed by sendable index; only the open one is edited.
   const [draftEdits, setDraftEdits] = useState<Record<number, { subject?: string; body?: string }>>({});
@@ -1921,7 +1922,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           {task.subtasks?.length ? (
             <section className="subtasks">
               <h4>Next Steps</h4>
-              <ul className="subtask-list">{task.subtasks.map((s, i) => <li key={i} className={s.automatable ? "automatable" : "user"}><input type="checkbox" checked={s.done || false} onChange={() => { s.done = !s.done; setTask({ ...task }); }} /><span className="subtask-title">{s.title}</span>{s.automatable ? <span className="badge">AI can help</span> : <span className="badge user-action">You decide</span>}</li>)}</ul>
+              <ul className="subtask-list">{task.subtasks.map((s, i) => <li key={i} className={s.automatable ? "automatable" : "user"}><input type="checkbox" checked={subtasksDone.has(i)} onChange={() => { setSubtasksDone(d => { const next = new Set(d); next.has(i) ? next.delete(i) : next.add(i); return next; }); }} /><span className="subtask-title">{s.title}</span>{s.automatable ? <span className="badge">AI can help</span> : <span className="badge user-action">You decide</span>}</li>)}</ul>
             </section>
           ) : null}
           {task.brief?.context || task.brief?.research?.length || task.brief?.outline?.length ? (
