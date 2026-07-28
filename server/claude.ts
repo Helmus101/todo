@@ -36,6 +36,13 @@ const PLAN_ONLY_OVERRIDE =
   `facts the user would otherwise have to look up themselves — never a restated version of the task title, ` +
   `and never a vague generality ("do some research", "check the details"). If a connected app plausibly ` +
   `relates to the task and you did NOT check it, that is a gap in the plan, not a shortcut.` +
+  `\n\nALWAYS START WITH web_search ON THE TASK TITLE ITSELF — before touching any connected app, look up what ` +
+  `the task title actually names (an event, a competition, a company, a concept). This is what keeps you ` +
+  `anchored to the REAL task instead of drifting onto a tangent: observed live, a task titled "Prepare for the ` +
+  `Wharton Investment Competition" got derailed into a plan about reorganizing Google Drive folders because the ` +
+  `agent found a file that happened to share words with the title and fixated on WHERE it was stored instead of ` +
+  `WHAT the actual task needed. A web_search first establishes ground truth about the task itself, so anything ` +
+  `you later find in an app gets interpreted correctly (as material FOR the task) instead of becoming the task.` +
   `\n\n"steps" MUST NEVER BE EMPTY — you never actually execute anything (no send, no calendar write, no send-to-` +
   `user), so the user's next action is the ONLY outcome of this run. Even after creating a resource doc, still ` +
   `list what the user should do with it (review it, decide something, take the real-world next step). Submitting ` +
@@ -103,6 +110,38 @@ function deadlineBlock(text: string): string {
     }
   }
   return `EXPLICIT DEADLINE PHRASE FROM THE TASK: "${snippet}". Treat that deadline/date as exact and preserve it unless the source data clearly contradicts it.\n`;
+}
+
+const STOPWORDS = new Set(["the", "a", "an", "and", "or", "to", "for", "of", "in", "on", "with", "your", "you",
+  "this", "that", "is", "are", "be", "it", "its", "from", "at", "into", "about", "up", "check", "make", "sure",
+  "prepare", "review", "update", "complete", "finish", "verify", "create", "find", "get", "do", "not", "if"]);
+/** Significant (non-generic) words from a task title, for a cheap "did the model even stay on-topic?" check. */
+function titleKeywords(title: string): string[] {
+  return title.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter((w) => w.length >= 4 && !STOPWORDS.has(w));
+}
+/** Structural drift backstop: does AT LEAST ONE step mention a real word from the task title? Catches wholesale
+ *  topic drift (a title about a competition, steps entirely about reorganizing Drive folders) that a prompt
+ *  instruction alone doesn't reliably prevent. Deliberately loose — one shared keyword is enough to pass, so it
+ *  only fires on total disconnection, never on steps that are merely imperfectly worded. Skips the check
+ *  entirely when the title has no distinctive words to match against (avoids false positives on short titles). */
+function stepsMatchTitle(title: string, steps: { text: string }[]): boolean {
+  const kws = titleKeywords(title);
+  if (!kws.length || !steps.length) return true;
+  return steps.some((s) => { const t = s.text.toLowerCase(); return kws.some((k) => t.includes(k)); });
+}
+
+// Observed live: a task titled "Prepare for the Wharton Investment Competition" came back with steps ALL
+// about moving files between Drive folders — one step happened to name-drop a file called "Wharton
+// Investment Notes", which was enough to pass stepsMatchTitle's loose keyword check even though the
+// content is pure folder housekeeping, not competition prep. This is the narrower, targeted pattern for
+// that exact drift: the agent apparently found a relevantly-named FILE during research and fixated on
+// organizing where it lives instead of using what's in it.
+const FOLDER_HOUSEKEEPING_STEP = /\b(move (the |this |that )?[\w\s]{0,40}?\bfile|create (a |the )?['"]?\w*['"]? ?folder|folder (exists|contains)|organi[sz]e (the |your )?(files?|folders?|drive)|clean(ing)? up (the |your )?(drive|folder))\b/i;
+/** Is EVERY step pure Drive folder/file housekeeping, on a task that isn't actually ABOUT organizing files? */
+function isFolderHousekeepingDrift(title: string, steps: { text: string }[]): boolean {
+  if (!steps.length) return false;
+  if (/\b(organi[sz]e|folder|clean ?up|file management|sort (my|the) files)\b/i.test(title)) return false; // legitimately about this
+  return steps.every((s) => FOLDER_HOUSEKEEPING_STEP.test(s.text));
 }
 
 // DeepSeek retired "deepseek-chat"/"deepseek-reasoner" in favor of "deepseek-v4-flash" (fast/cheap) and
@@ -1267,7 +1306,16 @@ export async function runTask(task: { title: string; why: string; source?: strin
             // "context" is a guess dressed up as research. Cap the pushback so a genuinely nothing-to-find
             // task (or one where every connected app turned out irrelevant) can still finish.
             const hasConnectedApps = !!extras?.connected?.length;
-            if (hasConnectedApps && readCalls === 0 && canBounce) {
+            // web_search costs nothing to require — it's always available regardless of what's connected,
+            // and grounding against what the task ACTUALLY is (not just what a filename/subject line suggests)
+            // is exactly what would have caught the Wharton drift below: a search for "Wharton Investment
+            // Competition" would have anchored the model on the real task instead of a coincidentally-named file.
+            if (!searchedWeb && canBounce) {
+              finishBacks++;
+              content = `REJECTED: you have not used web_search yet. Look up what "${task.title}" actually is/requires ` +
+                `(the real event, deadline, rules, or subject it names) before finalizing — this is what keeps the ` +
+                `plan anchored to the REAL task instead of drifting onto whatever you happened to notice in an app.`;
+            } else if (hasConnectedApps && readCalls === 0 && canBounce) {
               finishBacks++;
               content = "REJECTED: you have NOT read any connected app yet — \"context\" would be a guess, not " +
                 "research. Read whatever's relevant (the Gmail thread / Calendar event / Drive doc behind this, " +
@@ -1282,6 +1330,19 @@ export async function runTask(task: { title: string; why: string; source?: strin
               content = "REJECTED: \"steps\" is empty. Every task must leave the user at least one concrete " +
                 "next action — even after creating a resource doc, list what they should do with it (review it, " +
                 "make a decision, take the next real-world step). An empty steps[] is never acceptable here.";
+            } else if ((!stepsMatchTitle(task.title, draft.steps) || isFolderHousekeepingDrift(task.title, draft.steps)) && canBounce) {
+              // Observed live: a task titled "Prepare for the Wharton Investment Competition" came back with
+              // steps entirely about reorganizing Google Drive folders — the agent found a file with a
+              // relevant-sounding name during research and fixated on organizing where it lives instead of
+              // actually preparing for the task. The prompt already says "every step MUST relate to the task
+              // title", but that's advisory only; these are the structural backstops — either no step shares
+              // a real word with the title at all, or every step is pure folder/file housekeeping on a task
+              // that was never about organizing files.
+              finishBacks++;
+              content = `REJECTED: your "steps" don't actually move "${task.title}" forward — they read like you ` +
+                `found a file/folder during research and fixated on organizing it instead of using what's in it ` +
+                `to prepare for the real task. Discard those steps and write ones that substantively address ` +
+                `"${task.title}" itself.`;
             } else {
               // A "did" bullet claiming creation is legitimate ONLY if a resource-create call actually
               // succeeded this run (wroteAny) — otherwise it's the same fabrication risk execution mode
