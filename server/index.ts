@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn } from "../shared/types.ts";
-import { aiReady, refineManualTask, enrichManualTask } from "./claude.ts";
+import { aiReady, refineManualTask } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -394,20 +394,7 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
   const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
-  // Research the task deeply: understand it, generate subtasks, create an outline + brief.
-  // Awaited fully (not raced against a short timeout): the request handler is a Vercel serverless
-  // function (maxDuration 300s in vercel.json) that terminates right after res.json() — any
-  // fire-and-forget background work started here would be killed before it could persist. A generous
-  // 20s cap still protects against a truly hung call without throwing away enrichment on every slow one.
-  let enriched: Awaited<ReturnType<typeof enrichManualTask>> = null;
-  if (ready && refined) {
-    try {
-      const enrichPromise = enrichManualTask({ title: refined.title, why: refined.why });
-      const timeout = new Promise<null>((_, reject) => setTimeout(() => reject(new Error("timeout")), 20000));
-      enriched = await Promise.race([enrichPromise, timeout]).catch(() => null);
-    } catch { /* enrichment failed — task still gets created without a brief/subtasks */ }
-  }
-  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, enriched, !ready);
+  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready);
   const added = req.session.tasks[0];
   if (ready) added.status = "queued";
   // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from
@@ -416,6 +403,10 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   // marks the job succeeded and strands the task at "queued". Commit-then-enqueue closes that window.
   await commit(req);
   if (ready) {
+    // enqueueJob("execute_task") is the SINGLE planning pass: runTask() reads every connected integration
+    // (Gmail/Calendar/Drive/Slack/GitHub/Notion) + web_search and fills in task.context/task.steps. Plan-only
+    // mode (EXECUTION_ENABLED=false in claude.ts) already withholds every write tool, so this only gathers
+    // knowledge and produces a plan — it never sends/creates/deletes anything.
     try { await enqueueJob(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
   }
   res.json(req.session.tasks);

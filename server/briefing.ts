@@ -59,7 +59,7 @@ export function formatBriefing(tasks: WebTask[], profile: Profile, now: Date = n
       number: i + 1,
       title: t.title,
       estimated: t.context ? undefined : undefined,
-      brief: t.brief?.context || t.context || t.why,
+      brief: t.context || t.why,
     })),
     upcomingRisks: risks.length ? risks : ["None identified"],
     taskCount: readyTasks.length,

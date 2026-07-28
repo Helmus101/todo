@@ -1533,7 +1533,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const [changeText, setChangeText] = useState("");
   const [revising, setRevising] = useState(false);
   const [reviseError, setReviseError] = useState<string | null>(null);
-  const [subtasksDone, setSubtasksDone] = useState<Set<number>>(new Set()); // which subtasks user marked done
   // Manual edits to a draft's own text — separate from changeText (that's a PROMPT for Otto to rewrite it;
   // this is the user directly typing the replacement). Keyed by sendable index; only the open one is edited.
   const [draftEdits, setDraftEdits] = useState<Record<number, { subject?: string; body?: string }>>({});
@@ -1905,44 +1904,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               </ul>
           </section>
           )}
-          {/* "What Otto did" shows ONLY meaningful output — actions it actually produced/prepped, or the
-              artifacts it made. Dead-end attempts (failed searches) are filtered out server-side; when there's
-              nothing meaningful to show, the section is hidden entirely (the story lives in "What's left"). */}
-          {(task.did?.length || task.links?.length) ? (
-            <section>
-              <h4>What Otto did</h4>
-              {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{d}</li>)}</ul> : null}
-              {task.links?.length ? (
-                <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
-              ) : null}
-            </section>
-          ) : (cStatus === "queued" || cStatus === "executing") ? (
-            <section><h4>What Otto did</h4><p className="muted">{cStatus === "queued" ? "Queued — starting shortly…" : "Working on it now…"}</p></section>
-          ) : null}
-          {task.subtasks?.length ? (
-            <section className="subtasks">
-              <h4>Next Steps</h4>
-              <ul className="subtask-list">{task.subtasks.map((s, i) => <li key={i} className={s.automatable ? "automatable" : "user"}><input type="checkbox" checked={subtasksDone.has(i)} onChange={() => { setSubtasksDone(d => { const next = new Set(d); next.has(i) ? next.delete(i) : next.add(i); return next; }); }} /><span className="subtask-title">{s.title}</span>{s.automatable ? <span className="badge">AI can help</span> : <span className="badge user-action">You decide</span>}</li>)}</ul>
-            </section>
-          ) : null}
-          {task.brief?.context || task.brief?.research?.length || task.brief?.outline?.length ? (
-            <section className="brief">
-              <h4>Brief</h4>
-              {task.brief.context && <Bullets text={task.brief.context} />}
-              {task.brief.outline?.length ? (
-                <div className="outline">
-                  <div className="outline-label">How to approach this</div>
-                  <ol className="outline-list">{task.brief.outline.map((o, i) => <li key={i}>{o}</li>)}</ol>
-                </div>
-              ) : null}
-              {task.brief.research?.length ? (
-                <div className="research-items">
-                  <div className="research-label">Research</div>
-                  <ul className="links">{task.brief.research.map((r, i) => <li key={i}><a href={r.url} target="_blank" rel="noreferrer" title={r.snippet}>{r.title} ↗</a>{r.snippet ? <span className="research-snippet"> — {r.snippet}</span> : ""}</li>)}</ul>
-                </div>
-              ) : null}
-            </section>
-          ) : null}
           <button className="ctx-toggle" onClick={() => setShowContext((v) => !v)}>{showContext ? "Hide context" : "Show context"}</button>
           {showContext && (
             <section className="ctx">

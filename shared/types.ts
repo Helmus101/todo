@@ -368,25 +368,6 @@ export interface WebTask {
   steps?: TaskStep[];      // what's left, as classified bullets (automatable / needs-you / dependent)
   sendables?: Sendable[];  // drafted email / composed Slack message the user can send in one click
 
-  // Task-specific brief: context + curated research for this task
-  brief?: {
-    context?: string;       // background relevant to this task
-    research?: Array<{
-      title: string;
-      url: string;
-      snippet?: string;     // a short excerpt explaining relevance
-    }>;
-    outline?: string[];     // structured steps/outline to help the user approach the task
-  };
-
-  // Subtasks generated when task is manually added — either next steps for the user or AI-actionable prep
-  subtasks?: Array<{
-    title: string;
-    why: string;
-    automatable: boolean;  // true = AI can do it, false = user must do it
-    done?: boolean;
-  }>;
-
   evidence?: TaskLink[];   // the real source(s) this came from (the email thread / calendar event)
   autoRan?: boolean;       // guard so a reversible task auto-runs at most once
   /** Stable identity of the underlying thing (e.g. "gmail:<threadId>", "calendar:<eventId>"). Dedupes

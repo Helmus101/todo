@@ -653,7 +653,7 @@ export async function pickOneTask(
   } catch { return null; }
 }
 
-export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; brief?: { context?: string; research?: Array<{ title: string; url: string; snippet?: string }> } }
+export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; }
 
 /**
  * Turn a user's rough to-do note into a crisp, actionable task (keeps their intent — never invents
@@ -698,110 +698,12 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
   } catch { return null; }
 }
 
-/**
- * Generate a contextual brief for a task: research the topic and compile context + curated research.
- * Returns null if research fails (no internet, etc).
- */
-export async function generateBrief(task: { title: string; why: string }): Promise<{ context?: string; research?: Array<{ title: string; url: string; snippet?: string }> } | null> {
-  try {
-    const searchQuery = `${task.title} ${task.why}`.slice(0, 100);
-    const results = await webSearch(searchQuery);
-    if (!results.length) return null;
-
-    const client = deepseekClient();
-    const res: any = await retryRequest(() => client.chat.completions.create({
-      model: "deepseek-v4-flash",
-      max_tokens: 300,
-      temperature: 0.5,
-      messages: [{
-        role: "user",
-        content: `Task: "${task.title}"\nWhy: "${task.why}"\n\nWrite a SHORT 2-3 sentence context explaining what the user should know to complete this task. Be specific and actionable. Do NOT repeat the task title.`,
-      }],
-    }));
-
-    const context = String(res.choices?.[0]?.message?.content || "").trim();
-    return {
-      context: context.slice(0, 300) || undefined,
-      research: results.slice(0, 3).map(r => ({ title: r.title, url: r.url, snippet: r.snippet })),
-    };
-  } catch { return null; }
-}
-
-/**
- * Deeply research a manually-added task: search the web, understand what it means,
- * generate subtasks (both user and AI actionable), and create a helpful outline.
- */
-export async function enrichManualTask(task: { title: string; why: string }): Promise<{ context: string; subtasks: Array<{ title: string; why: string; automatable: boolean }>; outline: string[]; research?: Array<{ title: string; url: string; snippet?: string }> } | null> {
-  try {
-    // Try web search to understand the task, but don't fail if it times out
-    let searchContext = "";
-    let research: Array<{ title: string; url: string; snippet?: string }> | undefined;
-    try {
-      const searchQuery = `${task.title} ${task.why}`.slice(0, 100);
-      const results = await Promise.race([
-        webSearch(searchQuery),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000)),
-      ]);
-      if (results?.length) {
-        searchContext = `\n\nRELEVANT RESOURCES:\n${results.slice(0, 4).map(r => `- "${r.title}": ${r.snippet || r.url}`).join("\n")}`;
-        // Surface the actual links found — they were previously fed to the model as text and then
-        // discarded, leaving the user with no real resources despite research having happened.
-        research = results.slice(0, 4).map(r => ({ title: r.title, url: r.url, snippet: r.snippet }));
-      }
-    } catch { /* web search failed or timed out, continue without it */ }
-
-    const client = deepseekClient();
-    const res: any = await retryRequest(() => client.chat.completions.create({
-      model: "deepseek-v4-flash",
-      max_tokens: 800,
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [{
-        role: "user",
-        content: `Analyze this task and create a practical plan.
-
-TASK: "${task.title}"
-WHY: "${task.why}"${searchContext}
-
-Respond with ONLY this JSON (no other text):
-{
-  "context": "2-3 sentences of BACKGROUND FACTS relevant to this specific task — concrete details, requirements, names, dates, or numbers the user would otherwise have to look up themselves. Do NOT restate or summarize the plan (that's covered by subtasks/outline already) and do NOT describe what the user should do.",
-  "subtasks": [
-    {"title": "Specific action (imperative, 5-10 words)", "why": "Why this step matters", "automatable": false},
-    {"title": "Next action", "why": "Why this matters", "automatable": true}
-  ],
-  "outline": ["Step 1: First thing to do", "Step 2: Second thing", "Step 3: Final step"]
-}
-
-CRITICAL: Every subtask MUST directly serve completing "${task.title}" — not related tasks or general prep.
-CRITICAL: "context" must add NEW information, not repeat the outline/subtasks in prose form. If you have no real facts to add (no search results, nothing task-specific to surface), keep it to one short sentence rather than padding it with a restated plan.`,
-      }],
-    }));
-
-    const out = firstJson<any>(String(res.choices?.[0]?.message?.content || ""));
-    if (!out?.context || !Array.isArray(out.subtasks) || out.subtasks.length === 0) return null;
-
-    return {
-      context: String(out.context || "").trim().slice(0, 400),
-      subtasks: out.subtasks
-        .slice(0, 5)
-        .map((s: any) => ({
-          title: String(s?.title || "").trim().slice(0, 70),
-          why: String(s?.why || "").trim().slice(0, 150),
-          automatable: Boolean(s?.automatable),
-        }))
-        .filter((s: any) => s.title && s.why),
-      outline: (out.outline || [])
-        .slice(0, 5)
-        .map((o: any) => String(o || "").trim().slice(0, 120))
-        .filter((o: string) => o),
-      ...(research?.length ? { research } : {}),
-    };
-  } catch (e) {
-    console.warn("[tasks] enrichManualTask failed:", (e as any)?.message || e);
-    return null;
-  }
-}
+// Manual-add and sweep-generated tasks are both planned by the single `runTask()` agent below (see
+// enqueueJob("execute_task") callers) — it already reads every connected integration (Gmail, Calendar,
+// Drive, Slack, GitHub, Notion, ...) plus web_search and produces task.context/task.steps. A separate
+// web-search-only enrichment pass used to run here too (generateBrief/enrichManualTask); it was removed
+// because it duplicated runTask with strictly less context (no integrations) and produced a second,
+// disconnected "next steps" list next to the real one.
 
 export interface ProfileUpdate { category: "name" | "about" | "preference" | "person" | "project"; fact: string; }
 export interface RunOutput {
