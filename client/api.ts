@@ -87,6 +87,7 @@ export const api = {
   clearProfile: (): Promise<Profile> => req("/api/profile", { method: "DELETE" }).then(j).then(normalizeProfile),
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout"),
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
+  setDailyBriefing: (enabled: boolean): Promise<Profile> => post("/api/settings/daily-briefing", { enabled }).then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
   usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string }> => req("/api/usage").then(j),

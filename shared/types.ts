@@ -69,6 +69,9 @@ export interface Profile {
   // a real calendar event) always route back to THAT account regardless of this setting — this only
   // resolves the otherwise-ambiguous "which inbox does this new draft/doc belong to" case.
   primaryAccounts?: Record<string, string>;
+  // Daily briefing settings — sent every morning with top priorities + upcoming risks
+  dailyBriefingEnabled?: boolean;
+  lastBriefingSentAt?: string; // ISO timestamp of last successful briefing send
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -109,6 +112,8 @@ export function normalizeProfile(p: any): Profile {
     primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object"
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
       : undefined,
+    dailyBriefingEnabled: !!p?.dailyBriefingEnabled,
+    lastBriefingSentAt: typeof p?.lastBriefingSentAt === "string" ? p.lastBriefingSentAt : undefined,
   };
 }
 
@@ -362,6 +367,16 @@ export interface WebTask {
   links?: TaskLink[];      // docs/drafts it produced
   steps?: TaskStep[];      // what's left, as classified bullets (automatable / needs-you / dependent)
   sendables?: Sendable[];  // drafted email / composed Slack message the user can send in one click
+
+  // Task-specific brief: context + curated research for this task
+  brief?: {
+    context?: string;       // background relevant to this task
+    research?: Array<{
+      title: string;
+      url: string;
+      snippet?: string;     // a short excerpt explaining relevance
+    }>;
+  };
 
   evidence?: TaskLink[];   // the real source(s) this came from (the email thread / calendar event)
   autoRan?: boolean;       // guard so a reversible task auto-runs at most once

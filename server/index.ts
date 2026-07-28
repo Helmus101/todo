@@ -316,6 +316,13 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
   res.json(p);
 });
 
+app.post("/api/settings/daily-briefing", requireAuth, async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  p.dailyBriefingEnabled = req.body?.enabled === true;
+  await commit(req);
+  res.json(p);
+});
+
 // Live integration check — create → verify → clean up against the REAL connected account, on the user's
 // explicit click. No AI involved (direct hardcoded steps), so it works even while AI is paused.
 app.post("/api/settings/smoke", requireAuth, rateLimit(3, 60_000), async (req, res) => {

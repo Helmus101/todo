@@ -269,6 +269,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
+    dailyBriefingEnabled: p2.dailyBriefingEnabled ?? p1.dailyBriefingEnabled,
+    lastBriefingSentAt: (Date.parse(p2.lastBriefingSentAt || "") || 0) >= (Date.parse(p1.lastBriefingSentAt || "") || 0) ? (p2.lastBriefingSentAt ?? p1.lastBriefingSentAt) : (p1.lastBriefingSentAt ?? p2.lastBriefingSentAt),
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
     // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.

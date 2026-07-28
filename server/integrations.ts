@@ -415,6 +415,16 @@ export async function sendSendable(userId: string, s: { app: string; draftId?: s
   } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
 }
 
+/** Send a system-initiated email (daily briefing). Bypasses the agent-tool gate since this is server-side work, not agent-decided. */
+export async function sendSystemBriefing(userId: string, opts: { to: string; subject: string; body: string }): Promise<{ ok: boolean; error?: string }> {
+  if (!integrationsReady() || !userId) return { ok: false, error: "Integrations not configured." };
+  try {
+    const r: any = await sdk().tools.execute("GMAIL_SEND_EMAIL", { userId, arguments: { to: opts.to, subject: opts.subject, body: opts.body, isHtmlBody: true }, dangerouslySkipVersionCheck: true } as any);
+    if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Send failed.") };
+    return { ok: true };
+  } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
+}
+
 export interface AgentTools {
   tools: AgentTool[];
   call: (name: string, args: Record<string, unknown>) => Promise<string | null>;

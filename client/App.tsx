@@ -748,9 +748,10 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
   const [paused, setPausedLocal] = useState(status.paused);
   const [genPerDay, setGenPerDay] = useState(Math.min(4, Math.max(1, status.genPerDay || 1)));
   const [autoOpen, setAutoOpen] = useState(autoOpenDocsOn());
+  const [dailyBriefingEnabled, setDailyBriefingEnabledLocal] = useState(profile?.dailyBriefingEnabled ?? false);
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
   useEffect(() => { setGenPerDay(Math.min(4, Math.max(1, status.genPerDay || 1))); }, [status.genPerDay]);
-  useEffect(() => { void api.profile().then(setProfile); void api.usage().then(setUsage).catch(() => {}); }, []);
+  useEffect(() => { void api.profile().then((p) => { setProfile(p); setDailyBriefingEnabledLocal(p?.dailyBriefingEnabled ?? false); }); void api.usage().then(setUsage).catch(() => {}); }, []);
   const changeGen = (n: number) => { setGenPerDay(n); void api.setProfilePreference("genPerDay", n).then(() => onChanged()); };
   const toggleAutoOpen = (v: boolean) => { setAutoOpen(v); try { localStorage.setItem("otto-autoopen-docs", v ? "1" : "0"); } catch { /* ignore */ } };
   // Month-to-date AI spend vs. the cap — both computed server-side (USD, approximate; for visibility + the cap).
@@ -791,6 +792,10 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
               ))}
             </div>
           </div>
+          <label className="set-row">
+            <span className="set-text"><b>Daily briefing</b><span className="settings-hint">Get an email every morning with your top 3 priorities and upcoming risks.</span></span>
+            <span className="switch"><input type="checkbox" checked={dailyBriefingEnabled} onChange={(e) => { const v = e.target.checked; setDailyBriefingEnabledLocal(v); void api.setDailyBriefing(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
+          </label>
           <label className="set-row">
             <span className="set-text"><b>Connect to Otto Tabs</b><span className="settings-hint">Lets Otto open pages for you automatically — drafts, docs, links — grouped into one tab group. Needs the free Tabs extension.</span></span>
             <span className="switch"><input type="checkbox" checked={autoOpen} onChange={(e) => toggleAutoOpen(e.target.checked)} /><span className="switch-track" /></span>

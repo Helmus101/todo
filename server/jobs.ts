@@ -121,6 +121,19 @@ async function processSweep(job: store.Job): Promise<string> {
   await commitUser(email, profile, next);
   for (const t of found) void store.recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
   for (const t of toRun) { await store.enqueueJob(email, "execute_task", t.id); void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" }); }
+
+  // Enqueue daily briefing if enabled and due (once per day)
+  if (profile.dailyBriefingEnabled) {
+    const lastBriefing = Date.parse(profile.lastBriefingSentAt || "") || 0;
+    const now = Date.now();
+    const tz = tzOf(profile);
+    const lastDay = localDay(profile.lastBriefingSentAt || "", tz);
+    const todayDay = localDay(now, tz);
+    if (lastDay !== todayDay) {
+      void store.enqueueJob(email, "send_briefing");
+    }
+  }
+
   return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued${learned.length ? `, learned ${learned.length} fact${learned.length === 1 ? "" : "s"}` : ""}`;
 }
 
@@ -252,6 +265,36 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   return "step executed";
 }
 
+async function processSendBriefing(job: store.Job): Promise<string> {
+  const email = job.user_email;
+  const { profile, list } = await loadUser(email);
+  if (!profile.dailyBriefingEnabled) return "skipped: briefing disabled";
+
+  try {
+    const briefing = await import("./briefing.ts");
+    const content = briefing.formatBriefing(list, profile);
+    const html = briefing.briefingHtml(content);
+
+    // Send via Gmail — direct SDK call, bypassing the agent-tool gate since this is system-initiated
+    const result = await integrations.sendSystemBriefing(email, {
+      to: email,
+      subject: `Daily briefing — ${content.date}`,
+      body: html,
+    });
+
+    if (!result.ok) throw new Error(result.error || "Failed to send briefing");
+
+    profile.lastBriefingSentAt = new Date().toISOString();
+    await commitUser(email, profile, list);
+    await store.recordEvent(email, "briefing_sent", { message: `Sent to ${email}` });
+
+    return "briefing sent";
+  } catch (e: any) {
+    console.error(`[jobs] send_briefing failed for ${email}:`, e?.message || e);
+    throw e;
+  }
+}
+
 /** Run ONE claimed job to completion. Throwing marks it failed (retryable until max_attempts). */
 export async function processJob(job: store.Job): Promise<string> {
   switch (job.type) {
@@ -259,6 +302,7 @@ export async function processJob(job: store.Job): Promise<string> {
     case "execute_task": return processExecuteTask(job);
     case "revise": return processExecuteTask(job); // same processor; input.note carries the revision
     case "execute_step": return processExecuteStep(job);
+    case "send_briefing": return processSendBriefing(job);
     default: return `skipped: unknown type ${job.type}`;
   }
 }
