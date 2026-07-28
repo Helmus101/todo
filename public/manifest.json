@@ -1,7 +1,7 @@
 {
-  "name": "Otto — the to-do list that does itself",
+  "name": "Otto — Know what deserves your attention today",
   "short_name": "Otto",
-  "description": "Otto reads your inbox, calendar and Drive, then quietly does the to-dos it safely can — drafting replies, prepping docs, organizing tasks — and surfaces only what needs you.",
+  "description": "Stop deciding what to do next. Otto reads your inbox, calendar, and tools to rank what genuinely matters, prepare the work, and leave you in total control.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#EDEEE9",

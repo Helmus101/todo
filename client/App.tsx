@@ -543,22 +543,91 @@ export function App() {
                 </div>
               );
             }
-            // No priority bands — the list is simply ranked most-important first (sortWithinQuadrant). One
-            // clean list, no section headers.
-            // Rows stay collapsed in the list; clicking one opens the full task in a modal (below).
-            return <div className={`list ${settled ? "settled" : ""}`}>{shown.map((t) => (
-                  <Card
-                    key={t.id}
-                    task={t}
-                    retrying={retryingIds.includes(t.id)}
-                    open={false}
-                    onToggle={() => navigate(`task/${t.id}`)}
-                    onChange={setTasks}
-                    onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
-                    onConfirmed={flagJustDone}
-                    onNotify={notify}
-                  />
-                ))}</div>;
+            // Grouped by focus to eliminate overwhelm: Top 3 as "Focus Today", followed by "Later" and "Can wait".
+            const focusToday = shown.slice(0, 3);
+            const laterToday = shown.slice(3, 6);
+            const canWait = shown.slice(6);
+            const [showAllTasks, setShowAllTasks] = useState(false);
+
+            return (
+              <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
+                <div className="focus-group">
+                  <div className="focus-group-head">
+                    <span className="focus-title">Focus Today</span>
+                    <span className="focus-badge">Top {focusToday.length}</span>
+                  </div>
+                  <div className="list">
+                    {focusToday.map((t) => (
+                      <Card
+                        key={t.id}
+                        task={t}
+                        retrying={retryingIds.includes(t.id)}
+                        open={false}
+                        onToggle={() => navigate(`task/${t.id}`)}
+                        onChange={setTasks}
+                        onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                        onConfirmed={flagJustDone}
+                        onNotify={notify}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {laterToday.length > 0 && (
+                  <div className="focus-group">
+                    <div className="focus-group-head">
+                      <span className="focus-title">Later Today</span>
+                    </div>
+                    <div className="list">
+                      {laterToday.map((t) => (
+                        <Card
+                          key={t.id}
+                          task={t}
+                          retrying={retryingIds.includes(t.id)}
+                          open={false}
+                          onToggle={() => navigate(`task/${t.id}`)}
+                          onChange={setTasks}
+                          onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                          onConfirmed={flagJustDone}
+                          onNotify={notify}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {canWait.length > 0 && (
+                  <div className="focus-group">
+                    {!showAllTasks ? (
+                      <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
+                        Show {canWait.length} more tasks for later…
+                      </button>
+                    ) : (
+                      <>
+                        <div className="focus-group-head">
+                          <span className="focus-title">Can Wait</span>
+                        </div>
+                        <div className="list">
+                          {canWait.map((t) => (
+                            <Card
+                              key={t.id}
+                              task={t}
+                              retrying={retryingIds.includes(t.id)}
+                              open={false}
+                              onToggle={() => navigate(`task/${t.id}`)}
+                              onChange={setTasks}
+                              onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                              onConfirmed={flagJustDone}
+                              onNotify={notify}
+                            />
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
           })()}
           {completed.length > 0 && (
             <div className="completed-section">
@@ -664,6 +733,7 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
   );
 }
 
+/** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
 function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void; extOn: boolean }) {
@@ -979,7 +1049,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
         {step === 0 && (
           <div className="onboard-step">
             <h2>Welcome to Otto</h2>
-            <p className="onboard-lead">The to-do list that does itself. Otto reads your apps, does the reversible work, and surfaces only what needs you.</p>
+            <p className="onboard-lead">Know what deserves your attention today. Otto reads your apps, ranks what matters, and prepares the work — you stay in control.</p>
             <label className="field onboard-name"><span>What should Otto call you?</span>
               <input className="addinput" placeholder="Your name" value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
@@ -1125,8 +1195,8 @@ function Landing() {
       </header>
 
       <main className="hero">
-        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>The to-do list that <em>does itself</em>.</h1>
-        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Otto reads your inbox, calendar and Drive — then gets ahead of the work. It drafts the replies, preps the docs, and clears your list before you have to ask.</p>
+        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>Know what deserves your attention today.</h1>
+        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Stop deciding what to do next. Otto reads your inbox, calendar, and tools to rank what genuinely matters, prepare the work, and leave you in total control.</p>
         <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.25s" }}>
           <a className="btn primary big" href="/signup">Get started — it's free</a>
           <a className="btn ghost" href="/login">Log in</a>
@@ -1183,7 +1253,7 @@ function Landing() {
       </section>
 
       <div className="landing-foot">
-        <div>Otto — the to-do list that does itself.</div>
+        <div>Every day you decide what matters. Otto already did that.</div>
         <nav className="foot-links"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
       </div>
     </div>

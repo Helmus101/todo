@@ -232,9 +232,8 @@ const GEN_SYSTEM =
   `PREFERENCES ARE BINDING, not decoration — the "Preferences" lines in their profile MUST shape the list:\n` +
   `- FILTER: if a preference says they don't care about something (a topic, a sender, a kind of work), do NOT ` +
   `create tasks for it, even if it looks actionable.\n` +
-  `- RANK: automatically prioritize tasks strictly by deadline proximity, high-stakes importance (people/projects), and effort required. Raise importance/urgency for tasks with firm deadlines, tasks from high-priority contacts, or open commitments.\n` +
+  `- RANK: automatically prioritize tasks strictly by deadline proximity, high-stakes importance (people/projects), and open commitments; raise importance/urgency for firm deadlines, high-priority contacts, or promises made — lower it for what they've deprioritized. Two equal emails ≠ two equal tasks if a preference separates them.\n` +
   `- BREAK DOWN: for large, complex projects, ensure the task title and why reflect a clear, single actionable first step so the user is never overwhelmed by a vague backlog.\n` +
-  `lower it for what they've deprioritized. Two equal emails ≠ two equal tasks if a preference separates them.\n` +
   `- SHAPE: phrase titles/whys in line with how they work (e.g. "batch admin on Fridays" → set "when" accordingly; ` +
   `"prefers calls over email" → the task suggests a call). When a preference influenced a task, reflect it in "why".\n` +
   `- WORKING HOURS: if they have working hours set, consider whether tasks can be done within those hours.\n` +

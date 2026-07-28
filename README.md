@@ -1,6 +1,6 @@
-# Otto — the to-do list that does itself
+# Otto — Know what deserves your attention today
 
-Otto reads your Gmail, Calendar, and Drive (plus any apps you connect — Slack, GitHub, Notion, and more), turns them into your real to-dos, and **auto-runs the reversible work** — drafting replies in your voice, prepping docs, gathering context — the moment a task appears. You're left with a short checklist of only the things that genuinely need you. It **never sends, deletes, or changes anything irreversibly without your explicit confirmation.**
+Otto reads your Gmail, Calendar, and Drive (plus any apps you connect — Slack, GitHub, Notion, and more), ranks what genuinely matters, and prepares the work — drafting replies, prepping docs, gathering context. You're left with a short checklist of only the things that need you. It **never sends, deletes, or changes anything irreversibly without your explicit confirmation.**
 
 > Self-hostable and open source (MIT). Bring your own API keys and run it in a few minutes.
 
