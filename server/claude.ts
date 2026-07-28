@@ -17,6 +17,16 @@ const PLAN_ONLY_OVERRIDE =
   `them once you click), so the user has an exact plan for what Otto will do and in what order. Put the facts ` +
   `you found in "context", and a one-line "synthesis" describing the plan, e.g. "Researched X and broke it ` +
   `into 4 steps." Do not claim to have created, drafted, sent, or updated anything — you didn't.` +
+  `\n\nGO DEEP, NOT SHALLOW — since there is no execution phase this run, research IS the entire value you ` +
+  `produce; the "1-3 reads" / "targeted, not exhaustive" guidance above is for execution mode and does NOT ` +
+  `apply here. Instead: check EVERY connected app that could plausibly bear on this task (not just the first ` +
+  `one that turns up something) — the Gmail thread AND Calendar AND Drive AND Slack AND GitHub AND Notion, ` +
+  `whichever are connected — plus multiple web_search calls for external facts (exact dates, prices, ` +
+  `requirements, names, links). Cross-reference what you find: an email may reference a doc, a doc may name ` +
+  `a person worth checking Calendar/Contacts for. Keep digging until "context" contains SPECIFIC, verified ` +
+  `facts the user would otherwise have to look up themselves — never a restated version of the task title, ` +
+  `and never a vague generality ("do some research", "check the details"). If a connected app plausibly ` +
+  `relates to the task and you did NOT check it, that is a gap in the plan, not a shortcut.` +
   `\n\nCRITICAL: Every step in "steps" MUST be directly related to the task title. Do NOT generate unrelated ` +
   `follow-up tasks, project tasks, or separate initiatives. For example, if the task is "Find summer clothes", ` +
   `steps should be about researching styles, finding stores, checking prices — NOT about college apps, ` +
@@ -1077,7 +1087,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
   }];
 
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-  const MAX = 8; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
+  // Plan-only mode never spends rounds on writes (there are none), so its budget goes entirely to research —
+  // give it a bit more room than execution mode to actually check every relevant connected app.
+  const MAX = EXECUTION_ENABLED ? 8 : 10; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
   let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
   // Circuit breaker: round count alone doesn't bound cost — a pathological task (a huge thread, tool errors
   // burning rounds, retries) can cost 10-20× a normal run. Cap the TOTAL tokens a single run may spend; once
@@ -1097,6 +1109,10 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // doc genuinely needs approval).
   const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?)\b/i;
   let wroteAny = false;
+  // Real integration reads (Gmail/Calendar/Drive/Slack/… — NOT web_search, NOT submit/remember) actually
+  // succeeded this run. Drives the plan-only "don't submit a shallow plan" enforcement below: a plan built
+  // on zero reads of the user's connected apps is a guess, not research, no matter how confident it reads.
+  let readCalls = 0;
   // A task genuinely doing open-ended research (web_search called at least once) is NOT "read-only drift"
   // even though it hasn't written anything yet — it needs a few rounds of searching BEFORE it has enough
   // to compile into a doc/reply. Exempts it from the early-bail below, which used to cut research tasks
@@ -1225,8 +1241,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
           // something" — accept the plan as-is instead of bouncing it against enforcement built for the
           // execute-now mode below (which would otherwise reject every single submission).
           if (!EXECUTION_ENABLED) {
-            draft.did = (draft.did || []).filter((d) => !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d));
-            submitted = draft; content = "submitted";
+            // Reject a shallow plan: if apps are connected but NOTHING was actually read from them this run,
+            // "context" is a guess dressed up as research. Cap the pushback so a genuinely nothing-to-find
+            // task (or one where every connected app turned out irrelevant) can still finish.
+            const hasConnectedApps = !!extras?.connected?.length;
+            if (hasConnectedApps && readCalls === 0 && finishBacks < 2) {
+              finishBacks++;
+              content = "REJECTED: you have NOT read any connected app yet — \"context\" would be a guess, not " +
+                "research. Read whatever's relevant (the Gmail thread / Calendar event / Drive doc behind this, " +
+                "or any other connected app that plausibly bears on it) before you submit. If you genuinely " +
+                "checked and none apply, say so explicitly in \"context\" — but only after actually trying.";
+            } else {
+              draft.did = (draft.did || []).filter((d) => !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d));
+              submitted = draft; content = "submitted";
+            }
           }
           else {
           // (a) A revision that never actually wrote anything is a FABRICATED success (observed live: agent
@@ -1304,6 +1332,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.
           const r = extras ? await extras.call(toolName, input || {}) : null;
           content = r ?? `Unknown tool: ${toolName}`;
+          if (r !== null && !/^ERROR|PERMISSION_REQUIRED/i.test(String(r))) readCalls++;
           // Count as satisfying "you must write" ONLY when it's a genuine update (references an existing
           // artifact id) OR there are no prior artifacts to conflict with (a create is legitimately new work).
           const isRealWrite = r !== null && WRITE_NAME.test(String(toolName)) && !/^ERROR|PERMISSION_REQUIRED/i.test(String(r));

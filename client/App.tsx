@@ -548,10 +548,10 @@ export function App() {
                 </div>
               );
             }
-            // Grouped by Eisenhower quadrants: "Do" (urgent+important) → Focus Today, "Schedule" (important) → Later Today, rest → Can wait
-            const focusToday = shown.filter(t => t.quadrant === "do").slice(0, 3);
-            const laterToday = shown.filter(t => t.quadrant === "schedule").slice(0, 3);
-            const canWait = shown.filter(t => t.quadrant === "delegate" || t.quadrant === "later");
+            // Grouped by focus to eliminate overwhelm: Top 3 as "Focus Today", followed by "Later" and "Can wait".
+            const focusToday = shown.slice(0, 3);
+            const laterToday = shown.slice(3, 6);
+            const canWait = shown.slice(6);
 
             return (
               <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
@@ -1525,7 +1525,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const [stepBusy, setStepBusy] = useState<number | null>(null);
   const [failed, setFailed] = useState<number[]>([]); // steps whose auto-do errored — don't auto-retry
   const [decided, setDecided] = useState<Record<number, string>>({}); // what the user typed for a manual step
-  const [showContext, setShowContext] = useState(false); // Context is hidden by default — shown only on demand
   const [sending, setSending] = useState<number | null>(null); // which sendable is being sent
   const [viewDraft, setViewDraft] = useState<number | null>(null); // which sendable's draft is expanded for review
   const [confirmIdx, setConfirmIdx] = useState<number | null>(null); // which sendable is awaiting send confirmation
@@ -1904,16 +1903,16 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               </ul>
           </section>
           )}
-          <button className="ctx-toggle" onClick={() => setShowContext((v) => !v)}>{showContext ? "Hide context" : "Show context"}</button>
-          {showContext && (
+          {(task.context || task.why || task.evidence?.length) ? (
             <section className="ctx">
+              <h4>Brief</h4>
               <div className="ctx-src">{sourceLabel(task.source)}</div>
               <Bullets text={task.context || task.why} />
               {task.evidence?.length ? (
                 <ul className="links src-links">{task.evidence.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer">{l.label} ↗</a></li>)}</ul>
               ) : null}
             </section>
-          )}
+          ) : null}
           <div className="actions">
             {isDone ? (
               // A finished task is CLOSED, not just another item with the usual buttons — "Run now" here
