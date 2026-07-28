@@ -1918,6 +1918,18 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           ) : (cStatus === "queued" || cStatus === "executing") ? (
             <section><h4>What Otto did</h4><p className="muted">{cStatus === "queued" ? "Queued — starting shortly…" : "Working on it now…"}</p></section>
           ) : null}
+          {task.brief?.context || task.brief?.research?.length ? (
+            <section className="brief">
+              <h4>Brief</h4>
+              {task.brief.context && <Bullets text={task.brief.context} />}
+              {task.brief.research?.length ? (
+                <div className="research-items">
+                  <div className="research-label">Research</div>
+                  <ul className="links">{task.brief.research.map((r, i) => <li key={i}><a href={r.url} target="_blank" rel="noreferrer" title={r.snippet}>{r.title} ↗</a>{r.snippet ? <span className="research-snippet"> — {r.snippet}</span> : ""}</li>)}</ul>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
           <button className="ctx-toggle" onClick={() => setShowContext((v) => !v)}>{showContext ? "Hide context" : "Show context"}</button>
           {showContext && (
             <section className="ctx">
