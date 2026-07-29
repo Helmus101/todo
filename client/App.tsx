@@ -117,10 +117,22 @@ const CHROME_STORE_URL = "";
 
 /** Render context/synthesis as a clean bullet list (one bullet per line; leading -/•/* stripped). Full
  *  text always shown — never truncated. Falls back to a single line if there's just one. */
-function Bullets({ text }: { text: string }) {
-  const items = (text || "").split("\n").map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
-  if (items.length <= 1) return <p>{items[0] || text}</p>;
-  return <ul className="bullets">{items.map((b, i) => <li key={i}>{b}</li>)}</ul>;
+// Otto is instructed to write inline markdown links ([label](url)) into "did"/"steps" text when it names a
+// specific resource — render those as real clickable buttons instead of leaving the raw "[text](url)" syntax
+// visible. Anything not matching the pattern passes through as plain text.
+const MD_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+function withInlineLinks(text: string): ReactNode {
+  const parts: ReactNode[] = [];
+  let last = 0, m: RegExpExecArray | null;
+  MD_LINK.lastIndex = 0;
+  while ((m = MD_LINK.exec(text))) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(<a key={m.index} href={m[2]} target="_blank" rel="noreferrer" className="inline-link">{m[1]} ↗</a>);
+    last = m.index + m[0].length;
+  }
+  if (!parts.length) return text;
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
 }
 
 /** The Otto mark — a ring cut by the consent line. The LEFT half is solid (work Otto already did, done); the
@@ -1522,8 +1534,6 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
 
 function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onNotify, inModal }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean }) {
   const [running, setRunning] = useState(false);
-  const [stepBusy, setStepBusy] = useState<number | null>(null);
-  const [failed, setFailed] = useState<number[]>([]); // steps whose auto-do errored — don't auto-retry
   const [decided, setDecided] = useState<Record<number, string>>({}); // what the user typed for a manual step
   const [sending, setSending] = useState<number | null>(null); // which sendable is being sent
   const [viewDraft, setViewDraft] = useState<number | null>(null); // which sendable's draft is expanded for review
@@ -1601,46 +1611,25 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const blocked = (s: TaskStep) => s.dependsOn != null && !steps[s.dependsOn]?.done;
   // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
   const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
-  // Name WHAT a link is, not just where it points — "Google Doc" beats "docs.google.com" on the card.
+  // Name WHAT a link is, not just where it points — "Doc" beats "docs.google.com" on the card. Kept short —
+  // this is a button label, not a description, so it should read at a glance next to "Open ↗".
   const linkKind = (u?: string): string => {
     const s = u || "";
-    if (/docs\.google\.com\/document/.test(s)) return "Google Doc";
-    if (/docs\.google\.com\/spreadsheets/.test(s)) return "Google Sheet";
-    if (/docs\.google\.com\/presentation/.test(s)) return "Google Slides";
-    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return "Google Form";
-    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? "Gmail draft" : "Gmail thread";
-    if (/calendar\.google\.com/.test(s)) return "Calendar event";
-    if (/drive\.google\.com/.test(s)) return "Drive file";
+    if (/docs\.google\.com\/document/.test(s)) return "Doc";
+    if (/docs\.google\.com\/spreadsheets/.test(s)) return "Sheet";
+    if (/docs\.google\.com\/presentation/.test(s)) return "Slides";
+    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return "Form";
+    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? "Draft" : "Email";
+    if (/calendar\.google\.com/.test(s)) return "Event";
+    if (/drive\.google\.com/.test(s)) return "File";
     if (/maps\.google\.com|google\.com\/maps/.test(s)) return "Directions";
     if (/^tel:/.test(s)) return "Call";
-    if (/github\.com\/[^/]+\/[^/]+\/pull/.test(s)) return "Pull request";
-    if (/github\.com\/[^/]+\/[^/]+\/issues/.test(s)) return "GitHub issue";
+    if (/github\.com\/[^/]+\/[^/]+\/pull/.test(s)) return "PR";
+    if (/github\.com\/[^/]+\/[^/]+\/issues/.test(s)) return "Issue";
     if (/[a-z0-9-]+\.slack\.com/.test(s)) return "Slack";
-    if (/notion\.so/.test(s)) return "Notion page";
+    if (/notion\.so/.test(s)) return "Notion";
     return urlHost(s);
   };
-  // A step can auto-run if it's automatable, unblocked, not done, not already-failed, doesn't need permission,
-  // and (not a tab-open OR the extension is here to open it unattended). Tab-opens without the extension wait for a click.
-  const canAuto = (s: TaskStep, i: number) => s.automatable && !s.needsPermission && !s.question && !s.done && !blocked(s) && !failed.includes(i) && (!s.url || extPresent());
-
-  const doStep = async (i: number, answer?: string) => {
-    const s = steps[i];
-    if (!s || stepBusy != null) return;
-    setStepBusy(i);
-    try {
-      // A helper link on a USER step (directions, a booking page…) just opens — the user still has to
-      // do the real-world part, so only automatable page-opens self-complete.
-      if (s.url) { openTab(s.url, TAB_GROUP); if (s.automatable) onChange(await api.stepDone(task.id, i, true, "Opened ↗")); }
-      else { onTask(await api.runStep(task.id, i, answer)); }
-    } catch (e: any) {
-      setFailed((f) => (f.includes(i) ? f : [...f, i])); // stop auto-retrying; user can click to retry
-      // A rejected step (paused / over budget / still running elsewhere / a server error) used to fail
-      // completely silently — the button just reset with nothing visible, which is exactly what "Approve &
-      // Run doesn't work" looks like from the outside. Surface it.
-      onNotify?.(e?.message || "Couldn't run this step — try again.", "error");
-    } finally { setStepBusy(null); }
-  };
-
   // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
   const openAllPages = async () => {
     const idxs = steps.map((s, i) => ({ s, i })).filter(({ s }) => s.url && !s.done && !blocked(s)).map(({ i }) => i).slice(0, 3);
@@ -1653,15 +1642,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const openableCount = steps.filter((s) => s.url && !s.done && !blocked(s)).length;
 
   const cStatus = canonStatus(task.status);
-
-  // Auto-do: silently run the next automatable, unblocked step (one at a time). Manual steps + tab-opens
-  // (without the extension) wait for you; completing a manual prerequisite unblocks its dependents.
-  useEffect(() => {
-    if (!EXECUTION_ENABLED) return;
-    if (cStatus !== "needs_review" || stepBusy != null) return;
-    const i = steps.findIndex((s, idx) => canAuto(s, idx));
-    if (i >= 0) void doStep(i);
-  }, [task, stepBusy, failed]);
 
   // Auto-open documents Otto created (Doc/Sheet/Slides) once the task is done — capped per task + per
   // session, once per URL EVER (persisted), so the same doc never reopens. Works without the extension too:
@@ -1840,49 +1820,24 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               <ul className="steps">
                 {steps.map((s, i) => {
                   const blk = blocked(s);
-                  const busyHere = stepBusy === i;
                   const gatesAnother = steps.some((o, j) => j !== i && o.dependsOn === i); // does a later step wait on this one?
                   return (
                     <li key={i} className={`step ${s.done ? "done" : ""} ${blk ? "blocked" : ""}`}>
                       {/* The mark IS the control for a needs-you step: click ○ to tick it done (no separate button). */}
                       <button
                         type="button"
-                        className={`step-mark ${busyHere ? "busy" : ""} ${!s.done && !blk ? "tickable" : ""}`}
-                        title={s.done ? `Done${s.doneAt ? " " + relTime(s.doneAt) : ""} — click to undo` : busyHere ? "Otto is doing this…" : blk ? "Waiting on an earlier step" : s.automatable ? (s.needsPermission ? "Needs your approval" : s.question ? "Otto needs one answer from you" : "Otto does this automatically — or click if you already did it") : "Click to mark done"}
-                        disabled={busyHere || blk}
-                        onClick={() => { if (blk || busyHere) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
+                        className={`step-mark ${!s.done && !blk ? "tickable" : ""}`}
+                        title={s.done ? `Done${s.doneAt ? " " + relTime(s.doneAt) : ""} — click to undo` : blk ? "Waiting on an earlier step" : "Click to mark done"}
+                        disabled={blk}
+                        onClick={() => { if (blk) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
                       >
                         {s.done ? "✓" : ""}
                       </button>
                       <div className="step-body">
-                        <span className="step-text">{s.text}</span>
+                        <span className="step-text">{withInlineLinks(s.text)}</span>
                         {s.done && s.doneAt ? <span className="step-when">done {relTime(s.doneAt)}</span> : null}
                         {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                         {!s.done && blk ? <span className="step-dep">waits for step {(s.dependsOn ?? 0) + 1}</span> : null}
-                        {/* Otto needs ONE detail to do this step itself — tap a likely answer or type one; answering runs it. */}
-                        {EXECUTION_ENABLED && s.question && !s.done && !blk && !busyHere ? (
-                          <div className="step-q">
-                            <span className="step-q-text">{s.question}</span>
-                            {s.options?.length ? (
-                              <div className="step-q-opts">
-                                {s.options.map((o, k) => (
-                                  <button key={k} className="btn xs opt" disabled={stepBusy != null} onClick={() => void doStep(i, o)}>{o}</button>
-                                ))}
-                              </div>
-                            ) : null}
-                            <div className="step-q-free">
-                              <input
-                                className="step-input"
-                                placeholder={s.options?.length ? "Or type your own answer…" : "Type your answer — Otto takes it from there"}
-                                value={decided[i] || ""}
-                                disabled={stepBusy != null}
-                                onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
-                                onKeyDown={(e) => { if (e.key === "Enter" && (decided[i] || "").trim()) void doStep(i, decided[i].trim()); }}
-                              />
-                              <button className="btn xs primary" disabled={stepBusy != null || !(decided[i] || "").trim()} onClick={() => void doStep(i, decided[i].trim())}>Answer</button>
-                            </div>
-                          </div>
-                        ) : null}
                         {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. */}
                         {gatesAnother && !s.done && !blk && !s.automatable ? (
                           <input
@@ -1896,14 +1851,8 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                       </div>
                       <div className="step-act">
                         {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
-                            stays reachable from the task. Done/blocked: just reopen the tab; otherwise open + mark done. */}
-                        {!EXECUTION_ENABLED
-                          ? (s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>Open {linkKind(s.url) || "link"} ↗</button> : null)
-                          : busyHere ? <span className="muted small">Working…</span>
-                          : s.url ? <button className="btn xs ghost" title={s.url} onClick={() => (s.done || blk) ? openTab(s.url!, TAB_GROUP) : void doStep(i)}>Open {linkKind(s.url) || "link"} ↗</button>
-                          : s.done || blk ? null
-                          : s.automatable ? (s.needsPermission ? <button className="btn xs primary" onClick={() => void doStep(i)}>{failed.includes(i) ? "Retry" : "Approve & Run"}</button> : s.question ? null : <button className="btn xs ghost" onClick={() => void doStep(i)}>{failed.includes(i) ? "Retry" : "Auto-do"}</button>)
-                          : null}
+                            stays reachable from the task. */}
+                        {s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>Open {linkKind(s.url) || "link"} ↗</button> : null}
                       </div>
                     </li>
                   );
@@ -1916,7 +1865,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           {(task.did?.length || task.links?.length) ? (
             <section>
               <h4>What Otto did</h4>
-              {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{d}</li>)}</ul> : null}
+              {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul> : null}
               {task.links?.length ? (
                 <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
               ) : null}

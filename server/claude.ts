@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { Profile, TaskStep, TaskLink, Sendable } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
-import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
+import { readOnly } from "./integrations.ts";
 
 // Temporary: Otto gathers context and breaks work into a plan (steps), but does not itself create, draft,
 // update, or send anything — every actionable step is left for the user to do. Flip back to true to restore
@@ -10,74 +10,22 @@ import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 export const EXECUTION_ENABLED = false;
 const PLAN_ONLY_OVERRIDE =
   `\n\nPLAN-ONLY MODE IS ACTIVE — OVERRIDES ALL "ACT NOW"/"CREATE"/"DRAFT" INSTRUCTIONS ABOVE: you have NO ` +
-  `sending/calendar-writing/updating tools this run — only read/search tools, web_search, and TWO prep ` +
-  `actions: (a) creating a brand-new Google Doc/Sheet/Slides to compile a RESOURCE for the user (a research ` +
-  `guide, a study plan, a tracker, a reference doc), and (b) drafting a Gmail email (GMAIL_CREATE_EMAIL_DRAFT) ` +
-  `— NEVER sending it; the draft sits in the user's Drafts folder until THEY click Send. Those are the only ` +
-  `things you may create or write — never a Calendar event, an update to an existing doc/sheet, or anything ` +
-  `else. FOLLOW THIS EXACT ORDER, every run: ` +
-  `(1) RESEARCH FIRST, IN DEPTH — web_search the task title/subject AND read every connected app that ` +
-  `plausibly bears on it, until you genuinely understand what this task is actually asking for. Do not skip ` +
-  `to writing "context" before you've actually looked. ` +
-  `(2) STATE THE GOAL, THEN THE SUPPORTING FACTS — "context" must OPEN with ONE clear sentence naming exactly ` +
-  `what the user wants/needs (their real goal, in your own words — not the task title restated), THEN 2-4 ` +
-  `sentences of the specific supporting facts you found (names, dates, numbers, requirements) that make the ` +
-  `rest of the plan make sense. Skip straight to steps without this and the user has no idea WHY the steps ` +
-  `exist. ` +
-  `(3) BUILD THE STEPS — from that understanding, turn the remaining work into a clear, ORDERED list of ` +
-  `concrete steps in "steps", including steps that describe sending/scheduling something Otto drafted (mark ` +
-  `them automatable=true, since Otto already has it prepared, the user just clicks Send). ` +
-  `(4) DO THE PREP ACTIONS — create the resource doc if the task's deliverable is worth compiling into one, or ` +
-  `draft the email if the task is "reach out to X" / "send Y to Z" (write the actual message, addressed to the ` +
-  `real person if you found their real address; otherwise put the ready-to-send text in a step instead of ` +
-  `guessing an address); list any resource doc you created in "links", along with the real URL of any specific ` +
-  `email/doc/file "context" or "did" names. Finish with a one-line "synthesis" describing what you did, e.g. ` +
-  `"Researched X, drafted the outreach email, and broke the rest into 3 steps." Do not claim to have sent, ` +
-  `updated, or scheduled anything you didn't — the ONLY things you may claim to have created are a resource ` +
-  `doc/sheet/slides or an email draft you actually called the tool for.` +
-  `\n\nGO DEEP, NOT SHALLOW — since there is no execution phase this run, research IS the entire value you ` +
-  `produce; the "1-3 reads" / "targeted, not exhaustive" guidance above is for execution mode and does NOT ` +
-  `apply here. Instead: check EVERY connected app that could plausibly bear on this task (not just the first ` +
-  `one that turns up something) — the Gmail thread AND Calendar AND Drive AND Slack AND GitHub AND Notion, ` +
-  `whichever are connected — plus multiple web_search calls for external facts (exact dates, prices, ` +
-  `requirements, names, links). Cross-reference what you find: an email may reference a doc, a doc may name ` +
-  `a person worth checking Calendar/Contacts for. Keep digging until "context" contains SPECIFIC, verified ` +
-  `facts the user would otherwise have to look up themselves — never a restated version of the task title, ` +
-  `and never a vague generality ("do some research", "check the details"). If a connected app plausibly ` +
-  `relates to the task and you did NOT check it, that is a gap in the plan, not a shortcut.` +
-  `\n\nALWAYS START WITH web_search ON THE TASK TITLE ITSELF — before touching any connected app, look up what ` +
-  `the task title actually names (an event, a competition, a company, a concept). This is what keeps you ` +
-  `anchored to the REAL task instead of drifting onto a tangent: observed live, a task titled "Prepare for the ` +
-  `Wharton Investment Competition" got derailed into a plan about reorganizing Google Drive folders because the ` +
-  `agent found a file that happened to share words with the title and fixated on WHERE it was stored instead of ` +
-  `WHAT the actual task needed. A web_search first establishes ground truth about the task itself, so anything ` +
-  `you later find in an app gets interpreted correctly (as material FOR the task) instead of becoming the task.` +
-  `\n\nRESEARCH IS ITERATIVE, NOT ONE-SHOT — a single web_search is a lookup, not research. The real pattern is: ` +
-  `search → read what came back → let it point you at the NEXT question → search again → connect what you now ` +
-  `know across sources/apps → search again if a gap remains. Concrete example: task "Create SAT vocab list" — ` +
-  `(1) check connected apps (Calendar/Gmail) for the ACTUAL exam date ("August SAT"), (2) web_search "most ` +
-  `common SAT vocabulary words [that specific month/year]", (3) that result may mention a word list or source — ` +
-  `search THAT too, or search for a second source to cross-check the list, (4) draw the connection explicitly ` +
-  `in "context" (e.g. "Your SAT is Aug 23, so this list is built for that exact test window"), (5) then actually ` +
-  `PREPARE the deliverable: when the task's title itself names a piece of content (a vocab list, a packing list, ` +
-  `a study guide, a set of notes), don't stop at describing it — COMPILE THE REAL CONTENT (the actual words, the ` +
-  `actual items) into a resource doc. "Research vocab words" as a step for the user to do themselves is wrong ` +
-  `when YOU can do that research and put the finished list in front of them right now. (6) THEN tell the user ` +
-  `what to do with it in "steps" (e.g. "Review 10 words/day", "Quiz yourself on the list before Aug 23").` +
-  `\n\n"steps" MUST NEVER BE EMPTY — you never actually execute anything (no send, no calendar write, no send-to-` +
-  `user), so the user's next action is the ONLY outcome of this run. Even after creating a resource doc, still ` +
-  `list what the user should do with it (review it, decide something, take the real-world next step). Submitting ` +
-  `with zero steps is a rejected run, never a legitimate "nothing left to do".` +
-  `\n\nCRITICAL: Every step in "steps" MUST be directly related to the task title. Do NOT generate unrelated ` +
-  `follow-up tasks, project tasks, or separate initiatives. For example, if the task is "Find summer clothes", ` +
-  `steps should be about researching styles, finding stores, checking prices — NOT about college apps, ` +
-  `restaurant partnerships, or any other unrelated project. Stay strictly focused on the specific task title.` +
-  `\n\nINCLUDE LINKS — BOTH web AND app results: When you recommend specific stores, brands, products, or ` +
-  `resources, ALWAYS include the actual URLs you found via web_search in your steps/context text. AND when your ` +
-  `"context" or "did" references a SPECIFIC email, document, spreadsheet, or file you found (not a category — a ` +
-  `named one), put its real URL in "links" so the user can open it directly. "I found the relevant documents ` +
-  `and emails" with nothing in "links" is not acceptable — if you can name what you found, you have its URL from ` +
-  `the tool result; put it in "links". Never describe finding something without giving a way to open it.`;
+  `write/create/draft/send tools this run — only read/search tools and web_search. Your job is to (1) gather ` +
+  `real context via reads + web_search, and (2) turn the work into a clear, ORDERED list of concrete steps in ` +
+  `"steps" that the user can complete themselves. Put the facts you found in "context", and a one-line ` +
+  `"synthesis" describing the plan, e.g. "Researched X and broke it into 4 steps." Do not claim to have ` +
+  `created, drafted, sent, or updated anything — you didn't.` +
+  `\n\nRESEARCH DEEPLY — check EVERY connected app that could plausibly bear on this task (Gmail, Calendar, ` +
+  `Drive, Slack, GitHub, Notion, etc.) and use web_search for external facts. Cross-reference what you find: ` +
+  `an email may reference a doc, a doc may name a person worth checking. Keep digging until "context" contains ` +
+  `SPECIFIC, verified facts (names, dates, numbers, requirements) — never a restated version of the task title.` +
+  `\n\nBREAK INTO SIMPLE STEPS — from your research, turn the work into clear, actionable steps the user can ` +
+  `complete. Each step should be simple and concrete (e.g., "Email the professor about the deadline", "Book ` +
+  `the flight for October 15", "Submit the application form"). Steps must be directly related to the task ` +
+  `title — no unrelated follow-up tasks or separate initiatives.` +
+  `\n\nINCLUDE LINKS — when you recommend specific resources or reference specific emails/docs you found, ` +
+  `include their URLs in "links" (or inline as markdown [text](url) in "steps"/"context") so the user can open ` +
+  `them directly. Never describe finding something without giving a way to open it.`;
 import { webSearch } from "./websearch";
 
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
@@ -1121,14 +1069,11 @@ const RUN_TOOLS = [
 export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
   const profileUpdates: ProfileUpdate[] = [];
   // Plan-only mode: withhold every write/create/draft tool structurally, so the agent physically cannot
-  // execute anything irreversible — same "deny by absence" pattern already used for sends (see isGatedAction).
-  // It DOES still get two prep actions: creating a resource doc/sheet/slides, and drafting (never sending)
-  // a Gmail email — see readOnlyPlusPrep. Everything else (sends, calendar writes, edits to existing docs)
-  // stays stripped.
-  const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusPrep(extras);
+  // execute anything — same "deny by absence" pattern already used for irreversible sends (see isGatedAction).
+  const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnly(extras);
   const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
-    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus creating a resource doc/sheet/slides or drafting a Gmail email — never sending"}): ${extras.connected.join(", ")}.\n`
+    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
   const manualHint = task.source === "manual"
     ? `\nThe USER added this to-do themselves, typed as a rough note. Treat the title as their intent: use your ` +
@@ -1196,7 +1141,6 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // to compile into a doc/reply. Exempts it from the early-bail below, which used to cut research tasks
   // off right when they were making real progress, producing the "just read stuff, gave up" failure.
   let searchedWeb = false;
-  let searchCount = 0; // how many web_search calls this run — plan-only requires 2+ (research is iterative, not one-shot)
   let finishBacks = 0; // times we've bounced a submit for leaving work undone / claiming a phantom artifact
   // Backstop for a drafted-but-unreported reply: the model sometimes drafts a real Gmail reply, says so in
   // synthesis, but forgets to populate the structured "sendables" entry — leaving no Send button for
@@ -1323,33 +1267,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
             // Quality pushback, but NEVER at the cost of losing the run entirely: a rejection on the final
             // two rounds risks the model running out of rounds → the defeatist "Open and handle:" fallback,
             // which is strictly worse than an imperfect plan (observed live). So bounce only when there's
-            // round budget left to actually act on the feedback.
+            // round budget left to actually act on the feedback. Kept deliberately SIMPLE — quality checks
+            // only (did you research at all, are the steps real and on-topic), no quantity thresholds
+            // (search counts, character minimums) that just make the model perform depth instead of having it.
             const roundsLeft = MAX - 1 - i;
             const canBounce = finishBacks < 2 && roundsLeft >= 2;
-            // "context" must open with a real goal sentence + supporting facts (see PLAN_ONLY_OVERRIDE step 2)
-            // — a near-empty context means that step got skipped entirely, straight from research to steps.
             const hasConnectedApps = !!extras?.connected?.length;
-            if (draft.context.trim().length < 20 && canBounce) {
-              finishBacks++;
-              content = "REJECTED: \"context\" is missing or too short. It must open with ONE sentence stating " +
-                `what the user actually wants/needs from "${task.title}" (in your own words, not the title ` +
-                "restated), then 2-4 sentences of the specific supporting facts you found. Write that now.";
-            } else if (searchCount < 2 && canBounce) {
-              // web_search costs nothing to require — it's always available regardless of what's connected.
-              // ONE search is a lookup, not research: the real value is iterative — search, see what came
-              // back, let it point at the next question, search again. A single search is also exactly what
-              // would have missed the Wharton drift: one shallow lookup doesn't cross-check anything, but a
-              // second search (of what the first one turned up) would have anchored the model firmly on the
-              // real task instead of a coincidentally-named file it noticed in an app.
-              finishBacks++;
-              content = searchCount === 0
-                ? `REJECTED: you have not used web_search yet. Look up what "${task.title}" actually is/requires ` +
-                  `(the real event, deadline, rules, or subject it names) before finalizing — this is what keeps ` +
-                  `the plan anchored to the REAL task instead of drifting onto whatever you happened to notice in an app.`
-                : `REJECTED: you've only searched once. One search is a lookup, not research — look at what that ` +
-                  `first result told you and search AGAIN on the follow-up question it raises (a more specific ` +
-                  `angle, a second source to cross-check, a related fact you still need). Do that before finalizing.`;
-            } else if (hasConnectedApps && readCalls === 0 && canBounce) {
+            if (hasConnectedApps && readCalls === 0 && canBounce) {
               finishBacks++;
               content = "REJECTED: you have NOT read any connected app yet — \"context\" would be a guess, not " +
                 "research. Read whatever's relevant (the Gmail thread / Calendar event / Drive doc behind this, " +
@@ -1357,21 +1281,16 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "checked and none apply, say so explicitly in \"context\" — but only after actually trying.";
             } else if (!draft.steps.length && canBounce) {
               // Otto never actually executes (plan-only), so "steps" is the ONE thing every task must leave
-              // the user — even after creating a resource doc, there's still something for them to do with
-              // it (review it, act on it, decide something). Zero steps reads as "did nothing useful" even
-              // when research happened, so never accept an empty plan.
+              // the user. Zero steps reads as "did nothing useful" even when research happened, so never
+              // accept an empty plan.
               finishBacks++;
               content = "REJECTED: \"steps\" is empty. Every task must leave the user at least one concrete " +
-                "next action — even after creating a resource doc, list what they should do with it (review it, " +
-                "make a decision, take the next real-world step). An empty steps[] is never acceptable here.";
+                "next action. An empty steps[] is never acceptable here.";
             } else if ((!stepsMatchTitle(task.title, draft.steps) || isFolderHousekeepingDrift(task.title, draft.steps)) && canBounce) {
               // Observed live: a task titled "Prepare for the Wharton Investment Competition" came back with
               // steps entirely about reorganizing Google Drive folders — the agent found a file with a
               // relevant-sounding name during research and fixated on organizing where it lives instead of
-              // actually preparing for the task. The prompt already says "every step MUST relate to the task
-              // title", but that's advisory only; these are the structural backstops — either no step shares
-              // a real word with the title at all, or every step is pure folder/file housekeeping on a task
-              // that was never about organizing files.
+              // actually preparing for the task.
               finishBacks++;
               content = `REJECTED: your "steps" don't actually move "${task.title}" forward — they read like you ` +
                 `found a file/folder during research and fixated on organizing it instead of using what's in it ` +
@@ -1379,46 +1298,16 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 `"${task.title}" itself.`;
             } else if (/\bfound\b[^.]{0,60}\b(documents?|emails?|files?|spreadsheets?)\b/i.test(`${draft.context} ${(draft.did || []).join(" ")}`) && !draft.links.length && canBounce) {
               // "I found the relevant documents and emails" with nothing in links is a report of work the
-              // user can't act on — they have no way to open what was supposedly found. Force it to either
-              // name the real URLs (from the tool results already in hand) or stop claiming to have found them.
+              // user can't act on — they have no way to open what was supposedly found.
               finishBacks++;
               content = "REJECTED: your \"context\"/\"did\" says you found specific documents/emails/files, but " +
                 "\"links\" is empty — the user has no way to open what you claim to have found. Add their real " +
                 "URLs (from the tool results you already have) to \"links\", or rephrase to not claim you found " +
                 "named items you can't link to.";
-            } else if (!wroteAny && draft.steps.some((s) => /\b(create|generate|build|make|compile|draft)\b[^.]{0,40}\b(doc|spreadsheet|sheet|list|cheat sheet|checklist|guide|plan|tracker|schedule)\b/i.test(s.text)) && canBounce) {
-              // Steps describe creating documents/spreadsheets/lists but nothing was actually created.
-              // EXCEPTION: homework/study tasks (SAT prep, academic work, learning materials) should be
-              // broken into steps for the user to do themselves — the AI shouldn't do their homework.
-              const isHomework = /\b(sat|homework|study|learn|practice|test|exam|quiz|assignment|course|class|school|academic|prep|vocab|math|reading|writing)\b/i.test(`${task.title} ${task.why}`);
-              if (!isHomework) {
-                finishBacks++;
-                content = "REJECTED: your \"steps\" describe creating documents/spreadsheets/lists, but you didn't " +
-                  "actually create them. In plan-only mode, you ARE allowed to create resource docs/sheets — " +
-                  "call the create tool and write the real content into it now. Don't list \"Create X document\" " +
-                  "as a step when you can do that research and compilation yourself this run.";
-              }
             } else {
-              // A "did" bullet claiming creation is legitimate ONLY if a resource-create call actually
-              // succeeded this run (wroteAny) — otherwise it's the same fabrication risk execution mode
-              // guards against, just with research verbs allowed through since those ARE this mode's real work.
-              // ALSO filter out trivial read-only bullets ("Listed Google Drive files", "Read the doc") that
-              // don't represent meaningful research — those are just tool calls, not value. Keep only bullets
-              // that describe FINDING/IDENTIFYING something specific (names, dates, facts) OR actual creation.
-              draft.did = (draft.did || []).filter((d) => {
-                const s = d.toLowerCase();
-                // Allow creation claims only if we actually created something
-                if (CLAIM_VERBS.test(d) && !/research|gather|found|identif/i.test(d)) {
-                  return wroteAny && /creat|built|compil|assembl|produc|generat|draft/i.test(d);
-                }
-                // Filter out trivial read-only bullets: "listed", "read", "checked", "searched" without
-                // a specific finding (a name, date, number, or concrete fact). Keep only meaningful research.
-                if (/^(listed|read|checked|searched|opened|viewed|accessed)\b/.test(s)) {
-                  // Allow if it names a specific finding (contains a name, date, number, or "found X")
-                  return /found|identified|located|discovered|:\s*\w+|\d{4}|\b[a-z][a-z]+ [a-z][a-z]+\b/i.test(s);
-                }
-                return true;
-              });
+              // Nothing is ever legitimately "created" in plan-only mode (no write tools) — a "did" bullet
+              // claiming creation is always a fabrication, strip it. Research-describing verbs pass through.
+              draft.did = (draft.did || []).filter((d) => !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d));
               submitted = draft; content = "submitted";
             }
           }
@@ -1477,7 +1366,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           }
           }
         }
-        else if (toolName === "web_search") { searchedWeb = true; searchCount++; content = await runWebSearch(input); }
+        else if (toolName === "web_search") { searchedWeb = true; content = await runWebSearch(input); }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
         // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.
         else if (toolName === "send_self_brief") { content = "Blocked: autonomous email is disabled — put this in synthesis/context instead."; }
@@ -1490,11 +1379,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         // Plan-only mode: even a hallucinated call to a write tool name (not offered in the schema, so
         // unlikely, but not impossible) is blocked here too — enforcement can't rely on the model just not
-        // trying. Reads/searches still pass through below. TWO exceptions: creating a resource doc/sheet/
-        // slides, or drafting (never sending) a Gmail email — plan-only's allowed writes (see
-        // readOnlyPlusPrep) — fall through to the real call below instead of being blocked.
-        else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName)) && !isPlanOnlyAllowedWrite(String(toolName))) {
-          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run (except creating a NEW resource doc/sheet/slides, or drafting a Gmail email). Put this in \"steps\" instead.";
+        // trying. Reads/searches still pass through below. All writes are blocked in plan-only mode.
+        else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName))) {
+          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run. Put this in \"steps\" instead.";
         }
         else {
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.
