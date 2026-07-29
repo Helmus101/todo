@@ -12,11 +12,24 @@ export const EXECUTION_ENABLED = false;
 const PLAN_ONLY_OVERRIDE =
   `\n\nPLAN-ONLY MODE IS ACTIVE — OVERRIDES ALL "ACT NOW"/"CREATE"/"DRAFT" INSTRUCTIONS ABOVE: follow this exact ` +
   `four-stage process, every task:` +
-  `\n(1) GATHER CONTEXT — read every connected app that plausibly bears on this task (Gmail, Calendar, Drive, ` +
-  `Slack, GitHub, Notion, etc.), use what you already know about this person (the "WHO THIS PERSON IS" block ` +
-  `above), and web_search for anything external. Cross-reference what you find — an email may reference a doc, ` +
-  `a doc may name a person worth checking elsewhere. Keep digging until you genuinely understand the task, not ` +
-  `just its title.` +
+  `\n(1) GATHER CONTEXT — an ALGORITHM, not a vague "look around": ` +
+  `(a) EXTRACT ENTITIES — pull the specific names, people, organizations, places, dates, and subjects out of ` +
+  `the task title/why. These are your search terms for everything that follows — never search with the whole ` +
+  `raw title, or a generic word like "the event"/"the document". ` +
+  `(b) CHECK MEMORY FIRST — it's free: scan the "WHO THIS PERSON IS" block above for any of those entities ` +
+  `(a matching person, project, or preference). If it's already there, you don't need to search for it. ` +
+  `(c) QUERY EACH RELEVANT INTEGRATION WITH THOSE ENTITIES — for every connected app that could plausibly hold ` +
+  `something (Gmail, Calendar, Drive, Slack, GitHub, Notion, …), search/filter using the SPECIFIC entities from ` +
+  `(a), not an unfiltered "list recent items" call — e.g. search Gmail for the person's name or event name, ` +
+  `filter Calendar around the relevant date, search Drive for the subject. A blind unfiltered read wastes a ` +
+  `call and buries the signal; a targeted query finds it. ` +
+  `(d) QUERY THE WEB WITH THOSE ENTITIES + A QUALIFIER — build web_search queries as entity + qualifier suited ` +
+  `to the task ("<entity> deadline 2026", "<entity> official rules", "<entity> requirements", "<entity> most ` +
+  `common"), never the bare task title. ` +
+  `(e) CROSS-REFERENCE AND FOLLOW UP — if any result surfaces a NEW entity (a person's name, a linked doc, a ` +
+  `specific date), do ONE more targeted search/read using THAT entity before concluding — this is what catches ` +
+  `the connections a single flat pass misses. Stop once you genuinely understand the task, not just its title ` +
+  `— not when you've made a fixed number of calls.` +
   `\n(2) OUTLINE THE STEPS — from that research, work out the ordered list of concrete things that need to ` +
   `happen for this task to be done. This is your plan; you'll trim it down to what's actually left in stage 4.` +
   `\n(3) DECIDE: CAN YOU PREPARE SOMETHING HELPFUL? — you have exactly TWO write actions available: creating a ` +
@@ -142,7 +155,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // budget below must therefore fit reasoning + the actual structured output. `reserve()` gives a generous
 // headroom so the model never runs out mid-JSON; it caps waste, it doesn't force spend (the model emits
 // only the reasoning it needs). If a future non-reasoning model is used, these caps are simply never hit.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -1334,6 +1347,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
               draft.did = (draft.did || []).filter((d) =>
                 !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d) ||
                 wroteAny || draft.links.length > 0 || draft.sendables.length > 0);
+              // Dedicated second pass for the steps themselves — see writeStepsFromContext for why this is
+              // a SEPARATE call instead of trusting the steps the research loop proposed inline. The original
+              // draft.steps already passed the on-topic/drift checks above; the refined steps have NOT, so
+              // re-validate them and fall back to the original (already-validated) steps if the refinement
+              // pass itself drifted off-topic — never let a second-pass failure produce a WORSE result.
+              const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps);
+              draft.steps = (stepsMatchTitle(task.title, refined) && !isFolderHousekeepingDrift(task.title, refined)) ? refined : draft.steps;
               submitted = draft; content = "submitted";
             }
           }
@@ -1515,6 +1535,50 @@ export async function runTask(task: { title: string; why: string; source?: strin
   } finally {
     console.log(`${new Date().toISOString()} [ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
+}
+
+/**
+ * Plan-only mode's dedicated SECOND PASS for writing steps — separate from the research loop on purpose.
+ * The research loop's transcript is full of raw tool-call JSON, retries, and reasoning by the time it reaches
+ * "submit"; asking the SAME call to also produce the final actionable steps means the model is synthesizing
+ * a clean plan while still holding all that noise in context. This call sees NONE of that — only the task
+ * and the DISTILLED context/links already found — so it can focus entirely on "given what we now know, what
+ * are the concrete next actions?" instead of "given everything I just read AND what I know, what's next?"
+ * Falls back to the research loop's own steps on any failure (never worse than before, only sometimes better).
+ */
+async function writeStepsFromContext(
+  task: { title: string; why: string },
+  context: string,
+  links: TaskLink[],
+  fallbackSteps: TaskStep[],
+): Promise<TaskStep[]> {
+  if (!context.trim()) return fallbackSteps; // nothing distilled to work from — the loop's own steps are all there is
+  try {
+    const client = deepseekClient();
+    const linksBlock = links.length ? `\n\nRESOURCES ALREADY FOUND/CREATED:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
+      max_tokens: OUT.steps,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [{
+        role: "user",
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\nCONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}${linksBlock}\n\n` +
+          `Based ONLY on this task and this context, break the remaining work into a clear, ORDERED list of ` +
+          `concrete, actionable steps for the user — each a short one-liner naming a specific action (not a ` +
+          `vague category like "look into options"). If a resource above already covers part of the work, the ` +
+          `steps should say what to DO with it (review it, use it, decide something), not repeat researching it. ` +
+          `Every step must be directly about "${task.title}" — no unrelated tangents.\n\n` +
+          `Return ONLY this JSON: {"steps": [{"text": "...", "automatable": false}, ...]} — 1 to 6 steps.`,
+      }],
+    }));
+    const out = firstJson<{ steps?: { text?: string; automatable?: boolean }[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const steps = (out?.steps || [])
+      .map((s) => ({ text: String(s?.text || "").trim().slice(0, 180), automatable: !!s?.automatable }))
+      .filter((s) => s.text)
+      .slice(0, 6);
+    return steps.length ? steps : fallbackSteps;
+  } catch { return fallbackSteps; } // a failed refinement pass falls back to the loop's own steps, never blocks submission
 }
 
 /**
