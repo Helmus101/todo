@@ -32,22 +32,29 @@ const PLAN_ONLY_OVERRIDE =
   `— not when you've made a fixed number of calls.` +
   `\n(2) OUTLINE THE STEPS — from that research, work out the ordered list of concrete things that need to ` +
   `happen for this task to be done. This is your plan; you'll trim it down to what's actually left in stage 4.` +
-  `\n(3) DECIDE: CAN YOU PREPARE SOMETHING HELPFUL? — you have exactly TWO write actions available: creating a ` +
-  `brand-new Google Doc/Sheet/Slides (a resource: a guide, plan, tracker, compiled list), and drafting a Gmail ` +
-  `email (GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send). If one of ` +
-  `these would genuinely move the task forward, check whether you already have everything you need (from your ` +
-  `research/memory) to do it well: (a) if yes, DO IT NOW — write the real content, addressed to a real person ` +
-  `if you found their real address; (b) if a specific detail is missing that only the user can supply (which ` +
-  `email address, which of several options, a personal preference), do NOT guess — leave a step with a ` +
-  `"question" asking exactly that, and prepare everything else around it. Never fabricate a missing fact to ` +
-  `force completion. Not every task has a doc/email worth creating — most don't; only do this when it's a real ` +
-  `deliverable, not busywork.` +
-  `\n(4) REPORT — "did" = what you actually created/drafted (empty if nothing applied this run); "links" = the ` +
-  `real URL of anything you created AND of any specific email/doc/file you found and referenced; "steps" = ` +
-  `everything from stage 2 that's still left for the user, trimmed to what a resource/draft didn't already ` +
-  `cover, each a short concrete one-liner (mark automatable=true for a step Otto already prepared — the user ` +
-  `just needs to click Send/approve). "context" = the facts you found. "synthesis" = one past-tense line, e.g. ` +
-  `"Researched X, drafted the outreach email, and left 2 steps." Never claim to have created/drafted/sent ` +
+  `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT? — you have exactly TWO write ` +
+  `actions available: creating a brand-new Google Doc/Sheet/Slides, and drafting a Gmail email ` +
+  `(GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send). Walk the stage-2 ` +
+  `list ONE STEP AT A TIME: whenever a step describes producing a document/sheet/deck/compiled list/write-up, ` +
+  `or sending something to someone, don't leave it as a description — CREATE IT NOW, right there, as its own ` +
+  `tool call, using the research context you already gathered and RESPECTING WHAT THAT SPECIFIC STEP ASKED FOR ` +
+  `(its content should serve that one step's purpose within the larger task, not be a generic catch-all). A ` +
+  `task can legitimately produce SEVERAL documents/drafts this way if several of its steps each call for one — ` +
+  `create each one you have enough information for, not just the first. For each: check whether you already ` +
+  `have everything you need (from research/memory) to do it well: (a) if yes, DO IT NOW — write the real ` +
+  `content, addressed to a real person if you found their real address; (b) if a specific detail is missing ` +
+  `that only the user can supply (which email address, which of several options, a personal preference), do ` +
+  `NOT guess — leave THAT step with a "question" asking exactly that instead of creating it, and still prepare ` +
+  `whatever else you can around it. Never fabricate a missing fact to force completion. Steps that are pure ` +
+  `user actions (a physical task, a judgment call, a login) never get this treatment — only ones that are ` +
+  `themselves "produce a document" or "send something".` +
+  `\n(4) REPORT — "did" = what you actually created/drafted this run, one bullet per document/draft (empty if ` +
+  `nothing applied); "links" = the real URL of EVERY document you created AND of any specific email/doc/file ` +
+  `you found and referenced; "steps" = the stage-2 list MINUS whichever ones you just fulfilled by creating ` +
+  `their document/draft — what's left is only what genuinely still needs the user, each a short concrete ` +
+  `one-liner (mark automatable=true for a step Otto already prepared — the user just needs to click Send/ ` +
+  `approve). "context" = the facts you found. "synthesis" = one past-tense line, e.g. "Researched X, created 2 ` +
+  `documents and drafted the outreach email, and left 1 step." Never claim to have created/drafted/sent ` +
   `anything you didn't actually call a tool for.` +
   `\n\nINCLUDE LINKS — when you recommend specific resources or reference specific emails/docs you found, ` +
   `include their URLs in "links" (or inline as markdown [text](url) in "steps"/"context") so the user can open ` +
@@ -1393,7 +1400,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // draft.steps already passed the on-topic/drift checks above; the refined steps have NOT, so
               // re-validate them and fall back to the original (already-validated) steps if the refinement
               // pass itself drifted off-topic — never let a second-pass failure produce a WORSE result.
-              const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps);
+              const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps, draft.did);
               draft.steps = (stepsMatchTitle(task.title, refined) && !isFolderHousekeepingDrift(task.title, refined)) ? refined : draft.steps;
               submitted = draft; content = "submitted";
             }
@@ -1592,11 +1599,13 @@ async function writeStepsFromContext(
   context: string,
   links: TaskLink[],
   fallbackSteps: TaskStep[],
+  did: string[] = [],
 ): Promise<TaskStep[]> {
   if (!context.trim()) return fallbackSteps; // nothing distilled to work from — the loop's own steps are all there is
   try {
     const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY FOUND/CREATED:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
+    const didBlock = did.length ? `\n\nWHAT WAS ALREADY DONE THIS RUN (do not re-list these as steps):\n${did.map((d) => `- ${d}`).join("\n")}` : "";
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
@@ -1604,12 +1613,14 @@ async function writeStepsFromContext(
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\nCONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}${linksBlock}\n\n` +
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\nCONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}${linksBlock}${didBlock}\n\n` +
           `Based ONLY on this task and this context, break the remaining work into a clear, ORDERED list of ` +
           `concrete, actionable steps for the user — each a short one-liner naming a specific action (not a ` +
-          `vague category like "look into options"). If a resource above already covers part of the work, the ` +
-          `steps should say what to DO with it (review it, use it, decide something), not repeat researching it. ` +
-          `Every step must be directly about "${task.title}" — no unrelated tangents.\n\n` +
+          `vague category like "look into options"). If a resource above was already CREATED (not just found), ` +
+          `do NOT list "create X" as a step — that's done; instead say what to DO with it now (review it, send ` +
+          `it, use it, decide something). Only list creating a document/draft as a step if none of the ` +
+          `resources above cover it yet. Every step must be directly about "${task.title}" — no unrelated ` +
+          `tangents.\n\n` +
           `Return ONLY this JSON: {"steps": [{"text": "...", "automatable": false}, ...]} — 1 to 6 steps.`,
       }],
     }));
