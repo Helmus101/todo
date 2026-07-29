@@ -52,6 +52,18 @@ const PLAN_ONLY_OVERRIDE =
   `agent found a file that happened to share words with the title and fixated on WHERE it was stored instead of ` +
   `WHAT the actual task needed. A web_search first establishes ground truth about the task itself, so anything ` +
   `you later find in an app gets interpreted correctly (as material FOR the task) instead of becoming the task.` +
+  `\n\nRESEARCH IS ITERATIVE, NOT ONE-SHOT — a single web_search is a lookup, not research. The real pattern is: ` +
+  `search → read what came back → let it point you at the NEXT question → search again → connect what you now ` +
+  `know across sources/apps → search again if a gap remains. Concrete example: task "Create SAT vocab list" — ` +
+  `(1) check connected apps (Calendar/Gmail) for the ACTUAL exam date ("August SAT"), (2) web_search "most ` +
+  `common SAT vocabulary words [that specific month/year]", (3) that result may mention a word list or source — ` +
+  `search THAT too, or search for a second source to cross-check the list, (4) draw the connection explicitly ` +
+  `in "context" (e.g. "Your SAT is Aug 23, so this list is built for that exact test window"), (5) then actually ` +
+  `PREPARE the deliverable: when the task's title itself names a piece of content (a vocab list, a packing list, ` +
+  `a study guide, a set of notes), don't stop at describing it — COMPILE THE REAL CONTENT (the actual words, the ` +
+  `actual items) into a resource doc. "Research vocab words" as a step for the user to do themselves is wrong ` +
+  `when YOU can do that research and put the finished list in front of them right now. (6) THEN tell the user ` +
+  `what to do with it in "steps" (e.g. "Review 10 words/day", "Quiz yourself on the list before Aug 23").` +
   `\n\n"steps" MUST NEVER BE EMPTY — you never actually execute anything (no send, no calendar write, no send-to-` +
   `user), so the user's next action is the ONLY outcome of this run. Even after creating a resource doc, still ` +
   `list what the user should do with it (review it, decide something, take the real-world next step). Submitting ` +
@@ -1184,6 +1196,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // to compile into a doc/reply. Exempts it from the early-bail below, which used to cut research tasks
   // off right when they were making real progress, producing the "just read stuff, gave up" failure.
   let searchedWeb = false;
+  let searchCount = 0; // how many web_search calls this run — plan-only requires 2+ (research is iterative, not one-shot)
   let finishBacks = 0; // times we've bounced a submit for leaving work undone / claiming a phantom artifact
   // Backstop for a drafted-but-unreported reply: the model sometimes drafts a real Gmail reply, says so in
   // synthesis, but forgets to populate the structured "sendables" entry — leaving no Send button for
@@ -1321,16 +1334,21 @@ export async function runTask(task: { title: string; why: string; source?: strin
               content = "REJECTED: \"context\" is missing or too short. It must open with ONE sentence stating " +
                 `what the user actually wants/needs from "${task.title}" (in your own words, not the title ` +
                 "restated), then 2-4 sentences of the specific supporting facts you found. Write that now.";
-            } else if (!searchedWeb && canBounce) {
-              // web_search costs nothing to require — it's always available regardless of what's connected,
-              // and grounding against what the task ACTUALLY is (not just what a filename/subject line
-              // suggests) is exactly what would have caught the Wharton drift below: a search for "Wharton
-              // Investment Competition" would have anchored the model on the real task instead of a
-              // coincidentally-named file.
+            } else if (searchCount < 2 && canBounce) {
+              // web_search costs nothing to require — it's always available regardless of what's connected.
+              // ONE search is a lookup, not research: the real value is iterative — search, see what came
+              // back, let it point at the next question, search again. A single search is also exactly what
+              // would have missed the Wharton drift: one shallow lookup doesn't cross-check anything, but a
+              // second search (of what the first one turned up) would have anchored the model firmly on the
+              // real task instead of a coincidentally-named file it noticed in an app.
               finishBacks++;
-              content = `REJECTED: you have not used web_search yet. Look up what "${task.title}" actually is/requires ` +
-                `(the real event, deadline, rules, or subject it names) before finalizing — this is what keeps the ` +
-                `plan anchored to the REAL task instead of drifting onto whatever you happened to notice in an app.`;
+              content = searchCount === 0
+                ? `REJECTED: you have not used web_search yet. Look up what "${task.title}" actually is/requires ` +
+                  `(the real event, deadline, rules, or subject it names) before finalizing — this is what keeps ` +
+                  `the plan anchored to the REAL task instead of drifting onto whatever you happened to notice in an app.`
+                : `REJECTED: you've only searched once. One search is a lookup, not research — look at what that ` +
+                  `first result told you and search AGAIN on the follow-up question it raises (a more specific ` +
+                  `angle, a second source to cross-check, a related fact you still need). Do that before finalizing.`;
             } else if (hasConnectedApps && readCalls === 0 && canBounce) {
               finishBacks++;
               content = "REJECTED: you have NOT read any connected app yet — \"context\" would be a guess, not " +
@@ -1431,7 +1449,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           }
           }
         }
-        else if (toolName === "web_search") { searchedWeb = true; content = await runWebSearch(input); }
+        else if (toolName === "web_search") { searchedWeb = true; searchCount++; content = await runWebSearch(input); }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
         // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.
         else if (toolName === "send_self_brief") { content = "Blocked: autonomous email is disabled — put this in synthesis/context instead."; }
