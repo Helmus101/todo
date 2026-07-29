@@ -15,17 +15,26 @@ const PLAN_ONLY_OVERRIDE =
   `guide, a study plan, a tracker, a reference doc), and (b) drafting a Gmail email (GMAIL_CREATE_EMAIL_DRAFT) ` +
   `— NEVER sending it; the draft sits in the user's Drafts folder until THEY click Send. Those are the only ` +
   `things you may create or write — never a Calendar event, an update to an existing doc/sheet, or anything ` +
-  `else. Your job is (1) gather real context via reads + web_search, (2) DO whichever prep actions genuinely ` +
-  `apply — create the resource doc if the task's deliverable is worth compiling into one, draft the email if ` +
-  `the task is "reach out to X" / "send Y to Z" (write the actual message, addressed to the real person if you ` +
-  `found their real address; otherwise put the ready-to-send text in a step instead of guessing an address), ` +
-  `and (3) turn the remaining work into a clear, ORDERED list of concrete steps in "steps" — including steps ` +
-  `that describe sending/scheduling something Otto drafted (mark them automatable=true, since Otto already has ` +
-  `it prepared, the user just clicks Send), so the user has an exact plan for what's left and in what order. ` +
-  `Put the facts you found in "context", list any resource doc you created in "links", and a one-line ` +
-  `"synthesis" describing what you did, e.g. "Researched X, drafted the outreach email, and broke the rest ` +
-  `into 3 steps." Do not claim to have sent, updated, or scheduled anything you didn't — the ONLY things you ` +
-  `may claim to have created are a resource doc/sheet/slides or an email draft you actually called the tool for.` +
+  `else. FOLLOW THIS EXACT ORDER, every run: ` +
+  `(1) RESEARCH FIRST, IN DEPTH — web_search the task title/subject AND read every connected app that ` +
+  `plausibly bears on it, until you genuinely understand what this task is actually asking for. Do not skip ` +
+  `to writing "context" before you've actually looked. ` +
+  `(2) STATE THE GOAL, THEN THE SUPPORTING FACTS — "context" must OPEN with ONE clear sentence naming exactly ` +
+  `what the user wants/needs (their real goal, in your own words — not the task title restated), THEN 2-4 ` +
+  `sentences of the specific supporting facts you found (names, dates, numbers, requirements) that make the ` +
+  `rest of the plan make sense. Skip straight to steps without this and the user has no idea WHY the steps ` +
+  `exist. ` +
+  `(3) BUILD THE STEPS — from that understanding, turn the remaining work into a clear, ORDERED list of ` +
+  `concrete steps in "steps", including steps that describe sending/scheduling something Otto drafted (mark ` +
+  `them automatable=true, since Otto already has it prepared, the user just clicks Send). ` +
+  `(4) DO THE PREP ACTIONS — create the resource doc if the task's deliverable is worth compiling into one, or ` +
+  `draft the email if the task is "reach out to X" / "send Y to Z" (write the actual message, addressed to the ` +
+  `real person if you found their real address; otherwise put the ready-to-send text in a step instead of ` +
+  `guessing an address); list any resource doc you created in "links", along with the real URL of any specific ` +
+  `email/doc/file "context" or "did" names. Finish with a one-line "synthesis" describing what you did, e.g. ` +
+  `"Researched X, drafted the outreach email, and broke the rest into 3 steps." Do not claim to have sent, ` +
+  `updated, or scheduled anything you didn't — the ONLY things you may claim to have created are a resource ` +
+  `doc/sheet/slides or an email draft you actually called the tool for.` +
   `\n\nGO DEEP, NOT SHALLOW — since there is no execution phase this run, research IS the entire value you ` +
   `produce; the "1-3 reads" / "targeted, not exhaustive" guidance above is for execution mode and does NOT ` +
   `apply here. Instead: check EVERY connected app that could plausibly bear on this task (not just the first ` +
@@ -51,10 +60,12 @@ const PLAN_ONLY_OVERRIDE =
   `follow-up tasks, project tasks, or separate initiatives. For example, if the task is "Find summer clothes", ` +
   `steps should be about researching styles, finding stores, checking prices — NOT about college apps, ` +
   `restaurant partnerships, or any other unrelated project. Stay strictly focused on the specific task title.` +
-  `\n\nINCLUDE LINKS: When you recommend specific stores, brands, products, or resources in your steps or ` +
-  `context, ALWAYS include the actual URLs you found via web_search. Do not just mention names without links. ` +
-  `For example: "Research summer styles at [Zara](https://www.zara.com) and [H&M](https://www.hm.com)" or ` +
-  `"Check [Uniqlo's summer collection](https://www.uniqlo.com) for lightweight options."`;
+  `\n\nINCLUDE LINKS — BOTH web AND app results: When you recommend specific stores, brands, products, or ` +
+  `resources, ALWAYS include the actual URLs you found via web_search in your steps/context text. AND when your ` +
+  `"context" or "did" references a SPECIFIC email, document, spreadsheet, or file you found (not a category — a ` +
+  `named one), put its real URL in "links" so the user can open it directly. "I found the relevant documents ` +
+  `and emails" with nothing in "links" is not acceptable — if you can name what you found, you have its URL from ` +
+  `the tool result; put it in "links". Never describe finding something without giving a way to open it.`;
 import { webSearch } from "./websearch";
 
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
@@ -893,7 +904,7 @@ const RUN_SYSTEM =
   `note in "synthesis" that it's mass mail and needs no reply, and stop there.\n` +
   `NO AUTONOMOUS EMAIL, EVER — not even to the user's own inbox. Never draft an email addressed to the user or to summarize findings for the user — put summary briefs directly in "synthesis"/"context" or in a Google Doc/Sheet artifact. Never create steps like 'Draft an email to the user'.\n` +
   `STEPS MUST BE TASK-SPECIFIC — Every step in "steps" MUST be directly related to the task title. Do NOT generate unrelated follow-up tasks, project tasks, or separate initiatives. For example, if the task is "Find summer clothes", steps should be about researching styles, finding stores, checking prices — NOT about college apps, restaurant partnerships, or any other unrelated project. Stay strictly focused on the specific task title.\n` +
-  `INCLUDE LINKS IN RECOMMENDATIONS — When you recommend specific stores, brands, products, or resources in your steps, context, or artifacts, ALWAYS include the actual URLs you found via web_search. Do not just mention names without links. For example: "Research summer styles at [Zara](https://www.zara.com) and [H&M](https://www.hm.com)" or "Check [Uniqlo's summer collection](https://www.uniqlo.com) for lightweight options."\n` +
+  `INCLUDE LINKS IN RECOMMENDATIONS — When you recommend specific stores, brands, products, or resources in your steps, context, or artifacts, ALWAYS include the actual URLs you found via web_search. Do not just mention names without links. For example: "Research summer styles at [Zara](https://www.zara.com) and [H&M](https://www.hm.com)" or "Check [Uniqlo's summer collection](https://www.uniqlo.com) for lightweight options." The same rule applies to app results: if "context"/"did" names a SPECIFIC email, doc, sheet, or file you found, put its real URL in "links" — never describe finding something without giving a way to open it.\n` +
   `CALENDAR INVITES: create/update the event freely — but it lands on the user's calendar SILENTLY, with NO ` +
   `emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; ` +
   `instead add a "sendables" entry {app:"gcal", label, eventId, attendees:[their emails], summary, when} so the ` +
@@ -1302,15 +1313,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
             // round budget left to actually act on the feedback.
             const roundsLeft = MAX - 1 - i;
             const canBounce = finishBacks < 2 && roundsLeft >= 2;
-            // Reject a shallow plan: if apps are connected but NOTHING was actually read from them this run,
-            // "context" is a guess dressed up as research. Cap the pushback so a genuinely nothing-to-find
-            // task (or one where every connected app turned out irrelevant) can still finish.
+            // "context" must open with a real goal sentence + supporting facts (see PLAN_ONLY_OVERRIDE step 2)
+            // — a near-empty context means that step got skipped entirely, straight from research to steps.
             const hasConnectedApps = !!extras?.connected?.length;
-            // web_search costs nothing to require — it's always available regardless of what's connected,
-            // and grounding against what the task ACTUALLY is (not just what a filename/subject line suggests)
-            // is exactly what would have caught the Wharton drift below: a search for "Wharton Investment
-            // Competition" would have anchored the model on the real task instead of a coincidentally-named file.
-            if (!searchedWeb && canBounce) {
+            if (draft.context.trim().length < 20 && canBounce) {
+              finishBacks++;
+              content = "REJECTED: \"context\" is missing or too short. It must open with ONE sentence stating " +
+                `what the user actually wants/needs from "${task.title}" (in your own words, not the title ` +
+                "restated), then 2-4 sentences of the specific supporting facts you found. Write that now.";
+            } else if (!searchedWeb && canBounce) {
+              // web_search costs nothing to require — it's always available regardless of what's connected,
+              // and grounding against what the task ACTUALLY is (not just what a filename/subject line
+              // suggests) is exactly what would have caught the Wharton drift below: a search for "Wharton
+              // Investment Competition" would have anchored the model on the real task instead of a
+              // coincidentally-named file.
               finishBacks++;
               content = `REJECTED: you have not used web_search yet. Look up what "${task.title}" actually is/requires ` +
                 `(the real event, deadline, rules, or subject it names) before finalizing — this is what keeps the ` +
@@ -1343,6 +1359,15 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 `found a file/folder during research and fixated on organizing it instead of using what's in it ` +
                 `to prepare for the real task. Discard those steps and write ones that substantively address ` +
                 `"${task.title}" itself.`;
+            } else if (/\bfound\b[^.]{0,60}\b(documents?|emails?|files?|spreadsheets?)\b/i.test(`${draft.context} ${(draft.did || []).join(" ")}`) && !draft.links.length && canBounce) {
+              // "I found the relevant documents and emails" with nothing in links is a report of work the
+              // user can't act on — they have no way to open what was supposedly found. Force it to either
+              // name the real URLs (from the tool results already in hand) or stop claiming to have found them.
+              finishBacks++;
+              content = "REJECTED: your \"context\"/\"did\" says you found specific documents/emails/files, but " +
+                "\"links\" is empty — the user has no way to open what you claim to have found. Add their real " +
+                "URLs (from the tool results you already have) to \"links\", or rephrase to not claim you found " +
+                "named items you can't link to.";
             } else {
               // A "did" bullet claiming creation is legitimate ONLY if a resource-create call actually
               // succeeded this run (wroteAny) — otherwise it's the same fabrication risk execution mode
