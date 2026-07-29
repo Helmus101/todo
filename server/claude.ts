@@ -1386,11 +1386,39 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "\"links\" is empty — the user has no way to open what you claim to have found. Add their real " +
                 "URLs (from the tool results you already have) to \"links\", or rephrase to not claim you found " +
                 "named items you can't link to.";
+            } else if (!wroteAny && draft.steps.some((s) => /\b(create|generate|build|make|compile|draft)\b[^.]{0,40}\b(doc|spreadsheet|sheet|list|cheat sheet|checklist|guide|plan|tracker|schedule)\b/i.test(s.text)) && canBounce) {
+              // Steps describe creating documents/spreadsheets/lists but nothing was actually created.
+              // EXCEPTION: homework/study tasks (SAT prep, academic work, learning materials) should be
+              // broken into steps for the user to do themselves — the AI shouldn't do their homework.
+              const isHomework = /\b(sat|homework|study|learn|practice|test|exam|quiz|assignment|course|class|school|academic|prep|vocab|math|reading|writing)\b/i.test(`${task.title} ${task.why}`);
+              if (!isHomework) {
+                finishBacks++;
+                content = "REJECTED: your \"steps\" describe creating documents/spreadsheets/lists, but you didn't " +
+                  "actually create them. In plan-only mode, you ARE allowed to create resource docs/sheets — " +
+                  "call the create tool and write the real content into it now. Don't list \"Create X document\" " +
+                  "as a step when you can do that research and compilation yourself this run.";
+              }
             } else {
               // A "did" bullet claiming creation is legitimate ONLY if a resource-create call actually
               // succeeded this run (wroteAny) — otherwise it's the same fabrication risk execution mode
               // guards against, just with research verbs allowed through since those ARE this mode's real work.
-              draft.did = (draft.did || []).filter((d) => !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d) || (wroteAny && /creat|built|compil|assembl|produc|generat|draft/i.test(d)));
+              // ALSO filter out trivial read-only bullets ("Listed Google Drive files", "Read the doc") that
+              // don't represent meaningful research — those are just tool calls, not value. Keep only bullets
+              // that describe FINDING/IDENTIFYING something specific (names, dates, facts) OR actual creation.
+              draft.did = (draft.did || []).filter((d) => {
+                const s = d.toLowerCase();
+                // Allow creation claims only if we actually created something
+                if (CLAIM_VERBS.test(d) && !/research|gather|found|identif/i.test(d)) {
+                  return wroteAny && /creat|built|compil|assembl|produc|generat|draft/i.test(d);
+                }
+                // Filter out trivial read-only bullets: "listed", "read", "checked", "searched" without
+                // a specific finding (a name, date, number, or concrete fact). Keep only meaningful research.
+                if (/^(listed|read|checked|searched|opened|viewed|accessed)\b/.test(s)) {
+                  // Allow if it names a specific finding (contains a name, date, number, or "found X")
+                  return /found|identified|located|discovered|:\s*\w+|\d{4}|\b[a-z][a-z]+ [a-z][a-z]+\b/i.test(s);
+                }
+                return true;
+              });
               submitted = draft; content = "submitted";
             }
           }
