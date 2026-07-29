@@ -10,7 +10,7 @@
  * hallucinated reference is structurally impossible.
  */
 import { readAction, getConnectedAccounts } from "./integrations.ts";
-import { pronoteConnected, pronoteHomework } from "./pronote.ts";
+import { pronoteConnected, pronoteHomework, pronoteTests } from "./pronote.ts";
 
 export interface SourceItem {
   sourceApp: "gmail" | "calendar" | "drive" | "github" | "pronote";
@@ -105,7 +105,7 @@ function driveToItems(data: any, account?: { id?: string; email?: string }): Sou
   }).filter((x): x is SourceItem => !!x);
 }
 
-function githubToItems(data: any, label: string): SourceItem[] {
+function githubToItems(data: any, label: string, account?: { id?: string; email?: string }): SourceItem[] {
   const rows: any[] = data?.issues || data?.items || (Array.isArray(data) ? data : []);
   return (rows || []).slice(0, 15).map((r: any): SourceItem | null => {
     const url = String(r?.html_url ?? r?.htmlUrl ?? "").trim();
@@ -123,6 +123,8 @@ function githubToItems(data: any, label: string): SourceItem[] {
       sender: String(r?.user?.login ?? "").slice(0, 120),
       timestamp: String(r?.updated_at ?? r?.created_at ?? ""),
       labels: [label],
+      accountId: account?.id,
+      accountEmail: account?.email,
     };
   }).filter((x): x is SourceItem => !!x);
 }
@@ -137,6 +139,20 @@ function pronoteToItems(items: { id: string; subject: string; description: strin
     snippet: a.description || `Due ${a.deadline}`,
     timestamp: a.deadline,
     labels: ["homework"],
+  }));
+}
+
+function pronoteTestsToItems(items: { id: string; subject: string; deadline: string }[]): SourceItem[] {
+  return items.map((t): SourceItem => ({
+    sourceApp: "pronote",
+    // Timetable lesson ids aren't stable across re-fetches, so anchor on subject+date instead — this is
+    // what keeps a re-sweep from either duplicating the same test or losing it once the id rotates.
+    externalId: t.id,
+    anchorKey: `pronote-test:${t.subject}:${t.deadline.slice(0, 10)}`,
+    title: `${t.subject} test`.slice(0, 140),
+    snippet: `Test on ${t.deadline}`,
+    timestamp: t.deadline,
+    labels: ["test"],
   }));
 }
 
@@ -156,7 +172,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
     try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
   };
-  const [gmailAccounts, calAccounts, driveAccounts, pronoteOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), pronoteConnected(userEmail)]);
+  const [gmailAccounts, calAccounts, driveAccounts, githubAccounts, pronoteOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), accountsFor("github"), pronoteConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
@@ -187,18 +203,24 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
     ...calGrabs,
     ...driveGrabs,
     // GitHub (if connected): things waiting on the user — open issues assigned to them, PRs where their
-    // review was requested. Both fail silently for accounts without GitHub.
-    grab(async () => githubToItems(await readAction(userEmail, "GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER", {
-      filter: "assigned", state: "open", per_page: 10,
-    }), "assigned")),
-    grab(async () => githubToItems(await readAction(userEmail, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS", {
-      q: "is:open is:pr review-requested:@me", per_page: 10,
-    }), "review-requested")),
+    // review was requested. Both fail silently for accounts without GitHub. Multi-account like Gmail/
+    // Calendar/Drive above — a second GitHub account (e.g. work + personal) used to be silently skipped.
+    ...githubAccounts.flatMap((acc) => [
+      grab(async () => githubToItems(await readAction(userEmail, "GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER", {
+        filter: "assigned", state: "open", per_page: 10,
+      }, acc.id), "assigned", acc)),
+      grab(async () => githubToItems(await readAction(userEmail, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS", {
+        q: "is:open is:pr review-requested:@me", per_page: 10,
+      }, acc.id), "review-requested", acc)),
+    ]),
     // Pronote (if connected) — outside the Composio/getConnectedAccounts path entirely; checked separately.
     // Gated OUTSIDE grab() deliberately: grab() marks `attempted` true on any non-throwing call, and a
     // "not connected" check always succeeds — that would make `attempted` true for a user with NOTHING
     // connected at all (not even Pronote), wrongly skipping the agent-sweep fallback for them.
-    ...(pronoteOn.connected ? [grab(async () => pronoteToItems(await pronoteHomework(userEmail)))] : []),
+    ...(pronoteOn.connected ? [
+      grab(async () => pronoteToItems(await pronoteHomework(userEmail))),
+      grab(async () => pronoteTestsToItems(await pronoteTests(userEmail))),
+    ] : []),
   ]);
   return { items: dedupeByThread(items), attempted };
 }

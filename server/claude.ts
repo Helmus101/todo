@@ -581,7 +581,7 @@ export async function classifyCandidates(
 ): Promise<GenerationResult> {
   if (!items.length) return { tasks: [], profileUpdates: [] };
   const list = items.slice(0, 30).map((it, i) =>
-    `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}${it.labels.includes("assigned") ? "/ASSIGNED-TO-USER" : ""}${it.labels.includes("review-requested") ? "/REVIEW-REQUESTED" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
+    `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}${it.labels.includes("assigned") ? "/ASSIGNED-TO-USER" : ""}${it.labels.includes("review-requested") ? "/REVIEW-REQUESTED" : ""}${it.labels.includes("test") ? "/TEST" : ""}${it.labels.includes("homework") ? "/HOMEWORK" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `\nALREADY ON THEIR LIST (skip anything covering these):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
   const sys =
     `This is for a STUDENT'S to-do list — Otto is their companion, not a do-it-all; a task should name a real ` +
@@ -591,8 +591,13 @@ export async function classifyCandidates(
     `items are commitments THEY made ("I'll send you X") — create a task to FULFILL unfulfilled ones. Events: only ` +
     `if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if ` +
     `someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs ` +
-    `are actionable while open. Pronote homework: actionable while not yet marked done; urgency scales with how ` +
-    `close the deadline is (≥0.7 within ~48h). Skip FYIs, receipts, automated mail, and anything already on ` +
+    `are actionable while open. Pronote homework (labeled "homework"): actionable while not yet marked done; ` +
+    `urgency scales with how close the deadline is (≥0.7 within ~48h). Pronote tests/exams (labeled "test"): ` +
+    `these need STUDY TIME before the date, not last-minute action — surface one even weeks out (importance ` +
+    `≥0.7 always, since a test is inherently high-stakes), with urgency rising as the date nears (≥0.7 inside ` +
+    `~5 days) so it doesn't get crowded out by same-day noise but also doesn't wait until it's too late to ` +
+    `study. Title/why for a test should point at STARTING to prepare (e.g. "Start reviewing for the Math test ` +
+    `on Friday"), never phrase it as already studied. Skip FYIs, receipts, automated mail, and anything already on ` +
     `their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank ` +
     `HIGHER (importance ≥ 0.7); things their preferences deprioritize rank lower or get skipped. Quality over ` +
     `quantity — the handful that matter. ALWAYS include: a direct question or request from a real person awaiting ` +

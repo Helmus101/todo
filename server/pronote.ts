@@ -92,8 +92,14 @@ async function withPronoteSession<T>(email: string, fn: (session: pronote.Sessio
 
 export interface PronoteHomeworkItem { id: string; subject: string; description: string; deadline: string; done: boolean; }
 
+// Homework is graded work due days-to-weeks out, so a 10-day window used to miss anything a student
+// should already be starting on (a long essay, a project) — widened so nothing due within ~3 weeks is
+// silently invisible to Otto. Urgency/importance still scale with proximity in classify (claude.ts), so
+// a far-off deadline doesn't crowd out what's actually due soon.
+const HOMEWORK_DAYS_AHEAD = 21;
+
 /** Homework due in the next `daysAhead` days, not yet marked done. */
-export async function pronoteHomework(email: string, daysAhead = 10): Promise<PronoteHomeworkItem[]> {
+export async function pronoteHomework(email: string, daysAhead = HOMEWORK_DAYS_AHEAD): Promise<PronoteHomeworkItem[]> {
   const out = await withPronoteSession(email, async (session) => {
     const now = new Date();
     const end = new Date(now.getTime() + daysAhead * 86_400_000);
@@ -106,6 +112,33 @@ export async function pronoteHomework(email: string, daysAhead = 10): Promise<Pr
         description: String(a.description || "").replace(/\s+/g, " ").trim().slice(0, 400),
         deadline: a.deadline.toISOString(),
         done: a.done,
+      }));
+  });
+  return out || [];
+}
+
+export interface PronoteTestItem { id: string; subject: string; deadline: string; }
+
+// Tests/exams need more lead time than homework — they're the thing a student should be STUDYING FOR
+// ahead of the date, not just showing up to. A wider window than homework gives Otto (and the student)
+// real runway to plan study sessions instead of surfacing the exam the day before.
+const TEST_DAYS_AHEAD = 28;
+
+/** Upcoming tests/exams (Pronote flags a lesson slot as "test") in the next `daysAhead` days. Pronote's
+ *  timetable has no stable per-instance id across re-fetches, so the anchor identity used by the caller
+ *  (discover.ts) is built from subject+date, not `id` alone — this "id" is only for display/de-dup within
+ *  a single fetch. */
+export async function pronoteTests(email: string, daysAhead = TEST_DAYS_AHEAD): Promise<PronoteTestItem[]> {
+  const out = await withPronoteSession(email, async (session) => {
+    const now = new Date();
+    const end = new Date(now.getTime() + daysAhead * 86_400_000);
+    const timetable = await pronote.timetableFromIntervals(session, now, end);
+    return timetable.classes
+      .filter((c): c is pronote.TimetableClassLesson => c.is === "lesson" && (c as pronote.TimetableClassLesson).test === true && !(c as pronote.TimetableClassLesson).canceled)
+      .map((c): PronoteTestItem => ({
+        id: c.id,
+        subject: c.subject?.name || "Class",
+        deadline: c.startDate.toISOString(),
       }));
   });
   return out || [];

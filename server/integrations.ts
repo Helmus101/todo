@@ -60,10 +60,13 @@ const norm = (s: string) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, 
 export const MULTI_APPS = new Set(["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"]);
 // A task's `source` (gmail/calendar/drive) → the Composio toolkit prefix, so execution routes that toolkit's
 // actions to the SAME account the task came from.
-const SOURCE_TOOLKIT: Record<string, string> = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE" };
+const SOURCE_TOOLKIT: Record<string, string> = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE", github: "GITHUB" };
 // Google apps Composio lets a user connect more than once (personal + work inbox, etc.) — same list Settings
 // uses to decide whether to offer "Add account". Everything else is effectively single-account per user.
-export const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
+// "github" is included for implicit WRITE-account resolution (getAgentTools below) even though Settings
+// doesn't yet offer an "Add account" button for it — discovery (discover.ts) already reads every connected
+// GitHub account explicitly, so a write action needs the same account-awareness once more than one exists.
+export const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets", "github"];
 
 /** Real brand logo for a toolkit — served straight from Composio's logo CDN (SVG). Used by the Settings grid
  *  so each app shows its actual logo (not a hand-drawn icon). Verified to resolve for every catalog slug. */

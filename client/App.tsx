@@ -795,9 +795,8 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
         <h3>Apps</h3>
         <p className="settings-hint">Otto reads your apps and does reversible work — it <b>never sends, posts, or deletes</b> on its own, and only ever edits a document it created itself, never one of yours.</p>
         <Integrations onChanged={onChanged} primaryAccounts={profile?.primaryAccounts} onProfile={setProfile} />
-        {/* TEMPORARY note explaining why only Google (+ Pronote below) show right now. */}
-        <p className="settings-hint">Other integrations are temporarily hidden while Pronote support is rolled out.</p>
-        <PronoteTile />
+        {/* TEMPORARY: launch is scoped to Google only — Pronote (and everything else) stays hidden for now. */}
+        <p className="settings-hint">Other integrations are temporarily hidden for launch.</p>
       </section>
 
       <section className="settings-sec">
@@ -1228,7 +1227,7 @@ function Landing() {
 
       <main className="hero">
         <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>Know what deserves your attention today.</h1>
-        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Stop deciding what to do next. Otto reads your inbox, calendar, and tools to rank what genuinely matters, prepare the work, and leave you in total control.</p>
+        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Stop deciding what to do next. Otto reads your Gmail, Calendar, and Drive to rank what genuinely matters, prepare the work, and leave you in total control.</p>
         <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.25s" }}>
           <a className="btn primary big" href="/signup">Get started — it's free</a>
           <a className="btn ghost" href="/login">Log in</a>
