@@ -1,28 +1,41 @@
 import OpenAI from "openai";
 import type { Profile, TaskStep, TaskLink, Sendable } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
-import { readOnly } from "./integrations.ts";
+import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 
-// Temporary: Otto gathers context and breaks work into a plan (steps), but does not itself create, draft,
-// update, or send anything — every actionable step is left for the user to do. Flip back to true to restore
-// full auto-execution. Nothing execution-related is deleted, just gated: write tools are withheld from the
-// agent (see runTask) and the submit-time enforcement that demands a real artifact is skipped.
+// Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
+// email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
+// touches someone else or can't be undone is left for the user to trigger themselves. Flip back to true to
+// restore full auto-execution of every reversible action too. Nothing execution-related is deleted, just
+// gated: only sends/calendar-writes/updates-to-existing-docs are withheld from the agent (see runTask).
 export const EXECUTION_ENABLED = false;
 const PLAN_ONLY_OVERRIDE =
-  `\n\nPLAN-ONLY MODE IS ACTIVE — OVERRIDES ALL "ACT NOW"/"CREATE"/"DRAFT" INSTRUCTIONS ABOVE: you have NO ` +
-  `write/create/draft/send tools this run — only read/search tools and web_search. Your job is to (1) gather ` +
-  `real context via reads + web_search, and (2) turn the work into a clear, ORDERED list of concrete steps in ` +
-  `"steps" that the user can complete themselves. Put the facts you found in "context", and a one-line ` +
-  `"synthesis" describing the plan, e.g. "Researched X and broke it into 4 steps." Do not claim to have ` +
-  `created, drafted, sent, or updated anything — you didn't.` +
-  `\n\nRESEARCH DEEPLY — check EVERY connected app that could plausibly bear on this task (Gmail, Calendar, ` +
-  `Drive, Slack, GitHub, Notion, etc.) and use web_search for external facts. Cross-reference what you find: ` +
-  `an email may reference a doc, a doc may name a person worth checking. Keep digging until "context" contains ` +
-  `SPECIFIC, verified facts (names, dates, numbers, requirements) — never a restated version of the task title.` +
-  `\n\nBREAK INTO SIMPLE STEPS — from your research, turn the work into clear, actionable steps the user can ` +
-  `complete. Each step should be simple and concrete (e.g., "Email the professor about the deadline", "Book ` +
-  `the flight for October 15", "Submit the application form"). Steps must be directly related to the task ` +
-  `title — no unrelated follow-up tasks or separate initiatives.` +
+  `\n\nPLAN-ONLY MODE IS ACTIVE — OVERRIDES ALL "ACT NOW"/"CREATE"/"DRAFT" INSTRUCTIONS ABOVE: follow this exact ` +
+  `four-stage process, every task:` +
+  `\n(1) GATHER CONTEXT — read every connected app that plausibly bears on this task (Gmail, Calendar, Drive, ` +
+  `Slack, GitHub, Notion, etc.), use what you already know about this person (the "WHO THIS PERSON IS" block ` +
+  `above), and web_search for anything external. Cross-reference what you find — an email may reference a doc, ` +
+  `a doc may name a person worth checking elsewhere. Keep digging until you genuinely understand the task, not ` +
+  `just its title.` +
+  `\n(2) OUTLINE THE STEPS — from that research, work out the ordered list of concrete things that need to ` +
+  `happen for this task to be done. This is your plan; you'll trim it down to what's actually left in stage 4.` +
+  `\n(3) DECIDE: CAN YOU PREPARE SOMETHING HELPFUL? — you have exactly TWO write actions available: creating a ` +
+  `brand-new Google Doc/Sheet/Slides (a resource: a guide, plan, tracker, compiled list), and drafting a Gmail ` +
+  `email (GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send). If one of ` +
+  `these would genuinely move the task forward, check whether you already have everything you need (from your ` +
+  `research/memory) to do it well: (a) if yes, DO IT NOW — write the real content, addressed to a real person ` +
+  `if you found their real address; (b) if a specific detail is missing that only the user can supply (which ` +
+  `email address, which of several options, a personal preference), do NOT guess — leave a step with a ` +
+  `"question" asking exactly that, and prepare everything else around it. Never fabricate a missing fact to ` +
+  `force completion. Not every task has a doc/email worth creating — most don't; only do this when it's a real ` +
+  `deliverable, not busywork.` +
+  `\n(4) REPORT — "did" = what you actually created/drafted (empty if nothing applied this run); "links" = the ` +
+  `real URL of anything you created AND of any specific email/doc/file you found and referenced; "steps" = ` +
+  `everything from stage 2 that's still left for the user, trimmed to what a resource/draft didn't already ` +
+  `cover, each a short concrete one-liner (mark automatable=true for a step Otto already prepared — the user ` +
+  `just needs to click Send/approve). "context" = the facts you found. "synthesis" = one past-tense line, e.g. ` +
+  `"Researched X, drafted the outreach email, and left 2 steps." Never claim to have created/drafted/sent ` +
+  `anything you didn't actually call a tool for.` +
   `\n\nINCLUDE LINKS — when you recommend specific resources or reference specific emails/docs you found, ` +
   `include their URLs in "links" (or inline as markdown [text](url) in "steps"/"context") so the user can open ` +
   `them directly. Never describe finding something without giving a way to open it.`;
@@ -1068,12 +1081,14 @@ const RUN_TOOLS = [
  */
 export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
   const profileUpdates: ProfileUpdate[] = [];
-  // Plan-only mode: withhold every write/create/draft tool structurally, so the agent physically cannot
-  // execute anything — same "deny by absence" pattern already used for irreversible sends (see isGatedAction).
-  const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnly(extras);
+  // Plan-only mode: withhold every irreversible/other-people-facing write tool structurally, so the agent
+  // physically cannot send/post/delete/schedule — same "deny by absence" pattern already used for irreversible
+  // sends (see isGatedAction). It DOES still get two prep actions: creating a resource doc/sheet/slides, and
+  // drafting (never sending) a Gmail email — see readOnlyPlusPrep.
+  const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusPrep(extras);
   const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
-    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only"}): ${extras.connected.join(", ")}.\n`
+    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus creating a resource doc/sheet/slides or drafting a Gmail email — never sending"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
   const manualHint = task.source === "manual"
     ? `\nThe USER added this to-do themselves, typed as a rough note. Treat the title as their intent: use your ` +
@@ -1260,9 +1275,8 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         else if (toolName === "submit") {
           const draft = finalize(input as RunOutput, "", profileUpdates);
-          // Plan-only mode: the agent has no write tools, so it can never satisfy "you must have written
-          // something" — accept the plan as-is instead of bouncing it against enforcement built for the
-          // execute-now mode below (which would otherwise reject every single submission).
+          // Plan-only mode has its own lighter-weight enforcement (below) instead of the execute-now mode's
+          // enforcement further down, which assumes full read/write access and would reject constantly here.
           if (!EXECUTION_ENABLED) {
             // Quality pushback, but NEVER at the cost of losing the run entirely: a rejection on the final
             // two rounds risks the model running out of rounds → the defeatist "Open and handle:" fallback,
@@ -1304,10 +1318,22 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "\"links\" is empty — the user has no way to open what you claim to have found. Add their real " +
                 "URLs (from the tool results you already have) to \"links\", or rephrase to not claim you found " +
                 "named items you can't link to.";
+            } else if (CLAIM_VERBS.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`) && !wroteAny && !draft.links.length && !draft.sendables.length && canBounce) {
+              // Claims to have created/drafted something, but no write tool actually succeeded this run and
+              // there's no artifact/sendable to back it up — the same fabrication risk execution mode guards
+              // against. Reject rather than let a claimed-but-nonexistent doc/draft reach the user.
+              finishBacks++;
+              content = "REJECTED: you claim to have created or drafted something, but no create/draft tool " +
+                "call actually succeeded this run — there's no link or sendable to back that up. Either call the " +
+                "real tool (GOOGLEDOCS_CREATE_DOCUMENT / GMAIL_CREATE_EMAIL_DRAFT / etc.) and include the result " +
+                "in \"links\"/\"sendables\", or don't claim you created it.";
             } else {
-              // Nothing is ever legitimately "created" in plan-only mode (no write tools) — a "did" bullet
-              // claiming creation is always a fabrication, strip it. Research-describing verbs pass through.
-              draft.did = (draft.did || []).filter((d) => !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d));
+              // A "did" bullet claiming creation is legitimate ONLY if a create/draft call actually succeeded
+              // this run (wroteAny) or there's a real artifact/sendable to point at — otherwise it's dropped
+              // rather than shown as unverified work. Research-describing verbs always pass through.
+              draft.did = (draft.did || []).filter((d) =>
+                !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d) ||
+                wroteAny || draft.links.length > 0 || draft.sendables.length > 0);
               submitted = draft; content = "submitted";
             }
           }
@@ -1379,9 +1405,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         // Plan-only mode: even a hallucinated call to a write tool name (not offered in the schema, so
         // unlikely, but not impossible) is blocked here too — enforcement can't rely on the model just not
-        // trying. Reads/searches still pass through below. All writes are blocked in plan-only mode.
-        else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName))) {
-          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run. Put this in \"steps\" instead.";
+        // trying. Reads/searches still pass through below. TWO exceptions: creating a resource doc/sheet/
+        // slides, or drafting (never sending) a Gmail email — plan-only's allowed writes (see
+        // readOnlyPlusPrep) — fall through to the real call below instead of being blocked.
+        else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName)) && !isPlanOnlyAllowedWrite(String(toolName))) {
+          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run (except creating a NEW resource doc/sheet/slides, or drafting a Gmail email). Put this in \"steps\" instead.";
         }
         else {
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.
