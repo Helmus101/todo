@@ -3,14 +3,17 @@ import session from "express-session";
 import type { Credentials } from "google-auth-library";
 import type { WebTask, Profile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../shared/types.ts";
+import { encryptSecret, decryptSecret } from "./crypto.ts";
 
 /** A persisted Google connection for an account (incl. the refresh token, so it stays connected). */
 export interface StoredGoogle { tokens: Credentials; email?: string; }
 
 /** A persisted Pronote (French school portal) connection. `token` is a rotating credential the pawnote
  *  library issues in place of the password after the first login — NOT the password itself, which is used
- *  once to connect and never stored (see server/pronote.ts). Protected the same way as `google.tokens`:
- *  RLS + the service-role-only write path in supabase.sql, not app-level encryption. */
+ *  once to connect and never stored (see server/pronote.ts). Protected by RLS + the service-role-only
+ *  write path (supabase.sql) AND, transparently in loadState/saveState below, app-level AES-256-GCM
+ *  encryption (server/crypto.ts) — this interface always holds the LIVE plaintext token in memory, only
+ *  the DB row is encrypted. */
 export interface StoredPronote { url: string; username: string; kind: number; token: string; deviceUUID: string; navigatorIdentifier?: string; }
 
 // Cloud persistence, keyed by the user's Google email — so memory + tasks survive restarts and follow
@@ -134,7 +137,9 @@ export async function loadState(email?: string): Promise<AccountState> {
   if (error) { console.warn("[store] load failed:", error.message); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
-  const pronote = d?.pronote && d.pronote.token ? (d.pronote as StoredPronote) : undefined;
+  const pronote = d?.pronote && d.pronote.token
+    ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token) }
+    : undefined;
   return { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote };
 }
 
@@ -148,7 +153,9 @@ export async function saveState(email: string | undefined, state: AccountState):
   // them unconditionally as `?? null` would silently NULL OUT a live connection on the very next unrelated
   // save. Omitting the key from the upsert payload leaves the existing column value alone.
   if ("google" in state) row.google = state.google ?? null;
-  if ("pronote" in state) row.pronote = state.pronote ?? null;
+  if ("pronote" in state) {
+    row.pronote = state.pronote ? { ...state.pronote, token: encryptSecret(state.pronote.token) } : null;
+  }
   const { error } = await withRetry("save", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
   if (error) console.warn("[store] save failed:", error.message);

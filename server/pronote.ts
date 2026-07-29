@@ -10,8 +10,9 @@
  *      is used for exactly one login call and is NEVER stored or logged — pawnote's `loginCredentials`
  *      returns a `RefreshInformation.token` that acts as a password replacement from then on (scoped to a
  *      per-account deviceUUID), the same shape as an OAuth refresh token. That token IS what gets persisted
- *      (see StoredPronote in store.ts), protected the same way as everything else in weave_web_state: RLS +
- *      the service-role-only write path, not app-level encryption (consistent with `google.tokens`).
+ *      (see StoredPronote in store.ts), protected by RLS + the service-role-only write path AND, on top of
+ *      that, app-level AES-256-GCM encryption (server/crypto.ts) applied transparently in store.ts's
+ *      loadState/saveState — this file never sees the encrypted form, just the live token.
  *
  * GUARDRAIL: this module exposes READS ONLY (homework, timetable). It is never wired into
  * integrations.getAgentTools() — the agent has no path to call anything here, so none of Pronote's write
