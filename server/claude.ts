@@ -155,7 +155,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // budget below must therefore fit reasoning + the actual structured output. `reserve()` gives a generous
 // headroom so the model never runs out mid-JSON; it caps waste, it doesn't force spend (the model emits
 // only the reasoning it needs). If a future non-reasoning model is used, these caps are simply never hit.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 800 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -1088,6 +1088,41 @@ const RUN_TOOLS = [
 ];
 
 /**
+ * FIRST PASS, before any research happens: ask the AI to PLAN the research instead of improvising it live.
+ * Given just the task + which apps are connected, produce a short list of concrete search queries (which
+ * entities to look for, which specific query text to run against which app, which web searches to make).
+ * The main research loop then executes this plan instead of figuring out its approach on the fly — same
+ * reasoning as writeStepsFromContext's second pass: a dedicated, focused call does one job better than a
+ * single call trying to plan-and-research-and-write all at once. Falls back to an empty plan (the loop's own
+ * algorithmic instructions still apply) on any failure — this is an enhancement, never a blocker.
+ */
+async function planResearch(task: { title: string; why: string }, connectedApps: string[]): Promise<string[]> {
+  try {
+    const client = deepseekClient();
+    const appsLine = connectedApps.length ? connectedApps.join(", ") : "none connected";
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
+      max_tokens: OUT.plan,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [{
+        role: "user",
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\nCONNECTED APPS: ${appsLine}\n\n` +
+          `Before researching, PLAN it. First extract the key entities (names, people, organizations, places, ` +
+          `dates, subjects) from the task. Then list 3-6 concrete search actions to actually run — each one ` +
+          `naming a SPECIFIC query, not a vague instruction. For a connected app, phrase it as "Search <app> for ` +
+          `'<specific query>'" (e.g. "Search Gmail for 'Wharton Investment Competition'", not "check email"). ` +
+          `For external facts, phrase it as "web_search: '<specific query>'" using an entity + qualifier (e.g. ` +
+          `"web_search: 'Wharton Global Investment Competition 2026 rules deadline'"). Only include apps from ` +
+          `CONNECTED APPS above.\n\nReturn ONLY this JSON: {"queries": ["...", "...", ...]}`,
+      }],
+    }));
+    const out = firstJson<{ queries?: string[] }>(String(res.choices?.[0]?.message?.content || ""));
+    return (out?.queries || []).map((q) => String(q || "").trim().slice(0, 160)).filter(Boolean).slice(0, 6);
+  } catch { return []; } // planning failure just means the loop falls back to its own general algorithm
+}
+
+/**
  * Run a task as a bounded tool-using agent over the user's CONNECTED apps (Composio): it gathers facts and
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
@@ -1125,7 +1160,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
       `structure first:\n` +
       `${priorArtifacts.map((l) => `- ${l.label}${l.extra ? ` (${l.extra})` : ""}${l.url ? `: ${l.url}` : ""}`).join("\n")}\n`
     : "";
-  const head = nowBlock() + `TASK: ${task.title}\nWHY: ${task.why}\n` + profileBlock(profile) + artifactsBlock + connectedLine;
+  // FIRST PASS: plan the research before doing it (see planResearch) — skipped for a focused single-step
+  // re-run, which already knows exactly what it's doing and doesn't need a fresh research plan.
+  const researchPlan = (!EXECUTION_ENABLED && !focus) ? await planResearch({ title: task.title, why: task.why }, extras?.connected || []) : [];
+  const researchPlanBlock = researchPlan.length
+    ? `\nRESEARCH PLAN — run these searches, in order, before writing "context":\n${researchPlan.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n(This plan is a starting point, not a ceiling — follow up on anything it turns up, per the GATHER CONTEXT algorithm below.)\n`
+    : "";
+  const head = nowBlock() + `TASK: ${task.title}\nWHY: ${task.why}\n` + profileBlock(profile) + artifactsBlock + connectedLine + researchPlanBlock;
   const deadlineHint = deadlineBlock(`${task.title}\n${task.why}`);
   const messages: any[] = [{
     role: "user",
