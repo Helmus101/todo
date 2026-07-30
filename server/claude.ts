@@ -74,7 +74,8 @@ const PLAN_ONLY_OVERRIDE =
   `practice set). If a step IS the graded work itself, leave it as a step for the student, not a document.` +
   `\n(4) REPORT — "did" = what you actually accomplished this run: a document/draft you created (one bullet ` +
   `each), OR a genuine research win worth calling out (e.g. "Found the exam date and compiled the 40 most ` +
-  `common words"), OR both. Never a search log — "searched Gmail", "checked Drive", "looked into X" is NOT a ` +
+  `common words"), OR both. Never a search log — "searched Gmail", "checked Drive", "listed calendar events", ` +
+  `"looked into X" is NOT a ` +
   `"did" bullet, that's process, not a result; leave nothing at all when there's no real win to report. "links" ` +
   `= the real URL of EVERY document you created AND of any specific email/doc/file you found and referenced; ` +
   `"steps" = the stage-2 list MINUS whichever ones you just fulfilled by creating ` +
@@ -1814,7 +1815,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // "did" = things PRODUCED, not the looking that preceded them. A bullet that merely describes investigation
   // ("Searched Gmail for X", "Checked Contacts", "Looked through Drive", "Scrolled contacts") is a MEANS, not
   // a result — drop it. Real wins start with produce-verbs (drafted/created/wrote/updated/added/prepared/…).
-  const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted|retrieved|retrieve|fetched|fetch|pulled up|located)\b/i;
+  const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted|retrieved|retrieve|fetched|fetch|pulled up|located|listed|list|viewed|view|got|fetching)\b/i;
   const did: string[] = (Array.isArray(out?.did) ? out.did : [])
     .map((d: any) => {
       // Handle objects that might be returned by the AI instead of strings
