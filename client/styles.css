@@ -388,6 +388,33 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .history-list li { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
 .history-when { color: var(--ink-3); margin-right: 6px; }
 
+/* Landing-page interactive walkthrough — reuses card/chip/sendable classes so what a visitor sees here
+   is the real product's shape, not a bespoke mockup that could drift out of sync with it. */
+.walkthrough { margin-top: 28px; }
+.walk-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.walk-tab {
+  display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 13.5px;
+  font-weight: 550; cursor: pointer; transition: border-color .15s, color .15s;
+}
+.walk-tab:hover { color: var(--ink-1); }
+.walk-tab.active { border-color: var(--accent); color: var(--accent); }
+.walk-tab-n { font-size: 11px; font-weight: 700; opacity: 0.6; }
+.walk-panel {
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  padding: 22px; min-height: 180px;
+}
+.walk-scan { display: flex; flex-direction: column; gap: 10px; }
+.walk-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13.5px; }
+.walk-row-text { color: var(--ink-2); flex: 1; min-width: 200px; }
+.walk-check { font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.walk-caption { margin-top: 14px; font-size: 12.5px; color: var(--ink-3); }
+.walk-card .card-title { font-size: 15px; font-weight: 650; margin-bottom: 8px; }
+.walk-h { font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; color: var(--ink-3); margin: 16px 0 6px; }
+.walk-draft-body { font-size: 13.5px; line-height: 1.6; color: var(--ink-2); margin: 4px 0 14px; }
+.walk-nav { display: flex; justify-content: space-between; margin-top: 14px; }
+@media (max-width: 640px) { .walk-tabs { flex-direction: column; } }
+
 .links { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .links a { font-size: 13px; font-weight: 550; color: var(--accent); }
 .links a:hover { text-decoration: underline; }

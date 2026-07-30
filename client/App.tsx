@@ -1189,6 +1189,73 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
   );
 }
 
+/** A real, clickable 3-step demo on the landing page — not a video (nothing to record/host), a static
+ *  mock built from the SAME card/chip/step classes the real app uses, so the shape you see here is the
+ *  shape you'll actually get, just with canned data instead of your real inbox. Purely local state —
+ *  no network calls, safe for a signed-out visitor. */
+function Walkthrough() {
+  const STAGES = [
+    { n: "01", label: "Reads your world" },
+    { n: "02", label: "Prepares the work" },
+    { n: "03", label: "You confirm" },
+  ] as const;
+  const [stage, setStage] = useState(0);
+  const [sent, setSent] = useState(false);
+  const go = (i: number) => { setStage(i); if (i !== 2) setSent(false); };
+
+  return (
+    <div className="walkthrough">
+      <div className="walk-tabs" role="tablist">
+        {STAGES.map((s, i) => (
+          <button key={i} type="button" role="tab" aria-selected={stage === i}
+            className={`walk-tab ${stage === i ? "active" : ""}`} onClick={() => go(i)}>
+            <span className="walk-tab-n">{s.n}</span> {s.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="walk-panel">
+        {stage === 0 && (
+          <div className="walk-scan">
+            <div className="walk-row"><span className="chip chip-muted">Gmail</span><span className="walk-row-text">Alex — "Can we finalize the Q3 proposal numbers this week?"</span><span className="walk-check">✓ read</span></div>
+            <div className="walk-row"><span className="chip chip-muted">Calendar</span><span className="walk-row-text">Design review — tomorrow, 2:00 PM</span><span className="walk-check">✓ read</span></div>
+            <div className="walk-row"><span className="chip chip-muted">Drive</span><span className="walk-row-text">"Q3 Proposal — Draft v3" shared with you 2h ago</span><span className="walk-check">✓ read</span></div>
+            <p className="walk-caption">Otto reads what's connected and pulls out the handful of things that genuinely need you — everything else never reaches your list.</p>
+          </div>
+        )}
+        {stage === 1 && (
+          <div className="walk-card">
+            <div className="card-title">Reply to Alex about the Q3 proposal</div>
+            <div className="card-badges"><span className="chip chip-muted">Gmail</span><span className="chip chip-bad">High</span></div>
+            <h4 className="walk-h">Context <span className="chip chip-muted context-source">Gmail</span></h4>
+            <p className="context-text">Alex asked to finalize the Q3 numbers this week. The shared "Q3 Proposal — Draft v3" doc already has the updated figures from your last edit.</p>
+            <h4 className="walk-h">What Otto did</h4>
+            <ul className="bullets"><li>Drafted a reply referencing the updated numbers in Draft v3</li></ul>
+            <p className="walk-caption">The draft is ready to review — nothing has been sent.</p>
+          </div>
+        )}
+        {stage === 2 && (
+          <div className="walk-card">
+            <div className="sendable-to"><span className="sendable-to-label">To</span><span className="sendable-to-who">alex@company.com</span></div>
+            <p className="walk-draft-body">"Hi Alex — sounds good, thursday works. I'll bring the updated numbers from Draft v3 and we can walk through the deltas together."</p>
+            {!sent ? (
+              <button className="btn primary send-btn" onClick={() => setSent(true)}>Send</button>
+            ) : (
+              <button className="btn primary send-btn sent" disabled>Sent ✓</button>
+            )}
+            <p className="walk-caption">{sent ? "Only your click sends it — Otto never does." : "Review it, tweak it if you want, then send it yourself."}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="walk-nav">
+        <button className="btn ghost" disabled={stage === 0} onClick={() => go(stage - 1)}>← Back</button>
+        <button className="btn ghost" disabled={stage === STAGES.length - 1} onClick={() => go(stage + 1)}>Next →</button>
+      </div>
+    </div>
+  );
+}
+
 /** Marketing landing (signed out, route /). CTAs route to the dedicated login / sign-up page. */
 function Landing() {
   const DRAFT = "sounds good — thursday works. i'll bring the updated numbers and we can walk through the deltas together";
@@ -1259,12 +1326,8 @@ function Landing() {
 
       <section className="landing-sec">
         <h2 className="reveal">How it works</h2>
-        <p className="lead reveal">Connect once. From then on Otto watches the things that actually need you — and quietly gets ahead of them.</p>
-        <div className="how">
-          <div className="how-step reveal" style={{ ["--d" as any]: "0.0s" }}><div className="n">01</div><h3>It reads your world</h3><p>Inbox, calendar and Drive — pulling out the few things that genuinely need a reply, a decision, or prep.</p></div>
-          <div className="how-step reveal" style={{ ["--d" as any]: "0.1s" }}><div className="n">02</div><h3>It does the work</h3><p>Drafts the reply in your voice, builds the doc, gathers the context — then shows you exactly what it did.</p></div>
-          <div className="how-step reveal" style={{ ["--d" as any]: "0.2s" }}><div className="n">03</div><h3>You just confirm</h3><p>Open a draft, tweak it, send. Anything only you can do is laid out as a short, tickable checklist.</p></div>
-        </div>
+        <p className="lead reveal">Connect once. From then on Otto watches the things that actually need you — and quietly gets ahead of them. Click through the steps below.</p>
+        <Walkthrough />
       </section>
 
       <section className="landing-sec">
