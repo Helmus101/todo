@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn } from "../shared/types.ts";
 import { aiReady, refineManualTask } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -192,6 +192,22 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), async (req, res) => {
 });
 
 app.post("/api/auth/logout", (req, res) => { req.session.destroy(() => res.json({ ok: true })); });
+
+// GDPR right-to-erasure, self-serve: permanently deletes every row this account owns (see
+// store.deleteAccount) and destroys the session. Irreversible — the client confirms before calling this.
+app.post("/api/account/delete", requireAuth, async (req, res) => {
+  const email = req.session.user!;
+  const result = await deleteAccount(email);
+  req.session.destroy(() => res.json(result));
+});
+
+// GDPR right to data portability, self-serve: everything Otto has stored for this account, as one JSON file.
+app.get("/api/account/export", requireAuth, async (req, res) => {
+  const email = req.session.user!;
+  const state = cloudEnabled() ? await loadState(email) : { profile: req.session.profile, tasks: req.session.tasks };
+  res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
+  res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks });
+});
 
 // Google now connects through Composio (Gmail / Calendar / Docs / Slides / Drive / Sheets) like every other
 // app — see the integration routes below. (The old direct-OAuth /auth/google flow has been retired.)

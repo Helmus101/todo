@@ -171,6 +171,30 @@ export async function listAccountEmails(limit = 200): Promise<string[]> {
   } catch { return []; }
 }
 
+/** GDPR right-to-erasure (Art. 17), self-serve: permanently deletes EVERY row this account owns, across
+ *  every table — account/login, profile+tasks, connections (Google/Pronote), sessions, and the job queue +
+ *  its audit trail. Best-effort across tables (one table's failure shouldn't block the others — a partial
+ *  deletion is still much better than none), but any failure is reported so the caller can tell the user to
+ *  retry/contact support rather than silently claiming success. Irreversible; the caller must confirm first. */
+export async function deleteAccount(email: string): Promise<{ ok: boolean; errors: string[] }> {
+  if (!client || !email) return { ok: false, errors: ["cloud storage not configured"] };
+  const errors: string[] = [];
+  const tables: [string, string][] = [
+    [TABLE, "email"], [USERS, "email"], [JOBS, "user_email"], [EVENTS, "user_email"],
+  ];
+  for (const [table, col] of tables) {
+    try {
+      const { error } = await client.from(table).delete().eq(col, email);
+      if (error) errors.push(`${table}: ${error.message}`);
+    } catch (e: any) { errors.push(`${table}: ${e?.message || e}`); }
+  }
+  // Sessions aren't keyed by email (sid is the primary key, email lives inside the serialized `sess` jsonb) —
+  // best-effort text match rather than a full table scan/parse; a stray orphaned session row here is inert
+  // (it can't authenticate as anyone once weave_web_users no longer has this email) but worth attempting.
+  try { await client.from(SESSIONS).delete().ilike("sess", `%${email}%`); } catch { /* best-effort, non-fatal */ }
+  return { ok: errors.length === 0, errors };
+}
+
 // ── Durable job queue ─────────────────────────────────────────────────────────
 // The DB row IS the lock: claiming is a conditional UPDATE keyed on the current status, so exactly one
 // serverless instance wins even when several drain at once. When the jobs table is unreachable (dev with

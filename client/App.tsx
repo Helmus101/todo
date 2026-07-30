@@ -772,6 +772,7 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
   const [genPerDay, setGenPerDay] = useState(Math.min(4, Math.max(1, status.genPerDay || 1)));
   const [autoOpen, setAutoOpen] = useState(autoOpenDocsOn());
   const [dailyBriefingEnabled, setDailyBriefingEnabledLocal] = useState(profile?.dailyBriefingEnabled ?? false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
   useEffect(() => { setGenPerDay(Math.min(4, Math.max(1, status.genPerDay || 1))); }, [status.genPerDay]);
   useEffect(() => { void api.profile().then((p) => { setProfile(p); setDailyBriefingEnabledLocal(p?.dailyBriefingEnabled ?? false); }); void api.usage().then(setUsage).catch(() => {}); }, []);
@@ -789,6 +790,25 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
         <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? " · synced" : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>Sign out</button></div>
         {usage && <div className="modal-row"><span className="lbl">AI usage this month</span><span className="val" title={`${usage.runs} runs total`}>≈ {fmtUsd(usage.monthCostUsd)} of {fmtUsd(usage.budgetUsd)}{usage.over ? " · reached" : ""} · renews {fmtDay(usage.renewsOn)}</span></div>}
         <div className="modal-row"><span className="lbl">Legal</span><span className="val"><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></span></div>
+        {/* GDPR self-serve: download everything stored (Art. 20, portability) and permanently delete it
+            (Art. 17, erasure) — no "email us and wait" step for either. */}
+        <div className="modal-row">
+          <span className="lbl">Your data</span>
+          <span className="val"><a href={api.exportDataUrl()} download>Download my data</a></span>
+        </div>
+        <div className="modal-row">
+          <span className="lbl">Delete account</span>
+          <button
+            className="btn xs"
+            disabled={deletingAccount}
+            onClick={async () => {
+              if (!window.confirm("Permanently delete your Otto account and everything stored with it — tasks, profile, connections? This cannot be undone.")) return;
+              setDeletingAccount(true);
+              try { await api.deleteAccount(); window.location.href = "/"; }
+              catch { setDeletingAccount(false); }
+            }}
+          >{deletingAccount ? "Deleting…" : "Delete everything"}</button>
+        </div>
       </section>
 
       <section className="settings-sec">
@@ -1360,7 +1380,7 @@ function Landing() {
 const LEGAL_ENTITY = "Willem Tjong";
 const LEGAL_EMAIL = "tjong.willem@gmail.com";
 const LEGAL_JURISDICTION = "France";
-const LEGAL_UPDATED = "July 22, 2026";
+const LEGAL_UPDATED = "July 30, 2026";
 
 function LegalPage({ kind }: { kind: "privacy" | "terms" }) {
   return (
@@ -1416,7 +1436,7 @@ function PrivacyBody() {
       </ul>
 
       <h2>Retention & deletion</h2>
-      <p>Your data is kept while your account is active. You can clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time, or request full account deletion by contacting us at {LEGAL_EMAIL}. Disconnecting an app immediately revokes Otto's access to it.</p>
+      <p>Your data is kept only while your account is active — nothing is kept "just in case" after that. You're in control, with no email-and-wait required: clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time (revokes Otto's access immediately), download everything stored about you via Settings → "Download my data", or permanently delete your account and everything with it via Settings → "Delete everything" — instant, self-serve, and irreversible.</p>
 
       <h2>Security</h2>
       <p>Google and other OAuth-based connections mean we never see your app passwords. Pronote is the one exception — it has no OAuth, so its username/password pass through our server once to connect; the password itself is never stored or logged, only a rotating token Pronote issues in its place. Data is transmitted over HTTPS and access is scoped to your account. No system is perfectly secure, but we take reasonable measures to protect your information.</p>
@@ -1424,8 +1444,17 @@ function PrivacyBody() {
       <h2>Google API disclosure</h2>
       <p>Otto's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
 
-      <h2>Your rights & contact</h2>
-      <p>Depending on your jurisdiction ({LEGAL_JURISDICTION}), you may have rights to access, correct, or delete your data. To exercise them, contact {LEGAL_EMAIL}. We'll update this policy as the service evolves and note the date above.</p>
+      <h2>Your rights (GDPR)</h2>
+      <p>If you're in the EU/EEA, GDPR gives you the right to access, correct, export (portability), or delete (erasure) your data, and to object to or restrict how it's processed. The first three are self-serve in Settings, right now, with no request needed; for anything else, or if you're elsewhere and want the same, contact {LEGAL_EMAIL} and we'll handle it directly. Our legal basis for processing is performing the service you asked for (contract) plus our legitimate interest in making Otto work well for you.</p>
+
+      <h2>International transfers</h2>
+      <p>Your data is processed by providers based outside {LEGAL_JURISDICTION} (including the US and elsewhere) — Composio, DeepSeek, Supabase, and our hosting provider. We only use providers that commit contractually to protecting your data (e.g. standard contractual clauses where applicable) to the standard GDPR requires.</p>
+
+      <h2>Age</h2>
+      <p>Otto is built with students in mind, but opening an account requires being old enough to consent to data processing on your own (15 in {LEGAL_JURISDICTION}); younger than that, a parent or guardian should set it up and stay involved.</p>
+
+      <h2>Changes & contact</h2>
+      <p>We'll update this policy as the service evolves and note the date above. Questions or anything not covered here: {LEGAL_EMAIL}.</p>
     </>
   );
 }

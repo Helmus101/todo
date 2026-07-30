@@ -86,6 +86,9 @@ export const api = {
   delProfile: (category: string, index: number): Promise<Profile> => req(`/api/profile/${category}/${index}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   clearProfile: (): Promise<Profile> => req("/api/profile", { method: "DELETE" }).then(j).then(normalizeProfile),
   logout: (): Promise<{ ok: boolean }> => post("/api/auth/logout"),
+  // GDPR self-serve: erasure (Art. 17) and portability (Art. 20) — no "email us and wait" step needed.
+  deleteAccount: (): Promise<{ ok: boolean; errors: string[] }> => post("/api/account/delete"),
+  exportDataUrl: (): string => "/api/account/export",
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
   setDailyBriefing: (enabled: boolean): Promise<Profile> => post("/api/settings/daily-briefing", { enabled }).then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
