@@ -49,7 +49,11 @@ const PLAN_ONLY_OVERRIDE =
   `(e) CROSS-REFERENCE AND FOLLOW UP — if any result surfaces a NEW entity (a person's name, a linked doc, a ` +
   `specific date), do ONE more targeted search/read using THAT entity before concluding — this is what catches ` +
   `the connections a single flat pass misses. Stop once you genuinely understand the task, not just its title ` +
-  `— not when you've made a fixed number of calls.` +
+  `— not when you've made a fixed number of calls. ` +
+  `SAME BAR EVERY TASK — a task that LOOKS simple is not an excuse to research less: "Reply to Sarah" still ` +
+  `needs (a)-(e) run against the actual thread, not a one-line skim. Depth must come from how much there ` +
+  `genuinely IS to find (a thin thread stays thin), never from how much effort felt warranted — inconsistent ` +
+  `research depth across tasks is a real quality problem, not an efficiency win.` +
   `\n(2) OUTLINE THE STEPS — from that research, work out the ordered list of concrete things that need to ` +
   `happen for this task to be done. This is your plan; you'll trim it down to what's actually left in stage 4.` +
   `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT? — you have exactly TWO write ` +
@@ -1082,7 +1086,7 @@ const RUN_TOOLS = [
   { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
     title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (≤9 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
-    context: { type: "string", description: "what you FOUND — 2-3 bullets of the actual gathered facts: who sent what / what the event is / what the doc said. Name real people, dates, asks. This is proof you gathered context before acting. Each line starts with '- '." },
+    context: { type: "string", description: "the SURROUNDING FACTS about this task — real, specific, substantive: who's involved, what they actually said/asked, what the doc/event/thread contains, dates, numbers, links. NEVER a meta-description of the task or your own process — 'User requested information about X', 'Performed searches across multiple services', 'Looked into Y' are WORTHLESS filler, not context, and will be rejected. If you truly found nothing useful after a real attempt, say the SPECIFIC thing that's missing ('No upcoming meetings with Gabrielle on the calendar; her last email was 3 weeks ago about the budget') — never a vague description of the search itself. 2-4 bullets, each starting with '- '." },
     synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' NO caveats, NO explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
     did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
     steps: {
@@ -1250,6 +1254,11 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
   // doc genuinely needs approval).
   const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?)\b/i;
+  // "context" describing the REQUEST or the SEARCH PROCESS instead of what was actually found — e.g. "User
+  // requested information about Gabrielle; performed searches across multiple Google services." Technically
+  // non-empty (passes every other check), completely useless to the user. Catches both halves of that
+  // pattern: narrating what the user asked for, and narrating the act of searching/checking itself.
+  const META_NARRATION = /\b(user (requested|asked (for|about)|wants?)\b|performed (a )?searches?\b|conduct(?:ed)? (a )?search(?:es)?\b|search(?:ed|ing)? (across|through|multiple)\b|checked (multiple|several|various)\b|looked (into|through) (multiple|several|various)\b|across multiple (google )?services\b)/i;
   let wroteAny = false;
   // Real integration reads (Gmail/Calendar/Drive/Slack/… — NOT web_search, NOT submit/remember) actually
   // succeeded this run. Drives the plan-only "don't submit a shallow plan" enforcement below: a plan built
@@ -1397,6 +1406,21 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "research. Read whatever's relevant (the Gmail thread / Calendar event / Drive doc behind this, " +
                 "or any other connected app that plausibly bears on it) before you submit. If you genuinely " +
                 "checked and none apply, say so explicitly in \"context\" — but only after actually trying.";
+            } else if (META_NARRATION.test(draft.context) && canBounce) {
+              // Observed live: "context" describing the REQUEST or the SEARCH PROCESS instead of what was
+              // actually found ("User requested information about Gabrielle; performed searches across
+              // multiple Google services") — technically non-empty, completely worthless to the user. This
+              // is the single biggest driver of INCONSISTENT quality across tasks: when research comes up
+              // thin, the model defaults to narrating its own effort instead of either digging further or
+              // admitting a SPECIFIC gap. Reject it every time — no finishBacks cap, this is a content-shape
+              // defect, not a judgment call to relax under round pressure.
+              content = "REJECTED: \"context\" describes the REQUEST or your SEARCH PROCESS, not what you " +
+                "actually found — \"User requested X\" / \"performed searches across Y\" is worthless filler. " +
+                "Replace it with the real substantive facts (names, dates, what a thread/doc/event actually " +
+                "says) — dig further with another targeted search/read if you don't have enough yet. If you " +
+                "genuinely found nothing after a real attempt, state the SPECIFIC gap (e.g. \"no upcoming " +
+                "meetings with Gabrielle; her last email was 3 weeks ago about the budget\"), never a vague " +
+                "description of the search itself.";
             } else if (!draft.steps.length && canBounce) {
               // Otto never actually executes (plan-only), so "steps" is the ONE thing every task must leave
               // the user. Zero steps reads as "did nothing useful" even when research happened, so never
