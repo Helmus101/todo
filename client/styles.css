@@ -99,12 +99,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  transition: background 140ms var(--ease), border-color 140ms var(--ease), color 140ms var(--ease), opacity 140ms var(--ease);
+  transition: background 140ms var(--ease), border-color 140ms var(--ease), color 140ms var(--ease), opacity 140ms var(--ease), transform 100ms var(--ease);
   white-space: nowrap; text-decoration: none; user-select: none;
 }
 .btn:hover { background: var(--bg-2); }
-.btn:active { background: var(--line); }
+.btn:active { background: var(--line); transform: scale(0.97); }
 .btn:disabled { opacity: 0.45; cursor: default; }
+.btn:disabled:active { transform: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; } /* the irreversible act — cobalt */
 .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--accent); }
@@ -252,17 +253,28 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* All rows fade in TOGETHER (no per-row stagger) — the list appears as one, not piecemeal. */
 .list.settled .card { animation-duration: 0.18s; }
 @keyframes cardIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
-.card.dismissed { animation: cardOut 0.28s var(--ease) forwards; }
-@keyframes cardOut { to { opacity: 0; transform: translateX(24px) scale(0.98); } }
+/* Closing a task used to fade/slide the row out, then SNAP the gap shut the instant it left the DOM —
+   the rows below jumped up instead of gliding. Collapsing max-height (+ overflow:hidden, scoped to just
+   these terminal states so it never clips the open detail view) in the tail of the same animation makes
+   the row visibly shrink away, so everything below eases into place instead of jumping. will-change hints
+   the compositor since this runs on every dismiss/confirm — the highest-frequency animation in the app. */
+.card.dismissed, .card.confirming { overflow: hidden; will-change: transform, opacity, max-height; }
+.card.dismissed { animation: cardOut 0.32s var(--ease) forwards; }
+@keyframes cardOut {
+  0%   { max-height: 160px; opacity: 1; transform: translateX(0) scale(1); border-color: var(--line-soft); }
+  60%  { max-height: 160px; opacity: 0; transform: translateX(24px) scale(0.98); }
+  100% { max-height: 0; opacity: 0; transform: translateX(24px) scale(0.98); border-color: transparent; }
+}
 /* "Looks good" gets its own beat — a checkmark pops in (the same ✓ motif used everywhere else done is
    shown: step-mark, done-check, the empty-state check) over a clear accent wash, THEN it slides away — so
    finishing a task reads as a small, legible reward instead of a barely-there color flicker. */
-.card.confirming { animation: cardConfirm 0.5s cubic-bezier(0.34, 1.4, 0.64, 1) forwards; border-radius: 8px; z-index: 1; }
+.card.confirming { animation: cardConfirm 0.55s cubic-bezier(0.34, 1.4, 0.64, 1) forwards; border-radius: 8px; z-index: 1; }
 @keyframes cardConfirm {
-  0% { background: transparent; transform: scale(1); }
-  20% { background: var(--accent-soft); transform: scale(1.012); }
-  60% { background: var(--accent-soft); transform: scale(1.012); }
-  100% { opacity: 0; background: transparent; transform: translateX(24px) scale(0.98); }
+  0%   { max-height: 160px; background: transparent; transform: scale(1); }
+  20%  { max-height: 160px; background: var(--accent-soft); transform: scale(1.012); }
+  60%  { max-height: 160px; background: var(--accent-soft); transform: scale(1.012); opacity: 1; }
+  85%  { max-height: 160px; opacity: 0; background: transparent; transform: translateX(24px) scale(0.98); }
+  100% { max-height: 0; opacity: 0; background: transparent; transform: translateX(24px) scale(0.98); border-color: transparent; }
 }
 .card.confirming::before { background: var(--accent); box-shadow: none; animation: confirmDot 0.5s cubic-bezier(0.34, 1.4, 0.64, 1) forwards; }
 @keyframes confirmDot { 0% { transform: scale(1); } 30% { transform: scale(2); } 55% { transform: scale(1.4); } 100% { transform: scale(1.4); opacity: 0; } }
@@ -286,6 +298,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center;
   padding: 6vh 16px 16px; background: rgba(16, 19, 23, 0.42); backdrop-filter: blur(2px);
   animation: fadeIn 0.16s var(--ease); overflow-y: auto;
+  /* Mobile scroll feel: momentum scrolling (iOS Safari still needs the -webkit prefix for it) and
+     overscroll-behavior so scrolling past the top/bottom of the modal doesn't chain into the page behind
+     it — a full-bleed modal rubber-banding the body underneath is the single most common "janky" mobile
+     scroll complaint. */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 .task-modal {
   position: relative; width: 100%; max-width: 640px; background: var(--surface);
@@ -319,8 +337,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card.is-done::before { background: var(--ink-3); box-shadow: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.card-main { display: flex; align-items: center; gap: 12px; padding: 17px 6px 17px 26px; cursor: pointer; min-height: 58px; border-radius: 8px; transition: background 120ms var(--ease); }
+.card-main { display: flex; align-items: center; gap: 12px; padding: 17px 6px 17px 26px; cursor: pointer; min-height: 58px; border-radius: 8px; transition: background 120ms var(--ease), transform 120ms var(--ease); }
 .card-main:hover { background: rgba(0, 0, 0, 0.022); }
+/* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
+   response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
+   device (mouse) keeps the existing hover-only feel; this only kicks in where hover doesn't exist. */
+@media (hover: none) { .card-main:active { background: rgba(0, 0, 0, 0.035); transform: scale(0.994); } }
 /* The direct check-off control — a normal to-do checkbox. Click fills it and marks the task done in one
    step, no need to open the card first (opening it still works too, via "Looks good"). */
 .card-check {
@@ -647,6 +669,7 @@ label.set-row { cursor: pointer; }
 }
 .onboard-card {
   position: relative; width: min(480px, 100%); max-height: 90vh; overflow-y: auto;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
   box-shadow: var(--shadow-pop); padding: 30px 32px 32px;
   animation: rise 0.4s var(--ease);

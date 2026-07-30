@@ -1641,7 +1641,11 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
     if (leaving) return;
     setLeaveKind(kind);
     setLeaving(true);
-    const holdMs = kind === "confirm" ? 460 : 280; // confirm holds a beat longer so the check-pulse reads before it slides
+    // Must match (or slightly exceed) the CSS animation durations (cardConfirm 0.55s / cardOut 0.32s in
+    // styles.css) — the row is removed from state the instant this resolves, so if the timers were shorter
+    // than the animation, React would unmount mid-collapse and cut it off abruptly (the exact jank this is
+    // meant to avoid). Confirm holds a beat longer so the check-pulse reads before it slides away.
+    const holdMs = kind === "confirm" ? 550 : 320;
     const [list] = await Promise.all([fn(), new Promise((r) => setTimeout(r, holdMs))]);
     if (kind === "confirm") onConfirmed?.(task.id); // flags the row it lands on in "Completed" for a beat, so
     // finishing something has a visible destination instead of just vanishing from the list.
