@@ -19,15 +19,17 @@ function key(): Buffer | null {
   return cachedKey;
 }
 
-// Same fail-closed pattern as the SUPABASE_SERVICE_KEY check in store.ts: refuse to boot in production
-// without the key (a stored secret with no encryption key is a stored secret in plaintext), warn in dev.
+// NEVER throw here: this file is imported by store.ts, which nearly every server route depends on — a
+// module-load-time throw would take down auth, tasks, and integrations entirely over a missing env var
+// for a defense-in-depth layer on ONE currently-UI-hidden feature (Pronote). That's a wildly disproportionate
+// blast radius (observed live: shipped an earlier version of this check that crashed the whole app in
+// production). So: warn loudly in every environment, but always degrade to plaintext storage rather than
+// refuse to run. Unlike SUPABASE_SERVICE_KEY (whose absence is caught by store.ts's OWN guard, scoped to
+// just that concern), this check must not be able to break unrelated functionality.
 if (!key()) {
-  const msg = `${KEY_ENV} is not set — secrets we store (e.g. the Pronote login token) would be saved in ` +
-    `plaintext, protected only by database access control.`;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(`[crypto] ${msg} Set ${KEY_ENV} (e.g. \`openssl rand -hex 32\`) before deploying.`);
-  }
-  console.warn(`[crypto] SECURITY: ${msg} Fine locally; set ${KEY_ENV} before you deploy.`);
+  console.warn(`[crypto] SECURITY: ${KEY_ENV} is not set — secrets we store (e.g. the Pronote login token) ` +
+    `will be saved in plaintext, protected only by database access control (RLS + service-role key). Set ` +
+    `${KEY_ENV} (e.g. \`openssl rand -hex 32\`) in production when you're ready to enable this layer.`);
 }
 
 const PREFIX = "enc:v1:"; // lets decryptSecret recognize + skip values written before this existed

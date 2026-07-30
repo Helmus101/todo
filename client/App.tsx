@@ -1556,6 +1556,18 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
     catch { /* edit stays pending — the box keeps the user's text so nothing is lost */ }
     finally { setSavingDraft(null); }
   };
+  // Audit trail — every decision Otto made on this task (queued/refined/run/sent/dismissed/…), fetched
+  // on demand rather than always-on: it's for the moment someone asks "why did this happen?", not
+  // something to load for every card on every render.
+  const [history, setHistory] = useState<{ kind: string; message?: string; at: string }[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const toggleHistory = async () => {
+    if (history) { setHistory(null); return; }
+    setHistoryLoading(true);
+    try { setHistory(await api.taskEvents(task.id)); }
+    catch { setHistory([]); }
+    finally { setHistoryLoading(false); }
+  };
   const [leaving, setLeaving] = useState(false);
   const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
@@ -1813,6 +1825,15 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
             )}
           </section>
           ) : null}
+          {/* Transparency: WHERE this came from and WHAT Otto actually found, before any steps/actions —
+              the source badge + inline links (real Gmail/Calendar/Drive/web URLs) mean nothing here is a
+              bare unverifiable claim, the user can always open the real thing themselves. */}
+          {task.context?.trim() ? (
+            <section>
+              <h4>Context <span className="chip chip-muted context-source">{sourceBadge(task.source)}</span></h4>
+              <p className="context-text">{withInlineLinks(task.context)}</p>
+            </section>
+          ) : null}
           {steps.length > 0 && (
           <section>
             <h4>What's left{openableCount >= 2 && <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>Open all {openableCount} ↗</button>}</h4>
@@ -1870,6 +1891,22 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               ) : null}
             </section>
           ) : null}
+          {/* On-demand audit trail — every decision Otto made on THIS task, in order, so "why did this
+              happen" always has a real answer instead of just Otto's word for it. */}
+          <section className="history-sec">
+            <button className="btn xs ghost" onClick={() => void toggleHistory()}>
+              {historyLoading ? "Loading…" : history ? "Hide history" : "Show history"}
+            </button>
+            {history ? (
+              history.length ? (
+                <ul className="history-list">
+                  {history.map((e, i) => (
+                    <li key={i}><span className="history-when">{relTime(e.at)}</span> {e.message || e.kind}</li>
+                  ))}
+                </ul>
+              ) : <p className="muted small">No recorded history yet.</p>
+            ) : null}
+          </section>
           <div className="actions">
             {isDone ? (
               // A finished task is CLOSED, not just another item with the usual buttons — "Run now" here

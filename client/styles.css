@@ -380,6 +380,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .bullets { margin: 0; padding-left: 18px; }
 .bullets li { font-size: 14px; line-height: 1.55; margin-bottom: 4px; }
 
+.context-source { margin-left: 6px; font-weight: 500; text-transform: none; vertical-align: middle; }
+.context-text { white-space: pre-line; }
+
+.history-sec { margin-top: 10px; }
+.history-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.history-list li { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+.history-when { color: var(--ink-3); margin-right: 6px; }
+
 .links { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .links a { font-size: 13px; font-weight: 550; color: var(--accent); }
 .links a:hover { text-decoration: underline; }

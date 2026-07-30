@@ -587,7 +587,11 @@ export async function classifyCandidates(
     `This is for a STUDENT'S to-do list — Otto is their companion, not a do-it-all; a task should name a real ` +
     `next action THEY take, never phrase graded/learning work as already done for them.\n` +
     `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it ` +
-    `GENUINELY needs them to act. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER ` +
+    `GENUINELY needs them to act. TENTATIVE ≠ A COMMITMENT — "maybe I'll send it over", "I might look into X", ` +
+    `"we should grab coffee sometime" are casual musings, not promises; only a clear, specific commitment ` +
+    `("I'll send you the deck Friday", "I'll call you back") counts as SENT-BY-USER. When genuinely unsure ` +
+    `whether something is firm, leave it out — a missed maybe costs nothing, a false "you promised this" erodes ` +
+    `trust in every task after it. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER ` +
     `items are commitments THEY made ("I'll send you X") — create a task to FULFILL unfulfilled ones. Events: only ` +
     `if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if ` +
     `someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs ` +

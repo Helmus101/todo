@@ -55,7 +55,7 @@ That's enough to run locally. Add Supabase (below) to persist across restarts.
 |-----|---------|
 | `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` | Cloud persistence (recommended; **required in production**) |
 | `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | Anon-key fallback for local dev only |
-| `CREDENTIAL_ENCRYPTION_KEY` | Encrypts secrets stored in the DB ourselves (currently the Pronote login token) with AES-256-GCM before they're written — defense-in-depth on top of RLS. Any value works (`openssl rand -hex 32`); **required in production**, same fail-closed pattern as `SUPABASE_SERVICE_KEY`. |
+| `CREDENTIAL_ENCRYPTION_KEY` | Encrypts secrets stored in the DB ourselves (currently the Pronote login token) with AES-256-GCM before they're written — defense-in-depth on top of RLS. Any value works (`openssl rand -hex 32`). Optional — recommended before re-enabling Pronote in the UI, but its absence only warns, never blocks the app from running. |
 | `MONTHLY_AI_BUDGET_USD` | Per-account monthly AI spend cap (default `3`) |
 | `CRON_SECRET` | Protects `/api/cron/drain` (required on Vercel) |
 | `DEEPSEEK_MODEL` | Default `deepseek-v4-flash` (or `deepseek-v4-pro` for heavier reasoning) |
@@ -82,7 +82,8 @@ Runs on any Node host (Render, Railway, Fly, a VM, or Docker — a `Dockerfile` 
 
 ### Production checklist
 
-- Required env set (boot fails without them): `SESSION_SECRET`, `DEEPSEEK_API_KEY`, `COMPOSIO_API_KEY`, `PUBLIC_URL`, `CREDENTIAL_ENCRYPTION_KEY` (once Supabase is configured).
+- Required env set (boot fails without them): `SESSION_SECRET`, `DEEPSEEK_API_KEY`, `COMPOSIO_API_KEY`, `PUBLIC_URL`.
+- `CREDENTIAL_ENCRYPTION_KEY` set (optional, but recommended — see table above; unlike the required vars, its absence only logs a warning).
 - `supabase.sql` run; `SUPABASE_SERVICE_KEY` set; anon/service keys never shipped to the client.
 - `CRON_SECRET` set (Vercel Cron drains the job queue).
 - Security is wired: CSP + security headers, auth rate-limiting, bcrypt passwords, `httpOnly`/`secure` cookies, no secrets in the client bundle, RLS deny-by-default, AES-256-GCM on the one credential we store ourselves (Pronote token), plus Postgres/Supabase's own default encryption-at-rest on every table.
