@@ -168,6 +168,14 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
   if (await getUser(email)) { res.status(409).json({ error: "An account with that email already exists — log in instead." }); return; }
   if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: "Couldn't create the account." }); return; }
   req.session.user = email;
+  // Must explicitly reset these, exactly like /api/auth/login does — if this browser's session cookie
+  // already had another account's tasks/profile in it (e.g. someone created a new account without signing
+  // out of the previous one first), leaving them untouched here leaked the OLD account's tasks into the
+  // BRAND NEW one on the very next request (the safety-net middleware above only fills these in when
+  // they're `undefined`, which they aren't in that case) — they'd even get merged into and saved onto the
+  // new account's cloud row. A fresh signup always starts from empty state.
+  req.session.profile = emptyProfile();
+  req.session.tasks = [];
   await saveSession(req);
   res.json({ ok: true });
 });
