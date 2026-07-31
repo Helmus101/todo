@@ -496,6 +496,17 @@ export function App() {
     if (tz && tz !== status.timezone) { tzSynced.current = true; void api.setProfilePreference("timezone", tz).then(loadStatus).catch(() => { tzSynced.current = false; }); }
   }, [status?.loggedIn, status?.timezone, loadStatus]);
 
+  const openId = route.startsWith("task/") ? route.slice(5) : null; // the deep-linked task, if any
+  // Mark a task "seen" the moment its route opens — this is the ONE place every path into the task
+  // modal funnels through (four different onToggle call sites below all navigate here), so hooking it
+  // here instead of each call site can't miss one. MUST stay above every early return below (Rules of
+  // Hooks) — a version of this that lived after the login/legal-page returns crashed React (#310,
+  // "hooks order changed") on any route that skipped it, e.g. straight to /login.
+  useEffect(() => {
+    if (!openId || seenTasks.has(openId)) return;
+    setSeenTasks((prev) => { const next = new Set(prev); next.add(openId); saveSeenTasks(next); return next; });
+  }, [openId]);
+
   // Legal pages are PUBLIC — reachable logged-out or in, and even before status loads.
   if (route === "privacy") return <LegalPage kind="privacy" />;
   if (route === "terms") return <LegalPage kind="terms" />;
@@ -524,14 +535,6 @@ export function App() {
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const unseenCount = live.filter((t) => !seenTasks.has(t.id)).length;
-  const openId = route.startsWith("task/") ? route.slice(5) : null; // the deep-linked task, if any
-  // Mark a task "seen" the moment its route opens — this is the ONE place every path into the task
-  // modal funnels through (four different onToggle call sites below all navigate here), so hooking it
-  // here instead of each call site can't miss one.
-  useEffect(() => {
-    if (!openId || seenTasks.has(openId)) return;
-    setSeenTasks((prev) => { const next = new Set(prev); next.add(openId); saveSeenTasks(next); return next; });
-  }, [openId]);
 
   return (
     <div className="app">
