@@ -175,6 +175,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   content: ""; position: absolute; left: 10px; right: 10px; bottom: -11px;
   height: 2px; border-radius: 2px; background: var(--accent);
 }
+.tab-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px;
+  padding: 0 4px; margin-left: 6px; border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 10.5px; font-weight: 700; line-height: 1; vertical-align: middle;
+}
 .spacer { flex: 1; }
 .ext-chip { font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 
@@ -357,6 +362,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card-check:disabled { cursor: default; }
 .card-text { flex: 1; min-width: 0; }
 .card-title { font-size: 15.5px; font-weight: 560; letter-spacing: -0.01em; line-height: 1.35; }
+/* Unread marker — a fresh task the user hasn't opened yet. Disappears permanently the moment they open it
+   (see App()'s seenTasks tracking), same "you've seen this" semantics as an unread-email dot. */
+.new-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; vertical-align: middle; flex: none; }
 .card-sub { font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-next { font-size: 12.5px; color: var(--ink-3); margin-top: 3px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-badges { display: flex; gap: 6px; margin-top: 6px; }
@@ -404,9 +412,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 .context-source { margin-left: 6px; font-weight: 500; text-transform: none; vertical-align: middle; }
 .context-text { white-space: pre-line; }
+.context-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.context-toggle .caret.open { transform: rotate(90deg); }
+.context-body { margin-top: 8px; }
 
-.history-sec { margin-top: 10px; }
-.history-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.history-list { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 5px; }
 .history-list li { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
 .history-when { color: var(--ink-3); margin-right: 6px; }
 

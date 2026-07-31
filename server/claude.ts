@@ -55,7 +55,12 @@ const PLAN_ONLY_OVERRIDE =
   `genuinely IS to find (a thin thread stays thin), never from how much effort felt warranted — inconsistent ` +
   `research depth across tasks is a real quality problem, not an efficiency win.` +
   `\n(2) OUTLINE THE STEPS — from that research, work out the ordered list of concrete things that need to ` +
-  `happen for this task to be done. This is your plan; you'll trim it down to what's actually left in stage 4.` +
+  `happen for THIS task to be done. This is your plan; you'll trim it down to what's actually left in stage 4. ` +
+  `ONE TASK, ONE TOPIC — reading a mailbox/Drive often surfaces OTHER unrelated things along the way (a ` +
+  `different person's invitation, an unrelated message to someone else): those are NOT steps of this task, ` +
+  `no matter how recent or nearby they were found. A step earns its place only if it's actually part of ` +
+  `accomplishing THIS task's title — if a genuinely separate, substantial obligation turned up, put it in ` +
+  `"follow_ups" instead (its own future task), never bundled into this one's steps.` +
   `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT? — you have exactly TWO write ` +
   `actions available: creating a brand-new Google Doc/Sheet/Slides, and drafting a Gmail email ` +
   `(GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send). Walk the stage-2 ` +
@@ -155,15 +160,21 @@ const STOPWORDS = new Set(["the", "a", "an", "and", "or", "to", "for", "of", "in
 function titleKeywords(title: string): string[] {
   return title.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter((w) => w.length >= 4 && !STOPWORDS.has(w));
 }
-/** Structural drift backstop: does AT LEAST ONE step mention a real word from the task title? Catches wholesale
- *  topic drift (a title about a competition, steps entirely about reorganizing Drive folders) that a prompt
- *  instruction alone doesn't reliably prevent. Deliberately loose — one shared keyword is enough to pass, so it
- *  only fires on total disconnection, never on steps that are merely imperfectly worded. Skips the check
- *  entirely when the title has no distinctive words to match against (avoids false positives on short titles). */
+/** Structural drift backstop: do MOST steps mention a real word from the task title? Catches both wholesale
+ *  topic drift (a title about a competition, steps entirely about reorganizing Drive folders) AND partial
+ *  bleed-in (research swept up 2-3 UNRELATED email threads it happened to read along the way, and each got
+ *  turned into its own step — observed live: task "Send media coverage requests for Paris Model Congress"
+ *  came back with steps about replying to an unrelated Playbac invitation AND a separate message to "Kaan"
+ *  about a student network, alongside the one genuinely on-topic step). A single-step match used to be
+ *  enough to pass the WHOLE array, so 1-related-of-3 sailed through. Requiring a MAJORITY catches that while
+ *  staying lenient enough that legitimately-phrased steps (which won't all repeat the title's exact nouns)
+ *  don't false-positive: any task with just one step is trivially 100%. Skips entirely when the title has no
+ *  distinctive words to match against (avoids false positives on short titles). */
 function stepsMatchTitle(title: string, steps: { text: string }[]): boolean {
   const kws = titleKeywords(title);
   if (!kws.length || !steps.length) return true;
-  return steps.some((s) => { const t = s.text.toLowerCase(); return kws.some((k) => t.includes(k)); });
+  const matching = steps.filter((s) => { const t = s.text.toLowerCase(); return kws.some((k) => t.includes(k)); }).length;
+  return matching / steps.length >= 0.5;
 }
 
 // Observed live: a task titled "Prepare for the Wharton Investment Competition" came back with steps ALL
@@ -1259,6 +1270,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // non-empty (passes every other check), completely useless to the user. Catches both halves of that
   // pattern: narrating what the user asked for, and narrating the act of searching/checking itself.
   const META_NARRATION = /\b(user (requested|asked (for|about)|wants?)\b|performed (a )?searches?\b|conduct(?:ed)? (a )?search(?:es)?\b|search(?:ed|ing)? (across|through|multiple)\b|checked (multiple|several|various)\b|looked (into|through) (multiple|several|various)\b|across multiple (google )?services\b)/i;
+  // MISSION INTEGRITY: catches a claim that Otto did the student's actual graded/learning work FOR them —
+  // the one line the whole "companion, not do-it-all" mission is built around. Checked against synthesis/did
+  // (the model's own narrative of what it produced), the same place every other claim-verification check in
+  // this file looks — a false claim here is worse than a fabricated artifact claim, because a student could
+  // actually act on it (hand in what Otto wrote) instead of just seeing a broken card.
+  const DOES_STUDENT_WORK = /\b(wrote|completed|finished|did|solved|answered) (?:your |the |his |her |their )?(essay|assignment|homework|problem set|paper|report|exam|quiz|test|worksheet|questions?)\b|\bsolved (?:all |every )?(?:the )?(?:problems?|questions?)\b|\b(answers? (?:to|for) (?:the |your )?(?:exam|quiz|test|questions?))\b/i;
   let wroteAny = false;
   // Real integration reads (Gmail/Calendar/Drive/Slack/… — NOT web_search, NOT submit/remember) actually
   // succeeded this run. Drives the plan-only "don't submit a shallow plan" enforcement below: a plan built
@@ -1400,7 +1417,17 @@ export async function runTask(task: { title: string; why: string; source?: strin
             const roundsLeft = MAX - 1 - i;
             const canBounce = finishBacks < 2 && roundsLeft >= 2;
             const hasConnectedApps = !!extras?.connected?.length;
-            if (hasConnectedApps && readCalls === 0 && canBounce) {
+            if (DOES_STUDENT_WORK.test(`${draft.synthesis} ${(draft.did || []).join(" ")}`)) {
+              // No finishBacks cap, no canBounce gate — this is THE mission invariant, not a style call.
+              // Otto guides; it never claims to have done the student's actual graded/learning work FOR
+              // them. Reject every time until the claim is gone, even on the last round (better an honest
+              // "Open and handle:" fallback than a false claim a student could act on).
+              content = "REJECTED: you claimed to have written/completed/solved the student's actual " +
+                "assignment/essay/exam/problem set FOR them — Otto NEVER does that, no matter how confident " +
+                "or well-researched. Rephrase: whatever you produced must be a GUIDE (outline, checklist, " +
+                "study notes, compiled resources) that helps the student do the work themselves, and the " +
+                "actual exercise stays a step for them — never something you report as already done.";
+            } else if (hasConnectedApps && readCalls === 0 && canBounce) {
               finishBacks++;
               content = "REJECTED: you have NOT read any connected app yet — \"context\" would be a guess, not " +
                 "research. Read whatever's relevant (the Gmail thread / Calendar event / Drive doc behind this, " +
@@ -1691,7 +1718,10 @@ async function writeStepsFromContext(
           `STUDENT: every step must be something THEY do — never phrase the graded/learning work itself (writing ` +
           `the essay, solving the problem, answering the question) as if it were already done or as Otto's job; ` +
           `that work always stays a step for them. Every step must be directly about "${task.title}" — no ` +
-          `unrelated tangents.\n\n` +
+          `unrelated tangents. The context above may mention OTHER people/threads/obligations that came up ` +
+          `during research but aren't actually part of this task (a different person's invitation, an ` +
+          `unrelated message to someone else) — DO NOT turn those into steps just because they're in the ` +
+          `context; only steps that move "${task.title}" itself forward belong here.\n\n` +
           `Return ONLY this JSON: {"steps": [{"text": "...", "automatable": false}, ...]} — 1 to 6 steps.`,
       }],
     }));

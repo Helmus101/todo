@@ -203,6 +203,20 @@ const CACHED_TASKS: WebTask[] = (() => {
   try { const t = JSON.parse(localStorage.getItem("otto-tasks") || "[]"); return Array.isArray(t) ? t : []; } catch { return []; }
 })();
 
+// "New" indicator: task ids the user has already OPENED at least once, so a fresh card gets a small dot
+// until they look at it, then never again — permanent per-id memory (not a session flag), purely local
+// (no server field needed for something this cosmetic). Capped so a long-lived account's set can't grow
+// forever; oldest entries fall off first since new ids are always appended at the end.
+const SEEN_KEY = "otto-seen-tasks";
+const SEEN_CAP = 500;
+const loadSeenTasks = (): Set<string> => {
+  try { const a = JSON.parse(localStorage.getItem(SEEN_KEY) || "[]"); return new Set(Array.isArray(a) ? a : []); }
+  catch { return new Set(); }
+};
+const saveSeenTasks = (s: Set<string>) => {
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...s].slice(-SEEN_CAP))); } catch { /* ignore */ }
+};
+
 export function App() {
   const [status, setStatus] = useState<ConnectionStatus | null>(CACHED_STATUS);
   const [route] = usePathRoute();
@@ -227,6 +241,7 @@ export function App() {
   const [onboard, setOnboard] = useState(() => { try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
   const [loadError, setLoadError] = useState(false); // backend unreachable after retries → show a retry screen
   const [reloadKey, setReloadKey] = useState(0);      // bump to re-attempt the status fetch
+  const [seenTasks, setSeenTasks] = useState<Set<string>>(() => loadSeenTasks());
   // AI budget (from the CLOUD-authoritative /api/usage) — drives the "budget reached" banner + renewal date,
   // so it reflects usage racked up by background jobs, not just this session.
   const [budget, setBudget] = useState<{ over: boolean; renewsOn: string } | null>(null);
@@ -486,14 +501,22 @@ export function App() {
   const completed = tasks.filter((t) => t.status === "done").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
+  const unseenCount = live.filter((t) => !seenTasks.has(t.id)).length;
   const openId = route.startsWith("task/") ? route.slice(5) : null; // the deep-linked task, if any
+  // Mark a task "seen" the moment its route opens — this is the ONE place every path into the task
+  // modal funnels through (four different onToggle call sites below all navigate here), so hooking it
+  // here instead of each call site can't miss one.
+  useEffect(() => {
+    if (!openId || seenTasks.has(openId)) return;
+    setSeenTasks((prev) => { const next = new Set(prev); next.add(openId); saveSeenTasks(next); return next; });
+  }, [openId]);
 
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand"><Logo size={20} /> Otto</div>
         <nav className="tabs">
-          <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} href="/tasks">Tasks</a>
+          <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} href="/tasks">Tasks{unseenCount > 0 ? <span className="tab-badge">{unseenCount}</span> : null}</a>
           <a className={`tab ${route === "settings" ? "active" : ""}`} href="/settings">Settings</a>
         </nav>
         <div className="spacer" />
@@ -589,6 +612,7 @@ export function App() {
                         key={t.id}
                         task={t}
                         retrying={retryingIds.includes(t.id)}
+                        isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                         open={false}
                         onToggle={() => navigate(`task/${t.id}`)}
                         onChange={setTasks}
@@ -611,6 +635,7 @@ export function App() {
                           key={t.id}
                           task={t}
                           retrying={retryingIds.includes(t.id)}
+                          isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                           open={false}
                           onToggle={() => navigate(`task/${t.id}`)}
                           onChange={setTasks}
@@ -640,6 +665,7 @@ export function App() {
                               key={t.id}
                               task={t}
                               retrying={retryingIds.includes(t.id)}
+                              isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                               open={false}
                               onToggle={() => navigate(`task/${t.id}`)}
                               onChange={setTasks}
@@ -1623,7 +1649,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
   );
 }
 
-function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onNotify, inModal }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean }) {
+function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onNotify, inModal, isNew }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean; isNew?: boolean }) {
   const [running, setRunning] = useState(false);
   const [decided, setDecided] = useState<Record<number, string>>({}); // what the user typed for a manual step
   const [sending, setSending] = useState<number | null>(null); // which sendable is being sent
@@ -1648,13 +1674,17 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
     catch { /* edit stays pending — the box keeps the user's text so nothing is lost */ }
     finally { setSavingDraft(null); }
   };
-  // Audit trail — every decision Otto made on this task (queued/refined/run/sent/dismissed/…), fetched
-  // on demand rather than always-on: it's for the moment someone asks "why did this happen?", not
-  // something to load for every card on every render.
+  // Context + audit trail live in ONE collapsible section: both answer the same underlying question
+  // ("why am I seeing this / what actually happened"), so splitting them into two separately-toggled
+  // blocks just made the card longer for no benefit. Collapsed by default; history is fetched on first
+  // expand rather than always-on, since it's for the moment someone asks, not every render.
+  const [contextOpen, setContextOpen] = useState(false);
   const [history, setHistory] = useState<{ kind: string; message?: string; at: string }[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const toggleHistory = async () => {
-    if (history) { setHistory(null); return; }
+  const toggleContext = async () => {
+    if (contextOpen) { setContextOpen(false); return; }
+    setContextOpen(true);
+    if (history) return;
     setHistoryLoading(true);
     try { setHistory(await api.taskEvents(task.id)); }
     catch { setHistory([]); }
@@ -1790,7 +1820,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           </button>
         ) : null}
         <div className="card-text">
-          <div className="card-title">{task.title}</div>
+          <div className="card-title">{isNew ? <span className="new-dot" title="New — not yet opened" /> : null}{task.title}</div>
           {(() => { const sub = subtitle(task); const w = task.when ? fmtWhen(task.when) : ""; return (w || sub) ? <div className="card-sub">{w && <span className="when">{w}</span>}{sub}</div> : null; })()}
           {!isDone ? (() => {
             const next = (task.steps || []).find((s) => !s.done);
@@ -1921,15 +1951,29 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
             )}
           </section>
           ) : null}
-          {/* Transparency: WHERE this came from and WHAT Otto actually found, before any steps/actions —
-              the source badge + inline links (real Gmail/Calendar/Drive/web URLs) mean nothing here is a
-              bare unverifiable claim, the user can always open the real thing themselves. */}
-          {task.context?.trim() ? (
-            <section>
-              <h4>Context <span className="chip chip-muted context-source">{sourceBadge(task.source)}</span></h4>
-              <p className="context-text">{withInlineLinks(task.context)}</p>
-            </section>
-          ) : null}
+          {/* Transparency, collapsed by default: WHERE this came from, WHAT Otto actually found (source
+              badge + inline links — real Gmail/Calendar/Drive/web URLs, never a bare unverifiable claim),
+              AND the full decision trail, in one place so "why am I seeing this" always has a real answer. */}
+          <section className="context-sec">
+            <h4 className="context-toggle" onClick={() => void toggleContext()}>
+              <span className={`caret ${contextOpen ? "open" : ""}`}>›</span> Context
+              {task.source ? <span className="chip chip-muted context-source">{sourceBadge(task.source)}</span> : null}
+            </h4>
+            {contextOpen ? (
+              <div className="context-body">
+                {task.context?.trim() ? <p className="context-text">{withInlineLinks(task.context)}</p> : null}
+                {historyLoading ? (
+                  <p className="muted small">Loading history…</p>
+                ) : history?.length ? (
+                  <ul className="history-list">
+                    {history.map((e, i) => (
+                      <li key={i}><span className="history-when">{relTime(e.at)}</span> {e.message || e.kind}</li>
+                    ))}
+                  </ul>
+                ) : !task.context?.trim() ? <p className="muted small">Nothing recorded yet.</p> : null}
+              </div>
+            ) : null}
+          </section>
           {steps.length > 0 && (
           <section>
             <h4>What's left{openableCount >= 2 && <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>Open all {openableCount} ↗</button>}</h4>
@@ -1987,22 +2031,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               ) : null}
             </section>
           ) : null}
-          {/* On-demand audit trail — every decision Otto made on THIS task, in order, so "why did this
-              happen" always has a real answer instead of just Otto's word for it. */}
-          <section className="history-sec">
-            <button className="btn xs ghost" onClick={() => void toggleHistory()}>
-              {historyLoading ? "Loading…" : history ? "Hide history" : "Show history"}
-            </button>
-            {history ? (
-              history.length ? (
-                <ul className="history-list">
-                  {history.map((e, i) => (
-                    <li key={i}><span className="history-when">{relTime(e.at)}</span> {e.message || e.kind}</li>
-                  ))}
-                </ul>
-              ) : <p className="muted small">No recorded history yet.</p>
-            ) : null}
-          </section>
           <div className="actions">
             {isDone ? (
               // A finished task is CLOSED, not just another item with the usual buttons — "Run now" here
