@@ -35,6 +35,12 @@ export interface Profile {
   preferences: string[];  // e.g. "concise emails", "no meetings before 10am"
   people: string[];       // key people + relationship ("Sarah — my manager")
   projects: string[];     // ongoing projects / goals
+  // Per-course/class behavioral patterns — the "gets smarter every semester" memory: a professor's grading
+  // quirks or communication style, how far ahead of a deadline the student ACTUALLY starts (not what they
+  // say), which subtask types they stall on. Kept as its own bucket (not lumped into `projects`) so a
+  // course's facts don't scroll off the list behind unrelated ongoing projects, and so the UI/prompts can
+  // treat "this is about a specific class" as a distinct, groupable kind of fact.
+  courses: string[];
   paused?: boolean;       // "pause all AI usage" — blocks generation and task runs server-side
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
   lastSweepAt?: string;   // ISO stamp of the last SUCCESSFUL generation sweep — durable "did we check today"
@@ -73,7 +79,7 @@ export interface Profile {
   dailyBriefingEnabled?: boolean;
   lastBriefingSentAt?: string; // ISO timestamp of last successful briefing send
 }
-export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [] }; }
+export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [] }; }
 export function normalizeProfile(p: any): Profile {
   const arr = (v: any): string[] => Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
   return {
@@ -83,6 +89,7 @@ export function normalizeProfile(p: any): Profile {
     preferences: dedupeFacts(arr(p?.preferences)),
     people: dedupeFacts(arr(p?.people)),
     projects: dedupeFacts(arr(p?.projects)),
+    courses: dedupeFacts(arr(p?.courses)),
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,

@@ -1532,11 +1532,12 @@ function ProfileEditor() {
   const [p, setP] = useState<Profile | null>(null);
   useEffect(() => { void api.profile().then(setP).catch(() => setP(null)); }, []);
   if (!p) return <p className="muted small">Loading…</p>;
-  const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length;
+  const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length + p.courses.length;
   const lists = [
     { key: "preference" as const, label: "Preferences", items: p.preferences },
     { key: "person" as const, label: "People", items: p.people },
     { key: "project" as const, label: "Projects", items: p.projects },
+    { key: "course" as const, label: "Courses", items: p.courses },
   ];
   return (
     <div className="memory-body">

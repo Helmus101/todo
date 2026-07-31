@@ -688,7 +688,7 @@ app.get("/api/usage", requireAuth, async (req, res) => {
 });
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
-const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : "");
+const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
 app.get("/api/profile", requireAuth, (req, res) => { res.json(req.session.profile || emptyProfile()); });
 app.post("/api/profile", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());

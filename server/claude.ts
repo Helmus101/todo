@@ -27,7 +27,13 @@ const MISSION =
   `fill in — yes. A completed essay, a solved assignment, a "done for you" write-up that replaces their own ` +
   `work — never. The test: would handing this to the student help them DO the exercise, or does it let them ` +
   `SKIP it? Only ever build the former. The human stays at the center — Otto clears the clutter around the ` +
-  `work so the student can focus on the work itself.`;
+  `work so the student can focus on the work itself.\n` +
+  `GET SMARTER EVERY TERM — a course-specific pattern (a professor's grading quirks, how far ahead of THIS ` +
+  `course's deadlines the student actually starts work, what kind of feedback they got last time) is worth ` +
+  `more than a one-off preference: it compounds over a whole degree. Use "remember" with category "course" ` +
+  `for these, and USE what's already remembered — e.g. give more lead time on a course where they historically ` +
+  `start late, reference a professor's known preferences when prepping for their class. This is what makes ` +
+  `Otto visibly better by junior year than freshman year, not just aware of how the student writes emails.`;
 const PLAN_ONLY_OVERRIDE =
   MISSION +
   `\n\nPLAN-ONLY MODE IS ACTIVE — OVERRIDES ALL "ACT NOW"/"CREATE"/"DRAFT" INSTRUCTIONS ABOVE: follow this exact ` +
@@ -117,6 +123,10 @@ function profileBlock(p?: Profile): string {
   if (recent(p.preferences).length) parts.push(`Preferences: ${recent(p.preferences).join("; ")}`);
   if (recent(p.people).length) parts.push(`Key people: ${recent(p.people).join("; ")}`);
   if (recent(p.projects).length) parts.push(`Ongoing projects: ${recent(p.projects).join("; ")}`);
+  // Course-level patterns compound over a term/degree (a professor's grading quirks, how far ahead of THIS
+  // course's deadlines the student actually starts) — see MEMORY IS A LEAD, NOT A FACT in PLAN_ONLY_OVERRIDE:
+  // still only a lead to verify against fresh research, never grounds for asserting something is CURRENT.
+  if (recent(p.courses).length) parts.push(`Course patterns (leads to verify, not guaranteed still current): ${recent(p.courses).join("; ")}`);
   if (p.workingHours) parts.push(`Working hours: ${p.workingHours.start}-${p.workingHours.end} (${p.workingHours.timezone})`);
   // NOTE: responseStyle is deliberately NOT injected — reply tone/formality comes from the THREAD, not a
   // global preference (a "formal" default would fight a casual thread and vice-versa).
@@ -409,7 +419,7 @@ const SUBMIT_TASKS_TOOL = {
       link: { type: "string", description: "a URL to open the source item, if you have one" },
     }, required: ["title", "why", "source", "urgency", "importance"] } },
     profileUpdates: { type: "array", description: "0-4 durable facts about WHO THIS PERSON IS that you discovered while sweeping (their role, a key relationship, an ongoing project, a work preference) — including a CORRECTED/updated version of a profile line above that's now outdated. Not task content; only lasting identity facts.", items: { type: "object", properties: {
-      category: { type: "string", enum: ["name", "about", "preference", "person", "project"] },
+      category: { type: "string", enum: ["name", "about", "preference", "person", "project", "course"] },
       fact: { type: "string", description: "one short sentence" },
     }, required: ["category", "fact"] } },
   }, required: ["tasks"] },
@@ -420,7 +430,7 @@ export function parseProfileUpdates(arr: any): ProfileUpdate[] {
   if (!Array.isArray(arr)) return [];
   return arr
     .map((u): ProfileUpdate => ({
-      category: ["name", "about", "preference", "person", "project"].includes(u?.category) ? u.category : "preference",
+      category: ["name", "about", "preference", "person", "project", "course"].includes(u?.category) ? u.category : "preference",
       fact: String(u?.fact || "").trim().slice(0, 200),
     }))
     .filter((u) => u.fact)
@@ -641,10 +651,12 @@ export async function classifyCandidates(
     `the person or subject from the candidate, you don't understand it well enough to include it — omit it.\n` +
     `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words",` +
     `"why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item — NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,` +
-    `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"name"|"about",` +
+    `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"course"|"name"|"about",` +
     `"fact":"one short sentence"}]} — profileUpdates: 0-3 DURABLE facts about who this person is that these ` +
     `items reveal (a key relationship, an ongoing project) — only lasting identity facts, not task content. ` +
-    `Empty arrays are fine.`;
+    `Use "course" for a class-specific pattern worth compounding over the term (a professor's grading style, ` +
+    `how far ahead of THIS course's deadlines they actually start work) — this is what makes Otto visibly ` +
+    `smarter about a student's classes over a degree, not just their tone. Empty arrays are fine.`;
   const client = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   let tokIn = 0, tokOut = 0, tokCached = 0, calls = 0;
@@ -834,7 +846,7 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
 // because it duplicated runTask with strictly less context (no integrations) and produced a second,
 // disconnected "next steps" list next to the real one.
 
-export interface ProfileUpdate { category: "name" | "about" | "preference" | "person" | "project"; fact: string; }
+export interface ProfileUpdate { category: "name" | "about" | "preference" | "person" | "project" | "course"; fact: string; }
 export interface RunOutput {
   context: string;
   synthesis: string;
@@ -1101,7 +1113,7 @@ const RUN_SYSTEM =
   `steps you skipped — just the result.`;
 
 const RUN_TOOLS = [
-  { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
+  { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), 'course' (a class/course-specific pattern that should compound over the term/degree — a professor's grading style or communication quirks, how far ahead of THIS course's deadlines the student actually starts work, what kind of feedback they got, e.g. 'BIO 201 — Prof. Martinez wants a topic sentence in every paragraph' or 'Starts CS 101 problem sets ~2 days before due and it stresses them out'), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project", "course"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
     title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (≤9 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
     context: { type: "string", description: "the SURROUNDING FACTS about this task — real, specific, substantive: who's involved, what they actually said/asked, what the doc/event/thread contains, dates, numbers, links. NEVER a meta-description of the task or your own process — 'User requested information about X', 'Performed searches across multiple services', 'Looked into Y' are WORTHLESS filler, not context, and will be rejected. If you truly found nothing useful after a real attempt, say the SPECIFIC thing that's missing ('No upcoming meetings with Gabrielle on the calendar; her last email was 3 weeks ago about the budget') — never a vague description of the search itself. 2-4 bullets, each starting with '- '." },
@@ -1409,7 +1421,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
         const toolName = (tu as any).function?.name;
         if (toolName === "remember") {
           const fact = String(input.fact || "").trim();
-          const cat = ["name", "about", "preference", "person", "project"].includes(input.category) ? input.category : "preference";
+          const cat = ["name", "about", "preference", "person", "project", "course"].includes(input.category) ? input.category : "preference";
           if (fact) profileUpdates.push({ category: cat, fact });
           content = "saved";
         }
