@@ -66,7 +66,16 @@ const PLAN_ONLY_OVERRIDE =
   `SAME BAR EVERY TASK — a task that LOOKS simple is not an excuse to research less: "Reply to Sarah" still ` +
   `needs (a)-(e) run against the actual thread, not a one-line skim. Depth must come from how much there ` +
   `genuinely IS to find (a thin thread stays thin), never from how much effort felt warranted — inconsistent ` +
-  `research depth across tasks is a real quality problem, not an efficiency win.` +
+  `research depth across tasks is a real quality problem, not an efficiency win. ` +
+  `(f) CHECK IF THE ACTION ITSELF ALREADY HAPPENED — before you ever plan a step that sends/replies/composes ` +
+  `something to a specific person, search SENT mail (e.g. "in:sent to:<their address or name>") and the thread ` +
+  `itself for a message already sent to that exact recipient about this exact subject (observed live: a task ` +
+  `proposed re-sending an introduction email to someone Otto's own SENT folder showed had already been ` +
+  `emailed). Anchor this to the SAME recipient and SAME subject, not just "some email exists in this thread" — ` +
+  `a past email to a DIFFERENT person (e.g. the original sender, before being redirected) does not clear this. ` +
+  `If you find it was already sent, that step is DONE, not outstanding — drop it from the plan entirely (or, if ` +
+  `something about it still needs the user — e.g. confirming a reply arrived — phrase THAT as the step, never ` +
+  `"send X" again).` +
   `\n(2) OUTLINE THE STEPS — from that research, work out the ordered list of concrete things that need to ` +
   `happen for THIS task to be done. This is your plan; you'll trim it down to what's actually left in stage 4. ` +
   `ONE TASK, ONE TOPIC — reading a mailbox/Drive often surfaces OTHER unrelated things along the way (a ` +
