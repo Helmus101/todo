@@ -242,6 +242,19 @@ export function App() {
   const [loadError, setLoadError] = useState(false); // backend unreachable after retries → show a retry screen
   const [reloadKey, setReloadKey] = useState(0);      // bump to re-attempt the status fetch
   const [seenTasks, setSeenTasks] = useState<Set<string>>(() => loadSeenTasks());
+  // Defense in depth against cached-tasks leaking across accounts on a shared/reused browser: signOut()
+  // clears the cache on an explicit sign-out, but a session can also end by just expiring (cookie cleared,
+  // server-side timeout) without that ever running. The moment the REAL status confirms who's actually
+  // logged in, if it doesn't match whichever account's status/tasks were cached, drop the stale cache
+  // immediately rather than let it linger on screen until the tasks fetch happens to replace it.
+  useEffect(() => {
+    if (!status?.user) return;
+    if (CACHED_STATUS?.user && CACHED_STATUS.user !== status.user) {
+      setTasks([]);
+      try { ["otto-tasks", "otto-seen-tasks", "otto-lastgen"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+      setSeenTasks(new Set());
+    }
+  }, [status?.user]);
   // AI budget (from the CLOUD-authoritative /api/usage) — drives the "budget reached" banner + renewal date,
   // so it reflects usage racked up by background jobs, not just this session.
   const [budget, setBudget] = useState<{ over: boolean; renewsOn: string } | null>(null);
@@ -460,7 +473,16 @@ export function App() {
     catch (e: any) { notify(`Couldn't refresh: ${e?.message || "something went wrong — try again."}`, "error"); }
     finally { setBusy(false); }
   };
-  const signOut = async () => { await api.logout(); setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus(); };
+  const signOut = async () => {
+    await api.logout();
+    // Clear every local cache keyed to THIS account — without this, the next sign-in on the same browser
+    // (a different person, or the same person after clearing cookies) would hydrate instantly from the
+    // PREVIOUS account's cached tasks/status (see CACHED_TASKS/CACHED_STATUS above) before the real fetch
+    // replaces them — visible, if briefly, as someone else's to-do list. None of these are needed once
+    // signed out; the next session starts genuinely fresh.
+    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+    setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus();
+  };
 
   // Signed in, the dashboard lives at /tasks. Redirect the bare "/" there (landing only shows signed-OUT).
   useEffect(() => { if (status?.loggedIn && route === "") navigate("tasks"); }, [status?.loggedIn, route]);
@@ -1051,7 +1073,7 @@ function PronoteTile() {
           <span className="int-logo pronote-logo"><img src="/logos/pronote.png" alt="" loading="lazy" /></span>
           <div className="int-info">
             <div className="int-name">Pronote{status.connected && <span className="int-dot" title="Connected" />}</div>
-            <div className="int-blurb">Homework due dates. Read-only — Otto never marks anything done in Pronote. Unofficial integration (no official API exists).</div>
+            <div className="int-blurb">Homework &amp; test due dates. Read-only — Otto never marks anything done in Pronote. Unofficial, reverse-engineered connection (Index Éducation has no official student API or OAuth for this) — your password is used once to connect and never stored; an encrypted rotating token stands in for it after that.</div>
           </div>
           {status.connected
             ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : "Disconnect"}</button>
@@ -1851,9 +1873,13 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               in the Context section, redundant to repeat on every single row. */}
           {(() => {
             const w = task.when ? fmtWhen(task.when) : "";
+            // Days-to-deadline, not urgency score, drives the visual — same anti-procrastination curve as
+            // the server's applyDeadlineUrgency, so a card LOOKS as urgent as it's actually ranked.
+            const daysLeft = task.when ? (Date.parse(task.when) - Date.now()) / 86_400_000 : NaN;
+            const soon = !isDone && !isNaN(daysLeft) && daysLeft <= 3;
             const next = !isDone ? (task.steps || []).find((s) => !s.done) : undefined;
             const secondary = next ? `Next: ${next.text}` : subtitle(task);
-            return (w || secondary) ? <div className="card-sub">{w && <span className="when">{w}</span>}{secondary}</div> : null;
+            return (w || secondary) ? <div className="card-sub">{w && <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span>}{secondary}</div> : null;
           })()}
           <div className="card-badges">
             <span className={`chip chip-${task.quadrant === "do" ? "bad" : task.quadrant === "schedule" ? "attention" : "muted"}`}>{priorityBadge(task.quadrant)}</span>

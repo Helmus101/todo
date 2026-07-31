@@ -32,6 +32,14 @@ if (!key()) {
     `${KEY_ENV} (e.g. \`openssl rand -hex 32\`) in production when you're ready to enable this layer.`);
 }
 
+/** Is the encryption key actually configured? Exposed so a caller storing something genuinely sensitive
+ *  (a real school password's replacement token, not just "nice to encrypt") can refuse to proceed rather
+ *  than silently accept plaintext storage — see server/pronote.ts's connectPronote, which is mandatory
+ *  about this specifically because it's the one credential in this app with real-world stakes if leaked
+ *  (a student's actual school login), unlike this module's own boot-time check, which must stay non-fatal
+ *  since it's imported by nearly everything (see the comment below). */
+export function credentialEncryptionConfigured(): boolean { return !!key(); }
+
 const PREFIX = "enc:v1:"; // lets decryptSecret recognize + skip values written before this existed
 
 /** Encrypt a secret for storage. Returns the plaintext unchanged (never silently drop data) when no key

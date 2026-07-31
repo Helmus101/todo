@@ -22,6 +22,7 @@
 import { randomUUID } from "node:crypto";
 import * as pronote from "pawnote";
 import { loadState, saveState, type StoredPronote } from "./store.ts";
+import { credentialEncryptionConfigured } from "./crypto.ts";
 
 export const PRONOTE_KIND = { STUDENT: pronote.AccountKind.STUDENT, PARENT: pronote.AccountKind.PARENT } as const;
 
@@ -40,6 +41,15 @@ function humanizeError(e: unknown): string {
 /** Connect a Pronote account: log in ONCE with the real credentials (never stored past this call), then
  *  persist only the rotating token pawnote issues in their place. */
 export async function connectPronote(email: string, opts: { url: string; username: string; password: string; kind?: number }): Promise<{ ok: boolean; error?: string }> {
+  // Mandatory HERE specifically, unlike the rest of the app: a Pronote token is the replacement for a
+  // student's REAL school password, a materially bigger liability than a revocable Google OAuth token if
+  // this database ever leaked. crypto.ts itself stays non-fatal (it's imported by nearly everything, so a
+  // hard failure there would take down the whole app over one feature) — but THIS specific write, storing
+  // that real credential's replacement, refuses to proceed without encryption actually configured.
+  if (!credentialEncryptionConfigured()) {
+    return { ok: false, error: "Pronote isn't available right now — this server hasn't been configured to " +
+      "store school credentials securely yet. Try again later or contact support." };
+  }
   const url = opts.url.trim(), username = opts.username.trim();
   if (!url || !username || !opts.password) return { ok: false, error: "URL, username and password are required." };
   const kind = opts.kind === pronote.AccountKind.PARENT ? pronote.AccountKind.PARENT : pronote.AccountKind.STUDENT;

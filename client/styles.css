@@ -371,6 +371,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card-badges { display: flex; gap: 6px; margin-top: 6px; }
 .card-badges .chip { font-size: 10.5px; padding: 2px 7px; }
 .when { color: var(--ink-2); font-weight: 550; margin-right: 8px; }
+.when-soon { color: var(--accent); font-weight: 700; }
 .card-spin {
   flex: none; width: 14px; height: 14px; border-radius: 50%;
   border: 2px solid var(--line); border-top-color: var(--accent);

@@ -16,7 +16,7 @@ Otto is a **companion, not a do-it-all** — it's built to keep a student moving
 - **Runs with the browser closed** — a durable job queue drains on a schedule, so tasks generate and execute in the background.
 - **Multi-account** — connect several Gmail/Calendar/Drive/GitHub accounts; reads and drafts land against the right one.
 - **Cost-capped** — a configurable monthly AI spend cap per account.
-- **Homework & test deadlines (Pronote)** — optional, unofficial integration for French schools: tracks homework due dates and upcoming tests (from the timetable's "test" flag) with enough lead time to actually plan around them, not just a last-minute ping. Currently hidden from Settings while launch is scoped to Google only — the backend support is live, re-enabling it is a one-line flip.
+- **Homework & test deadlines (Pronote)** — optional, unofficial integration for French schools: tracks homework due dates and upcoming tests (from the timetable's "test" flag) with enough lead time to actually plan around them, not just a last-minute ping.
 
 ## Tech stack
 
@@ -55,7 +55,7 @@ That's enough to run locally. Add Supabase (below) to persist across restarts.
 |-----|---------|
 | `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` | Cloud persistence (recommended; **required in production**) |
 | `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | Anon-key fallback for local dev only |
-| `CREDENTIAL_ENCRYPTION_KEY` | Encrypts secrets stored in the DB ourselves (currently the Pronote login token) with AES-256-GCM before they're written — defense-in-depth on top of RLS. Any value works (`openssl rand -hex 32`). Optional — recommended before re-enabling Pronote in the UI, but its absence only warns, never blocks the app from running. |
+| `CREDENTIAL_ENCRYPTION_KEY` | Encrypts secrets stored in the DB ourselves (currently the Pronote login token) with AES-256-GCM before they're written — defense-in-depth on top of RLS. Any value works (`openssl rand -hex 32`). Optional — recommended given Pronote is live, but its absence only warns, never blocks the app from running. |
 | `MONTHLY_AI_BUDGET_USD` | Per-account monthly AI spend cap (default `3`) |
 | `CRON_SECRET` | Protects `/api/cron/drain` (required on Vercel) |
 | `DEEPSEEK_MODEL` | Default `deepseek-v4-flash` (or `deepseek-v4-pro` for heavier reasoning) |

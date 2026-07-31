@@ -362,6 +362,7 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       void saveSession(req);
     }
   } catch { /* best-effort — fall back to the session copy */ }
+  if (req.session.tasks) tasks.applyDeadlineUrgency(req.session.tasks);
   res.json(req.session.tasks || []);
 });
 

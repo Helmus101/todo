@@ -92,6 +92,31 @@ export function eisenhower(urgency: number, importance: number): { quadrant: Qua
   return { quadrant, score: rank + (0.6 * importance + 0.4 * urgency) * 0.99 };
 }
 
+/** Anti-procrastination core: urgency must climb DETERMINISTICALLY as a hard deadline nears, not sit
+ *  frozen at whatever the model guessed the day the task was created. A homework due in 10 days would
+ *  otherwise rank exactly as calmly the day before it's due as it did when first spotted — the opposite
+ *  of what a student needs. Called on every read (not just at sweep time) so ranking stays honest between
+ *  sweeps; only ever RAISES urgency (never overrides a model that already flagged something more urgent),
+ *  and only touches live "ready" cards with a real parseable date. */
+export function applyDeadlineUrgency<T extends { when?: string; urgency: number; importance: number; quadrant: Quadrant; score: number; status?: string }>(list: T[], now_: Date = new Date()): T[] {
+  const now = now_.getTime();
+  for (const t of list) {
+    if (t.status && t.status !== "ready") continue;
+    const due = Date.parse(t.when || "");
+    if (!due || Number.isNaN(due)) continue;
+    const daysLeft = (due - now) / 86_400_000;
+    // >14d out: no boost (a model that already sees it as calm can stay calm). Inside two weeks it climbs
+    // fast; overdue/today maxes out — exactly when procrastination is most costly.
+    const curve = daysLeft <= 0 ? 1 : daysLeft <= 1 ? 0.95 : daysLeft <= 3 ? 0.85 : daysLeft <= 7 ? 0.7 : daysLeft <= 14 ? 0.5 : 0;
+    if (curve > t.urgency) {
+      t.urgency = curve;
+      const e = eisenhower(t.urgency, t.importance);
+      t.quadrant = e.quadrant; t.score = e.score;
+    }
+  }
+  return list;
+}
+
 /** Normalize a title for fuzzy comparison: lowercase, drop punctuation, collapse whitespace. */
 function normTitle(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
 /** Generic action verbs / fillers that DON'T distinguish one to-do from another — ignored when comparing
