@@ -841,8 +841,9 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
         <h3>Apps</h3>
         <p className="settings-hint">Otto reads your apps and does reversible work — it <b>never sends, posts, or deletes</b> on its own, and only ever edits a document it created itself, never one of yours.</p>
         <Integrations onChanged={onChanged} primaryAccounts={profile?.primaryAccounts} onProfile={setProfile} />
-        {/* TEMPORARY: launch is scoped to Google only — Pronote (and everything else) stays hidden for now. */}
+        {/* TEMPORARY: launch is scoped to Google + Pronote — everything else (Slack, GitHub, Notion, …) stays hidden for now. */}
         <p className="settings-hint">Other integrations are temporarily hidden for launch.</p>
+        <PronoteTile />
       </section>
 
       <section className="settings-sec">
@@ -1609,29 +1610,38 @@ function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string
 function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  // Optional explicit date — the "personal commitment" capture path (a job shift, a club meeting, an
+  // appointment): a real date attached right here beats waiting on the AI to maybe infer one from vague
+  // phrasing, and it's the lowest-friction way to get something that isn't from a connected app onto the
+  // same list as everything else. Collapsed by default so it never adds weight to the common case of just
+  // typing a quick task.
+  const [showWhen, setShowWhen] = useState(false);
+  const [when, setWhen] = useState("");
   const submit = async () => {
     const v = text.trim();
     if (!v || busy) return;
     setBusy(true); setText("");
+    const whenToSend = when;
+    setShowWhen(false); setWhen("");
     // Show it in the list RIGHT AWAY instead of waiting on the round-trip — which includes a blocking AI
     // refinement call server-side and can take a couple seconds. A real "Add" should feel instant, like
     // any to-do list. The server's actual response (refined title, possibly auto-queued) replaces this
     // stub the moment it lands; a failure rolls the stub back and returns your text so nothing is lost.
     const stubId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const stub: WebTask = {
-      id: stubId, title: v, why: "Added by you", source: "manual", risk: "low",
+      id: stubId, title: v, why: "Added by you", when: whenToSend || undefined, source: "manual", risk: "low",
       urgency: 0.5, importance: 0.5, quadrant: "do", score: 1,
       status: "ready", createdAt: new Date().toISOString(), unrefined: true,
     };
     onAdded((prev) => [stub, ...prev]);
     try {
-      const fresh = await api.add(v);
+      const fresh = await api.add(v, whenToSend || undefined);
       // Defensive: a 401 (session expired) resolves instead of throwing (see api.ts's j()), returning the
       // error BODY where an array was expected. Setting `tasks` state to that non-array object crashed the
       // whole app on the next render — which, from the outside, looked exactly like the new task vanishing.
       if (!Array.isArray(fresh)) throw new Error("not logged in");
       onAdded(fresh);
-    } catch { onAdded((prev) => prev.filter((t) => t.id !== stubId)); setText(v); }
+    } catch { onAdded((prev) => prev.filter((t) => t.id !== stubId)); setText(v); setWhen(whenToSend); }
     finally { setBusy(false); }
   };
   return (
@@ -1639,12 +1649,24 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
       <span className="add-plus" aria-hidden="true">+</span>
       <input
         className="add-task-input"
-        placeholder="Add a task…"
+        placeholder="Add a task, a shift, an appointment…"
         value={text}
         disabled={busy}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") void submit(); }}
       />
+      {showWhen ? (
+        <input
+          className="addinput sm add-task-when"
+          type="date"
+          value={when}
+          disabled={busy}
+          onChange={(e) => setWhen(e.target.value)}
+          title="When this is due"
+        />
+      ) : (
+        <button type="button" className="btn xs ghost add-when-toggle" disabled={busy} onClick={() => setShowWhen(true)}>+ date</button>
+      )}
       {text.trim() && <button className="btn xs primary" disabled={busy} onClick={() => void submit()}>{busy ? "Adding…" : "Add"}</button>}
     </div>
   );

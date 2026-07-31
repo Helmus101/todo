@@ -68,7 +68,7 @@ export const api = {
     const out: any = await post("/api/tasks/generate", force ? { force: true } : undefined);
     return Array.isArray(out) ? { tasks: out, note: "" } : { tasks: out?.tasks || [], note: String(out?.note || "") };
   },
-  add: (title: string): Promise<WebTask[]> => post("/api/tasks", { title }),
+  add: (title: string, when?: string): Promise<WebTask[]> => post("/api/tasks", when ? { title, when } : { title }),
   run: (id: string): Promise<WebTask> => post(`/api/tasks/${id}/run`),
   revise: (id: string, note: string): Promise<WebTask> => post(`/api/tasks/${id}/revise`, { note }),
   confirm: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/confirm`),

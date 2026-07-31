@@ -402,6 +402,10 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
 app.post("/api/tasks", requireAuth, async (req, res) => {
   const title = String(req.body?.title || "").trim();
   if (!title) { res.status(400).json({ error: "title required" }); return; }
+  // Optional explicit date (personal commitments — a job shift, a club meeting, an appointment) from a
+  // native <input type="date">: only accept a real calendar date, never arbitrary free text here (that's
+  // what the title/AI-refinement path is for) — a bad value silently becomes "no date" rather than a 500.
+  const explicitWhen = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.when || "")) ? String(req.body.when) : undefined;
   // Refine the raw note into a crisp, specific task title UP FRONT (one quick call) so the card reads well
   // immediately — "send email to mmachi excusing that the ai service wasnt working in weave" becomes
   // "Email Mmachi apologizing for the Weave AI outage". This was previously left to the execution run as a
@@ -410,7 +414,7 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
   const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
-  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready);
+  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen);
   const added = req.session.tasks[0];
   if (ready) added.status = "queued";
   // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from

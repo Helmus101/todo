@@ -501,8 +501,12 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
 /** Add a task the user typed. No separate "clean up" pass anymore — it goes in with the raw title and runs
  *  immediately; the run itself tightens a vague title as a side effect (see the "title" field runById
  *  applies from RunOutput). `markUnrefined` is ONLY for the true fallback case — AI unavailable/paused/over
- *  budget at add time — so the background sweep's auto-refine (jobs.ts) still knows to pick it up later. */
-export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, markUnrefined = false): WebTask[] {
+ *  budget at add time — so the background sweep's auto-refine (jobs.ts) still knows to pick it up later.
+ *  `explicitWhen` is a date the USER set directly (e.g. a job shift, a club meeting, an appointment — the
+ *  "Ring 2" personal-commitment capture path: a real date attached at add-time, not left for the AI to try
+ *  to infer from vague phrasing). It always wins over whatever the AI refinement guessed, since a date the
+ *  person deliberately picked is strictly more trustworthy than an inference from text. */
+export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, markUnrefined = false, explicitWhen?: string): WebTask[] {
   const urgency = refined ? refined.urgency : 0.6;
   const importance = refined ? refined.importance : 0.75;
   const e = eisenhower(urgency, importance);
@@ -511,7 +515,7 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
     id: randomUUID(),
     title: (refined?.title || title).trim().slice(0, 120),
     why: refined?.why || "Added by you.",
-    when: refined?.when,
+    when: explicitWhen || refined?.when,
     source: "manual", risk: "low", urgency, importance, quadrant: e.quadrant, score: e.score,
     status: "ready", createdAt: now,
     ...(markUnrefined ? { unrefined: true } : {}), // AI paused/unavailable — raw text in, background sweep cleans it up
