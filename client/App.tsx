@@ -1821,13 +1821,18 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
         ) : null}
         <div className="card-text">
           <div className="card-title">{isNew ? <span className="new-dot" title="New — not yet opened" /> : null}{task.title}</div>
-          {(() => { const sub = subtitle(task); const w = task.when ? fmtWhen(task.when) : ""; return (w || sub) ? <div className="card-sub">{w && <span className="when">{w}</span>}{sub}</div> : null; })()}
-          {!isDone ? (() => {
-            const next = (task.steps || []).find((s) => !s.done);
-            return next ? <div className="card-next">Next action: {next.text}</div> : null;
-          })() : null}
+          {/* ONE secondary line, not three: a concrete next action is more useful to scan than the generic
+              "why" once one exists, so it takes priority — "why" only shows as a fallback before there's a
+              next step to point at. The deadline (if any) always stays, since that's a different kind of
+              information (timing, not description). Source badge dropped here entirely — it's one tap away
+              in the Context section, redundant to repeat on every single row. */}
+          {(() => {
+            const w = task.when ? fmtWhen(task.when) : "";
+            const next = !isDone ? (task.steps || []).find((s) => !s.done) : undefined;
+            const secondary = next ? `Next: ${next.text}` : subtitle(task);
+            return (w || secondary) ? <div className="card-sub">{w && <span className="when">{w}</span>}{secondary}</div> : null;
+          })()}
           <div className="card-badges">
-            <span className="chip chip-muted">{sourceBadge(task.source)}</span>
             <span className={`chip chip-${task.quadrant === "do" ? "bad" : task.quadrant === "schedule" ? "attention" : "muted"}`}>{priorityBadge(task.quadrant)}</span>
           </div>
         </div>

@@ -37,7 +37,14 @@ const PLAN_ONLY_OVERRIDE =
   `the task title/why. These are your search terms for everything that follows — never search with the whole ` +
   `raw title, or a generic word like "the event"/"the document". ` +
   `(b) CHECK MEMORY FIRST — it's free: scan the "WHO THIS PERSON IS" block above for any of those entities ` +
-  `(a matching person, project, or preference). If it's already there, you don't need to search for it. ` +
+  `(a matching person, project, or preference). MEMORY IS A LEAD, NOT A FACT — it tells you WHERE to look ` +
+  `(skip a redundant search for background you already have), but a person/project remembered from a PAST ` +
+  `task is not guaranteed to still be active NOW (observed live: a stale "Crimson advisor" relationship kept ` +
+  `resurfacing as a live step long after the user had moved on). Never build a step that asserts a ` +
+  `remembered person/project/relationship is CURRENTLY relevant unless something you found THIS run (a ` +
+  `recent email, an upcoming event, a live doc) actually corroborates it — if memory is all you have and ` +
+  `nothing fresh confirms it, leave it out rather than assume it's still true. ` +
+  `(c) QUERY EACH RELEVANT INTEGRATION WITH THOSE ENTITIES — for every connected app that could plausibly hold ` +
   `(c) QUERY EACH RELEVANT INTEGRATION WITH THOSE ENTITIES — for every connected app that could plausibly hold ` +
   `something (Gmail, Calendar, Drive, Slack, GitHub, Notion, …), search/filter using the SPECIFIC entities from ` +
   `(a), not an unfiltered "list recent items" call — e.g. search Gmail for the person's name or event name, ` +
@@ -1266,10 +1273,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // doc genuinely needs approval).
   const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?)\b/i;
   // "context" describing the REQUEST or the SEARCH PROCESS instead of what was actually found — e.g. "User
-  // requested information about Gabrielle; performed searches across multiple Google services." Technically
-  // non-empty (passes every other check), completely useless to the user. Catches both halves of that
-  // pattern: narrating what the user asked for, and narrating the act of searching/checking itself.
-  const META_NARRATION = /\b(user (requested|asked (for|about)|wants?)\b|performed (a )?searches?\b|conduct(?:ed)? (a )?search(?:es)?\b|search(?:ed|ing)? (across|through|multiple)\b|checked (multiple|several|various)\b|looked (into|through) (multiple|several|various)\b|across multiple (google )?services\b)/i;
+  // requested information about Gabrielle; performed searches across multiple Google services" or "Assistant
+  // retrieved calendar event for essay writing, read emails about X, and searched for Y on Drive and Gmail
+  // without success" (observed live, second variant). Technically non-empty (passes every other check),
+  // completely useless to the user. Catches: narrating what the user asked for, narrating the act of
+  // searching/checking/retrieving itself (in EITHER first- or third-person, "I searched" / "Assistant
+  // retrieved"), and a search described as having failed with no follow-up fact stated.
+  const META_NARRATION = /\b(user (requested|asked (for|about)|wants?)\b|(?:^|\. )(?:the )?assistant \w+ed\b|performed (a )?searches?\b|conduct(?:ed)? (a )?search(?:es)?\b|search(?:ed|ing)? (across|through|multiple|for)\b.{0,40}\bwithout (success|results?|luck)\b|checked (multiple|several|various)\b|looked (into|through) (multiple|several|various)\b|across multiple (google )?services\b|\bread emails? about\b|\bretrieved (?:the |a )?calendar event\b)/i;
   // MISSION INTEGRITY: catches a claim that Otto did the student's actual graded/learning work FOR them —
   // the one line the whole "companion, not do-it-all" mission is built around. Checked against synthesis/did
   // (the model's own narrative of what it produced), the same place every other claim-verification check in
