@@ -184,7 +184,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .ext-chip { font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
-.list-wrap { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; }
+.list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; }
 .dash-head { margin-bottom: 36px; }
 .list-head { font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
 .list-head span { color: var(--ink); }
