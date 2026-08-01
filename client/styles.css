@@ -238,7 +238,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .empty-state p { font-size: 13.5px; color: var(--ink-2); line-height: 1.6; max-width: 360px; margin: 2px 0 14px; }
 
 /* ─── Add task — clean "+ Add task" row (Minimalist-style) ─────────────────── */
-.add-task-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px 14px; margin-bottom: 4px; border-bottom: 1px solid var(--line-soft); }
+.add-task-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px 14px; margin-bottom: 28px; border-bottom: 1px solid var(--line-soft); }
 .add-plus { color: var(--ink-3); font-size: 20px; font-weight: 300; line-height: 1; flex: none; }
 .add-task-input { flex: 1; height: 34px; border: none; background: transparent; padding: 0; font-size: 15.5px; }
 .add-task-input:focus { border: none; box-shadow: none; }
@@ -344,7 +344,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card.is-done::before { background: var(--ink-3); box-shadow: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.card-main { display: flex; align-items: center; gap: 12px; padding: 17px 6px 17px 26px; cursor: pointer; min-height: 58px; border-radius: 8px; transition: background 120ms var(--ease), transform 120ms var(--ease); }
+.card-main { display: flex; align-items: center; gap: 14px; padding: 22px 8px 22px 26px; cursor: pointer; min-height: 58px; border-radius: 8px; transition: background 120ms var(--ease), transform 120ms var(--ease); }
 .card-main:hover { background: rgba(0, 0, 0, 0.022); }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
    response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
@@ -363,12 +363,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; }
 .card-check:disabled { cursor: default; }
 .card-text { flex: 1; min-width: 0; }
-.card-title { font-size: 15.5px; font-weight: 560; letter-spacing: -0.01em; line-height: 1.35; }
+.card-title { font-size: 15.5px; font-weight: 560; letter-spacing: -0.01em; line-height: 1.4; }
 /* Unread marker — a fresh task the user hasn't opened yet. Disappears permanently the moment they open it
    (see App()'s seenTasks tracking), same "you've seen this" semantics as an unread-email dot. */
 .new-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; vertical-align: middle; flex: none; }
-.card-sub { font-size: 13px; color: var(--ink-2); margin-top: 2px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card-badges { display: flex; gap: 6px; margin-top: 6px; }
+.card-sub {
+  font-size: 13px; color: var(--ink-2); margin-top: 6px; line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.card-badges { display: flex; gap: 6px; margin-top: 10px; }
 .card-badges .chip { font-size: 10.5px; padding: 2px 7px; }
 .when { color: var(--ink-2); font-weight: 550; margin-right: 8px; }
 .when-soon { color: var(--accent); font-weight: 700; }
@@ -936,9 +939,9 @@ label.set-row { cursor: pointer; }
 .done-footer { font-size: 12.5px; color: var(--ink-3); }
 
 /* ─── Focus Groups & Decision Engine Dashboard Styling ────────────────────── */
-.list-focus-wrap { display: flex; flex-direction: column; gap: 28px; }
-.focus-group { display: flex; flex-direction: column; gap: 6px; }
-.focus-group-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 6px; border-bottom: 1px solid var(--line); }
+.list-focus-wrap { display: flex; flex-direction: column; gap: 40px; }
+.focus-group { display: flex; flex-direction: column; gap: 10px; }
+.focus-group-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
 .focus-title { font-family: var(--display); font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); }
 .focus-badge { font-family: var(--mono); font-size: 11px; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 12px; font-weight: 500; }
 .show-more-btn { margin-top: 8px; width: 100%; justify-content: center; }
