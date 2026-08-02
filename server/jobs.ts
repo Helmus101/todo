@@ -340,9 +340,16 @@ export async function drain(limit = 3, budgetMs = 240_000, userEmail?: string): 
  *  (or already-in-flight) before responding, while the SAME queue gives cron the offline path. */
 export async function enqueueAndDrain(email: string, type: store.JobType, taskId?: string, input?: any): Promise<store.Job> {
   const job = await store.enqueueJob(email, type, taskId, input);
-  if (job.status === "queued") {
+  // Also attempt a drain when the job comes back "running", not just "queued" — a job left running by a
+  // worker that got killed mid-request (serverless execution-time limit cutting off a long sweep/run
+  // before it called finishJob) sits at "running" with a lock that only claimJob's "expired lock" pass can
+  // reclaim. Without this, the interactive route would report that stale "running" status back forever
+  // (observed live: "sweep didn't finish, still running" never clearing) — cron is the only other path
+  // that ever retries a claim, and it may run just once a day. drain()'s claimJob only actually picks up a
+  // job whose locked_until has passed, so this is a safe no-op when another worker is genuinely still on it.
+  if (job.status === "queued" || job.status === "running") {
     // Make the queued state VISIBLE before work starts (execution types only — sweeps aren't a task).
-    if (taskId && type !== "sweep") await markTaskStatus(email, taskId, "queued").catch(() => {});
+    if (taskId && type !== "sweep" && job.status === "queued") await markTaskStatus(email, taskId, "queued").catch(() => {});
     await drain(2);
   }
   return (await store.getJob(job.id, email)) || job;

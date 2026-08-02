@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn } from "../shared/types.ts";
-import { aiReady, refineManualTask } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -454,6 +454,36 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
   res.json(req.session.tasks || []);
 });
 
+// Per-task coaching chat — grounded in that one task's own context/steps, so a student stuck on it can
+// talk it through with Otto without re-explaining the situation. Rate-limited + budget-gated like every
+// other interactive AI call; capped history (CHAT_CAP) keeps a long-running task's thread bounded.
+const CHAT_CAP = 60;
+app.post("/api/tasks/:id/chat", requireAuth, rateLimit(20, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  const message = String(req.body?.message || "").trim().slice(0, 2000);
+  if (!message) { res.status(400).json({ error: "Say something first." }); return; }
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
+  if (!t) { res.status(404).json({ error: "not found" }); return; }
+  const history = t.chat || [];
+  try {
+    const reply = await chatAboutTask(
+      { title: t.title, why: t.why, context: t.context, steps: t.steps },
+      history.map((h) => ({ role: h.role, text: h.text })),
+      message,
+      req.session.profile,
+    );
+    const now = new Date().toISOString();
+    t.chat = [...history, { role: "user" as const, text: message, at: now }, { role: "assistant" as const, text: reply, at: now }].slice(-CHAT_CAP);
+    t.updatedAt = now;
+    await commit(req);
+    res.json({ chat: t.chat });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "chat failed" });
+  }
+});
+
 // Execution flows through the durable job queue: enqueue + drain inline (synchronous response for the
 // client), with job idempotency as the cross-instance lock — one ACTIVE job per task, held in the DB.
 // A second call while one is in flight gets a 409 (the client treats that as "the other run wins").
@@ -645,9 +675,13 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
   } catch (e: any) { res.status(500).json({ error: e?.message || "kick failed" }); }
 });
 
-// Background drain — called by Vercel Cron (Authorization: Bearer $CRON_SECRET) every few minutes.
-// This is what makes Otto work with every browser closed: sweeps due accounts, executes ready tasks,
-// retries failed jobs, all through the same durable queue the interactive routes use.
+// Background drain — called by Vercel Cron (Authorization: Bearer $CRON_SECRET) once a day (vercel.json;
+// Vercel's Hobby plan only permits daily cron — Pro allows tighter schedules if that's ever worth the
+// upgrade). This is what makes Otto work with every browser closed: sweeps due accounts, executes ready
+// tasks, retries failed jobs, all through the same durable queue the interactive routes use. Since a day
+// is a long gap, the INTERACTIVE routes are the real safety net the rest of the time — enqueueAndDrain
+// (jobs.ts) retries a claim on every manual refresh/action even when a job is stuck at "running" with an
+// expired lock (a worker killed mid-run by the platform's execution-time limit), not just when "queued".
 app.get("/api/cron/drain", async (req, res) => {
   const secret = process.env.CRON_SECRET;
   const auth = String(req.headers.authorization || "");

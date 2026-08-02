@@ -95,6 +95,7 @@ export const api = {
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
   usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string }> => req("/api/usage").then(j),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
+  chat: (id: string, message: string): Promise<{ chat: { role: "user" | "assistant"; text: string; at: string }[] }> => post(`/api/tasks/${id}/chat`, { message }),
   // Drain one queued job server-side and return the fresh task list + how many jobs remain active.
   kick: (): Promise<{ processed: number; failed: number; active: number; activeTaskIds?: string[]; tasks: WebTask[] }> => post("/api/jobs/kick"),
 };

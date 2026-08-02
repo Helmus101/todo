@@ -422,6 +422,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .context-body { margin-top: 8px; }
 
 .history-list { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 5px; }
+
+/* ─── Per-task coaching chat ─────────────────────────────────────────────── */
+.task-chat { border-top: 1px solid var(--line-soft); padding-top: 16px; }
+.chat-thread { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; margin-bottom: 10px; }
+.chat-msg { font-size: 13.5px; line-height: 1.5; padding: 9px 12px; border-radius: 12px; max-width: 88%; white-space: pre-line; }
+.chat-user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.chat-assistant { align-self: flex-start; background: var(--bg-2); color: var(--ink); border-bottom-left-radius: 4px; }
+.chat-typing { opacity: 0.5; }
+.chat-row { display: flex; gap: 8px; }
+.chat-input { flex: 1; font-size: 13.5px; }
 .history-list li { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
 .history-when { color: var(--ink-3); margin-right: 6px; }
 
@@ -610,6 +620,7 @@ label.set-row { cursor: pointer; }
 .set-text > b { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
 .set-text .settings-hint { margin: 0; }
 .set-row > .btn, .set-row > .ext-chip { flex: none; }
+.more-settings-btn { margin-top: 10px; align-self: flex-start; }
 
 /* iOS-style toggle — the accent when on, grey track when off. */
 .switch { position: relative; flex: none; width: 44px; height: 26px; }

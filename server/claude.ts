@@ -231,7 +231,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // budget below must therefore fit reasoning + the actual structured output. `reserve()` gives a generous
 // headroom so the model never runs out mid-JSON; it caps waste, it doesn't force spend (the model emits
 // only the reasoning it needs). If a future non-reasoning model is used, these caps are simply never hit.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 800 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 800, chat: 500 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -1972,3 +1972,53 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
 }
 
 function clamp01(n: number): number { return Math.max(0, Math.min(1, Number(n) || 0)); }
+
+// Same integrity line runTask() enforces on itself — a coaching reply must never cross into doing the
+// student's actual work either (a student stuck on an essay could easily ask the chat to "just write the
+// intro paragraph for me", which is exactly the failure mode this guards against).
+const CHAT_DOES_WORK = /\bhere('s| is)?\s+(the|your|an?)\s+(essay|paragraph|answer|solution|response)\b|\bwrote (?:it|the|your) (essay|paragraph|answer|solution)\b/i;
+
+/**
+ * Reply in a per-task coaching thread. Grounded in that ONE task's own context/steps/why so the student
+ * never has to re-explain their situation, and scoped to being a supportive guide — never a ghostwriter.
+ * No tools: this is a conversation, not another research/execution pass (those already happened in runTask).
+ */
+export async function chatAboutTask(
+  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean }[] },
+  history: { role: "user" | "assistant"; text: string }[],
+  message: string,
+  profile?: Profile,
+): Promise<string> {
+  const stepsBlock = (task.steps || []).length
+    ? `\nSteps (${(task.steps || []).filter((s) => s.done).length}/${(task.steps || []).length} done):\n` +
+      (task.steps || []).map((s) => `- [${s.done ? "x" : " "}] ${s.text}`).join("\n")
+    : "";
+  const sys = MISSION +
+    `\n\nYou are Otto, chatting with the student about ONE specific task — a supportive, encouraging coach ` +
+    `helping them actually get it done, not a generic chatbot. Ground every reply in the task context below; ` +
+    `never ask them to re-explain what's already here. Be warm and concrete: if they say they're stuck, help ` +
+    `them find the smallest next physical action (open the doc, write one sentence, set a 10-minute timer) ` +
+    `rather than generic encouragement. If they're overwhelmed, break whatever they're stuck on into smaller ` +
+    `pieces. If they ask a factual question you can answer from context, answer it directly and briefly. ` +
+    `NEVER write the student's actual work for them in this chat either (no essay paragraphs, no solved ` +
+    `answers, no finished write-ups) — if asked, redirect to helping them write it themselves (an outline, a ` +
+    `sentence starter, a way to think about it), exactly like the rest of Otto. Keep replies SHORT (2-5 ` +
+    `sentences) — this is a chat, not another report.` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}` +
+    profileBlock(profile);
+  const messages: any[] = [
+    { role: "system", content: sys },
+    ...history.slice(-16).map((h) => ({ role: h.role, content: h.text })),
+    { role: "user", content: message },
+  ];
+  const client = deepseekClient();
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+  const res: any = await retryRequest(() => client.chat.completions.create({
+    model: actualModel, max_tokens: OUT.chat, temperature: 0.6, messages,
+  }));
+  let reply = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 1200);
+  if (CHAT_DOES_WORK.test(reply)) {
+    reply = "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?";
+  }
+  return reply || "I'm here — what part of this is giving you trouble?";
+}

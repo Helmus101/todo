@@ -397,6 +397,11 @@ export interface WebTask {
   artifacts?: { kind: "doc" | "sheet" | "slides" | "draft" | "event"; id: string; url?: string; label?: string }[];
   /** Cost of the most recent run (input/output tokens) — shown in the timeline for cost visibility. */
   lastRunTokens?: { in: number; out: number };
+  /** Per-task coaching thread — a student can ask Otto about THIS specific task (stuck on a step, wants
+   *  it broken down further, needs encouragement) and get a reply grounded in the task's own context/steps,
+   *  without re-explaining the situation every time. Capped (see CHAT_CAP in tasks.ts) so a long-running
+   *  task's thread can't grow unbounded in storage. */
+  chat?: { role: "user" | "assistant"; text: string; at: string }[];
 }
 
 export interface ConnectionStatus {

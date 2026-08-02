@@ -818,6 +818,10 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
   const [profile, setProfile] = useState<Profile | null>(null);
   const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
+  // Simplicity: only the two settings almost everyone touches (pause, scan frequency) show by default —
+  // daily briefing and the Tabs extension are real but secondary, and having 4 toggles visible at once
+  // made this page read as more to configure than it actually is. One click away, not gone.
+  const [showMore, setShowMore] = useState(false);
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
   const [genPerDay, setGenPerDay] = useState(Math.min(4, Math.max(1, status.genPerDay || 1)));
@@ -886,29 +890,35 @@ function SettingsPage({ status, onSignOut, onChanged, extOn }: { status: Connect
               ))}
             </div>
           </div>
-          <label className="set-row">
-            <span className="set-text"><b>Daily briefing</b><span className="settings-hint">Get an email every morning with your top 3 priorities and upcoming risks.</span></span>
-            <span className="switch"><input type="checkbox" checked={dailyBriefingEnabled} onChange={(e) => { const v = e.target.checked; setDailyBriefingEnabledLocal(v); void api.setDailyBriefing(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
-          </label>
-          <label className="set-row">
-            <span className="set-text"><b>Connect to Otto Tabs</b><span className="settings-hint">Lets Otto open pages for you automatically — drafts, docs, links — grouped into one tab group. Needs the free Tabs extension.</span></span>
-            <span className="switch"><input type="checkbox" checked={autoOpen} onChange={(e) => toggleAutoOpen(e.target.checked)} /><span className="switch-track" /></span>
-          </label>
-          {autoOpen && (
-            extOn
-              ? <div className="ext-panel ok"><span className="ext-chip">✓ Tabs extension connected</span><span className="settings-hint">Otto will open pages into an “Otto” tab group as it works.</span></div>
-              : <div className="ext-panel">
-                  <p className="settings-hint">Add the free Tabs extension so Otto can open pages for you. Two ways:</p>
-                  {CHROME_STORE_URL && <a className="btn xs primary ext-primary" href={CHROME_STORE_URL} target="_blank" rel="noreferrer">Add to Chrome ↗</a>}
-                  <div className="ext-how">
-                    <div className="ext-how-title">{CHROME_STORE_URL ? "Or install it manually" : "Install it in under a minute"}</div>
-                    <ol className="ext-steps">
-                      <li><a href="/otto-tabs-extension.zip" download>Download the extension</a> and unzip it.</li>
-                      <li>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b> (top-right).</li>
-                      <li>Click <b>Load unpacked</b> and pick the unzipped folder.</li>
-                    </ol>
-                  </div>
-                </div>
+          {showMore ? (
+            <>
+              <label className="set-row">
+                <span className="set-text"><b>Daily briefing</b><span className="settings-hint">Get an email every morning with your top 3 priorities and upcoming risks.</span></span>
+                <span className="switch"><input type="checkbox" checked={dailyBriefingEnabled} onChange={(e) => { const v = e.target.checked; setDailyBriefingEnabledLocal(v); void api.setDailyBriefing(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
+              </label>
+              <label className="set-row">
+                <span className="set-text"><b>Connect to Otto Tabs</b><span className="settings-hint">Lets Otto open pages for you automatically — drafts, docs, links — grouped into one tab group. Needs the free Tabs extension.</span></span>
+                <span className="switch"><input type="checkbox" checked={autoOpen} onChange={(e) => toggleAutoOpen(e.target.checked)} /><span className="switch-track" /></span>
+              </label>
+              {autoOpen && (
+                extOn
+                  ? <div className="ext-panel ok"><span className="ext-chip">✓ Tabs extension connected</span><span className="settings-hint">Otto will open pages into an “Otto” tab group as it works.</span></div>
+                  : <div className="ext-panel">
+                      <p className="settings-hint">Add the free Tabs extension so Otto can open pages for you. Two ways:</p>
+                      {CHROME_STORE_URL && <a className="btn xs primary ext-primary" href={CHROME_STORE_URL} target="_blank" rel="noreferrer">Add to Chrome ↗</a>}
+                      <div className="ext-how">
+                        <div className="ext-how-title">{CHROME_STORE_URL ? "Or install it manually" : "Install it in under a minute"}</div>
+                        <ol className="ext-steps">
+                          <li><a href="/otto-tabs-extension.zip" download>Download the extension</a> and unzip it.</li>
+                          <li>Open <code>chrome://extensions</code> and turn on <b>Developer mode</b> (top-right).</li>
+                          <li>Click <b>Load unpacked</b> and pick the unzipped folder.</li>
+                        </ol>
+                      </div>
+                    </div>
+              )}
+            </>
+          ) : (
+            <button type="button" className="btn xs ghost more-settings-btn" onClick={() => setShowMore(true)}>More settings…</button>
           )}
         </div>
       </section>
@@ -1738,6 +1748,21 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
     catch { setHistory([]); }
     finally { setHistoryLoading(false); }
   };
+  // Per-task coaching chat — a thread scoped to THIS task so the student can ask for help without
+  // re-explaining their situation. Starts from whatever's already saved on the task (persists across opens).
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ block: "nearest" }); }, [task.chat?.length, chatSending]);
+  const sendChat = async () => {
+    const message = chatInput.trim();
+    if (!message || chatSending) return;
+    setChatInput(""); setChatSending(true); setChatError(null);
+    try { const { chat } = await api.chat(task.id, message); onTask({ ...task, chat }); }
+    catch (e: any) { setChatError(e?.message || "Couldn't send that — try again."); setChatInput(message); }
+    finally { setChatSending(false); }
+  };
   const [leaving, setLeaving] = useState(false);
   const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
@@ -2086,6 +2111,33 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               {task.links?.length ? (
                 <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || "Open link"} ↗</a></li>)}</ul>
               ) : null}
+            </section>
+          ) : null}
+          {inModal && !isDone ? (
+            // Supportive, task-scoped chat: talking through THIS task specifically ("I'm stuck on step 2",
+            // "can you break this down more?") without having to re-explain what it is — Otto already has
+            // the full context above. Never shown for a finished/dismissed task — nothing left to coach.
+            <section className="task-chat">
+              <h4>Ask Otto about this</h4>
+              <div className="chat-thread">
+                {!task.chat?.length ? (
+                  <p className="muted small">Stuck, overwhelmed, or just want a plan for tackling this? Ask below.</p>
+                ) : task.chat.map((m, i) => (
+                  <div key={i} className={`chat-msg chat-${m.role}`}>{m.text}</div>
+                ))}
+                {chatSending ? <div className="chat-msg chat-assistant chat-typing">…</div> : null}
+                <div ref={chatEndRef} />
+              </div>
+              {chatError ? <div className="rewrite-error">{chatError}</div> : null}
+              <div className="chat-row">
+                <input
+                  className="chat-input" placeholder="e.g. I'm stuck getting started on this…"
+                  value={chatInput} onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendChat(); } }}
+                  disabled={chatSending}
+                />
+                <button className="btn primary xs" disabled={chatSending || !chatInput.trim()} onClick={() => void sendChat()}>Send</button>
+              </div>
             </section>
           ) : null}
           <div className="actions">
