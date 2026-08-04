@@ -87,6 +87,10 @@ export interface Profile {
   // Otto Lycée defaults to French; a student can switch the whole app (UI + AI-generated content) to
   // English in Settings. Undefined/anything else is treated as "fr".
   language?: "fr" | "en";
+  // Manually-entered per-subject grades (Pronote's read API doesn't expose grades) — lets Otto know which
+  // subject is actually slipping, not just what's due soonest, so a low grade gets more lead time/attention
+  // than the deadline alone would suggest. Self-reported, so treated as a signal, not ground truth.
+  grades?: { subject: string; grade: number; scale: number; updatedAt: string }[];
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -132,6 +136,14 @@ export function normalizeProfile(p: any): Profile {
     lastBriefingSentAt: typeof p?.lastBriefingSentAt === "string" ? p.lastBriefingSentAt : undefined,
     calendarAutoBlock: !!p?.calendarAutoBlock,
     language: p?.language === "en" ? "en" : "fr",
+    grades: Array.isArray(p?.grades)
+      ? p.grades.map((g: any) => ({
+          subject: String(g?.subject || "").trim().slice(0, 60),
+          grade: Number(g?.grade) || 0,
+          scale: Number(g?.scale) > 0 ? Number(g.scale) : 20,
+          updatedAt: typeof g?.updatedAt === "string" ? g.updatedAt : new Date().toISOString(),
+        })).filter((g: { subject: string }) => g.subject).slice(0, 30)
+      : undefined,
   };
 }
 

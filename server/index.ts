@@ -270,9 +270,49 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
   const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
   res.status(result.ok ? 200 : 400).json(result);
 });
+// Upcoming tests for the dashboard's exam countdown strip — a plain read, separate from the task pipeline
+// (a test already has/will have a task, but the countdown needs the raw subject+date list to lay out as a
+// timeline rather than dig it back out of task titles).
+app.get("/api/pronote/tests", requireAuth, async (req, res) => {
+  try {
+    const conn = await pronoteSvc.pronoteConnected(req.session.user!);
+    if (!conn.connected) { res.json({ tests: [] }); return; }
+    const tests = await pronoteSvc.pronoteTests(req.session.user!);
+    res.json({ tests: tests.map((t) => ({ subject: t.subject, deadline: t.deadline })) });
+  } catch { res.json({ tests: [] }); }
+});
 app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
   await pronoteSvc.disconnectPronote(req.session.user!);
   res.json({ ok: true });
+});
+// Read-only: the raw Pronote grade averages, for anything that just wants to display them.
+app.get("/api/pronote/grades", requireAuth, async (req, res) => {
+  try {
+    const conn = await pronoteSvc.pronoteConnected(req.session.user!);
+    if (!conn.connected) { res.json({ grades: [] }); return; }
+    res.json({ grades: await pronoteSvc.pronoteGrades(req.session.user!) });
+  } catch { res.json({ grades: [] }); }
+});
+// Pull Pronote's grade averages into profile.grades (the same store Otto's prompts read) — Pronote is the
+// source of truth for any subject it reports; a manually-entered grade for a subject Pronote doesn't cover
+// (or before this sync ever ran) is left alone.
+app.post("/api/profile/grades/sync-pronote", requireAuth, async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  try {
+    const conn = await pronoteSvc.pronoteConnected(req.session.user!);
+    if (conn.connected) {
+      const fromPronote = await pronoteSvc.pronoteGrades(req.session.user!);
+      const now = new Date().toISOString();
+      const list = (p.grades ||= []);
+      for (const g of fromPronote) {
+        const i = list.findIndex((x) => x.subject.toLowerCase() === g.subject.toLowerCase());
+        const entry = { subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now };
+        if (i >= 0) list[i] = entry; else list.push(entry);
+      }
+    }
+  } catch { /* best-effort — profile is returned unchanged on failure */ }
+  await commit(req);
+  res.json(p);
 });
 
 app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
@@ -480,11 +520,19 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(20, 60_000), async (req, 
   if (!t) { res.status(404).json({ error: "not found" }); return; }
   const history = t.chat || [];
   try {
+    let academic: { homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>>; tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> } | undefined;
+    try {
+      if ((await pronoteSvc.pronoteConnected(req.session.user!)).connected) {
+        const [homework, tests] = await Promise.all([pronoteSvc.pronoteHomework(req.session.user!), pronoteSvc.pronoteTests(req.session.user!)]);
+        if (homework.length || tests.length) academic = { homework, tests };
+      }
+    } catch { /* best-effort */ }
     const reply = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       req.session.profile,
+      academic,
     );
     const now = new Date().toISOString();
     t.chat = [...history, { role: "user" as const, text: message, at: now }, { role: "assistant" as const, text: reply, at: now }].slice(-CHAT_CAP);
@@ -794,6 +842,33 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
   } else if (key === "language" && (value === "fr" || value === "en")) {
     p.language = value;
   }
+  await commit(req);
+  res.json(p);
+});
+// Per-subject grades — self-reported (Pronote's read API doesn't expose grades), so Otto can weigh which
+// subject actually needs attention, not just what's due soonest. Upsert by subject name (case-insensitive).
+app.post("/api/profile/grade", requireAuth, async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const subject = String(req.body?.subject || "").trim().slice(0, 60);
+  const grade = Number(req.body?.grade);
+  const scale = Number(req.body?.scale) > 0 ? Number(req.body.scale) : 20;
+  if (!subject || !Number.isFinite(grade)) { res.status(400).json({ error: "subject and grade are required" }); return; }
+  const entry = { subject, grade: Math.max(0, Math.min(scale, grade)), scale, updatedAt: new Date().toISOString() };
+  const list = (p.grades ||= []);
+  const i = list.findIndex((g) => g.subject.toLowerCase() === subject.toLowerCase());
+  if (i >= 0) list[i] = entry; else list.push(entry);
+  await commit(req);
+  res.json(p);
+});
+app.delete("/api/profile/grade/:subject", requireAuth, async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const subject = decodeURIComponent(String(req.params.subject || "")).toLowerCase();
+  p.grades = (p.grades || []).filter((g) => g.subject.toLowerCase() !== subject);
+  // commit()'s cross-device merge unions this list with whatever's still in the cloud copy — a plain
+  // remove-then-commit would have the deleted grade resurface (the cloud copy doesn't know it was removed,
+  // same tombstone-less limitation as the preference/people/project lists). Persist the deletion to cloud
+  // directly FIRST, so by the time commit() reloads "current" for the merge, it already reflects the delete.
+  if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
   await commit(req);
   res.json(p);
 });

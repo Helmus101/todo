@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
-import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask } from "./claude.ts";
+import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates } from "./discover.ts";
 
@@ -298,6 +298,16 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     dailyBriefingEnabled: p2.dailyBriefingEnabled ?? p1.dailyBriefingEnabled,
     calendarAutoBlock: p2.calendarAutoBlock ?? p1.calendarAutoBlock,
     language: p2.language ?? p1.language,
+    // Grades are a small, deliberately-edited list — merge by subject, newest updatedAt per subject wins
+    // (same idea as autoArchivePatterns/preferences, but keyed instead of just concatenated/deduped by text).
+    grades: (p1.grades?.length || p2.grades?.length) ? (() => {
+      const map = new Map<string, { subject: string; grade: number; scale: number; updatedAt: string }>();
+      for (const g of [...(p1.grades || []), ...(p2.grades || [])]) {
+        const prev = map.get(g.subject);
+        if (!prev || Date.parse(g.updatedAt) >= Date.parse(prev.updatedAt)) map.set(g.subject, g);
+      }
+      return [...map.values()];
+    })() : undefined,
     lastBriefingSentAt: (Date.parse(p2.lastBriefingSentAt || "") || 0) >= (Date.parse(p1.lastBriefingSentAt || "") || 0) ? (p2.lastBriefingSentAt ?? p1.lastBriefingSentAt) : (p1.lastBriefingSentAt ?? p2.lastBriefingSentAt),
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
@@ -624,7 +634,7 @@ export function unionArtifacts(prior: Artifact[] | undefined, fresh: Artifact[])
   return all.length ? all : undefined;
 }
 
-export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string): Promise<WebTask | undefined> {
+export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string, academic?: AcademicContext): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   if (!task) return undefined;
   if (canonStatus(task.status) === "executing") return task; // already in flight — never double-run
@@ -644,7 +654,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     const withArtifacts = extras?.withAllowedArtifacts && priorArtifactIds.length ? extras.withAllowedArtifacts(priorArtifactIds) : extras;
     const scoped = withArtifacts ? scopeTools(withArtifacts, task) : undefined;
     if (extras && scoped) console.log(`[tasks] run "${task.title.slice(0, 40)}": ${scoped.tools.length}/${extras.tools.length} tools after scoping`);
-    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts }, profile, focus, scoped);
+    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts }, profile, focus, scoped, academic);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     // A manually-added task's raw title gets tightened as a side effect of THIS run (no separate "clean
@@ -715,7 +725,7 @@ export function setStepDone(list: WebTask[], id: string, index: number, done: bo
  * itself via the connected apps and marks the step done with a short result. (URL-open steps are handled on
  * the client; this is for draft/doc/research/create/update steps.)
  */
-export async function runStep(list: WebTask[], id: string, index: number, profile: Profile, extras?: AgentTools, answer?: string): Promise<WebTask | undefined> {
+export async function runStep(list: WebTask[], id: string, index: number, profile: Profile, extras?: AgentTools, answer?: string, academic?: AcademicContext): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   const step = task?.steps?.[index];
   if (!task || !step) return task;
@@ -731,7 +741,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
       : `\nInfo from the user for this step: "${answer.trim()}". Use it.`
     : "";
   const focus = (decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text) + qa;
-  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras);
+  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras, academic);
   addUsage(profile, out.tokens);
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);

@@ -57,6 +57,18 @@ function mockTests(anchor: string): PronoteTestItem[] {
     { id: "mock-test-2", subject: "Philosophie", deadline: at(12) },
   ].filter((t) => Date.parse(t.deadline) >= now && Date.parse(t.deadline) <= now + TEST_DAYS_AHEAD * 86_400_000);
 }
+// Static (doesn't need the connection anchor — a grade average isn't a deadline that expires); deliberately
+// includes one clearly-weak subject (Anglais) and one strong one (SES) so the "prioritize the weak subject"
+// behavior (see profileBlock/classifyCandidates in claude.ts) has something real to demonstrate against.
+function mockGrades(): PronoteGradeItem[] {
+  return [
+    { subject: "Maths", average: 13.5, outOf: 20 },
+    { subject: "Physique", average: 11, outOf: 20 },
+    { subject: "Anglais", average: 8, outOf: 20 },
+    { subject: "SES", average: 16, outOf: 20 },
+    { subject: "Philosophie", average: 12, outOf: 20 },
+  ];
+}
 
 /** Turn pawnote's typed errors into something a user can actually act on. */
 function humanizeError(e: unknown): string {
@@ -190,6 +202,32 @@ export async function pronoteTests(email: string, daysAhead = TEST_DAYS_AHEAD): 
         id: c.id,
         subject: c.subject?.name || "Class",
         deadline: c.startDate.toISOString(),
+      }));
+  });
+  return out || [];
+}
+
+export interface PronoteGradeItem { subject: string; average: number; outOf: number; }
+
+/** Per-subject grade averages for the CURRENT period (Pronote splits the year into trimesters/semesters —
+ *  the period containing today's date, falling back to the most recent one if none matches, e.g. holidays).
+ *  Uses subjectsAverages (the student's own average per subject) rather than every individual grade — that's
+ *  exactly the "which subject needs attention" signal Otto's profile block wants, with no averaging logic
+ *  duplicated here. */
+export async function pronoteGrades(email: string): Promise<PronoteGradeItem[]> {
+  if (MOCK_ENABLED) { const { pronote: stored } = await loadState(email); if (stored?.url === MOCK_URL) return mockGrades(); }
+  const out = await withPronoteSession(email, async (session) => {
+    const periods = session.instance.periods;
+    if (!periods.length) return [];
+    const now = Date.now();
+    const period = periods.find((p) => p.startDate.getTime() <= now && now <= p.endDate.getTime()) || periods[periods.length - 1];
+    const overview = await pronote.gradesOverview(session, period);
+    return overview.subjectsAverages
+      .filter((s) => s.student && s.outOf?.points)
+      .map((s): PronoteGradeItem => ({
+        subject: s.subject?.name || "Matière",
+        average: Math.round((s.student!.points / (s.outOf!.points || 20)) * 20 * 10) / 10,
+        outOf: 20,
       }));
   });
   return out || [];

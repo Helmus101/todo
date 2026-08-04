@@ -13,7 +13,17 @@ import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
 import * as claude from "./claude.ts";
-import { pronoteConnected } from "./pronote.ts";
+import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests } from "./pronote.ts";
+import type { AcademicContext } from "./claude.ts";
+
+/** Live Pronote homework/exams for a task's own run/chat context — best-effort, never blocks execution. */
+async function loadAcademicContext(email: string): Promise<AcademicContext | undefined> {
+  try {
+    if (!(await pronoteConnected(email)).connected) return undefined;
+    const [homework, tests] = await Promise.all([pronoteHomework(email), pronoteTests(email)]);
+    return (homework.length || tests.length) ? { homework, tests } : undefined;
+  } catch { return undefined; }
+}
 
 const workerId = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -123,6 +133,23 @@ async function processSweep(job: store.Job): Promise<string> {
   const toRun = found.filter((t) => canonStatus(t.status) === "ready").sort((a, b) => b.score - a.score).slice(0, 3);
   for (const t of toRun) t.status = "queued";
   profile.lastSweepAt = new Date().toISOString(); // durable "checked today" marker — survives restarts
+  // Pull fresh grade averages alongside the daily sweep — best-effort, same "Pronote is the source of truth
+  // for what it reports" merge as the manual Settings sync, just automatic so a student never has to think
+  // about it. A failure here (Pronote down, no grades yet) never blocks the sweep itself.
+  try {
+    if ((await pronoteConnected(email)).connected) {
+      const fromPronote = await pronoteGrades(email);
+      if (fromPronote.length) {
+        const now = new Date().toISOString();
+        const list2 = (profile.grades ||= []);
+        for (const g of fromPronote) {
+          const i = list2.findIndex((x) => x.subject.toLowerCase() === g.subject.toLowerCase());
+          const entry = { subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now };
+          if (i >= 0) list2[i] = entry; else list2.push(entry);
+        }
+      }
+    }
+  } catch { /* best-effort */ }
   await commitUser(email, profile, next);
   for (const t of found) void store.recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
   for (const t of toRun) { await store.enqueueJob(email, "execute_task", t.id); void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" }); }
@@ -194,7 +221,8 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   t.autoRan = true; // whether this attempt succeeds or not, don't loop on it automatically
   const idsBefore = new Set(list.map((x) => x.id)); // to detect follow-up tasks the run spins off
   try {
-    const updated = await tasks.runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : undefined);
+    const academic = await loadAcademicContext(email);
+    const updated = await tasks.runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : undefined, academic);
     // Live artifact verification: read every claimed draft/event/doc back from the real account before the
     // user sees it — anything the API confirms missing is pruned and logged to the task's timeline.
     if (updated && (updated.links?.length || updated.sendables?.length)) {
@@ -267,7 +295,8 @@ async function processExecuteStep(job: store.Job): Promise<string> {
       primaryAccounts: profile.primaryAccounts,
     }).catch(() => undefined);
   }
-  const updated = await tasks.runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : undefined);
+  const academic = await loadAcademicContext(email);
+  const updated = await tasks.runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : undefined, academic);
   if (updated && (updated.links?.length || updated.sendables?.length)) {
     const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);
     for (const d of droppedArtifacts) void store.recordEvent(email, "artifact_dropped", { taskId, jobId: job.id, message: d.slice(0, 200) });

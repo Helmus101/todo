@@ -213,26 +213,42 @@ function FlashcardDeck({ deck }: { deck: TaskFlashcards }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [done, i, flipped]);
   if (done) {
+    const pct = deck.cards.length ? Math.round((right.length / deck.cards.length) * 100) : 0;
     return (
       <div className="deck-popup deck-done">
         <h3 className="note-popup-title">{deck.title}</h3>
+        <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
+          <span className="deck-score-pct">{pct}%</span>
+        </div>
         <p className="deck-score">{L(`${right.length} / ${deck.cards.length} correctes`, `${right.length} / ${deck.cards.length} correct`)}</p>
-        <button className="btn primary" onClick={restart}>{L("Recommencer", "Restart")}</button>
+        <div className="deck-acts">
+          <button className="btn primary" onClick={restart}>{L("Recommencer", "Restart")}</button>
+        </div>
       </div>
     );
   }
   return (
     <div className="deck-popup">
       <h3 className="note-popup-title">{deck.title}</h3>
+      <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / deck.cards.length) * 100}%` }} /></div>
       <div className="deck-progress">{i + 1} / {deck.cards.length}</div>
-      <div className={`deck-card ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
-        <div className="deck-card-face">{flipped ? card!.back : card!.front}</div>
+      <div className={`deck-card-3d ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
+        <div className="deck-card-inner">
+          <div className="deck-card-face deck-card-front">
+            <span className="deck-face-label">{L("Question", "Front")}</span>
+            <div className="deck-face-text">{card!.front}</div>
+          </div>
+          <div className="deck-card-face deck-card-back">
+            <span className="deck-face-label">{L("Réponse", "Back")}</span>
+            <div className="deck-face-text">{card!.back}</div>
+          </div>
+        </div>
       </div>
       <p className="deck-hint">{L("Espace pour retourner · ← faux · → correct", "Space to flip · ← wrong · → correct")}</p>
       <div className="deck-acts">
-        <button className="btn ghost" onClick={() => mark(false)}>← {L("Faux", "Wrong")}</button>
+        <button className="btn ghost deck-btn-wrong" onClick={() => mark(false)}>← {L("Faux", "Wrong")}</button>
         <button className="btn ghost" onClick={() => setFlipped((v) => !v)}>{L("Retourner", "Flip")}</button>
-        <button className="btn primary" onClick={() => mark(true)}>{L("Correct", "Correct")} →</button>
+        <button className="btn primary deck-btn-right" onClick={() => mark(true)}>{L("Correct", "Correct")} →</button>
       </div>
     </div>
   );
@@ -662,7 +678,7 @@ export function App() {
       ) : (
         <main className="list-wrap" key="dash">
           <div className="dash-head">
-            <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span>{status.name || firstName(status.user)}</span></> : null}.</h1>
+            <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span className="accent-num">{status.name || firstName(status.user)}</span></> : null}.</h1>
             <div className="list-status">
               <span><b>{live.length}</b> {en ? "active" : "en cours"}</span>
               {working ? <span> · <b>{working}</b> {en ? "processing" : "en cours de traitement"}</span> : null}
@@ -670,6 +686,7 @@ export function App() {
               {scanning && <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification en cours…"}</span>}
             </div>
           </div>
+          {status.pronoteConnected && <ExamCountdown lang={status.language} />}
           {note && (
             <div className={`toast ${noteKind}`} role="status" aria-live="polite">
               <span className="toast-msg">{note}</span>
@@ -876,6 +893,37 @@ function TaskModal({ onClose, children }: { onClose: () => void; children: React
   );
 }
 
+/** A horizontal strip of upcoming Pronote tests with a day-countdown — separate from the task list so
+ *  crunch weeks are visible at a glance, not buried inside individual task cards. Reads straight from
+ *  Pronote (not the task pipeline) so it shows the raw subject+date list. */
+function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
+  const en = lang === "en";
+  const [tests, setTests] = useState<{ subject: string; deadline: string }[] | null>(null);
+  useEffect(() => { void api.pronoteTests().then((r) => setTests(r.tests)).catch(() => setTests([])); }, []);
+  if (!tests?.length) return null;
+  const sorted = [...tests].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline)).slice(0, 8);
+  const daysLeft = (iso: string) => Math.ceil((Date.parse(iso) - Date.now()) / 86_400_000);
+  return (
+    <div className="exam-strip-wrap">
+      <div className="exam-strip-label">{en ? "Upcoming tests" : "Contrôles à venir"}</div>
+      <div className="exam-strip">
+        {sorted.map((t, i) => {
+          const d = daysLeft(t.deadline);
+          const soon = d <= 3;
+          const when = new Date(t.deadline).toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "short", day: "numeric", month: "short" });
+          return (
+            <div key={i} className={`exam-chip ${soon ? "soon" : ""}`}>
+              <span className="exam-days">{d <= 0 ? (en ? "Today" : "Aujourd'hui") : `J-${d}`}</span>
+              <span className="exam-subject">{t.subject}</span>
+              <span className="exam-when">{when}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Thorough loading screen while Otto loads/scans — a spinner, a status line, and shimmer rows so the
  *  whole list arrives at once (never a half-populated flash). */
 function TaskSkeleton() {
@@ -973,6 +1021,61 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   );
 }
 
+/** Self-reported per-subject grades (Pronote's read API doesn't expose grades) — feeds profileBlock() so
+ *  Otto weighs a weak subject more heavily than the deadline alone would suggest. Simple add/edit/remove
+ *  list, same pattern as ProfileEditor's fact lists. */
+function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profile | null; onChanged?: (p: Profile) => void; pronoteConnected?: boolean }) {
+  const L = useLang();
+  const [subject, setSubject] = useState("");
+  const [grade, setGrade] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const grades = profile?.grades || [];
+  const add = async () => {
+    const s = subject.trim();
+    const g = Number(grade);
+    if (!s || !Number.isFinite(g)) return;
+    onChanged?.(await api.setGrade(s, g));
+    setSubject(""); setGrade("");
+  };
+  const sync = async () => {
+    setSyncing(true);
+    try { onChanged?.(await api.syncGradesFromPronote()); }
+    finally { setSyncing(false); }
+  };
+  return (
+    <div className="grades-editor">
+      {pronoteConnected && (
+        <button type="button" className="btn xs ghost" disabled={syncing} onClick={() => void sync()}>
+          {syncing ? L("Synchronisation…", "Syncing…") : L("Synchroniser depuis Pronote", "Sync from Pronote")}
+        </button>
+      )}
+      {grades.length > 0 && (
+        <ul className="grade-list">
+          {[...grades].sort((a, b) => a.grade / a.scale - b.grade / b.scale).map((g) => {
+            const pct = Math.max(0, Math.min(100, (g.grade / g.scale) * 100));
+            const tone = pct < 45 ? "low" : "";
+            return (
+              <li key={g.subject} className="grade-row">
+                <div className="grade-row-top">
+                  <span className="grade-subject">{g.subject}</span>
+                  <span className="grade-value">{g.grade}/{g.scale}</span>
+                  <button className="x" title={L("Supprimer", "Remove")} onClick={async () => onChanged?.(await api.deleteGrade(g.subject))}>×</button>
+                </div>
+                <div className="grade-bar"><div className={`grade-bar-fill ${tone}`} style={{ width: `${pct}%` }} /></div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="addrow grade-addrow">
+        <input className="addinput sm" placeholder={L("Matière (ex : Maths)", "Subject (e.g. Math)")} value={subject} onChange={(e) => setSubject(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
+        <input className="addinput sm grade-num" type="number" min={0} max={20} placeholder={L("Note /20", "Grade /20")} value={grade} onChange={(e) => setGrade(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
+        <button className="btn" disabled={!subject.trim() || grade === ""} onClick={() => void add()}>{L("Ajouter", "Add")}</button>
+      </div>
+    </div>
+  );
+}
+
 /** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
@@ -1058,6 +1161,12 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
           </label>
           <PreferencesFields profile={profile} onChanged={setProfile} />
         </div>
+      </section>
+
+      <section className="settings-sec">
+        <h3>{L("Tes notes", "Your grades")}</h3>
+        <p className="settings-hint">{L("Aide Otto à voir quelle matière a vraiment besoin d'attention, pas juste ce qui est dû bientôt.", "Helps Otto see which subject actually needs attention, not just what's due soonest.")}</p>
+        <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} />
       </section>
 
       <section className="settings-sec">

@@ -67,7 +67,19 @@ body {
      unbreakable string (an email address, a URL) must not be able to widen the viewport on mobile. */
   overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
+  position: relative;
 }
+/* Ambient depth wash — two barely-there cobalt blooms, fixed to the viewport so they never scroll with
+   content. Pure atmosphere, not decoration: at this opacity they read as "this app has depth" without
+   ever competing with the one-accent rule (nothing here is legible as a shape, just a gradient of light). */
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(680px 420px at 12% -8%, var(--accent-soft), transparent 60%),
+    radial-gradient(600px 380px at 108% 12%, var(--accent-soft), transparent 55%);
+  opacity: 0.7;
+}
+#root, .app, .landing, .login-page { position: relative; z-index: 1; }
 a { color: var(--accent); text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
 :focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); border-radius: var(--radius-sm); }
@@ -106,8 +118,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .btn:active { background: var(--line); transform: scale(0.97); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn:disabled:active { transform: none; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; } /* the irreversible act — cobalt */
-.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.primary {
+  background: linear-gradient(155deg, var(--accent-hover), var(--accent) 55%); border-color: var(--accent); color: #fff;
+  box-shadow: 0 1px 2px rgba(16, 19, 23, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+} /* the irreversible act — cobalt */
+.btn.primary:hover { background: linear-gradient(155deg, var(--accent-hover), var(--accent-hover) 55%); border-color: var(--accent-hover); box-shadow: 0 4px 14px rgba(47, 77, 224, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.16); transform: translateY(-1px); }
+.btn.primary:active { transform: translateY(0) scale(0.97); box-shadow: 0 1px 2px rgba(16, 19, 23, 0.1); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--accent); }
 .btn.ghost:hover { background: var(--accent-soft); }
 /* Destructive confirm ONLY (delete / payment) — vermilion, never a marketing accent. */
@@ -173,8 +189,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .tab.active { color: var(--ink); font-weight: 600; }
 .tab.active::after {
   content: ""; position: absolute; left: 10px; right: 10px; bottom: -11px;
-  height: 2px; border-radius: 2px; background: var(--accent);
+  height: 2px; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  animation: tabIn 0.24s var(--ease);
 }
+@keyframes tabIn { from { opacity: 0; transform: scaleX(0.4); } to { opacity: 1; transform: scaleX(1); } }
 .tab-badge {
   display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px;
   padding: 0 4px; margin-left: 6px; border-radius: 999px; background: var(--accent); color: #fff;
@@ -186,8 +204,25 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
 .list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; }
 .dash-head { margin-bottom: 36px; }
-.list-head { font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+.exam-strip-wrap { margin: -16px 0 28px; }
+.exam-strip-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; }
+.exam-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
+.exam-chip {
+  flex: none; display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; border: 1px solid var(--line);
+  border-left: 3px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); min-width: 100px;
+  transition: border-color 120ms var(--ease), transform 120ms var(--ease);
+}
+.exam-chip:hover { transform: translateY(-1px); }
+.exam-chip.soon { border-left-color: var(--accent); background: var(--accent-soft); }
+.exam-days { font-family: var(--mono, ui-monospace, monospace); font-size: 15px; font-weight: 700; }
+.exam-chip.soon .exam-days { color: var(--accent); }
+.exam-subject { font-size: 13px; font-weight: 550; color: var(--ink); margin-top: 2px; }
+.exam-when { font-size: 11px; color: var(--ink-3); text-transform: capitalize; }
+.list-head { font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; animation: rise 0.5s var(--ease) backwards; }
 .list-head span { color: var(--ink); }
+/* The count/number in the greeting reads as the one "alive" element on the page — a soft cobalt gradient,
+   the same restrained wow-without-a-second-color trick the hero title's <em> already uses. */
+.list-head .accent-num { background: linear-gradient(100deg, var(--accent), var(--accent-hover)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 /* Machine output — counts, queue state, spend — is mono per the brand (if a human wrote it, it isn't mono). */
 .list-status { margin-top: 10px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; color: var(--ink-3); }
 .list-status b { font-weight: 500; color: var(--ink-2); }
@@ -231,7 +266,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 /* First-run / all-clear empty states — a calm centered moment, not a bare line. */
 .empty-state { text-align: center; padding: 52px 20px 40px; display: flex; flex-direction: column; align-items: center; gap: 6px; animation: fadeIn 0.3s var(--ease); }
-.empty-mark { width: 58px; height: 58px; margin-bottom: 8px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); }
+.empty-mark { width: 58px; height: 58px; margin-bottom: 8px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); animation: markPop 0.5s cubic-bezier(0.34, 1.4, 0.64, 1) backwards 0.1s; }
+@keyframes markPop { from { opacity: 0; transform: scale(0.5); } to { opacity: 1; transform: scale(1); } }
 .empty-mark.done { background: var(--bg-2); }
 .empty-check { font-size: 24px; font-weight: 700; color: var(--ink-3); }
 .empty-state h3 { font-family: var(--display); font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
@@ -248,6 +284,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .addinput.sm { height: 34px; font-size: 13px; }
 .addrow { display: flex; gap: 8px; }
 .addrow .addinput { flex: 1; }
+.grade-num { flex: none !important; width: 84px; }
 
 /* ─── Task list — flat, borderless checklist; rows separated by hairlines only ─ */
 .list {
@@ -338,17 +375,38 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .note-popup-body p { margin: 6px 0; line-height: 1.5; }
 .note-list { margin: 4px 0; padding-left: 20px; line-height: 1.5; }
 .deck-popup { padding: 6px 2px 2px; text-align: center; }
-.deck-progress { font-size: 12px; color: var(--ink-3); margin-bottom: 10px; }
-.deck-card {
-  min-height: 180px; display: flex; align-items: center; justify-content: center; text-align: center;
-  padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2);
-  cursor: pointer; user-select: none; font-size: 17px; line-height: 1.5; transition: background 120ms var(--ease);
+.deck-progress-bar { height: 3px; background: var(--line-soft); border-radius: 2px; overflow: hidden; margin-bottom: 8px; }
+.deck-progress-fill { height: 100%; background: var(--accent); transition: width 220ms var(--ease); }
+.deck-progress { font-size: 12px; color: var(--ink-3); margin-bottom: 14px; font-family: var(--mono, ui-monospace, monospace); }
+/* 3D flip: a fixed-perspective wrapper holding two absolutely-stacked faces that rotate together as one
+   rigid card — front/back never overlap mid-flip because backface-visibility hides whichever is turned away. */
+.deck-card-3d { min-height: 200px; perspective: 1200px; cursor: pointer; user-select: none; margin-bottom: 6px; }
+.deck-card-inner {
+  position: relative; width: 100%; height: 200px; text-align: center; transition: transform 420ms cubic-bezier(0.4, 0.1, 0.2, 1);
+  transform-style: preserve-3d;
 }
-.deck-card:hover { background: var(--bg-3, var(--bg-2)); }
-.deck-card.flipped { border-color: var(--accent); }
-.deck-hint { font-size: 12px; color: var(--ink-3); margin: 10px 0; }
+.deck-card-3d.flipped .deck-card-inner { transform: rotateY(180deg); }
+.deck-card-face {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  backface-visibility: hidden; box-shadow: var(--shadow-pop, 0 2px 12px rgba(0,0,0,0.06));
+}
+.deck-card-front { background: var(--surface); }
+.deck-card-back { transform: rotateY(180deg); background: var(--accent-soft); border-color: var(--accent); }
+.deck-face-label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.deck-face-text { font-size: 18px; line-height: 1.5; max-height: 130px; overflow-y: auto; }
+.deck-hint { font-size: 12px; color: var(--ink-3); margin: 12px 0; }
 .deck-acts { display: flex; gap: 8px; justify-content: center; margin-top: 4px; }
-.deck-done .deck-score { font-size: 20px; font-weight: 600; margin: 18px 0; }
+.deck-btn-wrong:hover { background: var(--bg-2); border-color: var(--ink-2); }
+.deck-btn-right { background: var(--accent); border-color: var(--accent); }
+.deck-done { padding: 12px 2px; }
+.deck-score-ring {
+  width: 88px; height: 88px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  margin: 16px auto 12px; border: 5px solid var(--line-soft); font-family: var(--mono, ui-monospace, monospace);
+}
+.deck-score-ring.good { border-color: var(--accent); }
+.deck-score-pct { font-size: 20px; font-weight: 700; }
+.deck-done .deck-score { font-size: 15px; color: var(--ink-2); margin: 0 0 18px; }
 .card.is-done { opacity: 0.5; }
 .card.is-done:hover { opacity: 0.8; }
 
@@ -363,8 +421,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card.is-done::before { background: var(--ink-3); box-shadow: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.card-main { display: flex; align-items: center; gap: 14px; padding: 22px 8px 22px 26px; cursor: pointer; min-height: 58px; border-radius: 8px; transition: background 120ms var(--ease), transform 120ms var(--ease); }
-.card-main:hover { background: rgba(0, 0, 0, 0.022); }
+.card-main { display: flex; align-items: center; gap: 14px; padding: 22px 8px 22px 26px; cursor: pointer; min-height: 58px; border-radius: 8px; transition: background 120ms var(--ease), transform 120ms var(--ease), box-shadow 200ms var(--ease); }
+.card-main:hover { background: rgba(0, 0, 0, 0.022); box-shadow: 0 1px 0 var(--line-soft); transform: translateX(2px); }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
    response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
    device (mouse) keeps the existing hover-only feel; this only kicks in where hover doesn't exist. */
@@ -707,6 +765,19 @@ label.set-row { cursor: pointer; }
   background: none; border: none; color: var(--ink-3); font-size: 15px; line-height: 1; padding: 2px 6px;
 }
 .profile-list .x:hover, .memory-list .x:hover { color: var(--warn); }
+.grade-list { list-style: none; margin: 4px 0 12px; }
+.grade-row { padding: 9px 0; }
+.grade-row + .grade-row { border-top: 1px solid var(--line-soft); }
+.grade-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.grade-subject { font-size: 13.5px; font-weight: 550; flex: 1; }
+.grade-value { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; color: var(--ink-2); }
+.grade-bar { height: 4px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
+.grade-bar-fill { height: 100%; border-radius: 2px; transition: width 220ms var(--ease); }
+/* The weakest subjects get the accent (draws the eye, same "needs attention" language as chip-attention
+   elsewhere); everything else stays muted grey — no red/amber/green semantic colors, matching the rest
+   of the app's monochrome-plus-one-accent palette. */
+.grade-bar-fill { background: var(--ink-3); }
+.grade-bar-fill.low { background: var(--accent); }
 .forget-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 
 /* ─── Onboarding overlay ───────────────────────────────────────────────────── */

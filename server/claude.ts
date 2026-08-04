@@ -115,8 +115,17 @@ const PLAN_ONLY_OVERRIDE =
   `CREATE_FLASHCARDS are both the default over a Google Doc — only reach for a real document when the content ` +
   `is genuinely long-form (a full multi-section guide, a real spreadsheet, a deck) or needs to be shared/ ` +
   `emailed/edited outside the app. A task can legitimately produce BOTH a note and a flashcard deck if it ` +
-  `genuinely calls for both (e.g. a study plan note plus a vocab deck). Walk the stage-2 ` +
-  `list ONE STEP AT A TIME: whenever a step describes producing a document/sheet/deck/compiled list/write-up, ` +
+  `genuinely calls for both (e.g. a study plan note plus a vocab deck). ` +
+  `SHAPE A NOTE TO ITS SUBJECT, NEVER ONE GENERIC TEMPLATE — Maths/Physique/Chimie: key formulas up top, then ` +
+  `a worked example structure (steps shown, not the final numeric answer to THEIR specific exercise), then a ` +
+  `short practice set with no answer key. Histoire/Géo/SES: a timeline or cause→consequence structure, key ` +
+  `dates/figures/definitions, never a pre-written analysis paragraph. Langues (vocab/grammar): almost always ` +
+  `CREATE_FLASHCARDS instead of a note — a conjugation table or grammar rule summary as a note only if the ` +
+  `content isn't naturally front→back. Français/Philo (dissertation, commentaire): a structure/plan with ` +
+  `guiding questions per part and relevant quotes/references, never pre-written paragraphs — the plan is the ` +
+  `prep, the writing stays theirs. If the subject doesn't clearly fit one of these, default to a clean ` +
+  `definitions+structure note. ` +
+  `Walk the stage-2 list ONE STEP AT A TIME: whenever a step describes producing a document/sheet/deck/compiled list/write-up, ` +
   `or sending something to someone, don't leave it as a description — CREATE IT NOW, right there, as its own ` +
   `tool call, using the research context you already gathered and RESPECTING WHAT THAT SPECIFIC STEP ASKED FOR ` +
   `(its content should serve that one step's purpose within the larger task, not be a generic catch-all). A ` +
@@ -149,6 +158,9 @@ const PLAN_ONLY_OVERRIDE =
   `include their URLs in "links" (or inline as markdown [text](url) in "steps"/"context") so the user can open ` +
   `them directly. Never describe finding something without giving a way to open it.`;
 import { webSearch } from "./websearch";
+import type { PronoteHomeworkItem, PronoteTestItem } from "./pronote.ts";
+
+export interface AcademicContext { homework?: PronoteHomeworkItem[]; tests?: PronoteTestItem[]; }
 
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
 function profileBlock(p?: Profile): string {
@@ -174,7 +186,31 @@ function profileBlock(p?: Profile): string {
   if (p.autoApprove?.length) parts.push(`Prefers automated handling of: ${p.autoApprove.join(", ")} (preference only — the permission system still decides; gated actions still need approval)`);
   if (p.highPriorityPeople?.length) parts.push(`High-priority people: ${p.highPriorityPeople.join(", ")}`);
   if (p.autoArchivePatterns?.length) parts.push(`Considers noise (never surface as tasks): ${p.autoArchivePatterns.join(", ")}`);
+  // Self-reported, not ground truth — a signal for WHICH subject needs more lead time/attention, never a
+  // fact to restate to the student ("your grade is X") unless they bring it up themselves. Lowest first so
+  // the weakest subject is the one the model actually notices, not buried after strong ones.
+  if (p.grades?.length) {
+    const sorted = [...p.grades].sort((a, b) => a.grade / a.scale - b.grade / b.scale);
+    parts.push(`Grades by subject (self-reported, lowest first — weigh the LOW ones as needing more lead time/attention, not just what's due soonest): ${sorted.map((g) => `${g.subject} ${g.grade}/${g.scale}`).join(", ")}`);
+  }
   return parts.length ? `\nWHO THIS PERSON IS — their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
+}
+
+/** Render live Pronote homework/exams for a single task's run/chat context — the candidate-discovery pass
+ *  (classifyCandidates) already sees these as separate items, but a task's OWN execution/chat previously
+ *  only saw `profile.grades`; this gives it the same real, dated homework/exam picture so it can weigh
+ *  "what else is due" (e.g. don't suggest cramming the night before a Physique test) without guessing. */
+function academicBlock(a?: AcademicContext): string {
+  if (!a) return "";
+  const parts: string[] = [];
+  const fmt = (iso: string) => { try { return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }); } catch { return iso; } };
+  if (a.homework?.length) {
+    parts.push(`Homework due soon (from Pronote, not yet done): ${a.homework.map((h) => `${h.subject} — ${h.description.slice(0, 80)} (due ${fmt(h.deadline)})`).join("; ")}`);
+  }
+  if (a.tests?.length) {
+    parts.push(`Upcoming tests/exams (from Pronote): ${a.tests.map((t) => `${t.subject} (${fmt(t.deadline)})`).join("; ")}`);
+  }
+  return parts.length ? `\nTHEIR CURRENT PRONOTE WORKLOAD — use this to judge real urgency/conflicts, never invent or assume beyond it:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
 }
 
 /** Current date + time, injected into every agent prompt so "today"/"tomorrow"/deadlines/scheduling are
@@ -705,7 +741,9 @@ export async function classifyCandidates(
     `≥0.7 always, since a test is inherently high-stakes), with urgency rising as the date nears (≥0.7 inside ` +
     `~5 days) so it doesn't get crowded out by same-day noise but also doesn't wait until it's too late to ` +
     `study. Title/why for a test should point at STARTING to prepare (e.g. "Start reviewing for the Math test ` +
-    `on Friday"), never phrase it as already studied. Skip FYIs, receipts, automated mail, and anything already on ` +
+    `on Friday"), never phrase it as already studied. If their profile lists a LOW grade in this subject, push ` +
+    `importance/urgency higher and earlier than the deadline alone would justify — a weak subject needs more ` +
+    `lead time, not the same runway as one they're already doing well in. Skip FYIs, receipts, automated mail, and anything already on ` +
     `their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank ` +
     `HIGHER (importance ≥ 0.7); things their preferences deprioritize rank lower or get skipped. Quality over ` +
     `quantity — the handful that matter. ALWAYS include: a direct question or request from a real person awaiting ` +
@@ -1290,7 +1328,7 @@ async function planResearch(task: { title: string; why: string }, connectedApps:
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
-export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[] }, profile?: Profile, focus?: string, extras?: AgentTools): Promise<RunOutput> {
+export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[] }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
   const profileUpdates: ProfileUpdate[] = [];
   // Plan-only mode: withhold every irreversible/other-people-facing write tool structurally, so the agent
   // physically cannot send/post/delete/schedule — same "deny by absence" pattern already used for irreversible
@@ -1329,7 +1367,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const researchPlanBlock = researchPlan.length
     ? `\nRESEARCH PLAN — run these searches, in order, before writing "context":\n${researchPlan.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n(This plan is a starting point, not a ceiling — follow up on anything it turns up, per the GATHER CONTEXT algorithm below.)\n`
     : "";
-  const head = nowBlock() + `TASK: ${task.title}\nWHY: ${task.why}\n` + profileBlock(profile) + artifactsBlock + connectedLine + researchPlanBlock;
+  const head = nowBlock() + `TASK: ${task.title}\nWHY: ${task.why}\n` + profileBlock(profile) + academicBlock(academic) + artifactsBlock + connectedLine + researchPlanBlock;
   const deadlineHint = deadlineBlock(`${task.title}\n${task.why}`);
   const messages: any[] = [{
     role: "user",
@@ -2086,6 +2124,7 @@ export async function chatAboutTask(
   history: { role: "user" | "assistant"; text: string }[],
   message: string,
   profile?: Profile,
+  academic?: AcademicContext,
 ): Promise<string> {
   const stepsBlock = (task.steps || []).length
     ? `\nSteps (${(task.steps || []).filter((s) => s.done).length}/${(task.steps || []).length} done):\n` +
@@ -2103,7 +2142,7 @@ export async function chatAboutTask(
     `sentence starter, a way to think about it), exactly like the rest of Otto. Keep replies SHORT (2-5 ` +
     `sentences) — this is a chat, not another report.` +
     `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}` +
-    profileBlock(profile);
+    profileBlock(profile) + academicBlock(academic);
   const messages: any[] = [
     { role: "system", content: sys },
     ...history.slice(-16).map((h) => ({ role: h.role, content: h.text })),
