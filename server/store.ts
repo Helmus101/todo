@@ -14,7 +14,12 @@ export interface StoredGoogle { tokens: Credentials; email?: string; }
  *  write path (supabase.sql) AND, transparently in loadState/saveState below, app-level AES-256-GCM
  *  encryption (server/crypto.ts) — this interface always holds the LIVE plaintext token in memory, only
  *  the DB row is encrypted. */
-export interface StoredPronote { url: string; username: string; kind: number; token: string; deviceUUID: string; navigatorIdentifier?: string; }
+export interface StoredPronote { url: string; username: string; kind: number; token: string; deviceUUID: string; navigatorIdentifier?: string;
+  /** PRONOTE_MOCK only: when the mock account was connected — the fixed anchor mock homework/test deadlines
+   *  are computed from, so they're real fixed dates that actually pass (and stop being returned) as time
+   *  goes on, instead of always being "N days from right now" on every fetch. */
+  mockConnectedAt?: string;
+}
 
 // Cloud persistence, keyed by the user's Google email — so memory + tasks survive restarts and follow
 // the ACCOUNT, not the browser cookie. Reuses the repo's existing Supabase project. Prefers a service

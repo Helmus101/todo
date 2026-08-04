@@ -306,11 +306,18 @@ app.get("/api/status", async (req, res) => {
   if (req.session.user && integrations.integrationsReady()) {
     try { googleConnected = !!(await integrations.connectionStatusesCached(req.session.user, ["gmail"]))["gmail"]; } catch { /* treat as not connected */ }
   }
+  // Otto Lycée: Pronote is now a first-class data source on its own, not just a Google add-on — a lycéen
+  // with ONLY Pronote connected (no Gmail) must still see their dashboard, not get stuck on ConnectCard.
+  let pronoteConnected = false;
+  if (req.session.user) {
+    try { pronoteConnected = (await pronoteSvc.pronoteConnected(req.session.user)).connected; } catch { /* treat as not connected */ }
+  }
   const s: ConnectionStatus = {
     loggedIn: !!req.session.user,
     user: req.session.user,
     name: req.session.profile?.name,
     googleConnected,
+    pronoteConnected,
     aiReady: aiReady(),
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
@@ -319,6 +326,7 @@ app.get("/api/status", async (req, res) => {
     genPerDay: req.session.profile?.genPerDay,
     timezone: req.session.profile?.timezone,
     overBudget: overMonthlyBudget(req.session.profile),
+    language: req.session.profile?.language === "en" ? "en" : "fr",
   };
   res.json(s);
 });
@@ -390,7 +398,11 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
       res.json({ tasks: req.session.tasks, note: "" }); return; // watched recently — serve the current list
     }
     const extras = await toolsFor(req);
-    if (!extras?.tools?.length) { res.status(400).json({ error: "Connect an app (Gmail, Calendar, Slack, etc.) in Settings so Otto has something to read." }); return; }
+    // Pronote is read outside the Composio toolset entirely (server/discover.ts calls it directly), so a
+    // Pronote-only lycéen with no Gmail connected must still be able to sweep — gating on Composio tools
+    // alone used to hard-block them here even though the deterministic pipeline already supports this.
+    const pronoteOn = (await pronoteSvc.pronoteConnected(user)).connected;
+    if (!extras?.tools?.length && !pronoteOn) { res.status(400).json({ error: "Connecte ton Pronote dans les Réglages pour qu'Otto ait quelque chose à lire." }); return; }
     const job = await jobs.enqueueAndDrain(user, "sweep");
     if (job.status === "succeeded") req.session.lastGenTime = new Date().toISOString();
     // The job committed to the CLOUD copy — fold it into this session so the response reflects it.
@@ -523,7 +535,11 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run tasks." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  await runViaJob(req, res, "execute_task", { manual: true });
+  // Hard reset ("Réexécuter depuis le début"): the actual wipe happens INSIDE processExecuteTask (jobs.ts),
+  // on the same load→mutate→commit cycle as the run itself — doing it here first and committing separately
+  // got silently undone by commit()'s cross-device merge (see jobs.ts's comment on this). Just pass the
+  // flag through the job input.
+  await runViaJob(req, res, "execute_task", { manual: true, ...(req.body?.reset === true ? { reset: true } : {}) });
 });
 
 // Revise: the user declined to send and said what to change → re-run the task with that instruction so Otto
@@ -773,6 +789,10 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     // Which connected account a multi-account app (Gmail, Calendar, Docs…) defaults to when a task isn't
     // tied to a specific one (a manual task, a brand-new doc) — see integrations.getAgentTools.
     (p.primaryAccounts ||= {})[value.app] = value.accountId;
+  } else if (key === "calendarAutoBlock") {
+    p.calendarAutoBlock = value === true;
+  } else if (key === "language" && (value === "fr" || value === "en")) {
+    p.language = value;
   }
   await commit(req);
   res.json(p);

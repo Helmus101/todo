@@ -13,6 +13,7 @@ import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
 import * as claude from "./claude.ts";
+import { pronoteConnected } from "./pronote.ts";
 
 const workerId = `${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -85,7 +86,11 @@ async function processSweep(job: store.Job): Promise<string> {
   if (profile.paused) return "skipped: AI paused";
   if (overMonthlyBudget(profile)) return "skipped: monthly AI budget reached";
   const extras = await integrations.getAgentTools(email, { primaryAccounts: profile.primaryAccounts });
-  if (!extras?.tools?.length) return "skipped: nothing connected";
+  // Pronote is read directly by discoverSourceItems (server/discover.ts), entirely outside the Composio
+  // toolset — a Pronote-only lycéen (no Gmail) has an empty `extras.tools` but genuinely has something for
+  // Otto to read. Gating on Composio tools alone used to skip the sweep for them with "nothing connected"
+  // even though tasks.generate() below would have found their Pronote homework just fine.
+  if (!extras?.tools?.length && !(await pronoteConnected(email)).connected) return "skipped: nothing connected";
   const before = new Set(list.map((t) => t.id));
   const factsBefore = new Set([...profile.preferences, ...profile.people, ...profile.projects]);
   // Auto-refine raw manual task names (added while AI was off) — no button needed; the next sweep cleans
@@ -167,6 +172,13 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   }
   const t = list.find((x) => x.id === taskId);
   if (!t) return "skipped: task not found";
+  // Hard reset ("Réexécuter depuis le début"): must happen HERE, inside the same load→mutate→commit cycle
+  // as the run itself — not in the interactive route before enqueueing. A pre-enqueue reset went through
+  // commit()'s generic cross-device merge, which treats a "ready" status as LESS progressed than the
+  // "needs_review" it's overwriting and silently restores the OLD cloud copy (rankStatus in tasks.ts) —
+  // so the reset never actually stuck, and the run below immediately hit the "already executed" skip.
+  // Doing it on this freshly-loaded, about-to-be-committed copy sidesteps that merge entirely.
+  if (job.input?.reset === true && !isHandled(t.status)) tasks.resetTask(list, taskId);
   const c = canonStatus(t.status);
   if (isHandled(t.status)) return "skipped: already handled";
   if (c === "needs_review" && !job.input?.note) return "skipped: already executed"; // idempotency — a retry never re-burns a finished run

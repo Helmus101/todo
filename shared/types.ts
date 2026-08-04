@@ -78,6 +78,15 @@ export interface Profile {
   // Daily briefing settings — sent every morning with top priorities + upcoming risks
   dailyBriefingEnabled?: boolean;
   lastBriefingSentAt?: string; // ISO timestamp of last successful briefing send
+  // Explicit opt-in: lets Otto block self-study time on Calendar (GOOGLECALENDAR_QUICK_ADD) for a step it
+  // gave a time estimate to — e.g. "Réviser Maths 15h-15h35". This is the user's ADVANCE acceptance for
+  // that one category of write, same trust model as autoApprove — never per-event confirmation, and never
+  // for anything but a self-study block Otto is proposing (never edits/deletes an existing event, never
+  // invites anyone). Off by default; asked once in onboarding, changeable any time in Settings.
+  calendarAutoBlock?: boolean;
+  // Otto Lycée defaults to French; a student can switch the whole app (UI + AI-generated content) to
+  // English in Settings. Undefined/anything else is treated as "fr".
+  language?: "fr" | "en";
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -121,6 +130,8 @@ export function normalizeProfile(p: any): Profile {
       : undefined,
     dailyBriefingEnabled: !!p?.dailyBriefingEnabled,
     lastBriefingSentAt: typeof p?.lastBriefingSentAt === "string" ? p.lastBriefingSentAt : undefined,
+    calendarAutoBlock: !!p?.calendarAutoBlock,
+    language: p?.language === "en" ? "en" : "fr",
   };
 }
 
@@ -402,6 +413,18 @@ export interface WebTask {
    *  without re-explaining the situation every time. Capped (see CHAT_CAP in tasks.ts) so a long-running
    *  task's thread can't grow unbounded in storage. */
   chat?: { role: "user" | "assistant"; text: string; at: string }[];
+  /** In-app fiches/checklists/reference notes Otto prepared for THIS task — no external account, no
+   *  approval needed (nothing leaves the app). This is the DEFAULT artifact for a study guide: rendered
+   *  as a button on the card that opens the content in a popup, instead of a Google Doc. */
+  notes?: TaskNote[];
+}
+
+export interface TaskNote {
+  id: string;
+  title: string;
+  /** Markdown — rendered lightly client-side (headings, bold, bullets), never sent anywhere external. */
+  body: string;
+  createdAt: string;
 }
 
 export interface ConnectionStatus {
@@ -409,6 +432,7 @@ export interface ConnectionStatus {
   user?: string;              // the account email
   name?: string;              // what to call the user (from their profile) — personalizes the UI
   googleConnected: boolean;   // Gmail is connected (via Composio) — the minimum to generate tasks
+  pronoteConnected: boolean;  // Pronote is connected — the OTHER minimum (Otto Lycée works on Pronote alone)
   aiReady: boolean;           // DEEPSEEK_API_KEY present
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist
@@ -417,6 +441,7 @@ export interface ConnectionStatus {
   genPerDay?: number;         // how many times/day Otto scans for new tasks (1–4) — drives the client sweep cadence
   timezone?: string;          // the account's captured IANA timezone (client compares to detect a change)
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
+  language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
 }
 
 export interface RunResult {

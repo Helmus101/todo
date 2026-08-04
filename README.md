@@ -1,131 +1,156 @@
-# Otto — Know what deserves your attention today
+# Otto Lycée — Ton Pronote devient 3 choses à faire aujourd'hui.
 
-Otto reads your Gmail, Calendar, and Drive, ranks what genuinely matters, and prepares the work — drafting replies, prepping docs, gathering context. You're left with a short checklist of only the things that need you. It **never sends, deletes, or changes anything irreversibly without your explicit confirmation.**
+**Otto lit Pronote, Gmail, Calendar et Drive, et te laisse seulement ce qui a besoin de toi. Il prépare le travail, jamais à ta place. Il n'envoie rien sans ton OK. Il ne fait jamais tes devoirs.**
 
-Otto is a **companion, not a do-it-all** — it's built to keep a student moving without ever doing the graded work for them. It executes the logistics (research, scheduling, compiling reference material, drafting routine messages) and structures the rest into small, concrete steps so a big task never feels like a wall of dread. Any document it creates is a study aid — a checklist, an outline, a compiled list of resources — never a finished essay or a solved problem set; the parts that are the actual learning always stay a step for the student to do themselves.
+> Pensé pour le lycée français (Seconde / Première / Terminale). Open source (MIT). Self-hostable. Coût plafonné.
 
-> Self-hostable and open source (MIT). Bring your own API keys and run it in a few minutes.
+## Le problème
 
-## Features
+Dimanche 19h. Pronote affiche 11 devoirs, 2 contrôles, 3 mails de profs dans Gmail, 2 PDF dans Drive. Tu paniques, tu ouvres TikTok.
 
-- **Reads your world, builds your list** — inbox, calendar, and Drive become a ranked, deduplicated to-do list (Eisenhower-ordered).
-- **Proactive, not just reactive** — sweeps every connected source on a schedule and forces at least one useful task a day, so the list stays alive even on a quiet inbox.
-- **Does the reversible prep work for you** — drafts, Google Docs/Sheets/Slides, research/synthesis — all reviewable, nothing sent.
-- **You confirm the rest** — anything irreversible (send, invite, delete, pay) is surfaced as a one-tap approval, never auto-done.
-- **Learns who you are** — remembers your people, projects, and preferences so its work sounds like you.
-- **Runs with the browser closed** — a durable job queue drains on a schedule, so tasks generate and execute in the background.
-- **Multi-account** — connect several Gmail/Calendar/Drive/GitHub accounts; reads and drafts land against the right one.
-- **Cost-capped** — a configurable monthly AI spend cap per account.
-- **Homework & test deadlines (Pronote)** — optional, unofficial integration for French schools: tracks homework due dates and upcoming tests (from the timetable's "test" flag) with enough lead time to actually plan around them, not just a last-minute ping.
+Les to-do lists classiques te demandent de tout retaper toi-même. Les IA qui "font tout à ta place" te font tricher — et flippent tes parents.
 
-## Tech stack
+## Ce que fait Otto
 
-- **Backend:** Node + Express (TypeScript), a durable Supabase-backed job queue
-- **Frontend:** Vite + React (TypeScript)
-- **Integrations:** [Composio](https://composio.dev) for Gmail, Calendar, and Drive/Docs/Sheets/Slides at launch. The Composio wiring also covers GitHub, Slack, Notion, Linear, and others — supported in the backend (multi-account included) but hidden from Settings for now; re-enabling one is a UI-only change (`client/App.tsx`'s `Integrations` component).
-- **AI:** [DeepSeek](https://deepseek.com) via the OpenAI-compatible API
-- **Storage:** [Supabase](https://supabase.com) (Postgres) — optional but recommended
+Otto tourne même quand ton ordi est fermé — un job queue durable (Supabase) le fait travailler en arrière-plan. Par défaut il vérifie Pronote une fois par jour ; réglable jusqu'à 4x/jour (soit toutes les 6h) dans Réglages, et un rafraîchissement manuel marche à tout moment.
 
-## Quick start
+**4 intégrations, 4 seulement :**
+
+1. **Pronote** — Devoirs, contrôles (flag "test" de l'emploi du temps), dates. Connexion non-officielle (Index Éducation n'a pas d'API publique) ; ton mot de passe sert une seule fois puis n'est jamais conservé — un jeton chiffré (AES-256-GCM) le remplace ensuite.
+2. **Gmail** — Mails de profs, convocations, liens Classroom. Otto ne fait qu'y répondre en brouillon, jamais d'envoi automatique.
+3. **Google Calendar** — Contrôles, créneaux libres pour réviser.
+4. **Google Drive** — Cours, fiches, corrections partagés par tes profs — pour enrichir tes fiches de révision.
+
+Tout le reste de Composio (GitHub, Slack, Notion, Linear, …) est supporté côté serveur mais volontairement caché de l'interface pour l'instant — chaque connexion en plus est un frein pour un lycéen qui n'a pas de Gmail pro.
+
+**Et il te rend : Aujourd'hui — 3 cartes, pas 20.** Le reste attend son tour dans "Plus tard" et "Peut attendre".
+
+## Ce qu'Otto fait / ne fait PAS
+
+C'est la question qu'on nous pose partout : "creepy", "ça va faire mes devoirs à ma place ?"
+
+**✅ Otto FAIT (travail réversible) :**
+- Fiche de révision (plan, définitions, formules) à partir de Pronote + Drive
+- Checklist découpée en petites étapes de 10-15 min
+- Liste de sources / vidéos ciblées
+- Brouillon de mail au prof (JAMAIS envoyé sans ton tap)
+
+**🔒 Otto ne fait JAMAIS sans toi :**
+- Envoyer un mail, inviter à un événement Calendar, supprimer un fichier → un tap d'approbation obligatoire, à chaque fois.
+
+**🎓 Otto REFUSE de faire :**
+- Dissertation rédigée, exercice corrigé, réponse de contrôle. Le document créé est un guide ; l'exercice reste une étape que TU fais. C'est une règle appliquée dans le code (pas juste une promesse dans ce README) — voir `DOES_STUDENT_WORK` dans `server/claude.ts`.
+
+## Stack
+
+- **Backend :** Node + Express (TypeScript), job queue durable Supabase (Postgres)
+- **Frontend :** Vite + React (TypeScript)
+- **IA :** [DeepSeek](https://deepseek.com) via l'API compatible OpenAI
+- **Intégrations :** [Composio](https://composio.dev) pour Gmail/Calendar/Drive ; module Pronote maison (`pawnote`, non-officiel) avec token chiffré AES-256-GCM
+- **Storage :** [Supabase](https://supabase.com) (Postgres, idéalement hébergé en EU) — recommandé, RGPD-friendly
+
+## Démarrage rapide
 
 ```bash
-git clone <your-fork-url> otto && cd otto
+git clone <ton-fork> otto && cd otto
 cp .env.example .env
-#   → set DEEPSEEK_API_KEY, COMPOSIO_API_KEY (https://composio.dev), and SESSION_SECRET
+#   → renseigne DEEPSEEK_API_KEY, COMPOSIO_API_KEY (https://composio.dev), et SESSION_SECRET
 npm install
-npm run dev          # opens http://localhost:5273
+npm run dev          # ouvre http://localhost:5273
 ```
 
-That's enough to run locally. Add Supabase (below) to persist across restarts.
+Ça suffit pour tourner en local. Ajoute Supabase (voir plus bas) pour que ça survive à un redémarrage.
 
-## Environment variables
+**Tester sans compte Pronote réel :** mets `PRONOTE_MOCK=1` dans `.env`, puis dans le formulaire "Connecter mon Pronote" tape `demo` comme URL (identifiant/mot de passe : n'importe quoi de non-vide). Ça fait tourner tout le pipeline (connexion → lecture → classement → cartes) avec des devoirs/contrôles factices, sans jamais contacter un vrai Pronote. Jamais actif sans cette variable — à ne pas mettre en production.
 
-**Required**
+## Variables d'environnement
 
-| Var | Purpose |
+**Requises**
+
+| Variable | Rôle |
 |-----|---------|
-| `DEEPSEEK_API_KEY` | The AI agent (task generation + execution) |
-| `COMPOSIO_API_KEY` | App integrations — get it at https://composio.dev |
-| `SESSION_SECRET` | Signs the session cookie (`openssl rand -hex 32`) |
-| `PUBLIC_URL` | Your origin (`http://localhost:5273` dev, your HTTPS URL in prod) |
+| `DEEPSEEK_API_KEY` | L'agent IA (génération + exécution des tâches) |
+| `COMPOSIO_API_KEY` | Gmail/Calendar/Drive — à récupérer sur https://composio.dev |
+| `SESSION_SECRET` | Signe le cookie de session (`openssl rand -hex 32`) |
+| `PUBLIC_URL` | Ton origine (`http://localhost:5273` en dev, ton URL HTTPS en prod) |
 
-**Optional**
+**Recommandées / spécifiques à Pronote**
 
-| Var | Purpose |
+| Variable | Rôle |
 |-----|---------|
-| `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` | Cloud persistence (recommended; **required in production**) |
-| `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` | Anon-key fallback for local dev only |
-| `CREDENTIAL_ENCRYPTION_KEY` | Encrypts secrets stored in the DB ourselves (currently the Pronote login token) with AES-256-GCM before they're written — defense-in-depth on top of RLS. Any value works (`openssl rand -hex 32`). Optional — recommended given Pronote is live, but its absence only warns, never blocks the app from running. |
-| `MONTHLY_AI_BUDGET_USD` | Per-account monthly AI spend cap (default `3`) |
-| `CRON_SECRET` | Protects `/api/cron/drain` (required on Vercel) |
-| `DEEPSEEK_MODEL` | Default `deepseek-v4-flash` (or `deepseek-v4-pro` for heavier reasoning) |
-| `PORT` | Default `8788` |
+| `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` | Persistance cloud (recommandé ; **requis en production**) |
+| `CREDENTIAL_ENCRYPTION_KEY` | Chiffre le jeton Pronote (AES-256-GCM) avant stockage. **Sans elle, la connexion Pronote refuse de démarrer** (`openssl rand -hex 32`) — les autres fonctionnalités continuent de marcher sans. |
+| `MONTHLY_AI_BUDGET_USD` | Plafond de dépense IA mensuel par compte (défaut `3`) |
+| `PRONOTE_MOCK` | `1` = active le compte Pronote factice (`demo`) pour tester sans vrai compte — dev uniquement |
+| `CRON_SECRET` | Protège `/api/cron/drain` (requis sur Vercel) |
+| `DEEPSEEK_MODEL` | Défaut `deepseek-v4-flash` (ou `deepseek-v4-pro` pour plus de raisonnement) |
+| `PORT` | Défaut `8788` |
 
-See [`.env.example`](.env.example) for the annotated list.
+Voir [`.env.example`](.env.example) pour la liste annotée complète.
 
-## Cloud persistence (recommended)
+## Persistance cloud (recommandé)
 
-Your profile, tasks, and connections are keyed by account email so they survive restarts and follow you.
+Ton profil, tes tâches et tes connexions sont indexés par email de compte, pour survivre aux redémarrages et te suivre partout.
 
-1. Run [`supabase.sql`](supabase.sql) in the Supabase SQL editor (creates the tables; ships **RLS-locked, deny-by-default**).
-2. Set `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. **The server refuses to boot in production without the service key** — it bypasses RLS and must stay server-side only.
-3. For a throwaway local project you may instead use the anon key + uncomment the clearly-marked DEV-ONLY policies in `supabase.sql`.
+1. Exécute [`supabase.sql`](supabase.sql) dans l'éditeur SQL Supabase (crée les tables ; **RLS verrouillée par défaut**).
+2. Renseigne `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. **Le serveur refuse de démarrer en production sans la clé de service** — elle contourne RLS et doit rester côté serveur uniquement.
+3. Pour un projet Supabase jetable en local, tu peux utiliser la clé anon + décommenter les policies DEV-ONLY clairement indiquées dans `supabase.sql`.
 
-## Deploy
+## Déployer
 
 ```bash
 npm run build        # → dist/
-npm start            # production: Express serves dist/ + the API on $PORT
+npm start            # production : Express sert dist/ + l'API sur $PORT
 ```
 
-Runs on any Node host (Render, Railway, Fly, a VM, or Docker — a `Dockerfile` is included) and on Vercel (`vercel.json` wires the API function, static hosting, cron, and security headers). Set the required env, point `PUBLIC_URL` at your HTTPS domain, and see the **Production checklist** below.
+Marche sur n'importe quel hébergeur Node (Render, Railway, Fly, une VM, ou Docker — un `Dockerfile` est fourni) et sur Vercel (`vercel.json` branche la fonction API, l'hébergement statique, le cron et les headers de sécurité). Renseigne les variables requises, pointe `PUBLIC_URL` vers ton domaine HTTPS, et vois la **checklist prod** ci-dessous.
 
-### Production checklist
+### Checklist production
 
-- Required env set (boot fails without them): `SESSION_SECRET`, `DEEPSEEK_API_KEY`, `COMPOSIO_API_KEY`, `PUBLIC_URL`.
-- `CREDENTIAL_ENCRYPTION_KEY` set (optional, but recommended — see table above; unlike the required vars, its absence only logs a warning).
-- `supabase.sql` run; `SUPABASE_SERVICE_KEY` set; anon/service keys never shipped to the client.
-- `CRON_SECRET` set (Vercel Cron drains the job queue).
-- Security is wired: CSP + security headers, auth rate-limiting, bcrypt passwords, `httpOnly`/`secure` cookies, no secrets in the client bundle, RLS deny-by-default, AES-256-GCM on the one credential we store ourselves (Pronote token), plus Postgres/Supabase's own default encryption-at-rest on every table.
-- `/privacy` and `/terms` are published in-app — **required for Google OAuth verification.**
-- **Google OAuth:** Gmail/Calendar/Drive are sensitive/restricted scopes. Submit the OAuth consent screen with your privacy-policy URL + homepage; until verified, Google caps the app at 100 users and shows an "unverified app" screen.
+- Variables requises renseignées (le démarrage échoue sans) : `SESSION_SECRET`, `DEEPSEEK_API_KEY`, `COMPOSIO_API_KEY`, `PUBLIC_URL`.
+- `CREDENTIAL_ENCRYPTION_KEY` renseignée si tu veux que Pronote fonctionne — sinon la connexion Pronote refuse poliment plutôt que de stocker en clair.
+- `supabase.sql` exécuté ; `SUPABASE_SERVICE_KEY` renseignée ; clés anon/service jamais envoyées au client.
+- `CRON_SECRET` renseignée (Vercel Cron vide la file d'attente — une fois par jour sur le plan Hobby, plus souvent sur Pro).
+- Sécurité en place : CSP + headers de sécurité, rate-limiting sur l'auth, mots de passe bcrypt, cookies `httpOnly`/`secure`, aucun secret dans le bundle client, RLS verrouillée par défaut, AES-256-GCM sur le seul identifiant qu'on stocke nous-mêmes (jeton Pronote), plus le chiffrement au repos par défaut de Postgres/Supabase sur chaque table.
+- `/privacy` et `/terms` publiées dans l'app — **requis pour la vérification OAuth Google.**
+- **Google OAuth :** Gmail/Calendar/Drive sont des scopes sensibles. Soumets l'écran de consentement OAuth avec ton URL de politique de confidentialité + ta page d'accueil ; tant que ce n'est pas vérifié, Google plafonne l'app à 100 utilisateurs et affiche un écran "app non vérifiée".
 
-## What it does / doesn't
+## Ce qu'il fait / ne fait pas
 
-- ✅ Auto-runs reversible prep: drafts (never sent), Docs/Sheets/Slides, research/synthesis.
-- 🔒 Never irreversible without you: sending mail, calendar invites, payments, deletes → surfaced as a checklist.
-- 🎓 Never does the graded/learning work itself: no written essays, no solved problem sets, no answered exam questions — documents it creates are guides (checklists, outlines, compiled resources), and the actual exercise always stays a step for the student.
-- 🧠 Mines your mail/calendar for the facts; only acts that *require you* show up.
-- 🗂️ Data is stored per account, encrypted at rest (Postgres/Supabase by default, plus app-level AES-256-GCM on the one credential we store ourselves); nothing is shared, sold, or used to train models.
+- ✅ Prépare automatiquement le travail réversible : brouillons (jamais envoyés), fiches de révision, checklists, recherche/synthèse.
+- 🔒 Jamais irréversible sans toi : envoyer un mail, inviter à un événement, supprimer → toujours un tap d'approbation.
+- 🎓 Ne fait jamais le travail noté à ta place : pas de dissertation rédigée, pas d'exercice corrigé, pas de réponse de contrôle — les documents créés sont des guides, et l'exercice reste toujours une étape pour toi.
+- 🧠 Passe au crible Pronote/Gmail/Calendar/Drive pour les faits ; seul ce qui a *vraiment besoin de toi* remonte.
+- 🗂️ Données stockées par compte, chiffrées au repos (Postgres/Supabase par défaut, plus AES-256-GCM applicatif sur le seul identifiant qu'on stocke nous-mêmes) ; rien n'est partagé, revendu, ou utilisé pour entraîner des modèles.
 
-## Optional: Otto Tabs Chrome extension
+## Extension Chrome Otto Tabs (optionnelle)
 
-Steps that mean "open a page" can open tabs unattended, grouped into one "Otto" tab group. The unpacked extension lives in [`extension/`](extension/): `chrome://extensions` → Developer mode → Load unpacked → select the folder.
+Les étapes du type "ouvrir une page" peuvent ouvrir des onglets automatiquement, groupés dans un groupe "Otto". L'extension non empaquetée est dans [`extension/`](extension/) : `chrome://extensions` → Mode développeur → Charger l'extension non empaquetée → sélectionne le dossier.
 
-## Project layout
+## Structure du projet
 
 ```
-client/     React app (Vite)
-server/     Express API, job queue, AI agent, integrations
-shared/     Types + pure helpers shared by client & server
-extension/  Otto Tabs Chrome extension (MV3)
-tests/      Pure-function test suite (npm test)
-supabase.sql  Postgres schema + RLS
+client/     App React (Vite)
+server/     API Express, job queue, agent IA, intégrations
+shared/     Types + fonctions pures partagées client & serveur
+extension/  Extension Chrome Otto Tabs (MV3)
+tests/      Suite de tests de fonctions pures (npm test)
+supabase.sql  Schéma Postgres + RLS
 ```
 
-## Development
+## Développement
 
 ```bash
-npm run dev         # server + client with hot reload
-npm test            # pure-function tests (no network/AI)
+npm run dev         # serveur + client avec hot reload
+npm test            # tests de fonctions pures (pas de réseau/IA)
 npm run typecheck   # tsc --noEmit
-npm run build       # production client build
+npm run build       # build de production du client
 ```
 
-## Contributing
+## Contribuer
 
-Issues and PRs welcome. Please run `npm run typecheck && npm test && npm run build` before opening a PR, and keep changes consistent with the existing style.
+Issues et PRs bienvenues. Lance `npm run typecheck && npm test && npm run build` avant d'ouvrir une PR, et garde un style cohérent avec l'existant.
 
-## License
+## Licence
 
-[MIT](LICENSE) © Willem Tjong. Otto is an independent project and is not affiliated with or endorsed by Google, Composio, DeepSeek, or Supabase.
+[MIT](LICENSE) © Willem Tjong. Projet indépendant, non affilié à ni approuvé par Pronote/Index Éducation, Google, Composio, DeepSeek, ou Supabase.

@@ -1,5 +1,6 @@
 import OpenAI from "openai";
-import type { Profile, TaskStep, TaskLink, Sendable } from "../shared/types.ts";
+import { randomUUID } from "node:crypto";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 
@@ -9,6 +10,17 @@ import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 // restore full auto-execution of every reversible action too. Nothing execution-related is deleted, just
 // gated: only sends/calendar-writes/updates-to-existing-docs are withheld from the agent (see runTask).
 export const EXECUTION_ENABLED = false;
+/** The app's UI + AI-content language, toggled in Settings (defaults French). Every prompt that phrases
+ *  user-facing text pulls this in rather than hardcoding a language. */
+export function languageLine(p?: Profile): string {
+  const lang = p?.language === "en" ? "en" : "fr";
+  return lang === "en"
+    ? `\n\nLANGUAGE: write EVERY user-facing string in ENGLISH (task titles, "why", steps, context, synthesis, ` +
+      `chat replies) — regardless of what language the source material (an email, a document) happens to be in.\n`
+    : `\n\nLANGUAGE: write EVERY user-facing string in FRENCH (tu, not vous — talk to the student like a peer, ` +
+      `not an administrator) — task titles, "why", steps, context, synthesis, chat replies — regardless of what ` +
+      `language the source material (an email, a document) happens to be in.\n`;
+}
 // Hardcoded mission — this is what Otto IS, not a preference that can drift with prompt tweaks. Otto is
 // built for STUDENTS: a companion that keeps them moving, never a do-it-all that does their work for them.
 const MISSION =
@@ -75,17 +87,29 @@ const PLAN_ONLY_OVERRIDE =
   `a past email to a DIFFERENT person (e.g. the original sender, before being redirected) does not clear this. ` +
   `If you find it was already sent, that step is DONE, not outstanding — drop it from the plan entirely (or, if ` +
   `something about it still needs the user — e.g. confirming a reply arrived — phrase THAT as the step, never ` +
-  `"send X" again).` +
+  `"send X" again). THE SAME CHECK APPLIES TO ANY FACT, NOT JUST SENT MAIL — before planning a step to ` +
+  `"research/arrange/book" something (travel, a reservation, a purchase), search Gmail/Calendar for a ` +
+  `confirmation that it's ALREADY arranged (a booking email, a confirmed calendar event, a thread where it was ` +
+  `settled). If you find it's already handled, say so in "context" and drop that step — never propose ` +
+  `re-researching or re-arranging something that's already confirmed in their own inbox/calendar.` +
   `\n(2) OUTLINE THE STEPS — from that research, work out the ordered list of concrete things that need to ` +
   `happen for THIS task to be done. This is your plan; you'll trim it down to what's actually left in stage 4. ` +
   `ONE TASK, ONE TOPIC — reading a mailbox/Drive often surfaces OTHER unrelated things along the way (a ` +
   `different person's invitation, an unrelated message to someone else): those are NOT steps of this task, ` +
   `no matter how recent or nearby they were found. A step earns its place only if it's actually part of ` +
   `accomplishing THIS task's title — if a genuinely separate, substantial obligation turned up, put it in ` +
-  `"follow_ups" instead (its own future task), never bundled into this one's steps.` +
-  `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT? — you have exactly TWO write ` +
-  `actions available: creating a brand-new Google Doc/Sheet/Slides, and drafting a Gmail email ` +
-  `(GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send). Walk the stage-2 ` +
+  `"follow_ups" instead (its own future task), never bundled into this one's steps. ` +
+  `A STEP THAT GATES A LATER ONE MUST SAY WHAT TO CAPTURE — if a later step needs a result/decision from an ` +
+  `earlier one (a score, a choice, an answer), the earlier step's OWN text must name exactly what to note down ` +
+  `(e.g. "Take the practice test and record your score by section", not just "Take the practice test") — the ` +
+  `user should never see a blank "what did you decide?" box with no idea what it's asking for.` +
+  `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT OR A BRIEF? — you have THREE ` +
+  `write actions available: creating a brand-new Google Doc/Sheet/Slides, drafting a Gmail email ` +
+  `(GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send), and CREATE_NOTE ` +
+  `for a SHORT in-app brief (a quick checklist, reference sheet, or outline the student opens right on the ` +
+  `card — no account, no approval, nothing external). CREATE_NOTE is the default for anything short; only use ` +
+  `a real Google Doc/Sheet/Slides when the content is genuinely long-form (a full multi-section guide, a real ` +
+  `spreadsheet, a deck) or needs to leave the app (shared/emailed/edited elsewhere). Walk the stage-2 ` +
   `list ONE STEP AT A TIME: whenever a step describes producing a document/sheet/deck/compiled list/write-up, ` +
   `or sending something to someone, don't leave it as a description — CREATE IT NOW, right there, as its own ` +
   `tool call, using the research context you already gathered and RESPECTING WHAT THAT SPECIFIC STEP ASKED FOR ` +
@@ -459,6 +483,19 @@ async function runWebSearch(input: any): Promise<string> {
   return JSON.stringify((await webSearch(q)).slice(0, 6));
 }
 
+// A short in-app brief attached directly to the task — no account, no OAuth, no approval, never leaves
+// Otto's own storage. This is the default for a short study aid (a checklist, a quick reference, a small
+// outline); reserve an actual GOOGLEDOCS/SHEETS/SLIDES document for something that's genuinely long-form
+// or needs to leave the app (shared/emailed/edited elsewhere).
+const CREATE_NOTE_TOOL = {
+  name: "CREATE_NOTE",
+  description: "Create a SHORT in-app brief/note attached to this task — a quick checklist, reference sheet, or outline the student opens in a popup right on the card. No account, no approval, nothing external. Use this by default for anything short; only create a real Google Doc/Sheet/Slides when the content is genuinely long-form or needs to leave the app.",
+  input_schema: { type: "object", properties: {
+    title: { type: "string", description: "short label shown on the button, e.g. 'Fiche de révision — Suites numériques'" },
+    body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists) — this IS the brief, not a placeholder." },
+  }, required: ["title", "body"] },
+};
+
 // Sources where every item HAS a stable id/link the tools return — a task claiming to come from one of
 // these without either is unverifiable (likely hallucinated or sloppily reported) and gets dropped.
 const ANCHORED_SOURCES = new Set(["gmail", "calendar", "googlecalendar", "slack"]);
@@ -542,7 +579,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       model: actualModel,
       max_tokens: OUT.generate,
       messages: [
-        { role: "system", content: GEN_SYSTEM },
+        { role: "system", content: languageLine(profile) + GEN_SYSTEM },
         ...apiMessages,
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
@@ -591,7 +628,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       model: actualModel,
       max_tokens: OUT.generate,
       messages: [
-        { role: "system", content: GEN_SYSTEM },
+        { role: "system", content: languageLine(profile) + GEN_SYSTEM },
         ...trimOldToolResults(messages),
         { role: "user", content: "STOP researching. Call submit_tasks NOW with every actionable task you found so far." },
       ],
@@ -626,6 +663,7 @@ export async function classifyCandidates(
     `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}${it.labels.includes("assigned") ? "/ASSIGNED-TO-USER" : ""}${it.labels.includes("review-requested") ? "/REVIEW-REQUESTED" : ""}${it.labels.includes("test") ? "/TEST" : ""}${it.labels.includes("homework") ? "/HOMEWORK" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `\nALREADY ON THEIR LIST (skip anything covering these):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
   const sys =
+    languageLine(profile) +
     `This is for a STUDENT'S to-do list — Otto is their companion, not a do-it-all; a task should name a real ` +
     `next action THEY take, never phrase graded/learning work as already done for them.\n` +
     `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it ` +
@@ -759,6 +797,7 @@ export async function pickOneTask(
     `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `\nAlready on their list (pick something DIFFERENT):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
   const sys =
+    languageLine(profile) +
     `This is for a STUDENT — Otto is their companion, not a do-it-all; pick a real next action THEY take.\n` +
     `Pick the SINGLE most useful thing this person could do TODAY from the candidates below — you must return ` +
     `EXACTLY ONE task. This is a "one useful thing a day" nudge, so it's fine if it's small, but it must be a ` +
@@ -822,6 +861,7 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content:
+          languageLine(profile) +
           "You turn a person's rough to-do note into ONE crisp, actionable task title. Make it a specific " +
           "imperative that names the concrete object/person from THEIR note — 'email sarah' → 'Reply to Sarah " +
           "about the proposal', 'trip' → 'Prepare Boston trip itinerary', 'call dentist' → 'Call the dentist " +
@@ -876,6 +916,9 @@ export interface RunOutput {
    *  the title now gets crisped as a side effect of the SAME run that does the work, instead of a distinct
    *  step the user had to wait through before anything started. */
   title?: string;
+  /** In-app briefs (CREATE_NOTE) created THIS run — verified (a real tool call each), persisted onto
+   *  WebTask.notes and rendered as a popup button on the card instead of an external doc. */
+  notes?: TaskNote[];
 }
 
 const RUN_SYSTEM =
@@ -1227,7 +1270,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // sends (see isGatedAction). It DOES still get two prep actions: creating a resource doc/sheet/slides, and
   // drafting (never sending) a Gmail email — see readOnlyPlusPrep.
   const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusPrep(extras);
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, CREATE_NOTE_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
     ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus creating a resource doc/sheet/slides or drafting a Gmail email — never sending"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
@@ -1292,7 +1335,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // left artifact creation as a step (incl. the "Approve creating a Google Doc" dodge) instead of doing it.
   // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
   // doc genuinely needs approval).
-  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?)\b/i;
+  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?)\b/i;
   // "context" describing the REQUEST or the SEARCH PROCESS instead of what was actually found — e.g. "User
   // requested information about Gabrielle; performed searches across multiple Google services" or "Assistant
   // retrieved calendar event for essay writing, read emails about X, and searched for Y on Drive and Gmail
@@ -1325,6 +1368,8 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // Doc/Sheet/Slide ids VERIFIED created this run (from real tool results, never the model's say-so) —
   // the only ids extractArtifacts() is allowed to treat as "Otto's own", see the guardrail comment below.
   const createdDocIds = new Set<string>();
+  // Briefs created THIS run via CREATE_NOTE — a real tool call each, same "verified, not claimed" bar.
+  const notesCreated: TaskNote[] = [];
   // Backstop for the same class of bug as lastGmailDraft, but for Docs/Sheets/Slides: the model creates a
   // real spreadsheet/doc, mentions it in a "did" bullet, but forgets to add a "links" entry — so the card
   // shows text describing an artifact with no way to actually open it. Tracks only the LAST one created;
@@ -1358,7 +1403,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // FINAL integrity pass — reconcile the narrative with the artifacts that actually survived (runs LAST,
     // after both backstops above have had their chance to re-attach a real draft/doc). A "Drafted a reply…"
     // claim with no sendable to show is a fabrication to the user, so it must not survive to the card.
-    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds] });
+    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds], notes: notesCreated.length ? notesCreated : undefined });
   };
   try {
   for (let i = 0; i < MAX; i++) {
@@ -1373,7 +1418,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // …but NOT if we've already bounced a submit this run (finishBacks): that means the model reached a
     // conclusion and is being pushed to actually DO the work (e.g. create the doc it tried to defer) — give
     // it the remaining rounds to comply instead of bailing it into the rescue with the work still undone.
-    if (EXECUTION_ENABLED && i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !finishBacks) break;
+    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !finishBacks) break;
     // Circuit breaker: a run that has already burned the token ceiling stops here — another round only
     // deepens the overspend. The rescue pass below salvages whatever was gathered into an honest result.
     if (overTokenCeiling()) { console.warn(`${new Date().toISOString()} [ai] runTask hit token ceiling (${tokIn + tokOut}) — stopping at round ${i}`); break; }
@@ -1383,7 +1428,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // reads, zero artifacts, "create the doc" left as a step). Track whether ANY write/create tool has
     // actually run and escalate EVERY round from round 3 until one does.
     // Revisions start closer to done (the artifact + its id are already known) — enforce a round earlier.
-    if (EXECUTION_ENABLED && i >= (priorArtifacts.length ? 1 : 2) && !wroteAny && !focus) {
+    if (i >= (priorArtifacts.length ? 1 : 2) && !wroteAny && !focus) {
       // Artifact-aware: when this is a rerun/revision, the enforcement must point at UPDATING the existing
       // artifact, never suggest CREATE — naming a create tool here was observed live steering revisions
       // into making a SECOND copy instead of editing the one listed in "ALREADY CREATED FOR THIS TASK".
@@ -1392,7 +1437,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           `the EXISTING artifact listed above under "ALREADY CREATED FOR THIS TASK" (its id is listed — use ` +
           `an UPDATE/PATCH/APPEND tool with that id) with the requested change. Do NOT create a new one. Do ` +
           `NOT make another read call.`
-        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. Your NEXT tool call MUST be a create/write tool (GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. If the task truly requires no artifact, call submit now.`;
+        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. Your NEXT tool call MUST be a create/write tool (CREATE_NOTE for a short brief, GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. If the task truly requires no artifact, call submit now.`;
       messages.push({ role: "user", content: nudge });
     }
     const client = deepseekClient();
@@ -1403,7 +1448,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
       model: actualModel,
       max_tokens: OUT.run,
       messages: [
-        { role: "system", content: EXECUTION_ENABLED ? RUN_SYSTEM : RUN_SYSTEM + PLAN_ONLY_OVERRIDE },
+        { role: "system", content: languageLine(profile) + (EXECUTION_ENABLED ? RUN_SYSTEM : RUN_SYSTEM + PLAN_ONLY_OVERRIDE) },
         ...apiMessages,
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
@@ -1526,7 +1571,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // draft.steps already passed the on-topic/drift checks above; the refined steps have NOT, so
               // re-validate them and fall back to the original (already-validated) steps if the refinement
               // pass itself drifted off-topic — never let a second-pass failure produce a WORSE result.
-              const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps, draft.did);
+              const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps, draft.did, profile);
               draft.steps = (stepsMatchTitle(task.title, refined) && !isFolderHousekeepingDrift(task.title, refined)) ? refined : draft.steps;
               submitted = draft; content = "submitted";
             }
@@ -1574,11 +1619,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
               `decision, an answer only they have, or a login/payment/physical action). Act, then submit.`;
           } else if (defersCreation && finishBacks < 2) {
             finishBacks++;
-            content = "REJECTED: the deliverable here is a document, and you left CREATING it as a step instead " +
-              "of doing it. Creating a NEW Google Doc/Sheet/Slides needs NO approval — it is YOUR job, not the " +
-              "user's (never phrase it as 'approve creating a doc'). Call the create tool NOW " +
-              "(GOOGLEDOCS_CREATE_DOCUMENT / GOOGLESHEETS_CREATE_GOOGLE_SHEET1 / GOOGLESLIDES_CREATE_PRESENTATION), " +
-              "write the actual compiled content INTO it, add a links entry with its URL, THEN submit.";
+            content = "REJECTED: the deliverable here is a document/brief, and you left CREATING it as a step " +
+              "instead of doing it. Creating it needs NO approval — it is YOUR job, not the user's (never " +
+              "phrase it as 'approve creating a doc'). Call the create tool NOW — CREATE_NOTE for a short " +
+              "brief, or GOOGLEDOCS_CREATE_DOCUMENT / GOOGLESHEETS_CREATE_GOOGLE_SHEET1 / " +
+              "GOOGLESLIDES_CREATE_PRESENTATION for something long-form — write the actual compiled content " +
+              "INTO it, add a links entry with its URL, THEN submit.";
           } else {
             // did[] must be backed by a real write: if nothing was written, drop bullets that claim creation.
             if (!wroteAny) draft.did = draft.did.filter((d) => !CLAIM_VERBS.test(d));
@@ -1587,6 +1633,14 @@ export async function runTask(task: { title: string; why: string; source?: strin
           }
         }
         else if (toolName === "web_search") { searchedWeb = true; content = await runWebSearch(input); }
+        else if (toolName === "CREATE_NOTE") {
+          const title = String(input?.title || "Note").trim().slice(0, 120) || "Note";
+          const body = String(input?.body || "").trim().slice(0, 8000);
+          const id = randomUUID();
+          notesCreated.push({ id, title, body, createdAt: new Date().toISOString() });
+          wroteAny = true; // a real, verified artifact — counts toward the write-enforcement checks below
+          content = JSON.stringify({ ok: true, id });
+        }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
         // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.
         else if (toolName === "send_self_brief") { content = "Blocked: autonomous email is disabled — put this in synthesis/context instead."; }
@@ -1726,6 +1780,7 @@ async function writeStepsFromContext(
   links: TaskLink[],
   fallbackSteps: TaskStep[],
   did: string[] = [],
+  profile?: Profile,
 ): Promise<TaskStep[]> {
   if (!context.trim()) return fallbackSteps; // nothing distilled to work from — the loop's own steps are all there is
   try {
@@ -1740,6 +1795,7 @@ async function writeStepsFromContext(
       messages: [{
         role: "user",
         content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\nCONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}${linksBlock}${didBlock}\n\n` +
+          languageLine(profile) +
           `Based ONLY on this task and this context, break the remaining work into a clear, ORDERED list of ` +
           `concrete, actionable steps for the user — each a short one-liner naming a specific action (not a ` +
           `vague category like "look into options"), small enough that the list feels doable, not overwhelming. ` +
@@ -1993,7 +2049,7 @@ export async function chatAboutTask(
     ? `\nSteps (${(task.steps || []).filter((s) => s.done).length}/${(task.steps || []).length} done):\n` +
       (task.steps || []).map((s) => `- [${s.done ? "x" : " "}] ${s.text}`).join("\n")
     : "";
-  const sys = MISSION +
+  const sys = languageLine(profile) + MISSION +
     `\n\nYou are Otto, chatting with the student about ONE specific task — a supportive, encouraging coach ` +
     `helping them actually get it done, not a generic chatbot. Ground every reply in the task context below; ` +
     `never ask them to re-explain what's already here. Be warm and concrete: if they say they're stuck, help ` +

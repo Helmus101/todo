@@ -296,6 +296,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
     dailyBriefingEnabled: p2.dailyBriefingEnabled ?? p1.dailyBriefingEnabled,
+    calendarAutoBlock: p2.calendarAutoBlock ?? p1.calendarAutoBlock,
+    language: p2.language ?? p1.language,
     lastBriefingSentAt: (Date.parse(p2.lastBriefingSentAt || "") || 0) >= (Date.parse(p1.lastBriefingSentAt || "") || 0) ? (p2.lastBriefingSentAt ?? p1.lastBriefingSentAt) : (p1.lastBriefingSentAt ?? p2.lastBriefingSentAt),
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
@@ -566,6 +568,24 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
   return t;
 }
 
+/** Wipe a task back to just its title/why, as if freshly generated — for a hard "start over" re-run.
+ *  Two things a plain re-run of a `needs_review` task can't give you: (1) processExecuteTask's own
+ *  idempotency guard skips a needs_review task with no revision note as "already executed", so nothing
+ *  would even run; (2) even past that, runById always hands the model its OWN prior artifacts/context,
+ *  which biases it toward "update the existing one" (and blocks CREATE entirely once artifacts exist) —
+ *  so a normal re-run tends to look like it did nothing. Resetting status to "ready" and clearing every
+ *  field a prior run filled in sidesteps both: the next run starts exactly like a brand-new task. */
+export function resetTask(list: WebTask[], id: string): WebTask | undefined {
+  const t = list.find((x) => x.id === id);
+  if (!t || isHandled(t.status)) return t;
+  t.context = undefined; t.synthesis = undefined; t.did = undefined; t.links = undefined;
+  t.sendables = undefined; t.artifacts = undefined; t.steps = undefined; t.lastError = undefined;
+  t.autoRan = false;
+  t.status = "ready";
+  t.updatedAt = new Date().toISOString();
+  return t;
+}
+
 
 /**
  * Run a task: the agent gathers facts and does the reversible work itself through the user's connected apps
@@ -641,6 +661,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
       return old ? { ...s, done: true, doneAt: old.doneAt, result: s.result || old.result } : s;
     });
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
+    task.notes = out.notes?.length ? [...(task.notes || []), ...out.notes].slice(-6) : task.notes; // in-app fiches, accumulated (a rerun can add another)
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out, out.createdDocIds));
     task.lastRunTokens = out.tokens;
@@ -728,6 +749,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   if (freshArtifacts.length) {
     task.artifacts = unionArtifacts(task.artifacts, freshArtifacts);
   }
+  if (out.notes?.length) task.notes = [...(task.notes || []), ...out.notes].slice(-6);
   if (out.sendables?.length) {
     const key = (s: Sendable) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
     const seen = new Set((task.sendables || []).map(key));

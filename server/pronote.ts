@@ -26,16 +26,48 @@ import { credentialEncryptionConfigured } from "./crypto.ts";
 
 export const PRONOTE_KIND = { STUDENT: pronote.AccountKind.STUDENT, PARENT: pronote.AccountKind.PARENT } as const;
 
+// ── Dev-only mock (no real Pronote account needed) ──────────────────────────────────────────────────
+// Index Éducation's public demo instance has moved/changed URLs often enough that hardcoding one here
+// would just go stale again. This lets local dev/testing exercise the WHOLE pipeline (connect → discover
+// → classify → French task cards) without touching pawnote or any real school at all. Gated behind an env
+// var so it can never accidentally ship live — enable with PRONOTE_MOCK=1 in .env, then in the Connecter
+// Pronote form type "demo" as the URL (username/password can be anything non-empty).
+const MOCK_ENABLED = process.env.PRONOTE_MOCK === "1";
+const MOCK_URL = "mock://demo";
+// Deadlines are FIXED offsets from the moment the mock account was connected (mockConnectedAt) — NOT
+// recomputed from "now" on every fetch. Real Pronote's assignmentsFromIntervals/timetableFromIntervals only
+// ever return items inside a [now, now+daysAhead] window, so a real homework due yesterday simply stops
+// coming back once "now" passes it. If these were "N days from right now" on every call, every mock item
+// would be permanently un-passable — exactly the dynamic-expiry behavior this is meant to help test would
+// never actually trigger. Instead: fixed offset from a fixed anchor, then filtered like the real API filters.
+function mockHomework(anchor: string): PronoteHomeworkItem[] {
+  const at = (days: number) => new Date(Date.parse(anchor) + days * 86_400_000).toISOString();
+  const now = Date.now();
+  return [
+    { id: "mock-hw-1", subject: "Physique", description: "Exercices 12 à 15 p.87 — mécanique du point", deadline: at(2), done: false },
+    { id: "mock-hw-2", subject: "Anglais", description: "Rédiger un paragraphe (150 mots) sur l'essay set text", deadline: at(4), done: false },
+    { id: "mock-hw-3", subject: "SES", description: "Fiche de lecture chapitre 3 — la mondialisation", deadline: at(9), done: false },
+  ].filter((h) => Date.parse(h.deadline) >= now && Date.parse(h.deadline) <= now + HOMEWORK_DAYS_AHEAD * 86_400_000);
+}
+function mockTests(anchor: string): PronoteTestItem[] {
+  const at = (days: number) => new Date(Date.parse(anchor) + days * 86_400_000).toISOString();
+  const now = Date.now();
+  return [
+    { id: "mock-test-1", subject: "Maths", deadline: at(3) },
+    { id: "mock-test-2", subject: "Philosophie", deadline: at(12) },
+  ].filter((t) => Date.parse(t.deadline) >= now && Date.parse(t.deadline) <= now + TEST_DAYS_AHEAD * 86_400_000);
+}
+
 /** Turn pawnote's typed errors into something a user can actually act on. */
 function humanizeError(e: unknown): string {
-  if (e instanceof pronote.BadCredentialsError) return "Wrong Pronote username or password.";
-  if (e instanceof pronote.AccountDisabledError) return "This Pronote account is disabled.";
-  if (e instanceof pronote.SuspendedIPError) return "Pronote has temporarily blocked this server's IP — try again later.";
-  if (e instanceof pronote.RateLimitedError) return "Pronote rate-limited this request — try again in a moment.";
-  if (e instanceof pronote.SecurityError) return "Pronote requires an extra security step this integration doesn't support (double authentication / CAPTCHA).";
-  if (e instanceof pronote.SessionExpiredError) return "Pronote session expired — reconnect in Settings.";
+  if (e instanceof pronote.BadCredentialsError) return "Identifiant ou mot de passe Pronote incorrect.";
+  if (e instanceof pronote.AccountDisabledError) return "Ce compte Pronote est désactivé.";
+  if (e instanceof pronote.SuspendedIPError) return "Pronote a temporairement bloqué ce serveur — réessaie plus tard.";
+  if (e instanceof pronote.RateLimitedError) return "Pronote a limité cette requête — réessaie dans un instant.";
+  if (e instanceof pronote.SecurityError) return "Pronote demande une étape de sécurité supplémentaire non gérée ici (double authentification / CAPTCHA).";
+  if (e instanceof pronote.SessionExpiredError) return "Session Pronote expirée — reconnecte-toi dans les Réglages.";
   const msg = (e as any)?.message || String(e);
-  return `Couldn't reach Pronote: ${msg}`.slice(0, 200);
+  return `Impossible de contacter Pronote : ${msg}`.slice(0, 200);
 }
 
 /** Connect a Pronote account: log in ONCE with the real credentials (never stored past this call), then
@@ -47,13 +79,19 @@ export async function connectPronote(email: string, opts: { url: string; usernam
   // hard failure there would take down the whole app over one feature) — but THIS specific write, storing
   // that real credential's replacement, refuses to proceed without encryption actually configured.
   if (!credentialEncryptionConfigured()) {
-    return { ok: false, error: "Pronote isn't available right now — this server hasn't been configured to " +
-      "store school credentials securely yet. Try again later or contact support." };
+    return { ok: false, error: "Pronote n'est pas disponible pour le moment — ce serveur n'est pas encore " +
+      "configuré pour stocker les identifiants scolaires en toute sécurité. Réessaie plus tard ou contacte le support." };
   }
   const url = opts.url.trim(), username = opts.username.trim();
-  if (!url || !username || !opts.password) return { ok: false, error: "URL, username and password are required." };
+  if (!url || !username || !opts.password) return { ok: false, error: "L'URL, l'identifiant et le mot de passe sont requis." };
   const kind = opts.kind === pronote.AccountKind.PARENT ? pronote.AccountKind.PARENT : pronote.AccountKind.STUDENT;
   const deviceUUID = randomUUID();
+  if (MOCK_ENABLED && url.toLowerCase() === "demo") {
+    const stored: StoredPronote = { url: MOCK_URL, username, kind, token: "mock-token", deviceUUID, mockConnectedAt: new Date().toISOString() };
+    const current = await loadState(email);
+    await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored });
+    return { ok: true };
+  }
   try {
     const session = pronote.createSessionHandle();
     const refresh = await pronote.loginCredentials(session, { url, kind, username, password: opts.password, deviceUUID });
@@ -111,6 +149,7 @@ const HOMEWORK_DAYS_AHEAD = 21;
 
 /** Homework due in the next `daysAhead` days, not yet marked done. */
 export async function pronoteHomework(email: string, daysAhead = HOMEWORK_DAYS_AHEAD): Promise<PronoteHomeworkItem[]> {
+  if (MOCK_ENABLED) { const { pronote: stored } = await loadState(email); if (stored?.url === MOCK_URL) return mockHomework(stored.mockConnectedAt || new Date().toISOString()); }
   const out = await withPronoteSession(email, async (session) => {
     const now = new Date();
     const end = new Date(now.getTime() + daysAhead * 86_400_000);
@@ -140,6 +179,7 @@ const TEST_DAYS_AHEAD = 28;
  *  (discover.ts) is built from subject+date, not `id` alone — this "id" is only for display/de-dup within
  *  a single fetch. */
 export async function pronoteTests(email: string, daysAhead = TEST_DAYS_AHEAD): Promise<PronoteTestItem[]> {
+  if (MOCK_ENABLED) { const { pronote: stored } = await loadState(email); if (stored?.url === MOCK_URL) return mockTests(stored.mockConnectedAt || new Date().toISOString()); }
   const out = await withPronoteSession(email, async (session) => {
     const now = new Date();
     const end = new Date(now.getTime() + daysAhead * 86_400_000);

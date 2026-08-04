@@ -330,6 +330,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-modal .caret, .task-modal .card-x { display: none; }
 @keyframes modalPop { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
 @media (max-width: 560px) { .task-modal-overlay { padding: 0; align-items: stretch; } .task-modal { max-width: none; border-radius: 0; min-height: 100%; } }
+.note-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.note-popup { padding: 6px 2px 2px; max-height: 74vh; overflow-y: auto; }
+.note-popup-title { margin: 0 28px 12px 0; }
+.note-popup-body h3, .note-popup-body h4, .note-popup-body h5 { margin: 16px 0 6px; }
+.note-popup-body h3:first-child, .note-popup-body h4:first-child, .note-popup-body h5:first-child { margin-top: 0; }
+.note-popup-body p { margin: 6px 0; line-height: 1.5; }
+.note-list { margin: 4px 0; padding-left: 20px; line-height: 1.5; }
 .card.is-done { opacity: 0.5; }
 .card.is-done:hover { opacity: 0.8; }
 
@@ -546,7 +553,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .rewrite-toggle { margin-top: 10px; }
 .rewrite-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
 .rewrite-row input { flex: 1; min-width: 160px; }
-.rewrite-error { flex-basis: 100%; font-size: 12.5px; color: var(--ink); background: var(--bg-2); border-radius: var(--radius-sm); padding: 8px 10px; }
+.rewrite-error { flex-basis: 100%; font-size: 12.5px; color: var(--ink); background: var(--bg-2); border-radius: var(--radius-sm); padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 /* Indeterminate progress bar — Otto is rewriting; the draft box above is disabled while this runs so a
    manual edit can never race the AI rewrite and get silently clobbered. */
 .rewrite-progress { width: 100%; height: 3px; margin-top: 8px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
@@ -620,6 +627,9 @@ label.set-row { cursor: pointer; }
 .set-text > b { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
 .set-text .settings-hint { margin: 0; }
 .set-row > .btn, .set-row > .ext-chip { flex: none; }
+.pref-hours { display: flex; align-items: center; gap: 8px; flex: none; }
+.pref-hours input[type="time"] { width: 100px; }
+.lang-toggle { display: flex; gap: 6px; flex: none; }
 .more-settings-btn { margin-top: 10px; align-self: flex-start; }
 
 /* iOS-style toggle — the accent when on, grey track when off. */
@@ -656,6 +666,7 @@ label.set-row { cursor: pointer; }
 .int-grid { display: flex; flex-direction: column; }
 .int-tile { display: flex; align-items: center; gap: 12px; padding: 11px 0; }
 .int-tile + .int-tile { border-top: 1px solid var(--line-soft); }
+.int-tile-block + .int-tile-block .int-tile { border-top: 1px solid var(--line-soft); }
 .int-logo { width: 24px; height: 24px; border-radius: 6px; flex: none; }
 /* PRONOTE's logo is a wide wordmark (not a square icon like the others) — contain + a white backing so
    it stays legible regardless of theme, instead of stretching to fill a square box. */
@@ -883,9 +894,11 @@ label.set-row { cursor: pointer; }
 .cta-fine { margin-top: 16px; font-size: 12px; color: var(--ink-3); }
 
 .landing-foot { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; font-size: 12.5px; color: var(--ink-3); padding: 24px 20px 32px; border-top: 1px solid var(--line-soft); }
-.foot-links { display: flex; gap: 18px; }
+.foot-links { display: flex; align-items: center; gap: 18px; }
 .foot-links a { color: var(--ink-3); font-weight: 550; }
 .foot-links a:hover { color: var(--ink-2); }
+.foot-mit { color: var(--ink-3); font-size: 12px; }
+.demo-badge { float: right; font-family: var(--mono); font-size: 11px; color: var(--accent); }
 
 /* ─── Legal pages ──────────────────────────────────────────────────────────── */
 .legal { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(40px, 7vh, 72px) 24px 96px; }
