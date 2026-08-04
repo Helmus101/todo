@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useContext, createContext, type Dispatch, type SetStateAction, type ReactNode } from "react";
-import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, TaskStep, TaskFlashcards } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 
@@ -182,6 +182,60 @@ function renderNoteBody(md: string): ReactNode {
   });
   flushList();
   return blocks;
+}
+
+/** Drillable flashcard viewer (CREATE_FLASHCARDS): space/click flips the card, → marks it right and
+ *  advances, ← marks it wrong and advances. Ends on a score summary with a restart. Keyboard-first so a
+ *  student can drill an entire deck without touching the mouse. */
+function FlashcardDeck({ deck }: { deck: TaskFlashcards }) {
+  const L = useLang();
+  const [i, setI] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [right, setRight] = useState<number[]>([]);
+  const [wrong, setWrong] = useState<number[]>([]);
+  const done = i >= deck.cards.length;
+  const card = !done ? deck.cards[i] : null;
+  const mark = (ok: boolean) => {
+    if (!card) return;
+    (ok ? setRight : setWrong)((prev) => [...prev, i]);
+    setFlipped(false);
+    setI((v) => v + 1);
+  };
+  const restart = () => { setI(0); setFlipped(false); setRight([]); setWrong([]); };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (done) return;
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); setFlipped((v) => !v); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); mark(true); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); mark(false); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [done, i, flipped]);
+  if (done) {
+    return (
+      <div className="deck-popup deck-done">
+        <h3 className="note-popup-title">{deck.title}</h3>
+        <p className="deck-score">{L(`${right.length} / ${deck.cards.length} correctes`, `${right.length} / ${deck.cards.length} correct`)}</p>
+        <button className="btn primary" onClick={restart}>{L("Recommencer", "Restart")}</button>
+      </div>
+    );
+  }
+  return (
+    <div className="deck-popup">
+      <h3 className="note-popup-title">{deck.title}</h3>
+      <div className="deck-progress">{i + 1} / {deck.cards.length}</div>
+      <div className={`deck-card ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
+        <div className="deck-card-face">{flipped ? card!.back : card!.front}</div>
+      </div>
+      <p className="deck-hint">{L("Espace pour retourner · ← faux · → correct", "Space to flip · ← wrong · → correct")}</p>
+      <div className="deck-acts">
+        <button className="btn ghost" onClick={() => mark(false)}>← {L("Faux", "Wrong")}</button>
+        <button className="btn ghost" onClick={() => setFlipped((v) => !v)}>{L("Retourner", "Flip")}</button>
+        <button className="btn primary" onClick={() => mark(true)}>{L("Correct", "Correct")} →</button>
+      </div>
+    </div>
+  );
 }
 
 /** The Otto mark — a ring cut by the consent line. The LEFT half is solid (work Otto already did, done); the
@@ -1767,6 +1821,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const cardEn = useContext(LangContext) === "en";
   const [running, setRunning] = useState(false);
   const [openNote, setOpenNote] = useState<string | null>(null);
+  const [openDeck, setOpenDeck] = useState<string | null>(null);
   const [decided, setDecided] = useState<Record<number, string>>({}); // what the user typed for a manual step
   const [sending, setSending] = useState<number | null>(null); // which sendable is being sent
   const [viewDraft, setViewDraft] = useState<number | null>(null); // which sendable's draft is expanded for review
@@ -2162,16 +2217,19 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           )}
           {/* "What Otto did" shows real output — a resource doc/sheet it created, or other concrete actions.
               Plan-only mode's one allowed write is creating a new resource doc, so this is genuine, not a stub. */}
-          {(task.did?.length || task.links?.length || task.notes?.length) ? (
+          {(task.did?.length || task.links?.length || task.notes?.length || task.flashcards?.length) ? (
             <section>
               <h4>{L("Ce qu'Otto a préparé", "What Otto prepared")}</h4>
               {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul> : null}
-              {/* In-app notes (CREATE_NOTE) — the default fiche/checklist artifact: no external tab, opens
-                  right here in a popup. Shown as its own row of buttons, ahead of any external links. */}
-              {task.notes?.length ? (
+              {/* In-app notes (CREATE_NOTE) and flashcard decks (CREATE_FLASHCARDS) — no external tab, open
+                  right here in a popup. Shown as their own row of buttons, ahead of any external links. */}
+              {(task.notes?.length || task.flashcards?.length) ? (
                 <div className="note-chips">
-                  {task.notes.map((n) => (
+                  {task.notes?.map((n) => (
                     <button key={n.id} type="button" className="btn xs ghost note-chip" onClick={(e) => { e.stopPropagation(); setOpenNote(n.id); }}>📄 {n.title}</button>
+                  ))}
+                  {task.flashcards?.map((f) => (
+                    <button key={f.id} type="button" className="btn xs ghost note-chip" onClick={(e) => { e.stopPropagation(); setOpenDeck(f.id); }}>🗂 {f.title} ({f.cards.length})</button>
                   ))}
                 </div>
               ) : null}
@@ -2189,6 +2247,15 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                   <h3 className="note-popup-title">{n.title}</h3>
                   <div className="note-popup-body">{renderNoteBody(n.body)}</div>
                 </div>
+              </TaskModal>
+            );
+          })() : null}
+          {openDeck ? (() => {
+            const f = task.flashcards?.find((x) => x.id === openDeck);
+            if (!f) return null;
+            return (
+              <TaskModal onClose={() => setOpenDeck(null)}>
+                <FlashcardDeck deck={f} />
               </TaskModal>
             );
           })() : null}

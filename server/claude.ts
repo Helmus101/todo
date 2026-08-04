@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 
@@ -103,13 +103,19 @@ const PLAN_ONLY_OVERRIDE =
   `earlier one (a score, a choice, an answer), the earlier step's OWN text must name exactly what to note down ` +
   `(e.g. "Take the practice test and record your score by section", not just "Take the practice test") — the ` +
   `user should never see a blank "what did you decide?" box with no idea what it's asking for.` +
-  `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT OR A BRIEF? — you have THREE ` +
-  `write actions available: creating a brand-new Google Doc/Sheet/Slides, drafting a Gmail email ` +
-  `(GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send), and CREATE_NOTE ` +
+  `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT, A BRIEF, OR FLASHCARDS? — ` +
+  `you have FOUR write actions available: creating a brand-new Google Doc/Sheet/Slides, drafting a Gmail email ` +
+  `(GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send), CREATE_NOTE ` +
   `for a SHORT in-app brief (a quick checklist, reference sheet, or outline the student opens right on the ` +
-  `card — no account, no approval, nothing external). CREATE_NOTE is the default for anything short; only use ` +
-  `a real Google Doc/Sheet/Slides when the content is genuinely long-form (a full multi-section guide, a real ` +
-  `spreadsheet, a deck) or needs to leave the app (shared/emailed/edited elsewhere). Walk the stage-2 ` +
+  `card — no account, no approval, nothing external), and CREATE_FLASHCARDS for a drillable deck (vocabulary, ` +
+  `definitions, formulas, dates — anything that's naturally a list of discrete front→back facts to memorize, ` +
+  `where testing yourself beats reading a written guide). Pick per subject: a language/vocab/definitions/ ` +
+  `history-dates topic → CREATE_FLASHCARDS; a process/checklist/outline/plan → CREATE_NOTE; something ` +
+  `genuinely long-form or that needs to leave the app → a real Google Doc/Sheet/Slides. CREATE_NOTE and ` +
+  `CREATE_FLASHCARDS are both the default over a Google Doc — only reach for a real document when the content ` +
+  `is genuinely long-form (a full multi-section guide, a real spreadsheet, a deck) or needs to be shared/ ` +
+  `emailed/edited outside the app. A task can legitimately produce BOTH a note and a flashcard deck if it ` +
+  `genuinely calls for both (e.g. a study plan note plus a vocab deck). Walk the stage-2 ` +
   `list ONE STEP AT A TIME: whenever a step describes producing a document/sheet/deck/compiled list/write-up, ` +
   `or sending something to someone, don't leave it as a description — CREATE IT NOW, right there, as its own ` +
   `tool call, using the research context you already gathered and RESPECTING WHAT THAT SPECIFIC STEP ASKED FOR ` +
@@ -494,6 +500,24 @@ const CREATE_NOTE_TOOL = {
     title: { type: "string", description: "short label shown on the button, e.g. 'Fiche de révision — Suites numériques'" },
     body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists) — this IS the brief, not a placeholder." },
   }, required: ["title", "body"] },
+};
+
+// A drillable flashcard deck attached to the task — for vocab/definitions/formulas/concept review, where
+// testing yourself front→back beats reading a written guide. Same no-account/no-approval model as notes.
+const CREATE_FLASHCARDS_TOOL = {
+  name: "CREATE_FLASHCARDS",
+  description: "Create an in-app flashcard deck attached to this task — for drilling vocabulary, definitions, formulas, dates, or any front→back recall. The student flips each card and marks it right/wrong to self-test. Use this INSTEAD OF CREATE_NOTE when the content is naturally a list of discrete facts to memorize/recall, not a checklist or outline.",
+  input_schema: { type: "object", properties: {
+    title: { type: "string", description: "short label shown on the button, e.g. 'Vocabulaire — Chapitre 4'" },
+    cards: {
+      type: "array",
+      description: "8-20 cards, MEDIUM length each side (a phrase/sentence, not one word and not a paragraph) — real content from the task's subject, never placeholders.",
+      items: { type: "object", properties: {
+        front: { type: "string", description: "the prompt side — a term, question, or formula name" },
+        back: { type: "string", description: "the answer side — the definition, translation, or value" },
+      }, required: ["front", "back"] },
+    },
+  }, required: ["title", "cards"] },
 };
 
 // Sources where every item HAS a stable id/link the tools return — a task claiming to come from one of
@@ -919,6 +943,9 @@ export interface RunOutput {
   /** In-app briefs (CREATE_NOTE) created THIS run — verified (a real tool call each), persisted onto
    *  WebTask.notes and rendered as a popup button on the card instead of an external doc. */
   notes?: TaskNote[];
+  /** In-app flashcard decks (CREATE_FLASHCARDS) created THIS run — verified, persisted onto
+   *  WebTask.flashcards and rendered as a drillable popup on the card. */
+  flashcards?: TaskFlashcards[];
 }
 
 const RUN_SYSTEM =
@@ -1270,7 +1297,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // sends (see isGatedAction). It DOES still get two prep actions: creating a resource doc/sheet/slides, and
   // drafting (never sending) a Gmail email — see readOnlyPlusPrep.
   const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusPrep(extras);
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, CREATE_NOTE_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
     ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus creating a resource doc/sheet/slides or drafting a Gmail email — never sending"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
@@ -1335,7 +1362,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // left artifact creation as a step (incl. the "Approve creating a Google Doc" dodge) instead of doing it.
   // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
   // doc genuinely needs approval).
-  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?)\b/i;
+  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?|flashcards?)\b/i;
   // "context" describing the REQUEST or the SEARCH PROCESS instead of what was actually found — e.g. "User
   // requested information about Gabrielle; performed searches across multiple Google services" or "Assistant
   // retrieved calendar event for essay writing, read emails about X, and searched for Y on Drive and Gmail
@@ -1370,6 +1397,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const createdDocIds = new Set<string>();
   // Briefs created THIS run via CREATE_NOTE — a real tool call each, same "verified, not claimed" bar.
   const notesCreated: TaskNote[] = [];
+  const flashcardsCreated: TaskFlashcards[] = [];
   // Backstop for the same class of bug as lastGmailDraft, but for Docs/Sheets/Slides: the model creates a
   // real spreadsheet/doc, mentions it in a "did" bullet, but forgets to add a "links" entry — so the card
   // shows text describing an artifact with no way to actually open it. Tracks only the LAST one created;
@@ -1403,7 +1431,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // FINAL integrity pass — reconcile the narrative with the artifacts that actually survived (runs LAST,
     // after both backstops above have had their chance to re-attach a real draft/doc). A "Drafted a reply…"
     // claim with no sendable to show is a fabrication to the user, so it must not survive to the card.
-    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds], notes: notesCreated.length ? notesCreated : undefined });
+    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds], notes: notesCreated.length ? notesCreated : undefined, flashcards: flashcardsCreated.length ? flashcardsCreated : undefined });
   };
   try {
   for (let i = 0; i < MAX; i++) {
@@ -1437,7 +1465,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           `the EXISTING artifact listed above under "ALREADY CREATED FOR THIS TASK" (its id is listed — use ` +
           `an UPDATE/PATCH/APPEND tool with that id) with the requested change. Do NOT create a new one. Do ` +
           `NOT make another read call.`
-        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. Your NEXT tool call MUST be a create/write tool (CREATE_NOTE for a short brief, GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. If the task truly requires no artifact, call submit now.`;
+        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. Your NEXT tool call MUST be a create/write tool (CREATE_NOTE for a short brief, CREATE_FLASHCARDS for a drillable deck, GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. If the task truly requires no artifact, call submit now.`;
       messages.push({ role: "user", content: nudge });
     }
     const client = deepseekClient();
@@ -1619,12 +1647,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
               `decision, an answer only they have, or a login/payment/physical action). Act, then submit.`;
           } else if (defersCreation && finishBacks < 2) {
             finishBacks++;
-            content = "REJECTED: the deliverable here is a document/brief, and you left CREATING it as a step " +
-              "instead of doing it. Creating it needs NO approval — it is YOUR job, not the user's (never " +
+            content = "REJECTED: the deliverable here is a document/brief/deck, and you left CREATING it as a " +
+              "step instead of doing it. Creating it needs NO approval — it is YOUR job, not the user's (never " +
               "phrase it as 'approve creating a doc'). Call the create tool NOW — CREATE_NOTE for a short " +
-              "brief, or GOOGLEDOCS_CREATE_DOCUMENT / GOOGLESHEETS_CREATE_GOOGLE_SHEET1 / " +
-              "GOOGLESLIDES_CREATE_PRESENTATION for something long-form — write the actual compiled content " +
-              "INTO it, add a links entry with its URL, THEN submit.";
+              "brief, CREATE_FLASHCARDS for vocab/definitions/facts to drill, or GOOGLEDOCS_CREATE_DOCUMENT / " +
+              "GOOGLESHEETS_CREATE_GOOGLE_SHEET1 / GOOGLESLIDES_CREATE_PRESENTATION for something long-form — " +
+              "write the actual compiled content INTO it, add a links entry with its URL, THEN submit.";
           } else {
             // did[] must be backed by a real write: if nothing was written, drop bullets that claim creation.
             if (!wroteAny) draft.did = draft.did.filter((d) => !CLAIM_VERBS.test(d));
@@ -1640,6 +1668,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
           notesCreated.push({ id, title, body, createdAt: new Date().toISOString() });
           wroteAny = true; // a real, verified artifact — counts toward the write-enforcement checks below
           content = JSON.stringify({ ok: true, id });
+        }
+        else if (toolName === "CREATE_FLASHCARDS") {
+          const title = String(input?.title || "Flashcards").trim().slice(0, 120) || "Flashcards";
+          const cards = (Array.isArray(input?.cards) ? input.cards : [])
+            .map((c: any) => ({ front: String(c?.front || "").trim().slice(0, 300), back: String(c?.back || "").trim().slice(0, 300) }))
+            .filter((c: { front: string; back: string }) => c.front && c.back)
+            .slice(0, 30);
+          if (!cards.length) { content = "ERROR: no valid cards (each needs a non-empty front and back)."; }
+          else {
+            const id = randomUUID();
+            flashcardsCreated.push({ id, title, cards, createdAt: new Date().toISOString() });
+            wroteAny = true;
+            content = JSON.stringify({ ok: true, id, count: cards.length });
+          }
         }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
         // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.

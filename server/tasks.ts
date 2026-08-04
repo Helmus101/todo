@@ -662,6 +662,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     });
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
     task.notes = out.notes?.length ? [...(task.notes || []), ...out.notes].slice(-6) : task.notes; // in-app fiches, accumulated (a rerun can add another)
+    task.flashcards = out.flashcards?.length ? [...(task.flashcards || []), ...out.flashcards].slice(-6) : task.flashcards;
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out, out.createdDocIds));
     task.lastRunTokens = out.tokens;
@@ -750,6 +751,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
     task.artifacts = unionArtifacts(task.artifacts, freshArtifacts);
   }
   if (out.notes?.length) task.notes = [...(task.notes || []), ...out.notes].slice(-6);
+  if (out.flashcards?.length) task.flashcards = [...(task.flashcards || []), ...out.flashcards].slice(-6);
   if (out.sendables?.length) {
     const key = (s: Sendable) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
     const seen = new Set((task.sendables || []).map(key));

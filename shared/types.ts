@@ -417,6 +417,9 @@ export interface WebTask {
    *  approval needed (nothing leaves the app). This is the DEFAULT artifact for a study guide: rendered
    *  as a button on the card that opens the content in a popup, instead of a Google Doc. */
   notes?: TaskNote[];
+  /** In-app flashcard decks Otto prepared for THIS task — for vocab/definitions/concept review, where
+   *  drilling front→back beats a written guide. Same no-account/no-approval model as notes. */
+  flashcards?: TaskFlashcards[];
 }
 
 export interface TaskNote {
@@ -424,6 +427,13 @@ export interface TaskNote {
   title: string;
   /** Markdown — rendered lightly client-side (headings, bold, bullets), never sent anywhere external. */
   body: string;
+  createdAt: string;
+}
+
+export interface TaskFlashcards {
+  id: string;
+  title: string;
+  cards: { front: string; back: string }[];
   createdAt: string;
 }
 
