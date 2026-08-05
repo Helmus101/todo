@@ -32,8 +32,8 @@
   --ok: var(--accent);
   --amber: var(--accent);
   --warn: var(--ink);
-  --radius: 10px;
-  --radius-sm: 6px;
+  --radius: 14px;
+  --radius-sm: 9px;
   --shadow-pop: 0 8px 30px rgba(16, 19, 23, 0.12); /* overlays/modals only */
   --display: "Archivo Expanded", "Archivo", "Helvetica Neue", Arial, sans-serif; /* headings / wordmark — 600/700 */
   --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -136,7 +136,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Destructive confirm ONLY (delete / payment) — vermilion, never a marketing accent. */
 .btn.danger { background: var(--vermilion); border-color: var(--vermilion); color: #fff; }
 .btn.danger:hover { background: #b03d29; border-color: #b03d29; }
-.btn.xs { height: 30px; padding: 0 11px; font-size: 12.5px; border-radius: 7px; }
+.btn.xs { height: 30px; padding: 0 11px; font-size: 12.5px; border-radius: 9px; }
 .btn.big { height: 46px; padding: 0 22px; font-size: 15px; border-radius: 10px; transition: background 140ms var(--ease), border-color 140ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease); }
 .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(37, 99, 235, 0.28); }
 .btn.primary.big:active { transform: translateY(0); }
@@ -190,7 +190,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .tabs { display: flex; gap: 4px; }
 .tab {
   position: relative; padding: 6px 10px; font-size: 13.5px; font-weight: 500;
-  color: var(--ink-2); border-radius: 7px; transition: color 140ms var(--ease), background 140ms var(--ease);
+  color: var(--ink-2); border-radius: 9px; transition: color 140ms var(--ease), background 140ms var(--ease);
 }
 .tab:hover { color: var(--ink); background: rgba(0, 0, 0, 0.04); }
 .tab.active { color: var(--ink); font-weight: 600; }
@@ -247,8 +247,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .week-day-detail { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--bg); animation: fadeIn 0.18s var(--ease); }
 .week-day-detail-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 8px; text-transform: capitalize; }
 .week-day-items { list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.week-day-item { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.week-day-item { display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; gap: 10px; font-size: 13px; }
 .week-day-item .btn { margin-left: auto; flex: none; }
+/* The move-to-lighter-day label is long in French ("Déplacer sur un jour plus léger") — on a narrow phone
+   it was squeezing the item title down to a sliver instead of wrapping, the exact "everything's crowded"
+   failure mode. Once it wraps, give it the full row instead of a short leftover sliver next to nothing. */
+@media (max-width: 420px) { .week-day-item .btn { flex-basis: 100%; margin-left: 0; } }
 .week-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .week-item-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
 .week-item-test { background: var(--accent); }
@@ -348,7 +352,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* "Looks good" gets its own beat — a checkmark pops in (the same ✓ motif used everywhere else done is
    shown: step-mark, done-check, the empty-state check) over a clear accent wash, THEN it slides away — so
    finishing a task reads as a small, legible reward instead of a barely-there color flicker. */
-.card.confirming { animation: cardConfirm 0.55s cubic-bezier(0.34, 1.4, 0.64, 1) forwards; border-radius: 8px; z-index: 1; }
+.card.confirming { animation: cardConfirm 0.55s cubic-bezier(0.34, 1.4, 0.64, 1) forwards; border-radius: 10px; z-index: 1; }
 @keyframes cardConfirm {
   0%   { max-height: 160px; background: transparent; transform: scale(1); }
   20%  { max-height: 160px; background: var(--accent-soft); transform: scale(1.012); }
@@ -473,7 +477,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card.is-done::before { background: var(--ink-3); box-shadow: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.card-main { display: flex; align-items: center; gap: 14px; padding: 22px 8px 22px 26px; cursor: pointer; min-height: 58px; border-radius: 8px; transition: background 120ms var(--ease), transform 120ms var(--ease), box-shadow 200ms var(--ease); }
+.card-main { display: flex; align-items: center; gap: 14px; padding: 22px 8px 22px 26px; cursor: pointer; min-height: 58px; border-radius: 10px; transition: background 120ms var(--ease), transform 120ms var(--ease), box-shadow 200ms var(--ease); }
 .card-main:hover { background: rgba(0, 0, 0, 0.022); box-shadow: 0 1px 0 var(--line-soft); transform: translateX(2px); }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
    response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
@@ -501,7 +505,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   font-size: 13px; color: var(--ink-2); margin-top: 6px; line-height: 1.55;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.card-badges { display: flex; gap: 6px; margin-top: 10px; }
+.card-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .card-badges .chip { font-size: 10.5px; padding: 2px 7px; }
 .when { color: var(--ink-2); font-weight: 550; margin-right: 8px; }
 .when-soon { color: var(--accent); font-weight: 700; }
@@ -514,7 +518,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Quick dismiss × — hidden until row hover (or always on touch), muted until you hover it. */
 .card-x {
   flex: none; width: 24px; height: 24px; border: none; background: none; color: var(--ink-3);
-  font-size: 18px; line-height: 1; border-radius: 6px; opacity: 0; cursor: pointer;
+  font-size: 18px; line-height: 1; border-radius: 8px; opacity: 0; cursor: pointer;
   transition: opacity 140ms var(--ease), background 140ms var(--ease), color 140ms var(--ease);
 }
 .card-main:hover .card-x { opacity: 1; }
@@ -767,7 +771,7 @@ label.set-row { cursor: pointer; }
 
 /* Segmented control (scans/day) — pill of choices, accent for the active one. */
 .seg { display: inline-flex; flex: none; background: var(--bg-2); border-radius: 9px; padding: 2px; gap: 2px; }
-.seg-btn { min-width: 34px; height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; border-radius: 7px; transition: background 140ms var(--ease), color 140ms var(--ease); }
+.seg-btn { min-width: 34px; height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; border-radius: 9px; transition: background 140ms var(--ease), color 140ms var(--ease); }
 .seg-btn:hover { color: var(--ink); }
 .seg-btn.on { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 
@@ -791,7 +795,7 @@ label.set-row { cursor: pointer; }
 .int-tile { display: flex; align-items: center; gap: 12px; padding: 11px 0; }
 .int-tile + .int-tile { border-top: 1px solid var(--line-soft); }
 .int-tile-block + .int-tile-block .int-tile { border-top: 1px solid var(--line-soft); }
-.int-logo { width: 24px; height: 24px; border-radius: 6px; flex: none; }
+.int-logo { width: 24px; height: 24px; border-radius: 8px; flex: none; }
 /* PRONOTE's logo is a wide wordmark (not a square icon like the others) — contain + a white backing so
    it stays legible regardless of theme, instead of stretching to fill a square box. */
 .pronote-logo { display: inline-flex; align-items: center; justify-content: center; background: #fff; padding: 3px; }
@@ -815,10 +819,12 @@ label.set-row { cursor: pointer; }
   padding: 8px 0; font-size: 13.5px;
 }
 .profile-list li + li, .memory-list li + li { border-top: 1px solid var(--line-soft); }
-.profile-list .x, .memory-list .x {
+.profile-list .x, .memory-list .x, .grade-list .x {
   background: none; border: none; color: var(--ink-3); font-size: 15px; line-height: 1; padding: 2px 6px;
+  border-radius: var(--radius-sm); transition: color 140ms var(--ease), background 140ms var(--ease), transform 100ms var(--ease);
 }
-.profile-list .x:hover, .memory-list .x:hover { color: var(--warn); }
+.profile-list .x:hover, .memory-list .x:hover, .grade-list .x:hover { color: var(--warn); background: var(--bg-2); }
+.profile-list .x:active, .memory-list .x:active, .grade-list .x:active { transform: scale(0.85); }
 .grade-list { list-style: none; margin: 4px 0 12px; }
 .grade-row { padding: 9px 0; }
 .grade-row + .grade-row { border-top: 1px solid var(--line-soft); }
@@ -1062,8 +1068,16 @@ label.set-row { cursor: pointer; }
   .week-day { min-width: 52px; }
   /* Grouped lists go edge-to-edge, iOS style. */
   .list, .empty { border-radius: 0; border-left: none; border-right: none; margin-left: -14px; margin-right: -14px; }
-  .card-main { padding-right: 14px; }
-  .detail { padding-right: 14px; }
+  /* The 26px left inset (sized for the checkbox on desktop) plus the container's own 14px padding left very
+     little room for card text on a ~375px phone, forcing titles onto extra wrapped lines — the main source
+     of the "everything's crowded" feel. Tightened without losing the checkbox's alignment with detail text. */
+  .card-main { padding-left: 16px; padding-right: 14px; }
+  .detail { padding-left: 16px; padding-right: 14px; }
+  .card-badges .chip { font-size: 10px; padding: 2px 6px; }
+  /* Any two-sided row (label + control) that fit fine on desktop can overflow on a narrow phone instead of
+     shrinking — let it drop to its own line rather than squeezing or clipping. */
+  .set-row, .modal-row, .int-tile, .int-acct { flex-wrap: wrap; row-gap: 6px; }
+  .onboard-card { padding: 22px 18px 24px; }
   .btn { height: 44px; }
   .btn.xs { height: 34px; }
   .addinput, input { height: 44px; font-size: 16px; } /* 16px stops iOS auto-zoom */
@@ -1089,7 +1103,7 @@ label.set-row { cursor: pointer; }
 
 /* Minimalist completed list — checked to-do rows, not cards */
 .done-list { display: flex; flex-direction: column; }
-.done-row { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; cursor: pointer; border-bottom: 1px solid rgba(127,127,127,.12); border-radius: 6px; }
+.done-row { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; cursor: pointer; border-bottom: 1px solid rgba(127,127,127,.12); border-radius: var(--radius-sm); transition: background 140ms var(--ease); }
 .done-row:hover { background: rgba(127,127,127,.06); }
 .done-check { color: var(--ink-3); font-weight: 700; }
 .done-title { flex: 1; text-decoration: line-through; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

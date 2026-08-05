@@ -1136,7 +1136,6 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
   const L = useLang();
   const [subject, setSubject] = useState("");
   const [grade, setGrade] = useState("");
-  const [syncing, setSyncing] = useState(false);
   const grades = profile?.grades || [];
   const add = async () => {
     const s = subject.trim();
@@ -1145,17 +1144,13 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
     onChanged?.(await api.setGrade(s, g));
     setSubject(""); setGrade("");
   };
-  const sync = async () => {
-    setSyncing(true);
-    try { onChanged?.(await api.syncGradesFromPronote()); }
-    finally { setSyncing(false); }
-  };
+  // No manual "sync" button — Pronote grades pull in automatically (on connect, and again with every
+  // daily sweep; see applyPronoteGrades in server/pronote.ts). A passive status line, not a button the
+  // student has to remember to press, matches how the rest of Otto works (things just happen for you).
   return (
     <div className="grades-editor">
-      {pronoteConnected && (
-        <button type="button" className="btn xs ghost" disabled={syncing} onClick={() => void sync()}>
-          {syncing ? L("Synchronisation…", "Syncing…") : L("Synchroniser depuis Pronote", "Sync from Pronote")}
-        </button>
+      {pronoteConnected && grades.length > 0 && (
+        <p className="settings-hint grades-sync-note">{L("Synchronisées automatiquement depuis Pronote", "Synced automatically from Pronote")}</p>
       )}
       {grades.length > 0 && (
         <ul className="grade-list">

@@ -305,19 +305,6 @@ app.get("/api/pronote/grades", requireAuth, async (req, res) => {
     res.json({ grades: await pronoteSvc.pronoteGrades(req.session.user!) });
   } catch { res.json({ grades: [] }); }
 });
-// Pull Pronote's grade averages into profile.grades (the same store Otto's prompts read) — Pronote is the
-// source of truth for any subject it reports; a manually-entered grade for a subject Pronote doesn't cover
-// (or before this sync ever ran) is left alone.
-app.post("/api/profile/grades/sync-pronote", requireAuth, async (req, res) => {
-  const p = (req.session.profile ||= emptyProfile());
-  try {
-    const conn = await pronoteSvc.pronoteConnected(req.session.user!);
-    if (conn.connected) pronoteSvc.applyPronoteGrades(p, await pronoteSvc.pronoteGrades(req.session.user!));
-  } catch { /* best-effort — profile is returned unchanged on failure */ }
-  await commit(req);
-  res.json(p);
-});
-
 // Deterministic "this week" workload view — no AI call, just real Pronote homework/tests + open tasks
 // bucketed by day with a relative effort heuristic (see server/workload.ts). Cheap enough to recompute
 // on every request rather than cache/store.
