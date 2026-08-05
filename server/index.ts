@@ -6,9 +6,10 @@ import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf } from "../shared/types.ts";
+import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -167,6 +168,7 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
   if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
   if (await getUser(email)) { res.status(409).json({ error: "An account with that email already exists — log in instead." }); return; }
   if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: "Couldn't create the account." }); return; }
+  void mirrorAuthUser(email, password); // best-effort — shows the account in Supabase's own Auth tab too
   req.session.user = email;
   // Must explicitly reset these, exactly like /api/auth/login does — if this browser's session cookie
   // already had another account's tasks/profile in it (e.g. someone created a new account without signing
@@ -313,6 +315,23 @@ app.post("/api/profile/grades/sync-pronote", requireAuth, async (req, res) => {
   } catch { /* best-effort — profile is returned unchanged on failure */ }
   await commit(req);
   res.json(p);
+});
+
+// Deterministic "this week" workload view — no AI call, just real Pronote homework/tests + open tasks
+// bucketed by day with a relative effort heuristic (see server/workload.ts). Cheap enough to recompute
+// on every request rather than cache/store.
+app.get("/api/workload", requireAuth, async (req, res) => {
+  const email = req.session.user!;
+  let homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>> = [];
+  let tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> = [];
+  try {
+    if ((await pronoteSvc.pronoteConnected(email)).connected) {
+      [homework, tests] = await Promise.all([pronoteSvc.pronoteHomework(email), pronoteSvc.pronoteTests(email)]);
+    }
+  } catch { /* best-effort — an empty Pronote picture still lets open tasks show */ }
+  const tasks = (req.session.tasks || []).filter((t) => !isHandled(t.status));
+  const { days } = computeWorkload({ homework, tests, tasks, grades: req.session.profile?.grades, timezone: tzOf(req.session.profile) });
+  res.json({ days });
 });
 
 app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
@@ -670,6 +689,23 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
   }
   res.json(req.session.tasks || []);
 });
+// "Move to a lighter day" from the workload widget — a manual, reversible nudge (never AI-driven): the
+// student picks the day, Otto just relabels the task's own `when` and re-scores it, same deadline-urgency
+// math every other task already goes through (tasks.applyDeadlineUrgency). Only meant for tasks with a
+// soft/inferred `when` — a task with a real Pronote-sourced deadline isn't something to reschedule here.
+app.post("/api/tasks/:id/reschedule", requireAuth, async (req, res) => {
+  const id = String(req.params.id);
+  const when = String(req.body?.when || "").trim();
+  if (!when || Number.isNaN(Date.parse(when))) { res.status(400).json({ error: "a valid date is required" }); return; }
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  if (!task) { res.status(404).json({ error: "not found" }); return; }
+  task.when = when;
+  task.updatedAt = new Date().toISOString();
+  tasks.applyDeadlineUrgency([task]);
+  await commit(req);
+  res.json(req.session.tasks || []);
+});
+
 // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
 app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
@@ -841,6 +877,8 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     p.calendarAutoBlock = value === true;
   } else if (key === "language" && (value === "fr" || value === "en")) {
     p.language = value;
+  } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {
+    p.track = value;
   }
   await commit(req);
   res.json(p);

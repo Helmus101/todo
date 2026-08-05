@@ -68,7 +68,14 @@ body {
   overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
   position: relative;
+  /* Installed as a PWA, a stray vertical rubber-band at the top/bottom of the page reads as a website,
+     not an app — Chrome/Android's pull-to-refresh gesture especially fights a fixed sticky topbar. Inner
+     scroll areas (the task modal, chat thread) already opt back in to their own contain above. */
+  overscroll-behavior-y: contain;
 }
+/* Kills the ~300ms tap delay + accidental double-tap-zoom on every interactive control — the single
+   biggest "this feels like a website, not an app" tell on a touch device. */
+button, a, input, textarea, .card-main, .week-day, [role="button"] { touch-action: manipulation; }
 /* Ambient depth wash — two barely-there cobalt blooms, fixed to the viewport so they never scroll with
    content. Pure atmosphere, not decoration: at this opacity they read as "this app has depth" without
    ever competing with the one-accent rule (nothing here is legible as a shape, just a gradient of light). */
@@ -202,7 +209,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .ext-chip { font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
-.list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; }
+.list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; animation: fadeIn 0.22s var(--ease); }
 .dash-head { margin-bottom: 36px; }
 .exam-strip-wrap { margin: -16px 0 28px; }
 .exam-strip-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; }
@@ -218,6 +225,35 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .exam-chip.soon .exam-days { color: var(--accent); }
 .exam-subject { font-size: 13px; font-weight: 550; color: var(--ink); margin-top: 2px; }
 .exam-when { font-size: 11px; color: var(--ink-3); text-transform: capitalize; }
+
+/* ─── This-week workload strip — deterministic, no AI; 7 day-bars sized by relative effort ─────────── */
+.week-load-wrap { margin: 0 0 28px; }
+.week-load-strip { display: flex; gap: 8px; }
+.week-day {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 6px 8px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); min-width: 0;
+  transition: border-color 120ms var(--ease), transform 120ms var(--ease), background 120ms var(--ease);
+}
+.week-day:hover { transform: translateY(-1px); }
+.week-day.is-today { border-color: var(--ink-3); }
+.week-day.heavy { border-color: var(--accent); background: var(--accent-soft); }
+.week-day.open { border-color: var(--accent); }
+.week-day-dow { font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-3); }
+.week-day.heavy .week-day-dow { color: var(--accent); }
+.week-day-bar-track { width: 100%; height: 34px; display: flex; align-items: flex-end; justify-content: center; }
+.week-day-bar { width: 60%; min-height: 4px; border-radius: 3px 3px 1px 1px; background: var(--ink-3); transition: height 220ms var(--ease); }
+.week-day.heavy .week-day-bar { background: var(--accent); }
+.week-day-count { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--ink-3); min-height: 14px; }
+.week-day-detail { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--bg); animation: fadeIn 0.18s var(--ease); }
+.week-day-detail-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 8px; text-transform: capitalize; }
+.week-day-items { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.week-day-item { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.week-day-item .btn { margin-left: auto; flex: none; }
+.week-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week-item-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+.week-item-test { background: var(--accent); }
+.week-item-homework { background: var(--ink-3); }
+.week-item-task { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
 .list-head { font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; animation: rise 0.5s var(--ease) backwards; }
 .list-head span { color: var(--ink); }
 /* The count/number in the greeting reads as the one "alive" element on the page — a soft cobalt gradient,
@@ -328,6 +364,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   font-size: 17px; font-weight: 750; color: var(--accent); pointer-events: none;
   animation: confirmCheck 0.5s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
 }
+@keyframes checkPop { 0% { transform: scale(0.7); } 55% { transform: scale(1.18); } 100% { transform: scale(1); } }
 @keyframes confirmCheck {
   0% { opacity: 0; transform: translateY(-50%) scale(0.4); }
   35% { opacity: 1; transform: translateY(-50%) scale(1.15); }
@@ -366,7 +403,22 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-modal .card-main:hover { background: transparent; }
 .task-modal .caret, .task-modal .card-x { display: none; }
 @keyframes modalPop { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
-@media (max-width: 560px) { .task-modal-overlay { padding: 0; align-items: stretch; } .task-modal { max-width: none; border-radius: 0; min-height: 100%; } }
+.task-modal-overlay.closing { animation: fadeOut 0.16s var(--ease) forwards; pointer-events: none; }
+.task-modal.closing { animation: modalOut 0.16s var(--ease) forwards; }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes modalOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.99); } }
+@media (max-width: 560px) {
+  .task-modal-overlay { padding: 0; align-items: stretch; }
+  /* Full-bleed on a phone — pad for the notch/Dynamic Island and the home-indicator bar so the ✕ button
+     and the last row of content never sit under either (standalone PWA has no browser chrome to absorb it). */
+  .task-modal {
+    max-width: none; border-radius: 0; min-height: 100%;
+    padding-top: calc(8px + env(safe-area-inset-top));
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    padding-left: calc(20px + env(safe-area-inset-left));
+    padding-right: calc(20px + env(safe-area-inset-right));
+  }
+}
 .note-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 .note-popup { padding: 6px 2px 2px; max-height: 74vh; overflow-y: auto; }
 .note-popup-title { margin: 0 28px 12px 0; }
@@ -437,7 +489,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   transition: border-color 140ms var(--ease), background 140ms var(--ease), transform 140ms var(--ease);
 }
 .card-check:hover { border-color: var(--accent); transform: scale(1.08); }
-.card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; }
+.card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms cubic-bezier(0.34, 1.4, 0.64, 1); }
+.card-check.checked:hover { transform: none; }
 .card-check:disabled { cursor: default; }
 .card-text { flex: 1; min-width: 0; }
 .card-title { font-size: 15.5px; font-weight: 560; letter-spacing: -0.01em; line-height: 1.4; }
@@ -466,6 +519,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .card-main:hover .card-x { opacity: 1; }
 .card-x:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+.card-x:active { transform: scale(0.82); }
 @media (hover: none) { .card-x { opacity: 0.6; } }
 .caret {
   flex: none; color: var(--ink-3); font-size: 17px; font-weight: 400; line-height: 1;
@@ -669,7 +723,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ─── Settings — flat, minimalist; sections divided by whitespace + a hairline ─ */
-.settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; }
+.settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; animation: fadeIn 0.22s var(--ease); }
 .settings-title { font-family: var(--display); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
 .settings { display: flex; flex-direction: column; }
 .settings-sec { padding: 26px 0; border-top: 1px solid var(--line-soft); }
@@ -814,6 +868,8 @@ label.set-row { cursor: pointer; }
 .ob-state > div { display: flex; flex-direction: column; gap: 2px; }
 .ob-state b { font-size: 14px; font-weight: 600; }
 .ob-state span:last-child { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.ob-state-btn { width: 100%; background: none; border: none; text-align: left; border-radius: 8px; cursor: pointer; transition: background 140ms var(--ease); }
+.ob-state-btn:hover { background: var(--accent-soft); }
 .ob-dot { flex: none; width: 11px; height: 11px; border-radius: 50%; margin-top: 4px; }
 .ob-dot.done { background: var(--accent); }
 .ob-dot.need { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
@@ -1002,6 +1058,8 @@ label.set-row { cursor: pointer; }
 @media (max-width: 640px) {
   .topbar { padding: 0 14px; gap: 12px; }
   .list-wrap, .settings-page { padding-left: 14px; padding-right: 14px; }
+  .week-load-strip { overflow-x: auto; padding-bottom: 4px; }
+  .week-day { min-width: 52px; }
   /* Grouped lists go edge-to-edge, iOS style. */
   .list, .empty { border-radius: 0; border-left: none; border-right: none; margin-left: -14px; margin-right: -14px; }
   .card-main { padding-right: 14px; }

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useContext, createContext, type Dispatch, type SetStateAction, type ReactNode } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskStep, TaskFlashcards } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
@@ -687,6 +687,7 @@ export function App() {
             </div>
           </div>
           {status.pronoteConnected && <ExamCountdown lang={status.language} />}
+          <WeekLoad lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
           {note && (
             <div className={`toast ${noteKind}`} role="status" aria-live="polite">
               <span className="toast-msg">{note}</span>
@@ -876,17 +877,28 @@ export function App() {
 
 /** Modal shell for the task detail — backdrop-click, ✕, and Esc all close; locks body scroll while open. */
 function TaskModal({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  // Closing used to unmount instantly (a hard cut, no exit motion) while opening got a full pop-in —
+  // asymmetric and the one modal-close moment in the app that read as unpolished. Mirror the entrance:
+  // play a quick close animation, THEN unmount (matches the CSS durations below exactly).
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const doClose = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    setTimeout(onClose, 160);
+  }, [onClose]);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") doClose(); };
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
-  }, [onClose]);
+  }, [doClose]);
   return (
-    <div className="task-modal-overlay" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="task-modal" onClick={(e) => e.stopPropagation()}>
-        <button className="task-modal-x" onClick={onClose} aria-label="Close">✕</button>
+    <div className={`task-modal-overlay ${closing ? "closing" : ""}`} onClick={doClose} role="dialog" aria-modal="true">
+      <div className={`task-modal ${closing ? "closing" : ""}`} onClick={(e) => e.stopPropagation()}>
+        <button className="task-modal-x" onClick={doClose} aria-label="Close">✕</button>
         {children}
       </div>
     </div>
@@ -920,6 +932,102 @@ function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+type WorkloadDay = { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number };
+
+/** Deterministic "this week" strip — no AI call, just real Pronote homework/tests + open tasks bucketed
+ *  by day. Answers the 4 workload gaps in one glance: what's on each day, how heavy it actually is (bar
+ *  height, relative to the week — never presented as minutes), which day is a pile-up (accent chip, same
+ *  visual language as ExamCountdown's "soon"), and — once expanded — a way to nudge a movable task off an
+ *  overloaded day onto the lightest one, without any AI round-trip. */
+function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void }) {
+  const en = lang === "en";
+  const [days, setDays] = useState<WorkloadDay[] | null>(null);
+  const [openDay, setOpenDay] = useState<string | null>(null);
+  const [moving, setMoving] = useState<string | null>(null);
+  const load = useCallback(() => { void api.workload().then((r) => setDays(r.days)).catch(() => setDays([])); }, []);
+  useEffect(() => { load(); }, [load]);
+  if (!days || days.every((d) => d.items.length === 0)) return null;
+
+  const max = Math.max(1, ...days.map((d) => d.totalEffort));
+  // Baselined against days that actually have something due (not the whole week) — see server/workload.ts's
+  // isPileUp for why a whole-week median would sit at ~0 and never trigger.
+  const busy = [...days.map((d) => d.totalEffort)].filter((e) => e > 0).sort((a, b) => a - b);
+  const busyMedian = busy[Math.floor(busy.length / 2)];
+  const pileUp = (d: WorkloadDay) => d.totalEffort > 0 && (busy.length < 2 ? d.totalEffort >= 3 : d.totalEffort >= busyMedian * 1.6);
+  const lightestOther = (excludeDate: string) => {
+    const others = days.filter((d) => d.date !== excludeDate);
+    if (!others.length) return undefined;
+    return others.reduce((a, b) => (b.totalEffort < a.totalEffort ? b : a)).date;
+  };
+  const dow = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "short" });
+  const dm = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { day: "numeric", month: "short" });
+  const todayKey = days[0]?.date;
+
+  const moveTask = async (taskId: string, fromDate: string) => {
+    const to = lightestOther(fromDate);
+    if (!to) return;
+    setMoving(taskId);
+    try {
+      const list = await api.rescheduleTask(taskId, to);
+      const updated = list.find((t) => t.id === taskId);
+      if (updated) onTask(updated);
+      load();
+    } catch { /* non-blocking — the widget just won't reflect the move */ }
+    setMoving(null);
+  };
+
+  return (
+    <div className="week-load-wrap">
+      <div className="exam-strip-label">{en ? "This week" : "Cette semaine"}</div>
+      <div className="week-load-strip">
+        {days.map((d) => {
+          const isToday = d.date === todayKey;
+          const heavy = pileUp(d);
+          const open = openDay === d.date;
+          return (
+            <button
+              type="button"
+              key={d.date}
+              className={`week-day ${heavy ? "heavy" : ""} ${isToday ? "is-today" : ""} ${open ? "open" : ""}`}
+              onClick={() => setOpenDay(open ? null : d.date)}
+            >
+              <span className="week-day-dow">{isToday ? (en ? "Today" : "Aujourd'hui") : dow(d.date)}</span>
+              <span className="week-day-bar-track"><span className="week-day-bar" style={{ height: `${Math.max(6, (d.totalEffort / max) * 100)}%` }} /></span>
+              <span className="week-day-count">{d.items.length || ""}</span>
+            </button>
+          );
+        })}
+      </div>
+      {openDay && (() => {
+        const d = days.find((x) => x.date === openDay);
+        if (!d) return null;
+        return (
+          <div className="week-day-detail">
+            <div className="week-day-detail-head">{dow(d.date)} {dm(d.date)}{pileUp(d) ? <span className="chip chip-attention">{en ? "Heavy day" : "Journée chargée"}</span> : null}</div>
+            {d.items.length === 0 ? (
+              <p className="muted small">{en ? "Nothing due." : "Rien de prévu."}</p>
+            ) : (
+              <ul className="week-day-items">
+                {[...d.items].sort((a, b) => b.effort - a.effort).map((it, i) => (
+                  <li key={i} className="week-day-item">
+                    <span className={`week-item-dot week-item-${it.kind}`} />
+                    <span className="week-item-title">{it.subject ? <b>{it.subject}: </b> : null}{it.title}</span>
+                    {it.movable && it.taskId && (
+                      <button type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => void moveTask(it.taskId!, d.date)}>
+                        {moving === it.taskId ? "…" : (en ? "Move to lighter day" : "Déplacer sur un jour plus léger")}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -1053,7 +1161,7 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
         <ul className="grade-list">
           {[...grades].sort((a, b) => a.grade / a.scale - b.grade / b.scale).map((g) => {
             const pct = Math.max(0, Math.min(100, (g.grade / g.scale) * 100));
-            const tone = pct < 45 ? "low" : "";
+            const tone = isLowGrade(g.grade, g.scale) ? "low" : "";
             return (
               <li key={g.subject} className="grade-row">
                 <div className="grade-row-top">
@@ -1340,7 +1448,7 @@ function GoogleTiles({ onChanged }: { onChanged?: () => void }) {
  *  welcome + name → how it works → connect first apps → done. Each connect opens in a new tab; we re-check
  *  on focus so a tile flips to ✓ when the user comes back. Shown once after sign-up; finishing (or "Skip")
  *  clears the otto-onboard flag. */
-const OB_STEPS = 5;
+const OB_STEPS = 6;
 /** Otto Lycée v1: onboarding is now just name → what Otto does → connect Pronote (the ONE data source) →
  *  done. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone — every extra sign-in step is a
  *  dropout for a lycéen without a work Google account, and Pronote's connect flow (URL + identifiants,
@@ -1350,6 +1458,12 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [pronoteConnected, setPronoteConnected] = useState(false);
+  const [track, setTrack] = useState<"ib" | "bac" | "other" | undefined>(undefined);
+  const saveTrack = async (t: "ib" | "bac" | "other") => {
+    setTrack(t);
+    try { await api.setProfilePreference("track", t); } catch { /* non-blocking */ }
+    setStep(2);
+  };
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { /* non-blocking */ } }
@@ -1399,6 +1513,31 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
 
         {step === 2 && (
           <div className="onboard-step">
+            <h2>{L("Tu es en quelle filière ?", "What track are you on?")}</h2>
+            <p className="onboard-lead">{L("Ça aide Otto à mieux comprendre ton emploi du temps — rien de bloquant, modifiable plus tard.", "This helps Otto understand your workload better — nothing is locked in, changeable later.")}</p>
+            <div className="ob-states">
+              <button type="button" className="ob-state ob-state-btn" onClick={() => void saveTrack("ib")}>
+                <span className={`ob-dot ${track === "ib" ? "done" : "need"}`} />
+                <div><b>{L("Bac international (IB)", "IB Diploma")}</b><span>{L("6 matières, CAS/EE/TOK.", "6 subjects, CAS/EE/TOK.")}</span></div>
+              </button>
+              <button type="button" className="ob-state ob-state-btn" onClick={() => void saveTrack("bac")}>
+                <span className={`ob-dot ${track === "bac" ? "done" : "need"}`} />
+                <div><b>{L("Bac général français", "French national bac")}</b><span>{L("Spécialités, contrôle continu.", "Specialités, continuous assessment.")}</span></div>
+              </button>
+              <button type="button" className="ob-state ob-state-btn" onClick={() => void saveTrack("other")}>
+                <span className={`ob-dot ${track === "other" ? "done" : "need"}`} />
+                <div><b>{L("Autre / pas sûr", "Other / not sure")}</b><span>{L("Pas grave, Otto s'adapte.", "That's fine, Otto adapts.")}</span></div>
+              </button>
+            </div>
+            <div className="onboard-actions onboard-actions-split">
+              <button className="btn ghost" onClick={() => setStep(1)}>{L("Retour", "Back")}</button>
+              <button className="btn ghost" onClick={() => setStep(3)}>{L("Passer", "Skip")}</button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="onboard-step">
             <h2>{L("Connecte ton Pronote", "Connect your Pronote")}</h2>
             <p className="onboard-lead">{L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés (AES-256-GCM) et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted (AES-256-GCM) and never resold.")}</p>
             <div className="onboard-apps">
@@ -1406,13 +1545,13 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             </div>
             <p className="muted small">{L("Tu peux te connecter plus tard depuis les Réglages.", "You can connect later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(1)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(3)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
+              <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(4)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
             </div>
           </div>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <div className="onboard-step">
             <h2>{L("Tes préférences", "Your preferences")}</h2>
             <p className="onboard-lead">{L("Ça aide Otto à proposer des créneaux de révision au bon moment — modifiable à tout moment dans les Réglages.", "This helps Otto propose study slots at the right time — changeable any time in Settings.")}</p>
@@ -1420,13 +1559,13 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <PreferencesFields profile={null} />
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(4)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(5)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>

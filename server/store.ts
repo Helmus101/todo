@@ -107,6 +107,34 @@ export async function createUser(email: string, passHash: string): Promise<boole
   } catch (e) { console.warn("[store] createUser threw:", (e as any)?.message || e); return false; }
 }
 
+/**
+ * Mirror the signup into Supabase's own Auth users table (Authentication tab in the dashboard), so accounts
+ * are visible there too — not just in `weave_web_users`. Otto's actual login still runs on its own bcrypt
+ * table above (that's what sessions are keyed off), so this is a best-effort side-write: the admin API
+ * needs the service-role key, and any failure here (key missing, email already mirrored, Auth not enabled)
+ * must never block or roll back the real signup.
+ */
+export async function mirrorAuthUser(email: string, password: string): Promise<void> {
+  if (!client || !process.env.SUPABASE_SERVICE_KEY) return;
+  try {
+    const { error } = await client.auth.admin.createUser({ email, password, email_confirm: true });
+    if (error && !/already been registered|already exists/i.test(error.message)) {
+      console.warn("[store] mirrorAuthUser failed:", error.message);
+    }
+  } catch (e) { console.warn("[store] mirrorAuthUser threw:", (e as any)?.message || e); }
+}
+
+/** Remove the mirrored Supabase Auth user on account deletion, so erasure covers the Auth table too. */
+export async function deleteAuthUser(email: string): Promise<void> {
+  if (!client || !process.env.SUPABASE_SERVICE_KEY) return;
+  try {
+    const { data, error } = await client.auth.admin.listUsers();
+    if (error) { console.warn("[store] deleteAuthUser lookup failed:", error.message); return; }
+    const match = data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    if (match) await client.auth.admin.deleteUser(match.id);
+  } catch (e) { console.warn("[store] deleteAuthUser threw:", (e as any)?.message || e); }
+}
+
 export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; }
 
 // A transient network drop (undici "terminated"/"fetch failed", a reset socket) is NOT the same as "no
@@ -197,6 +225,7 @@ export async function deleteAccount(email: string): Promise<{ ok: boolean; error
   // best-effort text match rather than a full table scan/parse; a stray orphaned session row here is inert
   // (it can't authenticate as anyone once weave_web_users no longer has this email) but worth attempting.
   try { await client.from(SESSIONS).delete().ilike("sess", `%${email}%`); } catch { /* best-effort, non-fatal */ }
+  await deleteAuthUser(email); // remove the mirrored Supabase Auth row too — best-effort, never blocks erasure
   return { ok: errors.length === 0, errors };
 }
 

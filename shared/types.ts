@@ -91,6 +91,10 @@ export interface Profile {
   // subject is actually slipping, not just what's due soonest, so a low grade gets more lead time/attention
   // than the deadline alone would suggest. Self-reported, so treated as a signal, not ground truth.
   grades?: { subject: string; grade: number; scale: number; updatedAt: string }[];
+  // Captured once at onboarding — which track this student is on. Not read anywhere yet (both IB and
+  // bac students go through the same Pronote-backed flow today); reserved for track-specific features
+  // (IB's CAS/EE/TOK, bac coefficients) once there's enough signal to justify building them.
+  track?: "ib" | "bac" | "other";
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -144,7 +148,15 @@ export function normalizeProfile(p: any): Profile {
           updatedAt: typeof g?.updatedAt === "string" ? g.updatedAt : new Date().toISOString(),
         })).filter((g: { subject: string }) => g.subject).slice(0, 30)
       : undefined,
+    track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
   };
+}
+
+/** Below this % of the scale, a grade counts as "weak" — the single threshold both the grades UI
+ *  (grade-bar-fill.low) and the workload effort heuristic (server/workload.ts) key off of, so a
+ *  subject reads as needing attention consistently everywhere instead of two silently-drifting numbers. */
+export function isLowGrade(grade: number, scale: number): boolean {
+  return scale > 0 && (grade / scale) * 100 < 45;
 }
 
 /** Is this a resolvable IANA timezone? (Intl throws on an unknown zone.) */

@@ -21,6 +21,32 @@ export function languageLine(p?: Profile): string {
       `not an administrator) — task titles, "why", steps, context, synthesis, chat replies — regardless of what ` +
       `language the source material (an email, a document) happens to be in.\n`;
 }
+/** Which school track this student is on (captured once at onboarding) — gives Otto the right vocabulary
+ *  for what it's looking at, so it never mislabels a discipline-specific deliverable as a generic
+ *  "assignment"/"test". Vocabulary only: this does NOT change scoring/priority — see server/workload.ts
+ *  and classifyCandidates, which stay track-agnostic until there's real usage data to justify weighting
+ *  one track's deliverables over another's. */
+export function trackLine(p?: Profile): string {
+  if (p?.track === "ib") {
+    return `\n\nTRACK: this student is on the IB Diploma — use its real vocabulary instead of generic terms. ` +
+      `Subjects are HL or SL (Higher/Standard Level — HL carries more depth and workload). Real deliverables: ` +
+      `CAS (Creativity, Activity, Service — logged hours/experiences, not an "assignment"), the Extended Essay ` +
+      `(EE — a months-long independent research paper with supervisor check-ins, not a one-off task), TOK ` +
+      `(Theory of Knowledge — an essay AND a separate oral presentation), and per-subject Internal Assessments ` +
+      `(IAs — graded coursework, call it an "IA" not "a test"; IAs often aren't in Pronote at all since they're ` +
+      `not scheduled exams). Only use this vocabulary when it clearly applies — don't force it onto something ` +
+      `that's actually just an ordinary homework or reading.\n`;
+  }
+  if (p?.track === "bac") {
+    return `\n\nTRACK: this student is on the Baccalauréat Français International (BFI) — the standard bac ` +
+      `général structure (spécialités, contrôle continu, a Grand Oral in Terminale) PLUS an international ` +
+      `component: two subjects (a literature course and a history-géo-géopolitique course) taught partly in a ` +
+      `foreign language, assessed by their own dedicated written + oral épreuves distinct from the regular bac ` +
+      `exams. Use "spécialité", "contrôle continu", "épreuve" naturally where they fit — don't assume a generic ` +
+      `bac techno/pro structure, and don't force this vocabulary onto something that's just ordinary homework.\n`;
+  }
+  return "";
+}
 // Hardcoded mission — this is what Otto IS, not a preference that can drift with prompt tweaks. Otto is
 // built for STUDENTS: a companion that keeps them moving, never a do-it-all that does their work for them.
 const MISSION =
@@ -473,6 +499,10 @@ const GEN_SYSTEM =
   `ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task.\n` +
   `QUALITY OVER QUANTITY — surface the handful (≤ ~12) of items that genuinely matter; skip marginal ` +
   `"maybes". A short list the user trusts beats a complete list they ignore.\n` +
+  `THE USER IS NOT A CONTACT: their own name (given as "Their name" below) never belongs in a task's title or ` +
+  `"why" as someone to ask, email, or follow up with — that's them, not a third party. If a task needs info ` +
+  `only THEY have (e.g. a missing email address, a decision only they can make), phrase it as something for ` +
+  `them to fill in directly (e.g. "Add Victoria's email to send the invite"), never "Ask <their name> for X".\n` +
   `READ ONLY here — do NOT create, modify, draft, or send anything during ` +
   `generation. BUDGET: you have roughly 6-8 tool calls TOTAL — batch your Gmail searches into ONE round ` +
   `(issue them as parallel calls), give each other app ONE targeted read, never re-read the same source, ` +
@@ -639,7 +669,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       model: actualModel,
       max_tokens: OUT.generate,
       messages: [
-        { role: "system", content: languageLine(profile) + GEN_SYSTEM },
+        { role: "system", content: languageLine(profile) + trackLine(profile) + GEN_SYSTEM },
         ...apiMessages,
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
@@ -688,7 +718,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       model: actualModel,
       max_tokens: OUT.generate,
       messages: [
-        { role: "system", content: languageLine(profile) + GEN_SYSTEM },
+        { role: "system", content: languageLine(profile) + trackLine(profile) + GEN_SYSTEM },
         ...trimOldToolResults(messages),
         { role: "user", content: "STOP researching. Call submit_tasks NOW with every actionable task you found so far." },
       ],
@@ -723,7 +753,7 @@ export async function classifyCandidates(
     `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}${it.labels.includes("assigned") ? "/ASSIGNED-TO-USER" : ""}${it.labels.includes("review-requested") ? "/REVIEW-REQUESTED" : ""}${it.labels.includes("test") ? "/TEST" : ""}${it.labels.includes("homework") ? "/HOMEWORK" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `\nALREADY ON THEIR LIST (skip anything covering these):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
   const sys =
-    languageLine(profile) +
+    languageLine(profile) + trackLine(profile) +
     `This is for a STUDENT'S to-do list — Otto is their companion, not a do-it-all; a task should name a real ` +
     `next action THEY take, never phrase graded/learning work as already done for them.\n` +
     `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it ` +
@@ -859,7 +889,7 @@ export async function pickOneTask(
     `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `\nAlready on their list (pick something DIFFERENT):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
   const sys =
-    languageLine(profile) +
+    languageLine(profile) + trackLine(profile) +
     `This is for a STUDENT — Otto is their companion, not a do-it-all; pick a real next action THEY take.\n` +
     `Pick the SINGLE most useful thing this person could do TODAY from the candidates below — you must return ` +
     `EXACTLY ONE task. This is a "one useful thing a day" nudge, so it's fine if it's small, but it must be a ` +
@@ -923,7 +953,7 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content:
-          languageLine(profile) +
+          languageLine(profile) + trackLine(profile) +
           "You turn a person's rough to-do note into ONE crisp, actionable task title. Make it a specific " +
           "imperative that names the concrete object/person from THEIR note — 'email sarah' → 'Reply to Sarah " +
           "about the proposal', 'trip' → 'Prepare Boston trip itinerary', 'call dentist' → 'Call the dentist " +
@@ -1514,7 +1544,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
       model: actualModel,
       max_tokens: OUT.run,
       messages: [
-        { role: "system", content: languageLine(profile) + (EXECUTION_ENABLED ? RUN_SYSTEM : RUN_SYSTEM + PLAN_ONLY_OVERRIDE) },
+        { role: "system", content: languageLine(profile) + trackLine(profile) + (EXECUTION_ENABLED ? RUN_SYSTEM : RUN_SYSTEM + PLAN_ONLY_OVERRIDE) },
         ...apiMessages,
       ],
       tools: tools.map((t: any) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })),
@@ -1875,7 +1905,7 @@ async function writeStepsFromContext(
       messages: [{
         role: "user",
         content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\nCONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}${linksBlock}${didBlock}\n\n` +
-          languageLine(profile) +
+          languageLine(profile) + trackLine(profile) +
           `Based ONLY on this task and this context, break the remaining work into a clear, ORDERED list of ` +
           `concrete, actionable steps for the user — each a short one-liner naming a specific action (not a ` +
           `vague category like "look into options"), small enough that the list feels doable, not overwhelming. ` +
@@ -2130,7 +2160,7 @@ export async function chatAboutTask(
     ? `\nSteps (${(task.steps || []).filter((s) => s.done).length}/${(task.steps || []).length} done):\n` +
       (task.steps || []).map((s) => `- [${s.done ? "x" : " "}] ${s.text}`).join("\n")
     : "";
-  const sys = languageLine(profile) + MISSION +
+  const sys = languageLine(profile) + trackLine(profile) + MISSION +
     `\n\nYou are Otto, chatting with the student about ONE specific task — a supportive, encouraging coach ` +
     `helping them actually get it done, not a generic chatbot. Ground every reply in the task context below; ` +
     `never ask them to re-explain what's already here. Be warm and concrete: if they say they're stuck, help ` +

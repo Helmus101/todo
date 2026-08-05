@@ -13,6 +13,9 @@ export function applyProfileUpdate(profile: Profile, u: ProfileUpdate): void {
   if (!f) return;
   if (u.category === "name") { profile.name = f.slice(0, 60); return; }
   if (u.category === "about") { profile.about = f.slice(0, 400); return; }
+  // Don't let the user's own name get stored as one of "their people" — that would later
+  // read back into prompts as a third party, producing tasks like "ask <user> for X".
+  if (u.category === "person" && profile.name && f.toLowerCase().includes(profile.name.toLowerCase())) return;
   const key = u.category === "preference" ? "preferences" : u.category === "person" ? "people" : u.category === "course" ? "courses" : "projects";
   const fact = f.slice(0, 160);
   // Drop EVERY stored wording of this entity (old lists may hold several), then add the newest.

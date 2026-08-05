@@ -62,6 +62,9 @@ export const api = {
     post("/api/integrations/pronote/connect", { url, username, password, kind }).catch((e) => ({ ok: false, error: e?.message || "Couldn't connect." })),
   disconnectPronote: (): Promise<{ ok: boolean }> => post("/api/integrations/pronote/disconnect"),
   pronoteTests: (): Promise<{ tests: { subject: string; deadline: string }[] }> => req("/api/pronote/tests").then(j),
+  workload: (): Promise<{ days: { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number }[] }> =>
+    req("/api/workload").then(j),
+  rescheduleTask: (id: string, when: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reschedule`, { when }),
   setGrade: (subject: string, grade: number, scale?: number): Promise<Profile> => post("/api/profile/grade", { subject, grade, scale }).then(normalizeProfile),
   deleteGrade: (subject: string): Promise<Profile> => req(`/api/profile/grade/${encodeURIComponent(subject)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   syncGradesFromPronote: (): Promise<Profile> => post("/api/profile/grades/sync-pronote").then(normalizeProfile),

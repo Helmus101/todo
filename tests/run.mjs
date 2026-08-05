@@ -1,10 +1,11 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine } from "../server/claude.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade } from "../shared/types.ts";
 import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue } from "../server/jobs.ts";
+import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -504,6 +505,44 @@ check("deadlineEpoch: empty sorts last", deadlineEpoch("") === Infinity && deadl
 section("guardrail: shared-artifact check fails closed");
 check("no fileId → treated as shared (no bypass)", await isArtifactShared("user@example.com", "") === true);
 check("unreachable/unconfigured Composio → treated as shared (fail closed)", await isArtifactShared("user@example.com", "some-real-looking-file-id-12345") === true);
+
+// ── Weekly workload balancing (deterministic, no AI) ──────────────────────────
+section("workload heuristic");
+check("isLowGrade: below 45% is low", isLowGrade(8, 20) === true);
+check("isLowGrade: above 45% is not low", isLowGrade(13, 20) === false);
+const WL_NOW = new Date("2026-08-05T08:00:00Z"); // a Wednesday
+const wlIso = (daysOut) => new Date(WL_NOW.getTime() + daysOut * 86_400_000).toISOString();
+const wl1 = computeWorkload({
+  homework: [{ id: "h1", subject: "Maths", description: "Exercices 1-10", deadline: wlIso(1), done: false }],
+  tests: [
+    { id: "t1", subject: "Physique", deadline: wlIso(2) },
+    { id: "t2", subject: "Anglais", deadline: wlIso(2) }, // same day → pile-up
+  ],
+  tasks: [
+    { id: "task1", title: "Undated project step", when: "", status: "ready", steps: [{ text: "a", automatable: false }, { text: "b", automatable: false, done: true }] },
+  ],
+  grades: [{ subject: "Physique", grade: 8, scale: 20, updatedAt: "x" }], // low grade → test effort ×1.5
+  now: WL_NOW,
+});
+check("computeWorkload returns 7 days", wl1.days.length === 7);
+check("undated task lands on today", wl1.days[0].items.some((it) => it.kind === "task" && it.taskId === "task1"));
+check("undated task is movable", wl1.days[0].items.find((it) => it.taskId === "task1")?.movable === true);
+check("undated task effort counts only UNDONE steps", wl1.days[0].items.find((it) => it.taskId === "task1")?.effort === 1);
+const testDay = wl1.days.find((d) => d.items.some((it) => it.kind === "test"));
+check("both same-day tests land on the same day", testDay?.items.filter((it) => it.kind === "test").length === 2);
+check("low-grade subject's test costs more than a normal one", testDay.items.find((it) => it.subject === "Physique").effort === 4.5 && testDay.items.find((it) => it.subject === "Anglais").effort === 3);
+check("the 2-test day is flagged as a pile-up", isPileUp(testDay, wl1.days) === true);
+const quietDay = wl1.days.find((d) => d.items.length === 0);
+check("an empty day is never a pile-up", !quietDay || isPileUp(quietDay, wl1.days) === false);
+check("lightestDay excludes the given date and picks the lowest-effort remaining day", lightestDay(wl1.days, testDay.date) !== testDay.date);
+const wlOutside = computeWorkload({ homework: [{ id: "h2", subject: "SES", description: "x", deadline: wlIso(20), done: false }], tests: [], tasks: [], now: WL_NOW });
+check("items past the 7-day window are dropped", wlOutside.days.every((d) => d.items.length === 0));
+
+// ── Track-aware prompt vocabulary (IB / BFI) ──────────────────────────────────
+section("trackLine vocabulary");
+check("ib mentions CAS/IA vocabulary", /CAS/.test(trackLine({ track: "ib" })) && /IA/.test(trackLine({ track: "ib" })));
+check("bac mentions Grand Oral / BFI vocabulary", /Grand Oral/.test(trackLine({ track: "bac" })) && /BFI/.test(trackLine({ track: "bac" })));
+check("other/undefined track adds nothing", trackLine({ track: "other" }) === "" && trackLine(undefined) === "" && trackLine({}) === "");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
