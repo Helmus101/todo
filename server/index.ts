@@ -270,6 +270,16 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
     res.status(400).json({ error: "URL, username and password are required." }); return;
   }
   const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
+  // Pull grades right away on a fresh connect — otherwise a student wouldn't see any until the next daily
+  // sweep or a manual "Sync from Pronote" click, and "I just connected Pronote" is exactly the moment
+  // grades should already be there. Best-effort: never fails the connect itself.
+  if (result.ok) {
+    try {
+      const p = (req.session.profile ||= emptyProfile());
+      pronoteSvc.applyPronoteGrades(p, await pronoteSvc.pronoteGrades(req.session.user!));
+      await commit(req);
+    } catch { /* best-effort */ }
+  }
   res.status(result.ok ? 200 : 400).json(result);
 });
 // Upcoming tests for the dashboard's exam countdown strip — a plain read, separate from the task pipeline
@@ -302,16 +312,7 @@ app.post("/api/profile/grades/sync-pronote", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   try {
     const conn = await pronoteSvc.pronoteConnected(req.session.user!);
-    if (conn.connected) {
-      const fromPronote = await pronoteSvc.pronoteGrades(req.session.user!);
-      const now = new Date().toISOString();
-      const list = (p.grades ||= []);
-      for (const g of fromPronote) {
-        const i = list.findIndex((x) => x.subject.toLowerCase() === g.subject.toLowerCase());
-        const entry = { subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now };
-        if (i >= 0) list[i] = entry; else list.push(entry);
-      }
-    }
+    if (conn.connected) pronoteSvc.applyPronoteGrades(p, await pronoteSvc.pronoteGrades(req.session.user!));
   } catch { /* best-effort — profile is returned unchanged on failure */ }
   await commit(req);
   res.json(p);

@@ -21,6 +21,7 @@
  */
 import { randomUUID } from "node:crypto";
 import * as pronote from "pawnote";
+import type { Profile } from "../shared/types.ts";
 import { loadState, saveState, type StoredPronote } from "./store.ts";
 import { credentialEncryptionConfigured } from "./crypto.ts";
 
@@ -205,6 +206,24 @@ export async function pronoteTests(email: string, daysAhead = TEST_DAYS_AHEAD): 
       }));
   });
   return out || [];
+}
+
+/**
+ * Merge Pronote's grade averages into profile.grades in place — Pronote is the source of truth for any
+ * subject it reports; a manually-entered grade for a subject Pronote doesn't cover (or before this ever
+ * ran) is left alone. Shared by every place grades get pulled in — the daily sweep (jobs.ts), the manual
+ * "Sync from Pronote" button (index.ts), and connecting Pronote for the first time — so a student's
+ * grades show up real, without a separate click, the moment there's something to show.
+ */
+export function applyPronoteGrades(profile: Profile, fromPronote: PronoteGradeItem[]): void {
+  if (!fromPronote.length) return;
+  const now = new Date().toISOString();
+  const list = (profile.grades ||= []);
+  for (const g of fromPronote) {
+    const i = list.findIndex((x) => x.subject.toLowerCase() === g.subject.toLowerCase());
+    const entry = { subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now };
+    if (i >= 0) list[i] = entry; else list.push(entry);
+  }
 }
 
 export interface PronoteGradeItem { subject: string; average: number; outOf: number; }

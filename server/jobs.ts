@@ -13,7 +13,7 @@ import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
 import * as claude from "./claude.ts";
-import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests } from "./pronote.ts";
+import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPronoteGrades } from "./pronote.ts";
 import type { AcademicContext } from "./claude.ts";
 
 /** Live Pronote homework/exams for a task's own run/chat context — best-effort, never blocks execution. */
@@ -137,18 +137,7 @@ async function processSweep(job: store.Job): Promise<string> {
   // for what it reports" merge as the manual Settings sync, just automatic so a student never has to think
   // about it. A failure here (Pronote down, no grades yet) never blocks the sweep itself.
   try {
-    if ((await pronoteConnected(email)).connected) {
-      const fromPronote = await pronoteGrades(email);
-      if (fromPronote.length) {
-        const now = new Date().toISOString();
-        const list2 = (profile.grades ||= []);
-        for (const g of fromPronote) {
-          const i = list2.findIndex((x) => x.subject.toLowerCase() === g.subject.toLowerCase());
-          const entry = { subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now };
-          if (i >= 0) list2[i] = entry; else list2.push(entry);
-        }
-      }
-    }
+    if ((await pronoteConnected(email)).connected) applyPronoteGrades(profile, await pronoteGrades(email));
   } catch { /* best-effort */ }
   await commitUser(email, profile, next);
   for (const t of found) void store.recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
