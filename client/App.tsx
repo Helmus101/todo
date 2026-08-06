@@ -2563,11 +2563,6 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               <>
                 <button className="btn primary" title={L("C'est bon — marquer comme fait", "Looks good — mark as done")} onClick={() => void leave(() => api.confirm(task.id), "confirm")}>{L("C'est bon", "Looks good")}</button>
                 <div className="actions-rest">
-                  {/* Not failed, but the student might want Otto to take another pass anyway (regenerate the
-                      fiche/checklist) without either confirming it done or dismissing it entirely. A plain
-                      re-run of an already-executed task is a no-op (see server's resetTask comment) — this
-                      wipes it back to just title/why first, so Otto genuinely starts over. */}
-                  <button className="btn xs ghost" title={L("Reprendre cette tâche depuis le début", "Start this task over from scratch")} disabled={running} onClick={() => void run(true)}>{running ? L("En cours…", "Working…") : L("Réexécuter", "Re-run")}</button>
                   <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id))}>{L("Ignorer", "Dismiss")}</button>
                 </div>
               </>

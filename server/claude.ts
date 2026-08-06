@@ -1280,7 +1280,7 @@ const RUN_TOOLS = [
       type: "array",
       description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). Often empty.",
       items: { type: "object", properties: {
-        text: { type: "string", description: "ONE concrete action — imperative verb + the specific thing, ≤ ~12 words, no hedging. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'." },
+        text: { type: "string", description: "ONE concrete action — imperative verb + the specific thing, ≤ 8 words, no hedging, cut every word that isn't load-bearing. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'. Exception: a step that GATES a later one (see dependsOn) may run a little longer since it must also name exactly what to capture for that later step — even then, stay as tight as the content allows." },
         automatable: { type: "boolean", description: "true = OTTO can do it with its tools or by finding info (read/search, draft, create/update a doc/sheet/event/task, ENTER/FILL data, comment, research, open a page) — do it NOW unless it waits on a user step (then set dependsOn). false = needs the USER, ONLY for: a judgment/decision/approval, a credential you lack, a payment, or a physical act. NOT for being specific/numeric/tedious; sending a message is a one-click send, not a step." },
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
@@ -1917,8 +1917,9 @@ async function writeStepsFromContext(
         content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\nCONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}${linksBlock}${didBlock}\n\n` +
           languageLine(profile) + trackLine(profile) +
           `Based ONLY on this task and this context, break the remaining work into a clear, ORDERED list of ` +
-          `concrete, actionable steps for the user — each a short one-liner naming a specific action (not a ` +
-          `vague category like "look into options"), small enough that the list feels doable, not overwhelming. ` +
+          `concrete, actionable steps for the user — each a SHORT one-liner (≤8 words: imperative verb + the ` +
+          `specific thing, no hedging, no filler) naming a specific action (not a vague category like "look ` +
+          `into options"), small enough that the list feels doable, not overwhelming. ` +
           `If a resource above was already CREATED (not just found), do NOT list "create X" as a step — that's ` +
           `done; instead say what to DO with it now (review it, send it, use it, decide something). Only list ` +
           `creating a document/draft as a step if none of the resources above cover it yet. This is for a ` +
