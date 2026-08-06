@@ -891,9 +891,22 @@ function TaskModal({ onClose, children }: { onClose: () => void; children: React
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") doClose(); };
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+    // `overflow: hidden` alone does NOT stop background scroll on iOS Safari (a long-standing WebKit quirk)
+    // — the list behind the modal kept scrolling under your thumb while you scrolled inside it, which reads
+    // as badly broken on a phone. Pinning the body at its current scroll position actually blocks it there;
+    // restore both the styles and the scroll offset on close so the list isn't left jumped to the top.
+    const scrollY = window.scrollY;
+    const body = document.body.style;
+    const prev = { overflow: body.overflow, position: body.position, top: body.top, width: body.width };
+    body.overflow = "hidden";
+    body.position = "fixed";
+    body.top = `-${scrollY}px`;
+    body.width = "100%";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      body.overflow = prev.overflow; body.position = prev.position; body.top = prev.top; body.width = prev.width;
+      window.scrollTo(0, scrollY);
+    };
   }, [doClose]);
   return (
     <div className={`task-modal-overlay ${closing ? "closing" : ""}`} onClick={doClose} role="dialog" aria-modal="true">

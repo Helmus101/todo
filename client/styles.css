@@ -412,7 +412,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes modalOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.99); } }
 @media (max-width: 560px) {
-  .task-modal-overlay { padding: 0; align-items: stretch; }
+  .task-modal-overlay { padding: 0; align-items: stretch; overflow-x: hidden; }
   /* Full-bleed on a phone — pad for the notch/Dynamic Island and the home-indicator bar so the ✕ button
      and the last row of content never sit under either (standalone PWA has no browser chrome to absorb it). */
   .task-modal {
@@ -422,6 +422,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
     padding-left: calc(20px + env(safe-area-inset-left));
     padding-right: calc(20px + env(safe-area-inset-right));
   }
+  /* .task-modal-x is `position: absolute` against the modal's BORDER box, which ignores the padding-top
+     above — on a notched phone the ✕ was landing under the status bar/Dynamic Island, effectively
+     untappable. It needs the same safe-area offset applied directly, not inherited from the parent's padding. */
+  .task-modal-x { top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); }
 }
 .note-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 .note-popup { padding: 6px 2px 2px; max-height: 74vh; overflow-y: auto; }

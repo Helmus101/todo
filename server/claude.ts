@@ -142,6 +142,16 @@ const PLAN_ONLY_OVERRIDE =
   `is genuinely long-form (a full multi-section guide, a real spreadsheet, a deck) or needs to be shared/ ` +
   `emailed/edited outside the app. A task can legitimately produce BOTH a note and a flashcard deck if it ` +
   `genuinely calls for both (e.g. a study plan note plus a vocab deck). ` +
+  `A NOTE/DECK MUST EARN ITS PLACE — it exists to hold real content the student would otherwise lose or have ` +
+  `to redo, never to restate the steps list in different words. Academic prep (studying, revising, a subject- ` +
+  `specific deliverable) is the main case where one pulls real weight — see the subject-by-subject shaping ` +
+  `below. LOGISTICS/ADMIN TASKS (booking travel, confirming an appointment, buying or ordering something, ` +
+  `scheduling, paying a bill) usually need NO note at all — the steps list alone IS the plan; do not create ` +
+  `one just to turn "step 1, step 2, step 3" into bullet-point prose, that is not content. Only create a note ` +
+  `for this kind of task if you found something genuinely worth preserving that the steps alone don't capture ` +
+  `— real compiled options with prices/links, actual confirmation details, a real comparison — never a ` +
+  `placeholder checklist standing in for research you didn't actually do. When in doubt for a logistics task, ` +
+  `leave it as steps and skip the note. ` +
   `SHAPE A NOTE TO ITS SUBJECT, NEVER ONE GENERIC TEMPLATE — Maths/Physique/Chimie: key formulas up top, then ` +
   `a worked example structure (steps shown, not the final numeric answer to THEIR specific exercise), then a ` +
   `short practice set with no answer key. Histoire/Géo/SES: a timeline or cause→consequence structure, key ` +
@@ -1533,7 +1543,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
           `the EXISTING artifact listed above under "ALREADY CREATED FOR THIS TASK" (its id is listed — use ` +
           `an UPDATE/PATCH/APPEND tool with that id) with the requested change. Do NOT create a new one. Do ` +
           `NOT make another read call.`
-        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. Your NEXT tool call MUST be a create/write tool (CREATE_NOTE for a short brief, CREATE_FLASHCARDS for a drillable deck, GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. If the task truly requires no artifact, call submit now.`;
+        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. If this is academic prep or genuinely needs a document/draft, your NEXT tool call MUST be a create/write tool (CREATE_NOTE for a short brief, CREATE_FLASHCARDS for a drillable deck, GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. But if this is a logistics/admin task (booking, confirming, buying, scheduling) with nothing worth preserving beyond the steps list, do NOT force a note just to have one — call submit now with steps only.`;
       messages.push({ role: "user", content: nudge });
     }
     const client = deepseekClient();
