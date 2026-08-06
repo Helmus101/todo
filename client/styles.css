@@ -405,6 +405,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-modal .card, .task-modal .card.open { background: transparent; }
 .task-modal .card-main { cursor: default; padding-left: 6px; }
 .task-modal .card-main:hover { background: transparent; }
+/* The ✕ close button sits absolutely over the top-right corner — a long task title (which wraps normally,
+   no line-clamp) could run straight under it with nothing reserving that corner. note-popup-title already
+   does this via margin; the task card's own title needed the same treatment. */
+.task-modal .card-title { padding-right: 34px; }
 .task-modal .caret, .task-modal .card-x { display: none; }
 @keyframes modalPop { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
 .task-modal-overlay.closing { animation: fadeOut 0.16s var(--ease) forwards; pointer-events: none; }
@@ -426,6 +430,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
      above — on a notched phone the ✕ was landing under the status bar/Dynamic Island, effectively
      untappable. It needs the same safe-area offset applied directly, not inherited from the parent's padding. */
   .task-modal-x { top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); }
+  /* A note/deck's own capped-height inner scrollbox made sense in a small floating desktop card — full-bleed
+     on a phone it just produced a second, confusingly independent scroll region (plus dead space below it
+     when the note was short) instead of the whole screen scrolling as one. Let the single outer modal scroll. */
+  .note-popup, .deck-popup { max-height: none; overflow-y: visible; }
 }
 .note-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 .note-popup { padding: 6px 2px 2px; max-height: 74vh; overflow-y: auto; }
