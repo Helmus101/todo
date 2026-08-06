@@ -2320,11 +2320,15 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                       {/* Only ONE panel open at a time (draft view, or the send confirm) — stacking both was
                           the "messy" part: opening one now always closes the other. */}
                       <button className="btn xs ghost" onClick={() => { setConfirmIdx(null); setViewDraft((v) => (v === i ? null : i)); if (viewDraft !== i) { setChangeIdx(null); setChangeText(""); } }}>{viewDraft === i ? L("Masquer les détails", "Hide details") : s.app === "gcal" ? L("Voir l'événement", "View event") : L("Voir le brouillon", "View draft")}</button>
+                      {/* Not yet blue: clicking this only OPENS the confirm below, it doesn't send anything —
+                          the real "needs you, this is irreversible" signal belongs on "Oui, envoyer" alone.
+                          Two blue buttons for one action (this + the confirm) was the "too many blue buttons"
+                          clutter; only the actual send moment gets the accent now. */}
                       {s.sent
-                        ? <button className="btn primary send-btn sent" disabled>{L("Envoyé", "Sent")}</button>
+                        ? <button className="btn send-btn sent" disabled>{L("Envoyé", "Sent")}</button>
                         : sending === i
-                          ? <button className="btn primary send-btn" disabled>{L("Envoi…", "Sending…")}</button>
-                          : <button className="btn primary send-btn" onClick={() => { setViewDraft(null); setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{`${sendIcon} ${s.label}`}</button>}
+                          ? <button className="btn send-btn" disabled>{L("Envoi…", "Sending…")}</button>
+                          : <button className="btn send-btn" onClick={() => { setViewDraft(null); setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{`${sendIcon} ${s.label}`}</button>}
                     </div>
                     {/* Confirm step — the recipient is spelled out in full before anything sends. */}
                     {confirmIdx === i && !s.sent && sending !== i ? (
@@ -2373,7 +2377,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                               onChange={(e) => { setDraftEdits((d) => ({ ...d, [i]: { ...d[i], body: e.target.value } })); e.target.style.height = "auto"; e.target.style.height = `${Math.min(e.target.scrollHeight, 600)}px`; }} />
                             {draftEdits[i] && !revising ? (
                               <div className="draft-edit-acts">
-                                <button className="btn primary xs" disabled={savingDraft === i} onClick={() => void saveDraftEdit(i)}>{savingDraft === i ? L("Enregistrement…", "Saving…") : L("Enregistrer les modifications", "Save changes")}</button>
+                                <button className="btn xs" disabled={savingDraft === i} onClick={() => void saveDraftEdit(i)}>{savingDraft === i ? L("Enregistrement…", "Saving…") : L("Enregistrer les modifications", "Save changes")}</button>
                                 <button className="btn xs ghost" disabled={savingDraft === i} onClick={() => setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; })}>{L("Annuler", "Discard")}</button>
                               </div>
                             ) : null}
@@ -2383,7 +2387,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                                   placeholder={L("Dis à Otto quoi changer — ex : ajoute mes horaires de vol, raccourcis, corrige la date", "Tell Otto what to change — e.g. add my flight times, make it shorter, fix the date")}
                                   value={changeText} onChange={(e) => setChangeText(e.target.value)}
                                   onKeyDown={(e) => { if (e.key === "Enter") void doRevise(); }} />
-                                {!revising && <button className="btn primary xs" disabled={!changeText.trim()} onClick={() => void doRevise()}>{L("Réviser", "Revise")}</button>}
+                                {!revising && <button className="btn xs" disabled={!changeText.trim()} onClick={() => void doRevise()}>{L("Réviser", "Revise")}</button>}
                                 <button className="btn xs ghost" disabled={revising} onClick={() => { setChangeIdx(null); setChangeText(""); setReviseError(null); }}>{L("Annuler", "Cancel")}</button>
                                 {reviseError ? <div className="rewrite-error">{reviseError}</div> : null}
                               </div>
@@ -2545,7 +2549,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendChat(); } }}
                   disabled={chatSending}
                 />
-                <button className="btn primary xs" disabled={chatSending || !chatInput.trim()} onClick={() => void sendChat()}>{L("Envoyer", "Send")}</button>
+                <button className="btn xs" disabled={chatSending || !chatInput.trim()} onClick={() => void sendChat()}>{L("Envoyer", "Send")}</button>
               </div>
             </section>
           ) : null}

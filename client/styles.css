@@ -411,7 +411,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-modal.closing { animation: modalOut 0.16s var(--ease) forwards; }
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes modalOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.99); } }
-@media (max-width: 560px) {
+@media (max-width: 640px) {
   .task-modal-overlay { padding: 0; align-items: stretch; overflow-x: hidden; }
   /* Full-bleed on a phone — pad for the notch/Dynamic Island and the home-indicator bar so the ✕ button
      and the last row of content never sit under either (standalone PWA has no browser chrome to absorb it). */
