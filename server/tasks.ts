@@ -267,7 +267,23 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
       const other = loser.steps?.find((o) => o.text === s.text);
       return other?.done ? { ...s, done: true, doneAt: other.doneAt, result: s.result ?? other.result } : s;
     });
-    map.set(t.id, steps ? { ...winner, steps } : winner);
+    // "Ask Otto" chat is append-only, one round-trip per device — picking a single whole-task "winner"
+    // (by status rank / updatedAt) silently DROPPED the loser's chat turns whenever the two devices'
+    // copies diverged (e.g. device A asks Otto something, device B ticks a step a moment later with a
+    // later updatedAt and wins outright — A's question+answer used to vanish on the next merge, on EITHER
+    // device, since only `steps` was unioned). Union both sides by (role, at, text) instead, so no device's
+    // conversation is ever silently discarded; capped to mirror CHAT_CAP in index.ts.
+    const chatA = winner.chat || [], chatB = loser.chat || [];
+    const chat = chatB.length
+      ? (() => {
+          const key = (c: { role: string; text: string; at: string }) => `${c.role}|${c.at}|${c.text}`;
+          const seen = new Set(chatA.map(key));
+          return [...chatA, ...chatB.filter((c) => !seen.has(key(c)))]
+            .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0))
+            .slice(-60);
+        })()
+      : undefined;
+    map.set(t.id, steps || chat ? { ...winner, ...(steps ? { steps } : {}), ...(chat ? { chat } : {}) } : winner);
   }
   return dedupeTasks(Array.from(map.values()));
 }

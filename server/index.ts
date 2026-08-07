@@ -756,7 +756,14 @@ app.get("/api/tasks/:id/events", requireAuth, async (req, res) => {
 // cron tick. Each kick is one bounded function invocation — serverless-friendly.
 app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   try {
-    const out = await jobs.drain(1);
+    // MUST scope to this account — an unscoped drain() claims the GLOBAL oldest queued job across every
+    // user (claimJob's `userEmail` param is exactly how the cron avoids one heavy account starving everyone
+    // else; leaving it off here inverts that into "everyone's kick can starve their OWN job"). With more than
+    // one active account, a user's own newly-queued task could sit behind other accounts' jobs indefinitely,
+    // even with the tab open and kicking every 4s — this was reported live as "task constantly queued,
+    // never executed" for a task that only ran ~20 minutes later, once its OWN turn came up in the global
+    // queue instead of the very next kick.
+    const out = await jobs.drain(1, undefined, req.session.user!);
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(req.session.user!), activeJobTaskIds(req.session.user!)]);
     // Refresh this session's view of the cloud copy the job just wrote.
     if (out.processed || out.failed) {

@@ -47,6 +47,16 @@ export function trackLine(p?: Profile): string {
   }
   return "";
 }
+// A big IB coursework project (Extended Essay, TOK, CAS, an Internal Assessment, a group project) isn't
+// like an ordinary task — it runs for weeks/months, has real intermediate milestones (research question,
+// outline, supervisor check-in, draft, final submission), and a flat "next 3 actions" list either buries
+// the timeline or reads as one giant undifferentiated step. Detected by keyword rather than a model call —
+// cheap, and these terms are specific enough on an IB track that false positives are rare (gated to
+// `track === "ib"` anyway, so this never fires for a non-IB student's ordinary "group project" for class).
+const BIG_IB_PROJECT_RE = /extended essay\b|\bee\b|theory of knowledge|\btok\b|\bcas\b|internal assessment|\bia\b|group project/i;
+export function isBigIbProject(profile: Profile | undefined, title: string, why: string): boolean {
+  return profile?.track === "ib" && BIG_IB_PROJECT_RE.test(`${title} ${why}`);
+}
 // Hardcoded mission — this is what Otto IS, not a preference that can drift with prompt tweaks. Otto is
 // built for STUDENTS: a companion that keeps them moving, never a do-it-all that does their work for them.
 const MISSION =
@@ -1903,6 +1913,7 @@ async function writeStepsFromContext(
   profile?: Profile,
 ): Promise<TaskStep[]> {
   if (!context.trim()) return fallbackSteps; // nothing distilled to work from — the loop's own steps are all there is
+  const bigProject = isBigIbProject(profile, task.title, task.why);
   try {
     const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY FOUND/CREATED:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
@@ -1915,29 +1926,47 @@ async function writeStepsFromContext(
       messages: [{
         role: "user",
         content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\nCONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}${linksBlock}${didBlock}\n\n` +
-          languageLine(profile) + trackLine(profile) +
-          `Based ONLY on this task and this context, break the remaining work into a clear, ORDERED list of ` +
-          `concrete, actionable steps for the user — each a SHORT one-liner (≤8 words: imperative verb + the ` +
-          `specific thing, no hedging, no filler) naming a specific action (not a vague category like "look ` +
-          `into options"), small enough that the list feels doable, not overwhelming. ` +
-          `If a resource above was already CREATED (not just found), do NOT list "create X" as a step — that's ` +
-          `done; instead say what to DO with it now (review it, send it, use it, decide something). Only list ` +
-          `creating a document/draft as a step if none of the resources above cover it yet. This is for a ` +
-          `STUDENT: every step must be something THEY do — never phrase the graded/learning work itself (writing ` +
-          `the essay, solving the problem, answering the question) as if it were already done or as Otto's job; ` +
-          `that work always stays a step for them. Every step must be directly about "${task.title}" — no ` +
-          `unrelated tangents. The context above may mention OTHER people/threads/obligations that came up ` +
-          `during research but aren't actually part of this task (a different person's invitation, an ` +
-          `unrelated message to someone else) — DO NOT turn those into steps just because they're in the ` +
-          `context; only steps that move "${task.title}" itself forward belong here.\n\n` +
-          `Return ONLY this JSON: {"steps": [{"text": "...", "automatable": false}, ...]} — 1 to 6 steps.`,
+          languageLine(profile) + trackLine(profile) + (bigProject ? nowBlock() : "") +
+          (bigProject
+            ? `This is a BIG, multi-week IB project (Extended Essay / TOK / CAS / an Internal Assessment / a group ` +
+              `project), not a short task — a flat "next 3 actions" list would bury the real timeline. Break it ` +
+              `into an ORDERED list of MILESTONES from where it stands now through final submission (e.g. research ` +
+              `question, source-gathering, outline, supervisor check-in, first draft, revision, final submission — ` +
+              `adapt to what this specific project actually needs, don't force every category to apply). Each ` +
+              `milestone needs a realistic "targetDate" (YYYY-MM-DD, relative to the CURRENT DATE above) spaced ` +
+              `out over the weeks/months a project like this genuinely takes — don't cram them all into the next ` +
+              `few days. This is for a STUDENT: never phrase the graded/learning work itself (writing the essay, ` +
+              `doing the research, forming the argument) as if it were already done or as Otto's job — that work ` +
+              `always stays theirs. Return ONLY this JSON: ` +
+              `{"steps": [{"text": "...", "targetDate": "YYYY-MM-DD"}, ...]} — 4 to 8 milestones, each text ` +
+              `≤10 words.`
+            : `Based ONLY on this task and this context, break the remaining work into a clear, ORDERED list of ` +
+              `concrete, actionable steps for the user — each a SHORT one-liner (≤8 words: imperative verb + the ` +
+              `specific thing, no hedging, no filler) naming a specific action (not a vague category like "look ` +
+              `into options"), small enough that the list feels doable, not overwhelming. ` +
+              `If a resource above was already CREATED (not just found), do NOT list "create X" as a step — that's ` +
+              `done; instead say what to DO with it now (review it, send it, use it, decide something). Only list ` +
+              `creating a document/draft as a step if none of the resources above cover it yet. This is for a ` +
+              `STUDENT: every step must be something THEY do — never phrase the graded/learning work itself (writing ` +
+              `the essay, solving the problem, answering the question) as if it were already done or as Otto's job; ` +
+              `that work always stays a step for them. Every step must be directly about "${task.title}" — no ` +
+              `unrelated tangents. The context above may mention OTHER people/threads/obligations that came up ` +
+              `during research but aren't actually part of this task (a different person's invitation, an ` +
+              `unrelated message to someone else) — DO NOT turn those into steps just because they're in the ` +
+              `context; only steps that move "${task.title}" itself forward belong here.\n\n` +
+              `Return ONLY this JSON: {"steps": [{"text": "...", "automatable": false}, ...]} — 1 to 6 steps.`),
       }],
     }));
-    const out = firstJson<{ steps?: { text?: string; automatable?: boolean }[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const out = firstJson<{ steps?: { text?: string; automatable?: boolean; targetDate?: string }[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     const steps = (out?.steps || [])
-      .map((s) => ({ text: String(s?.text || "").trim().slice(0, 180), automatable: !!s?.automatable }))
+      .map((s) => ({
+        text: String(s?.text || "").trim().slice(0, 180),
+        automatable: bigProject ? false : !!s?.automatable,
+        ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
+      }))
       .filter((s) => s.text)
-      .slice(0, 6);
+      .slice(0, bigProject ? 8 : 6);
     return steps.length ? steps : fallbackSteps;
   } catch { return fallbackSteps; } // a failed refinement pass falls back to the loop's own steps, never blocks submission
 }

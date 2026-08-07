@@ -1,6 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, isBigIbProject } from "../server/claude.ts";
+import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade } from "../shared/types.ts";
@@ -100,6 +101,12 @@ const s1 = { ...base, id: "s1", title: "Prep the offsite agenda deck", why: "off
 const s2 = { ...s1, updatedAt: newer, steps: [{ text: "Pick venue", automatable: false }, { text: "Send invites", automatable: false, done: true }] };
 const mergedSteps = mergeTaskLists([s1], [s2])[0].steps;
 check("step ticks union across devices", mergedSteps.every((s) => s.done));
+
+const c1 = { ...base, id: "c1", title: "Finish the essay", why: "due Friday", source: "manual", status: "needs_review", updatedAt: older, chat: [{ role: "user", text: "how do I start?", at: older }, { role: "assistant", text: "Start with the thesis.", at: older }] };
+const c2 = { ...c1, updatedAt: newer, chat: [{ role: "user", text: "what about the conclusion?", at: newer }, { role: "assistant", text: "Tie it back to the thesis.", at: newer }] }; // no earlier turns — a device that only just opened the task
+const mergedChat = mergeTaskLists([c1], [c2])[0].chat;
+check("chat turns union across devices instead of the winner's copy replacing the loser's", mergedChat.length === 4);
+check("unioned chat stays chronologically ordered", mergedChat[0].text === "how do I start?" && mergedChat[3].text === "Tie it back to the thesis.");
 
 // ── Profile ───────────────────────────────────────────────────────────────────
 section("profile merge + updates");
@@ -554,6 +561,29 @@ section("trackLine vocabulary");
 check("ib mentions CAS/IA vocabulary", /CAS/.test(trackLine({ track: "ib" })) && /IA/.test(trackLine({ track: "ib" })));
 check("bac mentions Grand Oral / BFI vocabulary", /Grand Oral/.test(trackLine({ track: "bac" })) && /BFI/.test(trackLine({ track: "bac" })));
 check("other/undefined track adds nothing", trackLine({ track: "other" }) === "" && trackLine(undefined) === "" && trackLine({}) === "");
+
+// ── Big IB project detection + milestone re-plan ──────────────────────────────
+section("isBigIbProject");
+check("EE on an IB student is a big project", isBigIbProject({ track: "ib" }, "Extended Essay research question", ""));
+check("CAS on an IB student is a big project", isBigIbProject({ track: "ib" }, "Log CAS hours", "for the CAS reflection"));
+check("an ordinary homework on an IB student is NOT a big project", !isBigIbProject({ track: "ib" }, "Finish the worksheet", "due tomorrow"));
+check("EE on a bac/other student does NOT trigger (track-gated)", !isBigIbProject({ track: "bac" }, "Extended Essay", "") && !isBigIbProject(undefined, "Extended Essay", ""));
+
+section("replanMilestones");
+const msNow = new Date("2026-06-15T12:00:00Z");
+const msSteps = [
+  { text: "Pick research question", automatable: false, done: true, targetDate: "2026-06-01" },
+  { text: "Gather sources", automatable: false, targetDate: "2026-06-10" }, // slipped 5 days
+  { text: "Write outline", automatable: false, targetDate: "2026-06-20" },
+  { text: "Submit", automatable: false, targetDate: "2026-07-01" },
+];
+const replanned = replanMilestones(msSteps, msNow);
+check("replan flags a change when a milestone slipped", replanned.changed === true);
+check("a done milestone is left untouched even if its date is in the past", replanned.steps[0].targetDate === "2026-06-01");
+check("the slipped milestone snaps to today", replanned.steps[1].targetDate === "2026-06-15");
+check("later milestones shift by the same slip amount, preserving spacing", replanned.steps[2].targetDate === "2026-06-26" && replanned.steps[3].targetDate === "2026-07-07");
+const noSlip = replanMilestones([{ text: "Submit", automatable: false, targetDate: "2026-07-01" }], msNow);
+check("nothing changes when no milestone has slipped", noSlip.changed === false);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

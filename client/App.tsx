@@ -13,6 +13,12 @@ function useLang(): (fr: string, en: string) => string {
   return (fr: string, en: string) => (lang === "en" ? en : fr);
 }
 
+/** "Sep 12" — a milestone target date (YYYY-MM-DD), formatted for display. */
+const fmtDate = (iso: string): string => {
+  const d = new Date(`${iso}T00:00:00`);
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
 /** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
 const relTime = (iso: string): string => {
   const ms = Date.now() - new Date(iso).getTime();
@@ -1128,6 +1134,12 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     setLang(v);
     onChanged?.(await api.setProfilePreference("language", v));
   };
+  const [track, setTrack] = useState<"ib" | "bac" | "other" | undefined>(profile?.track);
+  useEffect(() => { setTrack(profile?.track); }, [profile?.track]);
+  const saveTrack = async (v: "ib" | "bac" | "other") => {
+    setTrack(v);
+    onChanged?.(await api.setProfilePreference("track", v));
+  };
   return (
     <>
       <div className="set-row">
@@ -1135,6 +1147,14 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         <div className="lang-toggle">
           <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} onClick={() => void saveLang("fr")}>Français</button>
           <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} onClick={() => void saveLang("en")}>English</button>
+        </div>
+      </div>
+      <div className="set-row">
+        <span className="set-text"><b>{lang === "en" ? "Track" : "Filière"}</b><span className="settings-hint">{lang === "en" ? "Lets Otto use the right vocabulary (IA/CAS/EE, or spécialité/épreuve) and unlocks the milestone breakdown for big IB projects." : "Permet à Otto d'utiliser le bon vocabulaire (IA/CAS/EE, ou spécialité/épreuve) et débloque la découpe en jalons pour les grands projets IB."}</span></span>
+        <div className="lang-toggle">
+          <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
+          <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>BFI</button>
+          <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{lang === "en" ? "Other" : "Autre"}</button>
         </div>
       </div>
       <div className="set-row">
@@ -2464,6 +2484,10 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                       <div className="step-body">
                         <span className="step-text">{withInlineLinks(s.text)}</span>
                         {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
+                        {/* A milestone target date (big IB projects only — see isBigIbProject in claude.ts) — a
+                            forward-looking due date, distinct from step-when above which only ever shows PAST
+                            completion time. */}
+                        {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
                         {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                         {!s.done && blk ? <span className="step-dep">{L(`attend l'étape ${(s.dependsOn ?? 0) + 1}`, `waits for step ${(s.dependsOn ?? 0) + 1}`)}</span> : null}
                         {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. */}

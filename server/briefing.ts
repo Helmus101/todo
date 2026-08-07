@@ -1,5 +1,5 @@
 import type { WebTask, Profile } from "../shared/types.ts";
-import { sortWithinQuadrant, tzOf } from "../shared/types.ts";
+import { sortWithinQuadrant, tzOf, isHandled } from "../shared/types.ts";
 
 export interface BriefingContent {
   date: string;
@@ -25,10 +25,15 @@ export function formatBriefing(tasks: WebTask[], profile: Profile, now: Date = n
     year: "numeric",
   });
 
-  // Sort by score to find top priorities
+  // "ready" is only ONE moment in a task's life — the sweep auto-queues top-scored ready tasks for
+  // execution right away (server/jobs.ts), so by the time this runs most of what's actually on the
+  // student's plate is "queued"/"executing"/"needs_review", not "ready". Filtering on that raw status
+  // literally was why the briefing kept showing "0 priorities": nearly everything had already moved past
+  // it. Use the same "live" definition the dashboard itself uses (isHandled — only done/dismissed drop
+  // out) so the briefing actually reflects what's open, same as opening the app would show.
   const sorted = sortWithinQuadrant(tasks, profile.highPriorityPeople || [], now);
-  const readyTasks = sorted.filter((t) => t.status === "ready");
-  const top3 = readyTasks.slice(0, 3);
+  const liveTasks = sorted.filter((t) => !isHandled(t.status));
+  const top3 = liveTasks.slice(0, 3);
 
   // Extract upcoming risks: tasks due tomorrow, calendar events later today
   const upcomingRisks: string[] = [];
@@ -38,7 +43,7 @@ export function formatBriefing(tasks: WebTask[], profile: Profile, now: Date = n
   tomorrowStart.setHours(0, 0, 0, 0);
   const tomorrowMs = tomorrowStart.getTime();
 
-  for (const t of readyTasks) {
+  for (const t of liveTasks) {
     if (!t.when) continue;
     const deadline = Date.parse(t.when);
     if (isNaN(deadline)) continue;
@@ -62,7 +67,7 @@ export function formatBriefing(tasks: WebTask[], profile: Profile, now: Date = n
       brief: t.context || t.why,
     })),
     upcomingRisks: risks.length ? risks : ["None identified"],
-    taskCount: readyTasks.length,
+    taskCount: liveTasks.length,
   };
 }
 

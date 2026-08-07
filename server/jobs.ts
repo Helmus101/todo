@@ -15,6 +15,7 @@ import * as integrations from "./integrations.ts";
 import * as claude from "./claude.ts";
 import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPronoteGrades } from "./pronote.ts";
 import type { AcademicContext } from "./claude.ts";
+import { replanMilestones } from "./milestones.ts";
 
 /** Live Pronote homework/exams for a task's own run/chat context — best-effort, never blocks execution. */
 async function loadAcademicContext(email: string): Promise<AcademicContext | undefined> {
@@ -139,6 +140,14 @@ async function processSweep(job: store.Job): Promise<string> {
   try {
     if ((await pronoteConnected(email)).connected) applyPronoteGrades(profile, await pronoteGrades(email));
   } catch { /* best-effort */ }
+  // A big IB project's milestone steps (targetDate set — see isBigIbProject/writeStepsFromContext in
+  // claude.ts) get re-dated here if one slipped, so a missed research-question deadline doesn't just sit
+  // stale — the remaining milestones shift out to stay realistic. Deterministic, no AI call (replanMilestones).
+  for (const t of next) {
+    if (isHandled(t.status) || !t.steps?.some((s) => s.targetDate)) continue;
+    const { steps, changed } = replanMilestones(t.steps);
+    if (changed) t.steps = steps;
+  }
   await commitUser(email, profile, next);
   for (const t of found) void store.recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
   for (const t of toRun) { await store.enqueueJob(email, "execute_task", t.id); void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" }); }
@@ -310,6 +319,7 @@ async function processSendBriefing(job: store.Job): Promise<string> {
       to: email,
       subject: `Daily briefing — ${content.date}`,
       body: html,
+      primaryAccounts: profile.primaryAccounts,
     });
 
     if (!result.ok) throw new Error(result.error || "Failed to send briefing");
@@ -380,7 +390,10 @@ export async function enqueueAndDrain(email: string, type: store.JobType, taskId
   if (job.status === "queued" || job.status === "running") {
     // Make the queued state VISIBLE before work starts (execution types only — sweeps aren't a task).
     if (taskId && type !== "sweep" && job.status === "queued") await markTaskStatus(email, taskId, "queued").catch(() => {});
-    await drain(2);
+    // Scoped to THIS account — an unscoped drain() claims the global oldest queued job across every user
+    // (see the /api/jobs/kick fix for the same bug), which would make an interactive "run this now" request
+    // process a stranger's job instead of the one it just enqueued.
+    await drain(2, undefined, email);
   }
   return (await store.getJob(job.id, email)) || job;
 }

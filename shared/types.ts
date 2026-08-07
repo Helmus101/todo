@@ -367,6 +367,10 @@ export interface TaskStep {
    *  The client shows it inline with `options` as tappable answers + a free-text input; answering runs the step. */
   question?: string;
   options?: string[];   // 2-4 likely answers, best inference first (tap-to-answer MCQ)
+  /** ISO date (YYYY-MM-DD) this step should land by — set only for a big IB project broken into milestones
+   *  (Extended Essay, TOK, CAS, an IA, a group project), never for an ordinary short task. Lets the sweep
+   *  detect a slipped milestone and re-plan the remaining ones deterministically (see `replanMilestones`). */
+  targetDate?: string;
 }
 
 /** A reviewed message/invite the agent prepared (a Gmail draft / a composed Slack message / a calendar event
