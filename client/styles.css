@@ -437,11 +437,17 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-modal-x.nested { top: 12px; right: 12px; }
 
 @media (max-width: 640px) {
-  .task-modal-overlay { padding: 0; align-items: stretch; overflow-x: hidden; }
+  /* `100%`/the fixed overlay's own box only matches the LAYOUT viewport, not the VISIBLE one — on iOS
+     Safari the address bar collapses/expands as you scroll, so the real visible screen height changes
+     while the overlay's height (and thus the modal's `min-height: 100%` below) stays pinned to whatever
+     it was on open. That's exactly what produced the reported bug: background peeking around the modal
+     mid-scroll, gone once the toolbar settles. `100dvh` tracks the actual visible viewport continuously;
+     unsupported browsers just ignore it and keep the `inset: 0` sizing above. */
+  .task-modal-overlay { padding: 0; align-items: stretch; overflow-x: hidden; height: 100dvh; }
   /* Full-bleed on a phone — pad for the notch/Dynamic Island and the home-indicator bar so the ✕ button
      and the last row of content never sit under either (standalone PWA has no browser chrome to absorb it). */
   .task-modal {
-    max-width: none; border-radius: 0; min-height: 100%;
+    max-width: none; border-radius: 0; min-height: 100%; min-height: 100dvh;
     padding-top: calc(8px + env(safe-area-inset-top));
     padding-bottom: calc(20px + env(safe-area-inset-bottom));
     padding-left: calc(20px + env(safe-area-inset-left));
