@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useContext, createContext, type Dispatch, type SetStateAction, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { WebTask, ConnectionStatus, Profile, TaskStep, TaskFlashcards } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
@@ -875,8 +876,16 @@ export function App() {
   );
 }
 
-/** Modal shell for the task detail — backdrop-click, ✕, and Esc all close; locks body scroll while open. */
-function TaskModal({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+/** Modal shell for the task detail — backdrop-click, ✕, and Esc all close; locks body scroll while open.
+ *  `nested`: this is a popup opened FROM WITHIN an already-open TaskModal (a brief/flashcard deck opened
+ *  from the task detail) — it renders as a smaller centered card over the primary modal instead of also
+ *  going full-bleed, and always via a PORTAL to `document.body`. The portal isn't cosmetic: the primary
+ *  modal's own open/close animation (`modalPop`/`modalOut`) animates `transform`, and per the CSS spec any
+ *  animated `transform` makes that element the containing block for `position: fixed` descendants — so
+ *  without a portal, a nested modal's `inset: 0` was resolving against the OUTER modal's box, not the real
+ *  viewport (it rendered pinned to the top of the outer card instead of centered on screen). Portaling both
+ *  modals to `<body>` sidesteps that entirely, for every popup, not just nested ones. */
+function TaskModal({ onClose, children, nested }: { onClose: () => void; children: ReactNode; nested?: boolean }) {
   // Closing used to unmount instantly (a hard cut, no exit motion) while opening got a full pop-in —
   // asymmetric and the one modal-close moment in the app that read as unpolished. Mirror the entrance:
   // play a quick close animation, THEN unmount (matches the CSS durations below exactly).
@@ -908,13 +917,14 @@ function TaskModal({ onClose, children }: { onClose: () => void; children: React
       window.scrollTo(0, scrollY);
     };
   }, [doClose]);
-  return (
-    <div className={`task-modal-overlay ${closing ? "closing" : ""}`} onClick={doClose} role="dialog" aria-modal="true">
-      <div className={`task-modal ${closing ? "closing" : ""}`} onClick={(e) => e.stopPropagation()}>
-        <button className="task-modal-x" onClick={doClose} aria-label="Close">✕</button>
+  return createPortal(
+    <div className={`task-modal-overlay ${nested ? "nested" : ""} ${closing ? "closing" : ""}`} onClick={doClose} role="dialog" aria-modal="true">
+      <div className={`task-modal ${nested ? "nested" : ""} ${closing ? "closing" : ""}`} onClick={(e) => e.stopPropagation()}>
+        <button className={`task-modal-x ${nested ? "nested" : ""}`} onClick={doClose} aria-label="Close">✕</button>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2502,7 +2512,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
             const n = task.notes?.find((x) => x.id === openNote);
             if (!n) return null;
             return (
-              <TaskModal onClose={() => setOpenNote(null)}>
+              <TaskModal onClose={() => setOpenNote(null)} nested={inModal}>
                 <div className="note-popup">
                   <h3 className="note-popup-title">{n.title}</h3>
                   <div className="note-popup-body">{renderNoteBody(n.body)}</div>
@@ -2514,7 +2524,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
             const f = task.flashcards?.find((x) => x.id === openDeck);
             if (!f) return null;
             return (
-              <TaskModal onClose={() => setOpenDeck(null)}>
+              <TaskModal onClose={() => setOpenDeck(null)} nested={inModal}>
                 <FlashcardDeck deck={f} />
               </TaskModal>
             );

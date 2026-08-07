@@ -10,7 +10,10 @@ export interface WorkloadItem {
   title: string;
   effort: number;
   taskId?: string;
-  /** A task with no hard Pronote-sourced deadline — safe to nudge onto a lighter day. */
+  /** True only for a task with NO stated deadline at all — safe to nudge onto a lighter day. A task that
+   *  states ANY deadline (even one this heuristic can't machine-parse, like "vendredi" or "this week") is
+   *  never movable: silently relabeling it away from a real external due date would be actively misleading,
+   *  worse than just not offering the move. */
   movable?: boolean;
 }
 export interface WorkloadDay { date: string; items: WorkloadItem[]; totalEffort: number; }
@@ -68,17 +71,20 @@ export function computeWorkload(input: {
   }
   // An open task with a real, parseable, in-window deadline lands on that day; anything else (soft/no
   // deadline) is treated as "on your plate now" and lands on today, same as the dashboard's active list.
+  // "Stated a deadline" and "we could machine-parse it onto a specific day" are DIFFERENT questions — a
+  // task's `when` is often prose ("vendredi", "this week"), not an ISO date, so Date.parse failing does NOT
+  // mean there's no real deadline; it only means we can't place it precisely. Movability follows the former.
   const todayKey = keys[0];
   for (const task of input.tasks) {
     if (isHandled(task.status)) continue;
+    const hasStatedDeadline = !!task.when?.trim();
     const dueTs = Date.parse(task.when || "");
-    const dueKey = Number.isFinite(dueTs) ? dayOf(task.when!) : "";
-    const hasFixedDue = !!dueKey && keySet.has(dueKey);
-    const key = hasFixedDue ? dueKey : todayKey;
+    const parsedKey = Number.isFinite(dueTs) ? dayOf(task.when!) : "";
+    const key = (parsedKey && keySet.has(parsedKey)) ? parsedKey : todayKey;
     const bucket = byDay.get(key);
     if (!bucket) continue;
     const undone = (task.steps || []).filter((s) => !s.done).length;
-    bucket.push({ kind: "task", title: task.title, effort: Math.max(1, undone), taskId: task.id, movable: !hasFixedDue });
+    bucket.push({ kind: "task", title: task.title, effort: Math.max(1, undone), taskId: task.id, movable: !hasStatedDeadline });
   }
 
   const days: WorkloadDay[] = keys.map((date) => {

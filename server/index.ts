@@ -687,6 +687,11 @@ app.post("/api/tasks/:id/reschedule", requireAuth, async (req, res) => {
   if (!when || Number.isNaN(Date.parse(when))) { res.status(400).json({ error: "a valid date is required" }); return; }
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (!task) { res.status(404).json({ error: "not found" }); return; }
+  // This route only exists for the workload widget's "move to a lighter day" nudge — which only ever
+  // offers it for a task with NO stated deadline (see movable in server/workload.ts). Re-check here too:
+  // a task that already states a real deadline must never have it silently overwritten by a "which day is
+  // lighter" heuristic, whether the client is right or not.
+  if (task.when?.trim()) { res.status(409).json({ error: "This task already has a deadline — it can't be moved." }); return; }
   task.when = when;
   task.updatedAt = new Date().toISOString();
   tasks.applyDeadlineUrgency([task]);

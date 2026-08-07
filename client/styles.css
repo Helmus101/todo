@@ -390,6 +390,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
+/* True vertical centering on desktop — was top-anchored at a fixed 6vh, which read as "stuck to the top"
+   rather than a centered dialog. `safe center` centers a short task normally but falls back to top-aligned
+   (scrollable) instead of clipping the top of a LONG one — plain `center` can't do that; unsupported browsers
+   just ignore this line and keep the flex-start above, so this is purely additive. */
+@media (min-width: 641px) { .task-modal-overlay { align-items: safe center; } }
 .task-modal {
   position: relative; width: 100%; max-width: 640px; background: var(--surface);
   border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-pop);
@@ -415,6 +420,22 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-modal.closing { animation: modalOut 0.16s var(--ease) forwards; }
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes modalOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.99); } }
+/* A note/deck opened FROM an already-open task modal — a popup ON TOP OF a popup, so it always stays a
+   small centered card (never the mobile full-bleed treatment below) and sits visually above the primary
+   modal: a higher z-index, and a second backdrop layer so the primary modal reads as "beneath" it. Every
+   `.nested` selector here is 2 classes, so it beats the mobile block's plain 1-class selectors regardless
+   of viewport/source order, WITHOUT needing !important — but each property the mobile block sets on the
+   plain selector must be explicitly re-set here too (CSS cascades per-property, not per-rule), so nothing
+   from the full-bleed treatment leaks through unset. */
+.task-modal-overlay.nested {
+  z-index: 55; align-items: safe center; padding: 20px 16px; background: rgba(16, 19, 23, 0.55);
+}
+.task-modal.nested {
+  max-width: 480px; border-radius: var(--radius); min-height: 0;
+  padding: 8px 20px 20px;
+}
+.task-modal-x.nested { top: 12px; right: 12px; }
+
 @media (max-width: 640px) {
   .task-modal-overlay { padding: 0; align-items: stretch; overflow-x: hidden; }
   /* Full-bleed on a phone — pad for the notch/Dynamic Island and the home-indicator bar so the ✕ button

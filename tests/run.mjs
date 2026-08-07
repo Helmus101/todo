@@ -538,6 +538,17 @@ check("lightestDay excludes the given date and picks the lowest-effort remaining
 const wlOutside = computeWorkload({ homework: [{ id: "h2", subject: "SES", description: "x", deadline: wlIso(20), done: false }], tests: [], tasks: [], now: WL_NOW });
 check("items past the 7-day window are dropped", wlOutside.days.every((d) => d.items.length === 0));
 
+// Regression: a task's `when` is often prose ("vendredi", "this week"), not an ISO date — Date.parse
+// failing on it must NOT be read as "no deadline". A task that states ANY deadline, parseable or not,
+// must never be offered as movable (silently relabeling it away from a real due date would mislead).
+const wlProseDeadline = computeWorkload({
+  homework: [], tests: [],
+  tasks: [{ id: "task2", title: "Rendre le devoir de SES", when: "vendredi", status: "ready", steps: [] }],
+  now: WL_NOW,
+});
+const proseItem = wlProseDeadline.days[0].items.find((it) => it.taskId === "task2");
+check("a task with an unparseable-but-real deadline is NOT movable", proseItem?.movable === false);
+
 // ── Track-aware prompt vocabulary (IB / BFI) ──────────────────────────────────
 section("trackLine vocabulary");
 check("ib mentions CAS/IA vocabulary", /CAS/.test(trackLine({ track: "ib" })) && /IA/.test(trackLine({ track: "ib" })));
