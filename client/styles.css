@@ -443,7 +443,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
      it was on open. That's exactly what produced the reported bug: background peeking around the modal
      mid-scroll, gone once the toolbar settles. `100dvh` tracks the actual visible viewport continuously;
      unsupported browsers just ignore it and keep the `inset: 0` sizing above. */
-  .task-modal-overlay { padding: 0; align-items: stretch; overflow-x: hidden; height: 100dvh; }
+  /* `backdrop-filter: blur()` on a `position: fixed` overlay that's ALSO the scroll container for tall,
+     momentum-scrolled content is a known WebKit/Chromium compositing bug: mid-scroll, a stale blurred frame
+     of whatever was behind it gets left composited underneath the new frame, reading as a ghostly duplicate
+     of the page bleeding through. Full-bleed on mobile there's nothing left behind the modal to blur anyway
+     (it covers the whole screen), so just drop it here instead of fighting the compositor for a look nobody
+     sees. `transform: translateZ(0)` pins the overlay to its own GPU layer so it repaints cleanly on scroll. */
+  .task-modal-overlay { padding: 0; align-items: stretch; overflow-x: hidden; height: 100dvh; backdrop-filter: none; -webkit-backdrop-filter: none; transform: translateZ(0); }
   /* Full-bleed on a phone — pad for the notch/Dynamic Island and the home-indicator bar so the ✕ button
      and the last row of content never sit under either (standalone PWA has no browser chrome to absorb it). */
   .task-modal {

@@ -863,7 +863,8 @@ export function App() {
                   onToggle={() => navigate("")}
                   onChange={setTasks}
                   onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
-                  onConfirmed={(id) => { flagJustDone(id); navigate(""); }}
+                  onConfirmed={flagJustDone}
+                  onLeft={() => navigate("")}
                   onNotify={notify}
                 />
               </TaskModal>
@@ -2082,7 +2083,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
   );
 }
 
-function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onNotify, inModal, isNew }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean; isNew?: boolean }) {
+function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onLeft, onNotify, inModal, isNew }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean; isNew?: boolean }) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
   const [running, setRunning] = useState(false);
@@ -2161,6 +2162,8 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
     if (kind === "confirm") onConfirmed?.(task.id); // flags the row it lands on in "Completed" for a beat, so
     // finishing something has a visible destination instead of just vanishing from the list.
     onChange(list);
+    onLeft?.(task.id); // when open in the task modal, both finishing AND dismissing should close the
+    // popup and drop you back on the list — there's nothing left to look at either way.
   };
   // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
   const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
