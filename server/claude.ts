@@ -343,7 +343,12 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // budget below must therefore fit reasoning + the actual structured output. `reserve()` gives a generous
 // headroom so the model never runs out mid-JSON; it caps waste, it doesn't force spend (the model emits
 // only the reasoning it needs). If a future non-reasoning model is used, these caps are simply never hit.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 800, chat: 500 } as const;
+// `chat` was 500 — DeepSeek v4 is a REASONING model (its internal reasoning tokens count against
+// max_tokens, same failure mode already fixed elsewhere for task generation): a low cap lets the
+// reasoning pass alone consume the whole budget before any visible reply is emitted, leaving
+// `message.content` empty and silently returning chatAboutTask's generic fallback ("I'm here — what
+// part of this is giving you trouble?") on EVERY message, not just when the model was actually stuck.
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 800, chat: 2000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
