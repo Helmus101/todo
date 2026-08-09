@@ -35,6 +35,8 @@
   --radius: 14px;
   --radius-sm: 9px;
   --shadow-pop: 0 8px 30px rgba(16, 19, 23, 0.12); /* overlays/modals only */
+  --shadow-card: 0 1px 2px rgba(16, 19, 23, 0.04), 0 1px 1px rgba(16, 19, 23, 0.03);
+  --shadow-card-hover: 0 14px 28px rgba(16, 19, 23, 0.10), 0 3px 8px rgba(16, 19, 23, 0.06);
   --display: "Archivo Expanded", "Archivo", "Helvetica Neue", Arial, sans-serif; /* headings / wordmark — 600/700 */
   --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; /* machine output: counts, spend, state */
@@ -49,6 +51,8 @@
     --line: #262B33; --line-soft: rgba(255, 255, 255, 0.06);
     --accent: #5C79FF; --accent-hover: #7089FF; --accent-soft: rgba(92, 121, 255, 0.14); --bg-2: #1B1F26;
     --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.5);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-card-hover: 0 16px 32px rgba(0, 0, 0, 0.5), 0 3px 10px rgba(0, 0, 0, 0.35);
   }
 }
 
@@ -258,7 +262,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .week-item-test { background: var(--accent); }
 .week-item-homework { background: var(--ink-3); }
 .week-item-task { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
-.list-head { font-family: var(--display); font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; animation: rise 0.5s var(--ease) backwards; }
+.list-head { font-family: var(--display); font-size: 44px; font-weight: 750; letter-spacing: -0.03em; line-height: 1.05; animation: rise 0.5s var(--ease) backwards; }
 .list-head span { color: var(--ink); }
 /* The count/number in the greeting reads as the one "alive" element on the page — a soft cobalt gradient,
    the same restrained wow-without-a-second-color trick the hero title's <em> already uses. */
@@ -326,17 +330,34 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .addrow .addinput { flex: 1; }
 .grade-num { flex: none !important; width: 84px; }
 
-/* ─── Task list — flat, borderless checklist; rows separated by hairlines only ─ */
+/* ─── Task list — elevated cards, not a flat checklist ──────────────────────
+   Redesigned from the original flat/borderless/hairline-divided list: each task is now its own raised
+   surface (border + soft shadow), spaced by a gap instead of a divider, that lifts further on hover —
+   an intentional replacement of the earlier "flat list, no per-row stagger" design, not a regression. */
 .list {
   background: transparent;
   border: none;
   border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.card { position: relative; animation: cardIn 0.28s var(--ease) backwards; }
-.card + .card { border-top: 1px solid var(--line-soft); }
-/* All rows fade in TOGETHER (no per-row stagger) — the list appears as one, not piecemeal. */
-.list.settled .card { animation-duration: 0.18s; }
-@keyframes cardIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  animation: cardIn 0.45s var(--ease) backwards;
+  /* Staggered entrance, capped so a long list doesn't leave the last rows waiting ages to appear. */
+  animation-delay: min(calc(var(--i, 0) * 45ms), 300ms);
+  transition: box-shadow 240ms var(--ease), transform 240ms var(--ease), border-color 240ms var(--ease);
+}
+.card:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-3px); }
+/* Once the list has shown once, later re-renders replay faster and without the stagger — it's an update,
+   not a fresh reveal. */
+.list.settled .card { animation-duration: 0.18s; animation-delay: 0s; }
+@keyframes cardIn { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
 /* Closing a task used to fade/slide the row out, then SNAP the gap shut the instant it left the DOM —
    the rows below jumped up instead of gliding. Collapsing max-height (+ overflow:hidden, scoped to just
    these terminal states so it never clips the open detail view) in the tail of the same animation makes
@@ -511,9 +532,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card.is-done { opacity: 0.5; }
 .card.is-done:hover { opacity: 0.8; }
 
-/* Status dot — the row's single glance-state signal. */
+/* Status dot — the row's single glance-state signal. Repositioned inward now that the card has its own
+   border/padding (was 2px/24px against the old flush-left flat row). */
 .card::before {
-  content: ""; position: absolute; left: 2px; top: 24px;
+  content: ""; position: absolute; left: 14px; top: 26px;
   width: 8px; height: 8px; border-radius: 50%;
   background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); /* ready = hairline ring */
 }
@@ -522,8 +544,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card.is-done::before { background: var(--ink-3); box-shadow: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.card-main { display: flex; align-items: center; gap: 14px; padding: 22px 8px 22px 26px; cursor: pointer; min-height: 58px; border-radius: 10px; transition: background 120ms var(--ease), transform 120ms var(--ease), box-shadow 200ms var(--ease); }
-.card-main:hover { background: rgba(0, 0, 0, 0.022); box-shadow: 0 1px 0 var(--line-soft); transform: translateX(2px); }
+/* The card itself now lifts + gains shadow on hover (see .card:hover) — card-main no longer needs its own
+   background tint/translateX, that was the flat-row-era hover cue before the card had any elevation of its own. */
+.card-main { display: flex; align-items: center; gap: 14px; padding: 22px 18px 22px 34px; cursor: pointer; min-height: 58px; border-radius: var(--radius); }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
    response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
    device (mouse) keeps the existing hover-only feel; this only kicks in where hover doesn't exist. */
@@ -542,7 +565,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card-check.checked:hover { transform: none; }
 .card-check:disabled { cursor: default; }
 .card-text { flex: 1; min-width: 0; }
-.card-title { font-size: 15.5px; font-weight: 560; letter-spacing: -0.01em; line-height: 1.4; }
+.card-title { font-size: 16.5px; font-weight: 620; letter-spacing: -0.015em; line-height: 1.4; }
 /* Unread marker — a fresh task the user hasn't opened yet. Disappears permanently the moment they open it
    (see App()'s seenTasks tracking), same "you've seen this" semantics as an unread-email dot. */
 .new-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 7px; vertical-align: middle; flex: none; }
@@ -777,7 +800,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 /* ─── Settings — flat, minimalist; sections divided by whitespace + a hairline ─ */
 .settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; animation: pageIn 0.32s var(--ease) backwards; }
-.settings-title { font-family: var(--display); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+.settings-title { font-family: var(--display); font-size: 38px; font-weight: 750; letter-spacing: -0.03em; margin-bottom: 16px; }
 .settings { display: flex; flex-direction: column; }
 .settings-sec { padding: 26px 0; border-top: 1px solid var(--line-soft); }
 .settings-sec:first-of-type { border-top: none; padding-top: 20px; }
@@ -1170,7 +1193,7 @@ label.set-row { cursor: pointer; }
 .list-focus-wrap { display: flex; flex-direction: column; gap: 40px; }
 .focus-group { display: flex; flex-direction: column; gap: 10px; }
 .focus-group-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
-.focus-title { font-family: var(--display); font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-2); }
+.focus-title { font-family: var(--display); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-2); }
 .focus-badge { font-family: var(--mono); font-size: 11px; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 12px; font-weight: 500; }
 .show-more-btn { margin-top: 8px; width: 100%; justify-content: center; }
 

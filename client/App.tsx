@@ -782,10 +782,11 @@ export function App() {
                     <span className="focus-badge">Top {focusToday.length}</span>
                   </div>
                   <div className="list">
-                    {focusToday.map((t) => (
+                    {focusToday.map((t, i) => (
                       <Card
                         key={t.id}
                         task={t}
+                        index={i}
                         retrying={retryingIds.includes(t.id)}
                         isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                         open={false}
@@ -805,10 +806,11 @@ export function App() {
                       <span className="focus-title">{en ? "Later" : "Plus tard"}</span>
                     </div>
                     <div className="list">
-                      {laterToday.map((t) => (
+                      {laterToday.map((t, i) => (
                         <Card
                           key={t.id}
                           task={t}
+                          index={i}
                           retrying={retryingIds.includes(t.id)}
                           isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                           open={false}
@@ -835,10 +837,11 @@ export function App() {
                           <span className="focus-title">{en ? "Can wait" : "Peut attendre"}</span>
                         </div>
                         <div className="list">
-                          {canWait.map((t) => (
+                          {canWait.map((t, i) => (
                             <Card
                               key={t.id}
                               task={t}
+                              index={i}
                               retrying={retryingIds.includes(t.id)}
                               isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                               open={false}
@@ -2116,7 +2119,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
   );
 }
 
-function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onLeft, onNotify, inModal, isNew }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean; isNew?: boolean }) {
+function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onLeft, onNotify, inModal, isNew, index }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean; isNew?: boolean; index?: number }) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
   const [running, setRunning] = useState(false);
@@ -2296,7 +2299,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
     (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
   const chip = !isDone ? statusChip(task, retrying, cardEn) : null;
   return (
-    <div ref={cardRef} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
+    <div ref={cardRef} style={index !== undefined ? { ["--i" as any]: index } : undefined} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
       <div className="card-main" onClick={inModal ? undefined : onToggle} style={inModal ? { cursor: "default" } : undefined}>
         {/* Direct check-off, like a normal to-do list — no need to open the task first. Still one deliberate
             click (not automatic): it fires the same confirm as "Looks good" inside the detail view. */}
