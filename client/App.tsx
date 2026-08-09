@@ -4,6 +4,24 @@ import type { WebTask, ConnectionStatus, Profile, TaskStep, TaskFlashcards } fro
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 
+/** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
+ *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
+ *  styles.css). Originally inline in the marketing Landing page; pulled out so the same premium-feel
+ *  entrance can be reused across the real app (Settings, the dashboard's own sections) without copying the
+ *  IntersectionObserver wiring. Respects prefers-reduced-motion (reveals everything immediately, no motion). */
+function useReveal(deps: readonly unknown[] = []) {
+  useEffect(() => {
+    const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) { document.querySelectorAll(".reveal").forEach((el) => el.classList.add("in")); return; }
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+    }, { threshold: 0.18, rootMargin: "0px 0px -8% 0px" });
+    document.querySelectorAll(".reveal:not(.in)").forEach((el) => io.observe(el));
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
 // Profile). `L(fr, en)` picks the right string for whichever language is active — used everywhere instead of
 // hardcoding French so switching the toggle changes the WHOLE interface, not just AI-generated content.
@@ -942,11 +960,12 @@ function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
   const en = lang === "en";
   const [tests, setTests] = useState<{ subject: string; deadline: string }[] | null>(null);
   useEffect(() => { void api.pronoteTests().then((r) => setTests(r.tests)).catch(() => setTests([])); }, []);
+  useReveal([tests]); // this whole strip only exists once tests load, so re-scan then, not just on mount
   if (!tests?.length) return null;
   const sorted = [...tests].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline)).slice(0, 8);
   const daysLeft = (iso: string) => Math.ceil((Date.parse(iso) - Date.now()) / 86_400_000);
   return (
-    <div className="exam-strip-wrap">
+    <div className="exam-strip-wrap reveal">
       <div className="exam-strip-label">{en ? "Upcoming tests" : "Contrôles à venir"}</div>
       <div className="exam-strip">
         {sorted.map((t, i) => {
@@ -980,6 +999,7 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   const [moving, setMoving] = useState<string | null>(null);
   const load = useCallback(() => { void api.workload().then((r) => setDays(r.days)).catch(() => setDays([])); }, []);
   useEffect(() => { load(); }, [load]);
+  useReveal([days]); // the widget only mounts once workload data arrives, so re-scan then, not just on mount
   if (!days || days.every((d) => d.items.length === 0)) return null;
 
   const max = Math.max(1, ...days.map((d) => d.totalEffort));
@@ -1011,7 +1031,7 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   };
 
   return (
-    <div className="week-load-wrap">
+    <div className="week-load-wrap reveal">
       <div className="exam-strip-label">{en ? "This week" : "Cette semaine"}</div>
       <div className="week-load-strip">
         {days.map((d) => {
@@ -1242,12 +1262,13 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
   const changeGen = (n: number) => { setGenPerDay(n); void api.setProfilePreference("genPerDay", n).then(() => onChanged()); };
   // Month-to-date AI spend vs. the cap — both computed server-side (EUR, approximate; for visibility + the cap).
   const fmtEur = (n: number) => n <= 0 ? "0€" : n < 0.01 ? "< 0,01€" : `${n.toFixed(2).replace(".", ",")}€`;
+  useReveal(); // fades each settings section in on first paint (see `.reveal` in styles.css)
 
   return (
     <main className="settings-page">
       <h1 className="settings-title">{L("Réglages", "Settings")}</h1>
 
-      <section className="settings-sec">
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0s" }}>
         <h3>{L("Compte", "Account")}</h3>
         <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
         {/* French parents care about RGPD more than the AI-spend number itself — show both, but privacy first. */}
@@ -1275,7 +1296,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         </div>
       </section>
 
-      <section className="settings-sec">
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
         <h3>{L("Sources", "Sources")}</h3>
         {/* Otto Lycée v1: France high-school only, scoped to Pronote + Gmail/Calendar/Drive (GOOGLE_LYCEE_APPS)
             — the rest of Composio (GitHub/Slack/Notion/Linear/…) stays hidden entirely, not just
@@ -1287,7 +1308,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <GoogleTiles onChanged={onChanged} />
       </section>
 
-      <section className="settings-sec">
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.12s" }}>
         <h3>{L("Préférences", "Preferences")}</h3>
         <div className="set-list">
           <label className="set-row">
@@ -1310,13 +1331,13 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         </div>
       </section>
 
-      <section className="settings-sec">
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
         <h3>{L("Tes notes", "Your grades")}</h3>
         <p className="settings-hint">{L("Aide Otto à voir quelle matière a vraiment besoin d'attention, pas juste ce qui est dû bientôt.", "Helps Otto see which subject actually needs attention, not just what's due soonest.")}</p>
         <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} />
       </section>
 
-      <section className="settings-sec">
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.24s" }}>
         <button className="sec-toggle" onClick={() => setShowKnows((v) => !v)}>
           <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
           <span className={`caret ${showKnows ? "open" : ""}`}>›</span>
@@ -1735,15 +1756,7 @@ function Landing() {
   const [typed, setTyped] = useState("");
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // Scroll-reveal: each .reveal element animates in the first time it enters the viewport.
-  useEffect(() => {
-    if (reduced) { document.querySelectorAll(".reveal").forEach((el) => el.classList.add("in")); return; }
-    const io = new IntersectionObserver((entries) => {
-      for (const e of entries) if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
-    }, { threshold: 0.18, rootMargin: "0px 0px -8% 0px" });
-    document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, [reduced]);
+  useReveal();
 
   // Live typewriter in the hero demo — types the draft out, then holds. (Full text immediately if reduced-motion.)
   useEffect(() => {

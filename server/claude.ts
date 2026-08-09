@@ -799,7 +799,14 @@ export async function classifyCandidates(
     `on Friday"), never phrase it as already studied. If their profile lists a LOW grade in this subject, push ` +
     `importance/urgency higher and earlier than the deadline alone would justify — a weak subject needs more ` +
     `lead time, not the same runway as one they're already doing well in. Skip FYIs, receipts, automated mail, and anything already on ` +
-    `their list. USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank ` +
+    `their list.\n` +
+    `NEWSLETTERS & PROMOTIONAL EMAIL — HARD EXCLUSION: NEVER create a task to reply to, respond to, or otherwise ` +
+    `engage with a newsletter, marketing/promotional email, automated digest, or bulk/no-reply sender — a sender ` +
+    `containing "noreply"/"no-reply"/"newsletter"/"marketing"/"updates@"/"news@", an unsubscribe footer, or a ` +
+    `Gmail promotions/social label are all signals of this. This holds even if it asks a question, has a ` +
+    `"reply"/"take our survey" call-to-action, or looks personalized (a school's mass newsletter addressed ` +
+    `"Dear Willem" is still mass mail) — it is still not a real to-do. Skip it entirely, no matter how it's worded.\n` +
+    `USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank ` +
     `HIGHER (importance ≥ 0.7); things their preferences deprioritize rank lower or get skipped. Quality over ` +
     `quantity — the handful that matter. ALWAYS include: a direct question or request from a real person awaiting ` +
     `their reply; a SENT-BY-USER commitment ("I'll send/do/call…") with no later fulfilment visible; an event in ` +
