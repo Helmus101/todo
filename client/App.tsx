@@ -531,6 +531,12 @@ export function App() {
     try {
       const { tasks: fresh, note: serverNote } = await api.generate();
       setTasks((prev) => keepLocalHandled(prev, retryFlags(fresh))); setLoaded(true);
+      // "sweep running: ..." means a sweep is genuinely still mid-flight (another tab, cron, or this
+      // account's one-active-sweep idempotency lock) — NOT a failure. Surfacing it as "Sweep didn't finish"
+      // read as broken when nothing actually is; the honest thing is to say nothing and let it keep going —
+      // its result lands on the next sync/kick same as always. Also skip the lastgen stamp so THIS device
+      // retries again shortly instead of believing today's sweep already happened.
+      if (/^sweep running:/.test(serverNote)) return;
       // A skipped sweep must say WHY (e.g. "nothing connected") — never look like a quiet all-clear.
       if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, status?.language === "en"), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
@@ -601,14 +607,20 @@ export function App() {
       const before = new Set(tasks.map((t) => t.id));
       const { tasks: t, note: serverNote } = await api.generate(true);
       setTasks((prev) => keepLocalHandled(prev, t)); setLoaded(true);
+      const stillRunning = /^sweep running:/.test(serverNote); // a concurrent sweep is already mid-flight — not a failure
       // A manual Refresh counts as a sweep — reset the watch interval so the background one doesn't repeat it.
-      try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
+      // Skip that when a sweep is still running: THIS click didn't actually get a result, so let the watch
+      // interval try again soon instead of believing a sweep already completed.
+      if (!stillRunning) { try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ } }
       // Run summary — honest, specific feedback on what the sweep did (the trust-building layer).
       // A SKIPPED sweep says why (nothing connected / paused) instead of masquerading as "no new tasks".
       const fresh = t.filter((x) => !before.has(x.id) && !isHandled(x.status));
       const queuedN = fresh.filter((x) => isInFlight(x.status)).length;
       const needsYou = t.filter((x) => canonStatus(x.status) === "needs_review" && (x.steps?.some((s) => !s.done && !s.automatable) || x.sendables?.some((s) => !s.sent))).length;
-      if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, status?.language === "en"), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
+      // "Still running" isn't broken — a sweep is genuinely mid-flight elsewhere (another tab, cron). Say so
+      // gently rather than "Sweep didn't finish", which reads as an error when nothing's actually wrong.
+      if (stillRunning) notify(status?.language === "en" ? "Still checking — hang on a moment." : "Vérification en cours — patiente un instant.");
+      else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, status?.language === "en"), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
       else if (!t.length) notify("Nothing found — nothing actionable in your recent inbox + calendar right now.");
       else if (!fresh.length) notify(`Swept your apps — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything actionable is already on your list"}.`);
       else notify(`Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} queued to run` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`);

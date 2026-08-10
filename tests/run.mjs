@@ -556,6 +556,18 @@ const wlProseDeadline = computeWorkload({
 const proseItem = wlProseDeadline.days[0].items.find((it) => it.taskId === "task2");
 check("a task with an unparseable-but-real deadline is NOT movable", proseItem?.movable === false);
 
+// Regression: /api/tasks/:id/reschedule ("move to a lighter day") writes a bare "YYYY-MM-DD" — that string
+// already unambiguously names a local calendar day and must be used AS the bucket key directly. Re-parsing
+// it as an instant (Date.parse → UTC midnight) and re-projecting into a timezone WEST of UTC rolls it back
+// to the previous day, so a task "moved to the 8th" landed back on the 7th for e.g. US timezones.
+const wlTz = computeWorkload({
+  homework: [], tests: [],
+  tasks: [{ id: "task3", title: "Moved task", when: "2026-08-08", status: "ready", steps: [] }],
+  now: WL_NOW, timezone: "America/Los_Angeles",
+});
+check("a bare YYYY-MM-DD reschedule date lands on that exact day, not the day before", wlTz.days[3]?.date === "2026-08-08" && wlTz.days[3].items.some((it) => it.taskId === "task3"));
+check("...and NOT on the previous day (the timezone round-trip bug)", !wlTz.days[2]?.items.some((it) => it.taskId === "task3"));
+
 // ── Track-aware prompt vocabulary (IB / BFI) ──────────────────────────────────
 section("trackLine vocabulary");
 check("ib mentions CAS/IA vocabulary", /CAS/.test(trackLine({ track: "ib" })) && /IA/.test(trackLine({ track: "ib" })));

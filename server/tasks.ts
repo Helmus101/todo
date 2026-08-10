@@ -433,7 +433,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         const knownAnchors = existing.map((t) => t.anchorKey);
         const candidates = filterCandidates(items, knownAnchors);
         const classified = candidates.length
-          ? await classifyCandidates(candidates, profile, active.map((a) => a.title))
+          ? await classifyCandidates(candidates, profile, active.map((a) => a.title), handled.map((h) => h.title))
           : { tasks: [], profileUpdates: [] as ProfileUpdate[] };
         addUsage(profile, (classified as { tokens?: { in: number; out: number } }).tokens);
         // The classification pass also LEARNS: durable facts these items revealed (a key person, an
@@ -452,7 +452,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         // only when there ARE candidates to choose from. The forced pick still folds through dedupe.
         let result = folded;
         if (newCards === 0 && candidates.length && forcedDueToday(profile)) {
-          const one = await pickOneTask(candidates, profile, active.map((a) => a.title));
+          const one = await pickOneTask(candidates, profile, active.map((a) => a.title), handled.map((h) => h.title));
           if (one) {
             addUsage(profile, one.tokens);
             profile.lastForcedAt = new Date().toISOString();

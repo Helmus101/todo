@@ -687,6 +687,10 @@ app.post("/api/tasks/:id/reschedule", requireAuth, async (req, res) => {
   if (!when || Number.isNaN(Date.parse(when))) { res.status(400).json({ error: "a valid date is required" }); return; }
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (!task) { res.status(404).json({ error: "not found" }); return; }
+  // The workload widget only ever offers this for a LIVE task (computeWorkload skips handled ones entirely)
+  // — but re-check server-side rather than trusting the client: a done/dismissed task has nothing left to
+  // move, and silently re-dating one would make it look active again.
+  if (isHandled(task.status)) { res.status(409).json({ error: "This task is already done or dismissed — nothing to move." }); return; }
   // This route only exists for the workload widget's "move to a lighter day" nudge — which only ever
   // offers it for a task with NO stated deadline (see movable in server/workload.ts). Re-check here too:
   // a task that already states a real deadline must never have it silently overwritten by a "which day is

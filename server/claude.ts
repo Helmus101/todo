@@ -772,11 +772,18 @@ export async function classifyCandidates(
   items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string }[],
   profile?: Profile,
   activeTitles?: string[],
+  handledTitles?: string[],
 ): Promise<GenerationResult> {
   if (!items.length) return { tasks: [], profileUpdates: [] };
   const list = items.slice(0, 30).map((it, i) =>
     `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}${it.labels.includes("shared") ? "/SHARED-WITH-USER" : ""}${it.labels.includes("assigned") ? "/ASSIGNED-TO-USER" : ""}${it.labels.includes("review-requested") ? "/REVIEW-REQUESTED" : ""}${it.labels.includes("test") ? "/TEST" : ""}${it.labels.includes("homework") ? "/HOMEWORK" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `\nALREADY ON THEIR LIST (skip anything covering these):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
+  // filterCandidates (discover.ts) already drops any candidate whose ANCHOR exactly matches a done/dismissed
+  // task, so an unchanged email/event never gets re-classified. This catches what that can't: a genuinely
+  // NEW anchor (a new message, a reworded ask) that's really the SAME underlying obligation the student
+  // already explicitly said no to. A dismissal is a preference signal, not a one-time skip — without this,
+  // "reply to the same recurring request" kept resurfacing as a fresh-looking task every sweep.
+  const handledBlock = handledTitles?.length ? `\nALREADY DISMISSED/DONE — do NOT recreate a task for these, or anything that's really the same underlying ask reworded (same sender's request, same recurring thing):\n${handledTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
   const sys =
     languageLine(profile) + trackLine(profile) +
     `This is for a STUDENT'S to-do list — Otto is their companion, not a do-it-all; a task should name a real ` +
@@ -842,7 +849,7 @@ export async function classifyCandidates(
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: sys },
-        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` + (extra ? `\n\n${extra}` : "") },
+        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + handledBlock + `\nCANDIDATES:\n${list}` + (extra ? `\n\n${extra}` : "") },
       ],
     }));
     const u = usageOf(res); tokIn += u.in; tokOut += u.out; tokCached += u.cachedIn;
@@ -915,11 +922,13 @@ export async function pickOneTask(
   items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string }[],
   profile?: Profile,
   activeTitles?: string[],
+  handledTitles?: string[],
 ): Promise<{ task: GeneratedTask; tokens: { in: number; out: number; cachedIn?: number } } | null> {
   if (!items.length) return null;
   const list = items.slice(0, 30).map((it, i) =>
     `#${i} [${it.sourceApp}${it.labels.includes("sent") ? "/SENT-BY-USER" : ""}] from:"${it.sender || "?"}" when:"${it.timestamp || "?"}" title:"${it.title}" body:"${it.snippet}"`).join("\n");
   const activeBlock = activeTitles?.length ? `\nAlready on their list (pick something DIFFERENT):\n${activeTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
+  const handledBlock = handledTitles?.length ? `\nAlready dismissed/done (do NOT pick these or the same ask reworded):\n${handledTitles.slice(0, 30).map((t) => `- ${t}`).join("\n")}\n` : "";
   const sys =
     languageLine(profile) + trackLine(profile) +
     `This is for a STUDENT — Otto is their companion, not a do-it-all; pick a real next action THEY take.\n` +
@@ -941,7 +950,7 @@ export async function pickOneTask(
       model: actualModel, max_tokens: OUT.pick, temperature: 0.2, response_format: { type: "json_object" },
       messages: [
         { role: "system", content: sys },
-        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + `\nCANDIDATES:\n${list}` },
+        { role: "user", content: nowBlock() + profileBlock(profile) + activeBlock + handledBlock + `\nCANDIDATES:\n${list}` },
       ],
     }));
     const tokens = usageOf(res);

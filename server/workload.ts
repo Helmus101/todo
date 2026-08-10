@@ -75,11 +75,19 @@ export function computeWorkload(input: {
   // task's `when` is often prose ("vendredi", "this week"), not an ISO date, so Date.parse failing does NOT
   // mean there's no real deadline; it only means we can't place it precisely. Movability follows the former.
   const todayKey = keys[0];
+  // A bare "YYYY-MM-DD" (exactly what /api/tasks/:id/reschedule writes when you move a task to a lighter
+  // day) already unambiguously names a local calendar day — it must be used AS the key directly, not
+  // re-parsed through dayOf(). Date.parse("2026-08-12") reads it as UTC MIDNIGHT, and dayOf() then re-projects
+  // that instant into the student's own timezone — for any timezone behind UTC that rolls it back to the
+  // PREVIOUS day. A task moved to "the 12th" was landing back on the 11th for e.g. US timezones (no bug for
+  // CET/CEST, which is why this went unnoticed for a Paris-based test account).
+  const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
   for (const task of input.tasks) {
     if (isHandled(task.status)) continue;
     const hasStatedDeadline = !!task.when?.trim();
+    const bareKey = task.when && BARE_DATE.test(task.when) ? task.when : "";
     const dueTs = Date.parse(task.when || "");
-    const parsedKey = Number.isFinite(dueTs) ? dayOf(task.when!) : "";
+    const parsedKey = bareKey || (Number.isFinite(dueTs) ? dayOf(task.when!) : "");
     const key = (parsedKey && keySet.has(parsedKey)) ? parsedKey : todayKey;
     const bucket = byDay.get(key);
     if (!bucket) continue;
