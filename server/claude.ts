@@ -348,7 +348,11 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // reasoning pass alone consume the whole budget before any visible reply is emitted, leaving
 // `message.content` empty and silently returning chatAboutTask's generic fallback ("I'm here — what
 // part of this is giving you trouble?") on EVERY message, not just when the model was actually stuck.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 800, chat: 2000 } as const;
+// `plan` was 800 — same reasoning-token risk class as the `chat` fix above: planResearch already
+// falls back to an empty query list on any parse failure, so a truncation here degrades silently
+// (the research loop just improvises live instead of following a planned query list) rather than
+// producing a visible bug — but it's still worth closing before it causes one.
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 2000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;

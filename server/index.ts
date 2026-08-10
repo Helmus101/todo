@@ -609,7 +609,7 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
 
 // These return the FULL task list (client filters out done/dismissed for display) — so the dashboard's
 // "handled" count + the deep-link "already handled" fallback keep working after a confirm/dismiss.
-app.post("/api/tasks/:id/confirm", requireAuth, async (req, res) => {
+app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
@@ -637,7 +637,7 @@ app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => {
   }
   res.json(req.session.tasks || []);
 });
-app.post("/api/tasks/:id/dismiss", requireAuth, async (req, res) => {
+app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
@@ -661,7 +661,7 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), a
   await runViaJob(req, res, "execute_step", { index: Number(req.params.index), ...(answer ? { answer } : {}) });
 });
 // Mark a step done/undone (a manual step the user did, or after the client opened a URL step).
-app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
+app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
   const index = Number(req.params.index);
   const done = req.body?.done !== false;
@@ -681,7 +681,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, async (req, res) => {
 // student picks the day, Otto just relabels the task's own `when` and re-scores it, same deadline-urgency
 // math every other task already goes through (tasks.applyDeadlineUrgency). Only meant for tasks with a
 // soft/inferred `when` — a task with a real Pronote-sourced deadline isn't something to reschedule here.
-app.post("/api/tasks/:id/reschedule", requireAuth, async (req, res) => {
+app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
   const when = String(req.body?.when || "").trim();
   if (!when || Number.isNaN(Date.parse(when))) { res.status(400).json({ error: "a valid date is required" }); return; }
@@ -704,7 +704,10 @@ app.post("/api/tasks/:id/reschedule", requireAuth, async (req, res) => {
 });
 
 // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
-app.post("/api/tasks/:id/send/:index", requireAuth, async (req, res) => {
+// The one route in the app with a real, irreversible EXTERNAL side effect per call (an actual email/message
+// leaves the student's real account) — rate-limited so a compromised session or a buggy client retry loop
+// can't spam-send, unlike this session's other task-mutation routes which are just local state.
+app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   const s = t?.sendables?.[Number(req.params.index)];
   if (!t || !s) { res.status(404).json({ error: "not found" }); return; }

@@ -672,7 +672,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     const priorArtifactIds = (task.artifacts || []).map((a) => a.id);
     const withArtifacts = extras?.withAllowedArtifacts && priorArtifactIds.length ? extras.withAllowedArtifacts(priorArtifactIds) : extras;
     const scoped = withArtifacts ? scopeTools(withArtifacts, task) : undefined;
-    if (extras && scoped) console.log(`[tasks] run "${task.title.slice(0, 40)}": ${scoped.tools.length}/${extras.tools.length} tools after scoping`);
+    if (extras && scoped) console.log(`${new Date().toISOString()} [tasks] run "${task.title.slice(0, 40)}": ${scoped.tools.length}/${extras.tools.length} tools after scoping`);
     const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts }, profile, focus, scoped, academic);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);

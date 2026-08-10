@@ -54,7 +54,7 @@ create table if not exists weave_web_jobs (
   id uuid primary key default gen_random_uuid(),
   user_email text not null,
   task_id text,
-  type text not null,                       -- sweep | execute_task | execute_step | revise
+  type text not null,                       -- sweep | execute_task | execute_step | revise | send_briefing
   status text not null default 'queued',    -- queued | running | succeeded | failed_retryable | failed_terminal | cancelled
   attempt_count int not null default 0,
   max_attempts int not null default 3,
@@ -80,7 +80,9 @@ create table if not exists weave_web_job_events (
   user_email text not null,
   task_id text,
   job_id uuid,
-  kind text not null,                        -- queued | run_started | run_succeeded | run_failed | sweep_done | sent | confirmed | dismissed | …
+  kind text not null,                        -- queued | run_started | run_succeeded | run_failed | step_started | step_done |
+                                              -- found | learned | refined | reconciled | verified | artifact_dropped |
+                                              -- sent | confirmed | dismissed | briefing_sent | smoke_test | …
   message text,
   at timestamptz not null default now()
 );

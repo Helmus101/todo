@@ -692,6 +692,12 @@ export function App() {
   const handled = completed.length;
   const unseenCount = live.filter((t) => !seenTasks.has(t.id)).length;
   const en = status?.language === "en";
+  // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
+  // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
+  // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
+  const focusToday = live.slice(0, 3);
+  const laterToday = live.slice(3, 6);
+  const canWait = live.slice(6);
 
   return (
     <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
@@ -723,8 +729,6 @@ export function App() {
               {scanning && <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification en cours…"}</span>}
             </div>
           </div>
-          {status.pronoteConnected && <ExamCountdown lang={status.language} />}
-          <WeekLoad lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
           {note && (
             <div className={`toast ${noteKind}`} role="status" aria-live="polite">
               <span className="toast-msg">{note}</span>
@@ -751,74 +755,42 @@ export function App() {
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
           )}
-          <AddTask onAdded={setTasks} />
-          {/* If a deep link points at a task that's already handled (not in the live list), surface it so the URL still resolves. */}
-          {(() => {
-            // A deep-linked task (even a completed one) opens in the modal below, so the live list is just
-            // the live tasks — no need to inject the opened id here anymore.
-            const shown = live;
-            // Until the first server response, an empty list means "still loading", not "all clear" —
-            // show the skeleton instead of flashing the empty state.
-            if (shown.length === 0 && (busy || !loaded)) return <TaskSkeleton />;
-            if (shown.length === 0) {
-              const who = status.name || firstName(status.user);
-              // First run (nothing ever completed) reads differently from a genuinely cleared list.
-              // (The refresh summary / "nothing found" now shows in the toast above, visible with or
-              // without cards — so the empty state always shows its own contextual message here.)
-              if (handled === 0) return (
-                <div className="empty-state">
-                  <div className="empty-mark"><Logo size={28} /></div>
-                  <h3>{en ? `Otto is watching your Pronote${who ? `, ${who}` : ""}` : `Otto surveille ton Pronote${who ? `, ${who}` : ""}`}</h3>
-                  <p>{en ? "It reads your homework and tests. New tasks arrive automatically — or check right now." : "Il lit tes devoirs et contrôles. De nouvelles tâches arrivent automatiquement — ou lance une vérification maintenant."}</p>
-                  <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Searching…" : "Recherche…") : (en ? "Check now" : "Vérifier maintenant")}</button>
-                </div>
-              );
-              return (
-                <div className="empty-state">
-                  <div className="empty-mark done"><span className="empty-check">✓</span></div>
-                  <h3>{en ? `All caught up${who ? `, ${who}` : ""}` : `Tout est à jour${who ? `, ${who}` : ""}`}</h3>
-                  <p>{en ? "Nothing waiting for you right now. Otto keeps watching your Pronote." : "Rien ne t'attend pour l'instant. Otto continue de surveiller ton Pronote."}</p>
-                </div>
-              );
-            }
-            // Grouped by focus to eliminate overwhelm: Top 3 as "Focus Today", followed by "Later" and "Can wait".
-            const focusToday = shown.slice(0, 3);
-            const laterToday = shown.slice(3, 6);
-            const canWait = shown.slice(6);
+          {/* Two-zone dashboard: Today (dash-today) is the main event — on mobile it comes right after
+              Add task, ahead of the rail widgets, DOM order alone gives the right mobile stacking. On
+              desktop (≥1024px) dash-grid places dash-rail beside dash-today+dash-more instead, sticky,
+              so the workload/exam/milestone widgets stay ambient context, never blocking the task list. */}
+          <div className="dash-grid">
+            <div className="dash-addtask"><AddTask onAdded={setTasks} /></div>
 
-            return (
-              <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                <div className="focus-group">
-                  <div className="focus-group-head">
-                    <span className="focus-title">{en ? "Today" : "Aujourd'hui"}</span>
-                    <span className="focus-badge">Top {focusToday.length}</span>
+            <div className="dash-today">
+              {/* Until the first server response, an empty list means "still loading", not "all clear" —
+                  show the skeleton instead of flashing the empty state. */}
+              {live.length === 0 && (busy || !loaded) ? <TaskSkeleton /> : live.length === 0 ? (() => {
+                const who = status.name || firstName(status.user);
+                // First run (nothing ever completed) reads differently from a genuinely cleared list.
+                return handled === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-mark"><Logo size={28} /></div>
+                    <h3>{en ? `Otto is watching your Pronote${who ? `, ${who}` : ""}` : `Otto surveille ton Pronote${who ? `, ${who}` : ""}`}</h3>
+                    <p>{en ? "It reads your homework and tests. New tasks arrive automatically — or check right now." : "Il lit tes devoirs et contrôles. De nouvelles tâches arrivent automatiquement — ou lance une vérification maintenant."}</p>
+                    <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Searching…" : "Recherche…") : (en ? "Check now" : "Vérifier maintenant")}</button>
                   </div>
-                  <div className="list">
-                    {focusToday.map((t, i) => (
-                      <Card
-                        key={t.id}
-                        task={t}
-                        index={i}
-                        retrying={retryingIds.includes(t.id)}
-                        isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
-                        open={false}
-                        onToggle={() => navigate(`task/${t.id}`)}
-                        onChange={setTasks}
-                        onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
-                        onConfirmed={flagJustDone}
-                        onNotify={notify}
-                      />
-                    ))}
+                ) : (
+                  <div className="empty-state">
+                    <div className="empty-mark done"><span className="empty-check">✓</span></div>
+                    <h3>{en ? `All caught up${who ? `, ${who}` : ""}` : `Tout est à jour${who ? `, ${who}` : ""}`}</h3>
+                    <p>{en ? "Nothing waiting for you right now. Otto keeps watching your Pronote." : "Rien ne t'attend pour l'instant. Otto continue de surveiller ton Pronote."}</p>
                   </div>
-                </div>
-
-                {laterToday.length > 0 && (
+                );
+              })() : (
+                <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
                   <div className="focus-group">
                     <div className="focus-group-head">
-                      <span className="focus-title">{en ? "Later" : "Plus tard"}</span>
+                      <span className="focus-title">{en ? "Today" : "Aujourd'hui"}</span>
+                      <span className="focus-badge">Top {focusToday.length}</span>
                     </div>
                     <div className="list">
-                      {laterToday.map((t, i) => (
+                      {focusToday.map((t, i) => (
                         <Card
                           key={t.id}
                           task={t}
@@ -835,59 +807,96 @@ export function App() {
                       ))}
                     </div>
                   </div>
-                )}
-
-                {canWait.length > 0 && (
-                  <div className="focus-group">
-                    {!showAllTasks ? (
-                      <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
-                        {en ? `See ${canWait.length} more task${canWait.length > 1 ? "s" : ""} for later…` : `Voir ${canWait.length} tâche${canWait.length > 1 ? "s" : ""} de plus pour plus tard…`}
-                      </button>
-                    ) : (
-                      <>
-                        <div className="focus-group-head">
-                          <span className="focus-title">{en ? "Can wait" : "Peut attendre"}</span>
-                        </div>
-                        <div className="list">
-                          {canWait.map((t, i) => (
-                            <Card
-                              key={t.id}
-                              task={t}
-                              index={i}
-                              retrying={retryingIds.includes(t.id)}
-                              isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
-                              open={false}
-                              onToggle={() => navigate(`task/${t.id}`)}
-                              onChange={setTasks}
-                              onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
-                              onConfirmed={flagJustDone}
-                              onNotify={notify}
-                            />
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-          {completed.length > 0 && (
-            <div className="completed-section">
-              <h3 className="completed-head">{en ? "Completed" : "Terminées"}</h3>
-              {/* Minimalist done-list: checked rows like a to-do app, not full cards. Click to expand details. */}
-              <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
-                <div key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
-                  <span className="done-check">✓</span>
-                  <span className="done-title">{t.title}</span>
-                  <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
                 </div>
-              ))}</div>
-              {completed.length > 8 && !showCompleted && (
-                <button className="btn xs ghost" onClick={() => setShowCompleted(true)}>{en ? `Show all ${completed.length}` : `Tout afficher (${completed.length})`}</button>
               )}
             </div>
-          )}
+
+            <div className="dash-rail">
+              <Milestones tasks={live} />
+              {status.pronoteConnected && <ExamCountdown lang={status.language} />}
+              <WeekLoad lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
+            </div>
+
+            <div className="dash-more">
+              {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
+                <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
+                  {laterToday.length > 0 && (
+                    <div className="focus-group">
+                      <div className="focus-group-head">
+                        <span className="focus-title">{en ? "Later" : "Plus tard"}</span>
+                      </div>
+                      <div className="list">
+                        {laterToday.map((t, i) => (
+                          <Card
+                            key={t.id}
+                            task={t}
+                            index={i}
+                            retrying={retryingIds.includes(t.id)}
+                            isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
+                            open={false}
+                            onToggle={() => navigate(`task/${t.id}`)}
+                            onChange={setTasks}
+                            onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                            onConfirmed={flagJustDone}
+                            onNotify={notify}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {canWait.length > 0 && (
+                    <div className="focus-group">
+                      {!showAllTasks ? (
+                        <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
+                          {en ? `See ${canWait.length} more task${canWait.length > 1 ? "s" : ""} for later…` : `Voir ${canWait.length} tâche${canWait.length > 1 ? "s" : ""} de plus pour plus tard…`}
+                        </button>
+                      ) : (
+                        <>
+                          <div className="focus-group-head">
+                            <span className="focus-title">{en ? "Can wait" : "Peut attendre"}</span>
+                          </div>
+                          <div className="list">
+                            {canWait.map((t, i) => (
+                              <Card
+                                key={t.id}
+                                task={t}
+                                index={i}
+                                retrying={retryingIds.includes(t.id)}
+                                isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
+                                open={false}
+                                onToggle={() => navigate(`task/${t.id}`)}
+                                onChange={setTasks}
+                                onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                                onConfirmed={flagJustDone}
+                                onNotify={notify}
+                              />
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+              {completed.length > 0 && (
+                <div className="completed-section">
+                  <h3 className="completed-head">{en ? "Completed" : "Terminées"}</h3>
+                  {/* Minimalist done-list: checked rows like a to-do app, not full cards. Click to expand details. */}
+                  <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
+                    <div key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
+                      <span className="done-check">✓</span>
+                      <span className="done-title">{t.title}</span>
+                      <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
+                    </div>
+                  ))}</div>
+                  {completed.length > 8 && !showCompleted && (
+                    <button className="btn xs ghost" onClick={() => setShowCompleted(true)}>{en ? `Show all ${completed.length}` : `Tout afficher (${completed.length})`}</button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
           {/* Task detail opens as a modal over the list — click a row (live or completed) to open it. */}
           {(() => {
             const openTask = openId ? tasks.find((t) => t.id === openId) : null;
@@ -965,6 +974,36 @@ function TaskModal({ onClose, children, nested }: { onClose: () => void; childre
       </div>
     </div>,
     document.body,
+  );
+}
+
+/** The IB "big project" milestone breakdown (Extended Essay/TOK/CAS/IA — see isBigIbProject in
+ *  server/claude.ts) surfaced at DASHBOARD level, not just as a badge buried inside one task's step
+ *  list. Entirely client-derived from tasks already in state — no fetch, no server endpoint — so it's
+ *  a silent no-op for a BFI/other-track student (their tasks simply never have `targetDate` steps). */
+function Milestones({ tasks }: { tasks: WebTask[] }) {
+  const L = useLang();
+  const items = tasks
+    .flatMap((t) => (t.steps || [])
+      .filter((s) => !s.done && s.targetDate)
+      .map((s) => ({ taskId: t.id, taskTitle: t.title, text: s.text, targetDate: s.targetDate! })))
+    .sort((a, b) => a.targetDate.localeCompare(b.targetDate))
+    .slice(0, 5);
+  useReveal([items.length]);
+  if (!items.length) return null;
+  return (
+    <div className="milestone-wrap reveal">
+      <div className="exam-strip-label">{L("Prochains jalons", "Upcoming milestones")}</div>
+      <div className="milestone-list">
+        {items.map((it, i) => (
+          <div key={i} className="milestone-chip">
+            <span className="milestone-date">{fmtDate(it.targetDate)}</span>
+            <span className="milestone-text">{it.text}</span>
+            <span className="milestone-task">{it.taskTitle}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1145,6 +1184,30 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
 /** Working-hours + calendar-auto-block controls — shared between Settings and Onboarding so the same
  *  question/UI isn't built twice. Renders bare rows (no wrapping section) so it drops into either
  *  container's own `.set-list`/step markup. `onChanged` receives the fresh profile after each save. */
+/** Track (IB/BFI/Other) used to be one row among many in PreferencesFields — but it's a student-
+ *  identity decision (which vocabulary Otto uses, and whether the milestone breakdown for big
+ *  projects even exists for this account), not a toggle-tier preference. Pulled out into its own
+ *  leading Settings section so it's the first thing under the page title, not buried mid-list. */
+function TrackSection({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
+  const L = useLang();
+  const [track, setTrack] = useState<"ib" | "bac" | "other" | undefined>(profile?.track);
+  useEffect(() => { setTrack(profile?.track); }, [profile?.track]);
+  const saveTrack = async (v: "ib" | "bac" | "other") => {
+    setTrack(v);
+    onChanged?.(await api.setProfilePreference("track", v));
+  };
+  return (
+    <div className="set-row">
+      <span className="set-text"><span className="settings-hint">{L("Permet à Otto d'utiliser le bon vocabulaire (IA/CAS/EE, ou spécialité/épreuve) et débloque la découpe en jalons pour les grands projets IB.", "Lets Otto use the right vocabulary (IA/CAS/EE, or spécialité/épreuve) and unlocks the milestone breakdown for big IB projects.")}</span></span>
+      <div className="lang-toggle">
+        <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
+        <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>BFI</button>
+        <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
+      </div>
+    </div>
+  );
+}
+
 function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
   const [start, setStart] = useState(profile?.workingHours?.start || "16:00");
   const [end, setEnd] = useState(profile?.workingHours?.end || "19:00");
@@ -1169,12 +1232,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     setLang(v);
     onChanged?.(await api.setProfilePreference("language", v));
   };
-  const [track, setTrack] = useState<"ib" | "bac" | "other" | undefined>(profile?.track);
-  useEffect(() => { setTrack(profile?.track); }, [profile?.track]);
-  const saveTrack = async (v: "ib" | "bac" | "other") => {
-    setTrack(v);
-    onChanged?.(await api.setProfilePreference("track", v));
-  };
   return (
     <>
       <div className="set-row">
@@ -1182,14 +1239,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         <div className="lang-toggle">
           <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} onClick={() => void saveLang("fr")}>Français</button>
           <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} onClick={() => void saveLang("en")}>English</button>
-        </div>
-      </div>
-      <div className="set-row">
-        <span className="set-text"><b>{lang === "en" ? "Track" : "Filière"}</b><span className="settings-hint">{lang === "en" ? "Lets Otto use the right vocabulary (IA/CAS/EE, or spécialité/épreuve) and unlocks the milestone breakdown for big IB projects." : "Permet à Otto d'utiliser le bon vocabulaire (IA/CAS/EE, ou spécialité/épreuve) et débloque la découpe en jalons pour les grands projets IB."}</span></span>
-        <div className="lang-toggle">
-          <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
-          <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>BFI</button>
-          <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{lang === "en" ? "Other" : "Autre"}</button>
         </div>
       </div>
       <div className="set-row">
@@ -1284,6 +1333,11 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
       <h1 className="settings-title">{L("Réglages", "Settings")}</h1>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0s" }}>
+        <h3>{L("Filière", "Track")}</h3>
+        <TrackSection profile={profile} onChanged={setProfile} />
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
         <h3>{L("Compte", "Account")}</h3>
         <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
         {/* French parents care about RGPD more than the AI-spend number itself — show both, but privacy first. */}
@@ -1311,7 +1365,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         </div>
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.12s" }}>
         <h3>{L("Sources", "Sources")}</h3>
         {/* Otto Lycée v1: France high-school only, scoped to Pronote + Gmail/Calendar/Drive (GOOGLE_LYCEE_APPS)
             — the rest of Composio (GitHub/Slack/Notion/Linear/…) stays hidden entirely, not just
@@ -1323,7 +1377,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <GoogleTiles onChanged={onChanged} />
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.12s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
         <h3>{L("Préférences", "Preferences")}</h3>
         <div className="set-list">
           <label className="set-row">
@@ -1346,13 +1400,13 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         </div>
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.24s" }}>
         <h3>{L("Tes notes", "Your grades")}</h3>
         <p className="settings-hint">{L("Aide Otto à voir quelle matière a vraiment besoin d'attention, pas juste ce qui est dû bientôt.", "Helps Otto see which subject actually needs attention, not just what's due soonest.")}</p>
         <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} />
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.24s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.30s" }}>
         <button className="sec-toggle" onClick={() => setShowKnows((v) => !v)}>
           <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
           <span className={`caret ${showKnows ? "open" : ""}`}>›</span>
@@ -2493,6 +2547,25 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           {steps.length > 0 && (
           <section>
             <h4>{L("Ce qu'il reste à faire", "What's left")}{openableCount >= 2 && <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>{L(`Tout ouvrir (${openableCount}) ↗`, `Open all (${openableCount}) ↗`)}</button>}</h4>
+              {/* A big IB project (Extended Essay/TOK/CAS/IA — see isBigIbProject in server/claude.ts)
+                  gets a milestone stepper instead of just relying on the plain checklist below: each
+                  segment is one milestone, so progress through a months-long project reads at a glance
+                  instead of being just another line in a step list. Omitted entirely for an ordinary
+                  task (no step ever has targetDate outside a big project). */}
+              {steps.some((s) => s.targetDate) && (
+                <div className="milestone-bar" role="list">
+                  {steps.filter((s) => s.targetDate).map((s, i, arr) => {
+                    const doneIdx = arr.reduce((n, x) => n + (x.done ? 1 : 0), 0);
+                    const state = s.done ? "done" : i === doneIdx ? "current" : "upcoming";
+                    return (
+                      <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate)}` : ""}`}>
+                        <span className="milestone-segment-bar" />
+                        <span className="milestone-segment-label">{s.text}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <ul className="steps">
                 {steps.map((s, i) => {
                   const blk = blocked(s);

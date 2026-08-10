@@ -215,6 +215,44 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
 .list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; animation: pageIn 0.32s var(--ease) backwards; }
 .dash-head { margin-bottom: 36px; }
+
+/* ─── Two-zone dashboard ──────────────────────────────────────────────────────
+   Otto's promise is "panic → 3 clear tasks for today" — Today must never sit behind the workload/
+   exam/milestone widgets. Below 1024px this is a single flex column and DOM order alone gives the
+   right stacking (add-task, Today, the rail widgets, then Later/Can wait/Completed) — no JS toggle
+   needed. At 1024px+ it becomes a real two-column grid: Today (+Later/Completed below it) stays the
+   main column, the widgets move into a sticky right rail so they're always-visible ambient context
+   instead of blocking the task list above the fold. */
+.dash-grid { display: flex; flex-direction: column; }
+.dash-addtask { margin-bottom: 28px; }
+.dash-rail { display: flex; flex-direction: column; gap: 28px; margin: 4px 0 28px; }
+.dash-more { margin-top: 8px; }
+@media (min-width: 1024px) {
+  .list-wrap { max-width: 1320px; }
+  .dash-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    column-gap: 44px;
+    row-gap: 0;
+    align-items: start;
+  }
+  .dash-addtask { grid-column: 1; grid-row: 1; }
+  .dash-today { grid-column: 1; grid-row: 2; }
+  .dash-more { grid-column: 1; grid-row: 3; }
+  .dash-rail {
+    grid-column: 2; grid-row: 1 / 4;
+    position: sticky; top: 88px;
+    margin: 0;
+  }
+  /* Chip strips make sense on a narrow phone (swipe sideways); in a 340px sticky column they read
+     better stacked vertically, one full-width row per item — same components/data, layout only. */
+  .dash-rail .exam-strip-wrap, .dash-rail .week-load-wrap, .dash-rail .milestone-wrap { margin: 0; }
+  .dash-rail .exam-strip, .dash-rail .milestone-list { flex-direction: column; overflow-x: visible; padding-bottom: 0; }
+  .dash-rail .exam-chip { min-width: 0; border-left-width: 3px; }
+  .dash-rail .week-load-strip { flex-direction: column; gap: 6px; }
+  .dash-rail .week-day { flex-direction: row; justify-content: space-between; padding: 8px 12px; }
+  .dash-rail .week-day-bar-track { display: none; } /* the bar chart's visual comparison only works side-by-side; a vertical rail shows the count instead */
+}
 .exam-strip-wrap { margin: -16px 0 28px; }
 .exam-strip-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; }
 .exam-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
@@ -229,6 +267,21 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .exam-chip.soon .exam-days { color: var(--accent); }
 .exam-subject { font-size: 13px; font-weight: 550; color: var(--ink); margin-top: 2px; }
 .exam-when { font-size: 11px; color: var(--ink-3); text-transform: capitalize; }
+
+/* ─── IB milestone widget — dashboard-level surface for the big-project breakdown (Extended Essay/
+   TOK/CAS/IA), previously only visible as a small badge once a task was already open. Same chip
+   language as the exam strip so it reads as part of the same "ambient context" family. */
+.milestone-wrap { margin: 0 0 28px; }
+.milestone-list { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
+.milestone-chip {
+  flex: none; display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; border: 1px solid var(--line);
+  border-left: 3px solid var(--accent); border-radius: var(--radius-sm); background: var(--surface); min-width: 160px; max-width: 220px;
+  transition: transform 120ms var(--ease);
+}
+.milestone-chip:hover { transform: translateY(-1px); }
+.milestone-date { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; font-weight: 700; color: var(--accent); }
+.milestone-text { font-size: 13px; font-weight: 550; color: var(--ink); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.milestone-task { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ─── This-week workload strip — deterministic, no AI; 7 day-bars sized by relative effort ─────────── */
 .week-load-wrap { margin: 0 0 28px; }
@@ -354,6 +407,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   transition: box-shadow 240ms var(--ease), transform 240ms var(--ease), border-color 240ms var(--ease);
 }
 .card:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-3px); }
+/* "Today" is the main event of the whole app — it must unmistakably outweigh Later/Can wait/
+   Completed below it, not just be the first section of a longer list. Scoped by container
+   (`.dash-today`) rather than a Card prop — same card, just more visual weight where it's the hero. */
+.dash-today .card-main { padding: 26px 22px 26px 38px; }
+.dash-today .card-title { font-size: 17.5px; }
+.dash-today .card::before { left: 16px; top: 30px; width: 9px; height: 9px; }
 /* Once the list has shown once, later re-renders replay faster and without the stagger — it's an update,
    not a fresh reveal. */
 .list.settled .card { animation-duration: 0.18s; animation-delay: 0s; }
@@ -672,6 +731,17 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .inline-link { display: inline-flex; align-items: center; font-weight: 550; color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 4px; text-decoration: none; }
 .inline-link:hover { text-decoration: underline; }
 
+/* Milestone stepper — a big IB project's targetDate steps, shown as a segmented progress bar above
+   the regular checklist. Completed segments read as "done" (graphite), the CURRENT one (first undone)
+   in cobalt — the app's one "needs you" signal — everything after it a quiet upcoming hairline. */
+.milestone-bar { display: flex; gap: 4px; margin: 4px 0 16px; }
+.milestone-segment { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.milestone-segment-bar { display: block; height: 4px; border-radius: 2px; background: var(--line); }
+.milestone-segment.done .milestone-segment-bar { background: var(--ink-3); }
+.milestone-segment.current .milestone-segment-bar { background: var(--accent); }
+.milestone-segment-label { font-size: 10.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.milestone-segment.current .milestone-segment-label { color: var(--accent); font-weight: 600; }
+
 /* Steps */
 .steps { list-style: none; }
 .step { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; font-size: 14px; line-height: 1.5; }
@@ -800,10 +870,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 /* ─── Settings — flat, minimalist; sections divided by whitespace + a hairline ─ */
 .settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; animation: pageIn 0.32s var(--ease) backwards; }
+@media (min-width: 1024px) { .settings-page { max-width: 680px; } } /* a touch more room now each section is its own bordered card, not a divider-separated block */
 .settings-title { font-family: var(--display); font-size: 38px; font-weight: 750; letter-spacing: -0.03em; margin-bottom: 16px; }
 .settings { display: flex; flex-direction: column; }
-.settings-sec { padding: 26px 0; border-top: 1px solid var(--line-soft); }
-.settings-sec:first-of-type { border-top: none; padding-top: 20px; }
+/* Each section is now its own elevated card — the same surface/border/shadow language the task list
+   cards use — instead of divider-separated blocks directly on the page background. Extends the
+   already-shipped card system rather than inventing a second one. */
+.settings-sec {
+  padding: 24px 26px; margin-bottom: 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-card);
+}
 .settings-sec h2 { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 12px; }
 .settings-sec h3 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); margin: 0 0 14px; }
 .settings-hint { font-size: 12.5px; color: var(--ink-2); line-height: 1.55; margin-bottom: 6px; }
