@@ -1978,17 +1978,26 @@ async function writeStepsFromContext(
               `unrelated tangents. The context above may mention OTHER people/threads/obligations that came up ` +
               `during research but aren't actually part of this task (a different person's invitation, an ` +
               `unrelated message to someone else) — DO NOT turn those into steps just because they're in the ` +
-              `context; only steps that move "${task.title}" itself forward belong here.\n\n` +
-              `Return ONLY this JSON: {"steps": [{"text": "...", "automatable": false}, ...]} — 1 to 6 steps.`),
+              `context; only steps that move "${task.title}" itself forward belong here. Order them; set ` +
+              `"dependsOn" to an earlier step's index (0-based, in THIS list) when one must happen first — e.g. ` +
+              `an automatable step that's blocked until the user makes a call on an earlier step.\n\n` +
+              `Return ONLY this JSON: {"steps": [{"text": "...", "automatable": false, "dependsOn": 0}, ...]} — ` +
+              `1 to 6 steps, omit "dependsOn" when a step doesn't wait on another.`),
       }],
     }));
-    const out = firstJson<{ steps?: { text?: string; automatable?: boolean; targetDate?: string }[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const out = firstJson<{ steps?: { text?: string; automatable?: boolean; targetDate?: string; dependsOn?: number }[] }>(String(res.choices?.[0]?.message?.content || ""));
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-    const steps = (out?.steps || [])
-      .map((s) => ({
+    const rawSteps = out?.steps || [];
+    const steps = rawSteps
+      .map((s, idx) => ({
         text: String(s?.text || "").trim().slice(0, 180),
         automatable: bigProject ? false : !!s?.automatable,
         ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
+        // Same validation as finalize()'s dependsOn handling — must point at a REAL other step in
+        // THIS (possibly reordered/re-worded) list, never dropped silently as it was before this fix.
+        ...(!bigProject && Number.isInteger(s?.dependsOn) && s!.dependsOn! >= 0 && s!.dependsOn! < rawSteps.length && s!.dependsOn !== idx
+          ? { dependsOn: s!.dependsOn }
+          : {}),
       }))
       .filter((s) => s.text)
       .slice(0, bigProject ? 8 : 6);

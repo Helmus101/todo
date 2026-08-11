@@ -231,6 +231,14 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       // DISMISSED task title-suppress a new one. But two ACTIVE same-title cards ARE worth merging (the
       // user shouldn't see visual duplicates), and anchorless tasks (manual/agent-sweep) still title-dedupe.
       if (!!ak && !!kak && kak !== ak && (k.status === "done" || k.status === "dismissed")) return false;
+      // A DONE task with NO real anchor (an evergreen/recurring ask like "study philosophy" that the sweep
+      // re-suggests under a slightly reworded title each time, not tied to one email/event) needs the SAME
+      // looser cross-field match used for dismissed tasks below — the strict nearDup bar above is easily
+      // missed by a reworded title ("17 notions" vs "for the Aug 22 test"), which is exactly how a finished
+      // task was resurfacing under a new name. Anchored done tasks are exempt (handled by the block above —
+      // a genuinely new anchor IS a new real-world item, e.g. next week's report).
+      if (!ak && !kak && k.status === "done" && t.source !== "manual" && k.source !== "manual" &&
+        (looseDup(t.title, k.title) || looseDup(t.title, k.why) || looseDup(t.why, k.title) || (t.source === k.source && looseDup(t.why, k.why)))) return true;
       // A MANUAL task is a deliberate, explicit user action. It must NEVER be suppressed by — or absorbed
       // into — an already-HANDLED (done/dismissed) task: re-typing a to-do you finished or dismissed before
       // is a clear request to do it AGAIN now, not a duplicate to hide. (Two ACTIVE identical manual cards

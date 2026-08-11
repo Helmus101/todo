@@ -690,7 +690,9 @@ export function App() {
   const completed = tasks.filter((t) => t.status === "done").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
-  const unseenCount = live.filter((t) => !seenTasks.has(t.id)).length;
+  // Only count tasks that actually have something to look at — a queued/executing task has no content
+  // yet (opening it just shows a spinner), so it shouldn't inflate the "new" badge with nothing to review.
+  const unseenCount = live.filter((t) => !seenTasks.has(t.id) && !isInFlight(t.status)).length;
   const en = status?.language === "en";
   // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
