@@ -280,6 +280,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .milestone-chip:hover { transform: translateY(-1px); }
 .milestone-date { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; font-weight: 700; color: var(--accent); }
+/* Overdue: emphasis via weight/ink, not a new color — the app stays black/white/grey + one accent (see
+   .chip-bad); a red flag here would be the one place that rule breaks. */
+.milestone-chip.late { border-left-color: var(--ink); background: var(--bg-2); }
+.milestone-chip.late .milestone-date { color: var(--ink); font-weight: 800; }
 .milestone-text { font-size: 13px; font-weight: 550; color: var(--ink); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .milestone-task { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -741,6 +745,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .milestone-segment.current .milestone-segment-bar { background: var(--accent); }
 .milestone-segment-label { font-size: 10.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .milestone-segment.current .milestone-segment-label { color: var(--accent); font-weight: 600; }
+.milestone-segment.late .milestone-segment-bar { background: var(--ink); }
+.milestone-segment.late .milestone-segment-label { color: var(--ink); font-weight: 700; }
 
 /* Steps */
 .steps { list-style: none; }
@@ -899,6 +905,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; min-height: 56px; }
 .set-row + .set-row { border-top: 1px solid var(--line-soft); }
 label.set-row { cursor: pointer; }
+label.set-row.disabled { cursor: default; opacity: 0.55; }
 .set-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .set-text > b { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
 .set-text .settings-hint { margin: 0; }

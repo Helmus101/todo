@@ -308,6 +308,13 @@ async function processSendBriefing(job: store.Job): Promise<string> {
   const email = job.user_email;
   const { profile, list } = await loadUser(email);
   if (!profile.dailyBriefingEnabled) return "skipped: briefing disabled";
+  // Otto Lycée students can be Pronote-only (no Gmail) — the toggle is now hidden client-side without
+  // Gmail connected, but a stale/pre-fix profile could still have it on. Fail with a clear, non-retried
+  // reason instead of the job silently retrying against a Gmail account that will never exist.
+  if (!(await integrations.connectionStatusesCached(email, ["gmail"]))["gmail"]) {
+    void store.recordEvent(email, "briefing_sent", { message: "Skipped: connect Gmail to receive the daily briefing" });
+    return "skipped: no Gmail connected";
+  }
 
   try {
     const briefing = await import("./briefing.ts");

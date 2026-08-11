@@ -12,6 +12,10 @@ export interface BriefingContent {
   }>;
   upcomingRisks: string[];
   taskCount: number;
+  /** Big-project (EE/IA/TOK/CAS) milestones whose targetDate has passed and are still undone — the one
+   *  place a slipping big project actually surfaces proactively, instead of sitting quiet until the
+   *  student happens to open the task. Sorted worst-slip-first so the most urgent nudge leads. */
+  staleMilestones: Array<{ taskTitle: string; text: string; daysLate: number }>;
 }
 
 /** Format tasks into a daily briefing — top 3 priorities + upcoming risks. */
@@ -57,6 +61,22 @@ export function formatBriefing(tasks: WebTask[], profile: Profile, now: Date = n
   // Cap risks at a reasonable number
   const risks = upcomingRisks.slice(0, 5);
 
+  // Big-project milestones (targetDate set — see isBigIbProject in claude.ts) that are PAST due and still
+  // undone. This is the one proactive nudge for "waited til the end" procrastination: the plan itself
+  // (server/milestones.ts's replanMilestones) only shifts the DATE, it never tells the student they're
+  // behind — the briefing is what actually surfaces that, sorted worst-slip-first.
+  const todayKey = now.toISOString().slice(0, 10);
+  const staleMilestones = liveTasks
+    .flatMap((t) => (t.steps || [])
+      .filter((s) => !s.done && s.targetDate && s.targetDate < todayKey)
+      .map((s) => ({
+        taskTitle: t.title,
+        text: s.text,
+        daysLate: Math.max(1, Math.round((now.getTime() - new Date(`${s.targetDate}T00:00:00Z`).getTime()) / 86_400_000)),
+      })))
+    .sort((a, b) => b.daysLate - a.daysLate)
+    .slice(0, 3);
+
   return {
     date: dayFormatter.format(now),
     userName: profile.name,
@@ -68,6 +88,7 @@ export function formatBriefing(tasks: WebTask[], profile: Profile, now: Date = n
     })),
     upcomingRisks: risks.length ? risks : ["None identified"],
     taskCount: liveTasks.length,
+    staleMilestones,
   };
 }
 
@@ -87,6 +108,19 @@ export function briefingHtml(content: BriefingContent): string {
         </div>
       </td>
     </tr>
+  `,
+    )
+    .join("");
+
+  // Escalating tone by lateness — a 1-day slip reads as a nudge, a 7+ day slip reads as urgent. Never
+  // guilt-trippy wording (this is for a student already stressed about the deadline), just honest and direct.
+  const lateWord = (d: number) => (d >= 7 ? "way overdue" : d >= 3 ? "overdue" : "a little late");
+  const staleHtml = content.staleMilestones
+    .map(
+      (m) => `
+    <li style="margin: 8px 0; color: #7f1d1d; font-size: 14px;">
+      <b>${escapeHtml(m.text)}</b> (${escapeHtml(m.taskTitle)}) — ${m.daysLate}d ${lateWord(m.daysLate)}
+    </li>
   `,
     )
     .join("");
@@ -116,6 +150,15 @@ export function briefingHtml(content: BriefingContent): string {
         <h1 style="margin: 0 0 8px 0; font-size: 24px; font-weight: 600; color: #1f2937;">Good morning${content.userName ? ", " + escapeHtml(content.userName) : ""}</h1>
         <p style="margin: 0; color: #6b7280; font-size: 14px;">${escapeHtml(content.date)}</p>
       </div>
+
+      ${content.staleMilestones.length ? `
+      <!-- Stale milestones -->
+      <div style="background-color: #fee2e2; border-left: 4px solid #dc2626; padding: 12px 16px; border-radius: 4px; margin-bottom: 20px;">
+        <h3 style="margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: #7f1d1d; text-transform: uppercase;">⏰ Falling behind</h3>
+        <ul style="margin: 0; padding-left: 20px;">
+          ${staleHtml}
+        </ul>
+      </div>` : ""}
 
       <!-- Priorities -->
       <div style="margin-bottom: 24px;">

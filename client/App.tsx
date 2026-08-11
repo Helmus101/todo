@@ -31,6 +31,10 @@ function useLang(): (fr: string, en: string) => string {
   return (fr: string, en: string) => (lang === "en" ? en : fr);
 }
 
+/** Today as a bare "YYYY-MM-DD" — for comparing against a milestone's targetDate (same bare-string
+ *  convention as server/workload.ts's BARE_DATE check, so this never drifts across a timezone). */
+const todayIso = (): string => new Date().toISOString().slice(0, 10);
+
 /** "Sep 12" — a milestone target date (YYYY-MM-DD), formatted for display. */
 const fmtDate = (iso: string): string => {
   const d = new Date(`${iso}T00:00:00`);
@@ -997,13 +1001,16 @@ function Milestones({ tasks }: { tasks: WebTask[] }) {
     <div className="milestone-wrap reveal">
       <div className="exam-strip-label">{L("Prochains jalons", "Upcoming milestones")}</div>
       <div className="milestone-list">
-        {items.map((it, i) => (
-          <div key={i} className="milestone-chip">
-            <span className="milestone-date">{fmtDate(it.targetDate)}</span>
-            <span className="milestone-text">{it.text}</span>
-            <span className="milestone-task">{it.taskTitle}</span>
-          </div>
-        ))}
+        {items.map((it, i) => {
+          const late = it.targetDate < todayIso();
+          return (
+            <div key={i} className={`milestone-chip ${late ? "late" : ""}`}>
+              <span className="milestone-date">{late ? L("en retard", "overdue") : fmtDate(it.targetDate)}</span>
+              <span className="milestone-text">{it.text}</span>
+              <span className="milestone-task">{it.taskTitle}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1394,9 +1401,13 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
               ))}
             </div>
           </div>
-          <label className="set-row">
-            <span className="set-text"><b>{L("Bilan quotidien", "Daily briefing")}</b><span className="settings-hint">{L("Reçois un email chaque matin avec tes 3 priorités du jour.", "Get an email each morning with your top 3 priorities.")}</span></span>
-            <span className="switch"><input type="checkbox" checked={dailyBriefingEnabled} onChange={(e) => { const v = e.target.checked; setDailyBriefingEnabledLocal(v); void api.setDailyBriefing(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
+          <label className={`set-row ${status.googleConnected ? "" : "disabled"}`}>
+            <span className="set-text"><b>{L("Bilan quotidien", "Daily briefing")}</b><span className="settings-hint">
+              {status.googleConnected
+                ? L("Reçois un email chaque matin avec tes 3 priorités du jour.", "Get an email each morning with your top 3 priorities.")
+                : L("Connecte Gmail dans Sources pour recevoir un email chaque matin — c'est par là que le bilan part.", "Connect Gmail under Sources to get a morning email — that's what the briefing sends through.")}
+            </span></span>
+            <span className="switch"><input type="checkbox" disabled={!status.googleConnected} checked={dailyBriefingEnabled && status.googleConnected} onChange={(e) => { const v = e.target.checked; setDailyBriefingEnabledLocal(v); void api.setDailyBriefing(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
           </label>
           <PreferencesFields profile={profile} onChanged={setProfile} />
         </div>
@@ -2558,9 +2569,10 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                 <div className="milestone-bar" role="list">
                   {steps.filter((s) => s.targetDate).map((s, i, arr) => {
                     const doneIdx = arr.reduce((n, x) => n + (x.done ? 1 : 0), 0);
-                    const state = s.done ? "done" : i === doneIdx ? "current" : "upcoming";
+                    const late = !s.done && s.targetDate! < todayIso();
+                    const state = s.done ? "done" : late ? "late" : i === doneIdx ? "current" : "upcoming";
                     return (
-                      <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate)}` : ""}`}>
+                      <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate)}${late ? ` (${L("en retard", "overdue")})` : ""}` : ""}`}>
                         <span className="milestone-segment-bar" />
                         <span className="milestone-segment-label">{s.text}</span>
                       </div>
