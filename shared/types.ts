@@ -91,9 +91,8 @@ export interface Profile {
   // subject is actually slipping, not just what's due soonest, so a low grade gets more lead time/attention
   // than the deadline alone would suggest. Self-reported, so treated as a signal, not ground truth.
   grades?: { subject: string; grade: number; scale: number; updatedAt: string }[];
-  // Captured once at onboarding — which track this student is on. Not read anywhere yet (both IB and
-  // bac students go through the same Pronote-backed flow today); reserved for track-specific features
-  // (IB's CAS/EE/TOK, bac coefficients) once there's enough signal to justify building them.
+  // Which track this student is on — drives AI vocabulary (isBigIbProject/trackLine in claude.ts) and
+  // unlocks the milestone/big-project breakdown for IB (EE/IA/TOK/CAS). Set from Settings.
   track?: "ib" | "bac" | "other";
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [] }; }

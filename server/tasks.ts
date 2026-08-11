@@ -303,6 +303,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
   return {
     name: p2.name || p1.name,
     about: p2.about || p1.about,
+    track: p2.track || p1.track,
     preferences: dedupeFacts([...(p1.preferences || []), ...(p2.preferences || [])]),
     people: dedupeFacts([...(p1.people || []), ...(p2.people || [])]),
     projects: dedupeFacts([...(p1.projects || []), ...(p2.projects || [])]),
@@ -322,6 +323,12 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
+    confidence: (p1.confidence || p2.confidence) ? { ...p1.confidence, ...p2.confidence } : undefined,
+    confidenceHistory: (p1.confidenceHistory?.length || p2.confidenceHistory?.length)
+      ? [...(p1.confidenceHistory || []), ...(p2.confidenceHistory || [])]
+          .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0))
+          .slice(-100)
+      : undefined,
     dailyBriefingEnabled: p2.dailyBriefingEnabled ?? p1.dailyBriefingEnabled,
     calendarAutoBlock: p2.calendarAutoBlock ?? p1.calendarAutoBlock,
     language: p2.language ?? p1.language,
