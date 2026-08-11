@@ -1339,7 +1339,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <TrackSection profile={profile} onChanged={setProfile} />
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
         <h3>{L("Compte", "Account")}</h3>
         <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
         {/* French parents care about RGPD more than the AI-spend number itself — show both, but privacy first. */}
@@ -1367,7 +1367,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         </div>
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.12s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
         <h3>{L("Sources", "Sources")}</h3>
         {/* Otto Lycée v1: France high-school only, scoped to Pronote + Gmail/Calendar/Drive (GOOGLE_LYCEE_APPS)
             — the rest of Composio (GitHub/Slack/Notion/Linear/…) stays hidden entirely, not just
@@ -1379,7 +1379,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <GoogleTiles onChanged={onChanged} />
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
         <h3>{L("Préférences", "Preferences")}</h3>
         <div className="set-list">
           <label className="set-row">
@@ -1402,13 +1402,13 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         </div>
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.24s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.12s" }}>
         <h3>{L("Tes notes", "Your grades")}</h3>
         <p className="settings-hint">{L("Aide Otto à voir quelle matière a vraiment besoin d'attention, pas juste ce qui est dû bientôt.", "Helps Otto see which subject actually needs attention, not just what's due soonest.")}</p>
         <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} />
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.30s" }}>
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
         <button className="sec-toggle" onClick={() => setShowKnows((v) => !v)}>
           <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
           <span className={`caret ${showKnows ? "open" : ""}`}>›</span>

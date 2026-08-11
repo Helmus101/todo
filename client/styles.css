@@ -1111,7 +1111,10 @@ label.set-row { cursor: pointer; }
 @keyframes floaty { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
 
 /* Scroll-reveal — elements rise + fade the first time they enter view (JS adds .in). */
-.reveal { opacity: 0; transform: translateY(26px); transition: opacity 0.75s var(--ease), transform 0.75s var(--ease); transition-delay: var(--d, 0s); will-change: opacity, transform; }
+/* 0.45s (was 0.75s) — the Settings/dashboard uses of .reveal fire almost immediately on navigation (the
+   content starts above the fold, not a genuine scroll-triggered reveal), so the slower landing-page
+   timing read as the app itself being slow to respond rather than a deliberate entrance. */
+.reveal { opacity: 0; transform: translateY(26px); transition: opacity 0.45s var(--ease), transform 0.45s var(--ease); transition-delay: var(--d, 0s); will-change: opacity, transform; }
 .reveal.in { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) {
   .hero-in { animation: none; }
