@@ -2273,15 +2273,27 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  // The message currently in flight. Without this the student's own message VANISHED the moment they hit
+  // send (the input clears immediately, but the thread only updates once the server responds) — so for the
+  // several seconds a reasoning-model reply takes, the thread showed no trace of what they just asked.
+  const [pendingMsg, setPendingMsg] = useState<string | null>(null);
+  // Replies from a reasoning model routinely take 5-10s. Past that, a silent indicator starts reading as
+  // "it's broken" — so say it's still going rather than let them wonder.
+  const [chatSlow, setChatSlow] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ block: "nearest" }); }, [task.chat?.length, chatSending]);
+  useEffect(() => {
+    if (!chatSending) { setChatSlow(false); return; }
+    const id = setTimeout(() => setChatSlow(true), 6000);
+    return () => clearTimeout(id);
+  }, [chatSending]);
   const sendChat = async () => {
     const message = chatInput.trim();
     if (!message || chatSending) return;
-    setChatInput(""); setChatSending(true); setChatError(null);
+    setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try { const { chat } = await api.chat(task.id, message); onTask({ ...task, chat }); }
     catch (e: any) { setChatError(e?.message || L("Envoi impossible — réessaie.", "Couldn't send that — try again.")); setChatInput(message); }
-    finally { setChatSending(false); }
+    finally { setChatSending(false); setPendingMsg(null); }
   };
   const [leaving, setLeaving] = useState(false);
   const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
@@ -2703,12 +2715,20 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
             <section className="task-chat">
               <h4>{L("Demander à Otto", "Ask Otto")}</h4>
               <div className="chat-thread">
-                {!task.chat?.length ? (
+                {!task.chat?.length && !pendingMsg ? (
                   <p className="muted small">{L("Explique-lui ce qui te bloque et il t'aidera à comprendre — pas à te donner la réponse. Montre-lui ton essai, dis-lui quelle étape te perd, ou demande-lui de réexpliquer autrement.", "Tell it what's blocking you and it'll help you understand — not hand you the answer. Show it your attempt, say which step loses you, or ask it to explain a different way.")}</p>
-                ) : task.chat.map((m, i) => (
+                ) : task.chat?.map((m, i) => (
                   <div key={i} className={`chat-msg chat-${m.role}`}>{m.text}</div>
                 ))}
-                {chatSending ? <div className="chat-msg chat-assistant chat-typing">…</div> : null}
+                {/* Echo the in-flight message immediately (see pendingMsg) so the thread reads like a real
+                    conversation while waiting, instead of swallowing what they just typed. */}
+                {pendingMsg ? <div className="chat-msg chat-user chat-pending">{pendingMsg}</div> : null}
+                {chatSending ? (
+                  <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
+                    <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
+                    {chatSlow && <span className="typing-slow">{L("il réfléchit encore…", "still thinking…")}</span>}
+                  </div>
+                ) : null}
                 <div ref={chatEndRef} />
               </div>
               {chatError ? (

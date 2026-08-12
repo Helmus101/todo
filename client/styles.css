@@ -101,12 +101,14 @@ a { color: var(--accent); text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
 :focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); border-radius: var(--radius-sm); }
 
+/* MOBILE-FIRST: 16px is the base font size because anything smaller makes iOS Safari auto-zoom the whole
+   page on focus — the single most jarring mobile bug in a form-heavy app. Desktop steps down to 14px. */
 input, textarea {
-  font-family: inherit; font-size: 14px; color: var(--ink);
+  font-family: inherit; font-size: 16px; color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 0 12px; height: 40px;
+  padding: 0 12px; height: 44px;
   transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
 }
 input::placeholder, textarea::placeholder { color: var(--ink-3); }
@@ -121,9 +123,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .logo { color: var(--ink); flex: none; } /* ring inherits ink; the consent line inside the mark is always cobalt */
 
 /* ─── Buttons — 3 flat variants: default (secondary), primary, ghost ───────── */
+/* MOBILE-FIRST: 44px is the comfortable touch-target floor, so it's the BASE — desktop opts down to 40px
+   in the `min-width: 641px` block, not the other way round. (Previously the reverse: 40px base with a
+   max-width override, which meant any new control was born desktop-sized and had to be remembered.) */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  height: 40px; padding: 0 16px;
+  height: 44px; padding: 0 16px;
   font-size: 13.5px; font-weight: 550; letter-spacing: -0.005em; color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line);
@@ -146,8 +151,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Destructive confirm ONLY (delete / payment) — vermilion, never a marketing accent. */
 .btn.danger { background: var(--vermilion); border-color: var(--vermilion); color: #fff; }
 .btn.danger:hover { background: #b03d29; border-color: #b03d29; }
-.btn.xs { height: 30px; padding: 0 11px; font-size: 12.5px; border-radius: 9px; }
-.btn.big { height: 46px; padding: 0 22px; font-size: 15px; border-radius: 10px; transition: background 140ms var(--ease), border-color 140ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease); }
+.btn.xs { height: 34px; padding: 0 11px; font-size: 12.5px; border-radius: 9px; }
+.btn.big { height: 48px; padding: 0 22px; font-size: 15px; border-radius: 10px; transition: background 140ms var(--ease), border-color 140ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease); }
 .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(37, 99, 235, 0.28); }
 .btn.primary.big:active { transform: translateY(0); }
 .btn.opt { background: var(--surface); }               /* MCQ option — secondary look */
@@ -184,14 +189,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .app { min-height: 100vh; display: flex; flex-direction: column; }
 .topbar {
   position: sticky; top: 0; z-index: 20;
-  display: flex; align-items: center; gap: 20px;
-  height: 52px; padding: 0 20px;
+  display: flex; align-items: center; gap: 12px;
+  height: 52px; padding: 0 14px;
   /* viewport-fit=cover (index.html) lets iOS draw under the notch/Dynamic Island — clear it here instead
      of leaving a fixed header stuck partway under the status bar. env() is 0 on devices without a notch. */
   padding-top: env(safe-area-inset-top);
   height: calc(52px + env(safe-area-inset-top));
-  padding-left: calc(20px + env(safe-area-inset-left));
-  padding-right: calc(20px + env(safe-area-inset-right));
+  padding-left: calc(14px + env(safe-area-inset-left));
+  padding-right: calc(14px + env(safe-area-inset-right));
   background: var(--bar);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
@@ -219,8 +224,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .ext-chip { font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
-.list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; animation: pageIn 0.32s var(--ease) backwards; }
-.dash-head { margin-bottom: 36px; }
+/* MOBILE-FIRST: 14px gutters are the base (a 375px phone has no room to give away); desktop widens them
+   in the min-width:641px block below. */
+.list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 14px 120px; animation: pageIn 0.32s var(--ease) backwards; }
+.dash-head { margin-bottom: 28px; }
 
 /* ─── Two-zone dashboard ──────────────────────────────────────────────────────
    Otto's promise is "panic → 3 clear tasks for today" — Today must never sit behind the workload/
@@ -325,7 +332,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .week-item-test { background: var(--accent); }
 .week-item-homework { background: var(--ink-3); }
 .week-item-task { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
-.list-head { font-family: var(--display); font-size: 44px; font-weight: 750; letter-spacing: -0.03em; line-height: 1.05; animation: rise 0.5s var(--ease) backwards; }
+/* Fluid from the phone up — a flat 44px display face on a 375px screen pushed "Bonjour, <prénom>." onto
+   three cramped lines and ate the fold before a single task was visible. */
+.list-head { font-family: var(--display); font-size: clamp(28px, 8.5vw, 44px); font-weight: 750; letter-spacing: -0.03em; line-height: 1.06; animation: rise 0.5s var(--ease) backwards; }
 .list-head span { color: var(--ink); }
 /* The count/number in the greeting reads as the one "alive" element on the page — a soft cobalt gradient,
    the same restrained wow-without-a-second-color trick the hero title's <em> already uses. */
@@ -421,7 +430,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .add-task-row:focus-within { border-style: solid; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .add-plus { color: var(--ink-3); font-size: 20px; font-weight: 300; line-height: 1; flex: none; transition: color 160ms var(--ease); }
 .add-task-row:focus-within .add-plus { color: var(--accent); }
-.add-task-input { flex: 1; height: 34px; border: none; background: transparent; padding: 0; font-size: 15.5px; }
+.add-task-input { flex: 1; height: 40px; border: none; background: transparent; padding: 0; font-size: 15.5px; }
 .add-task-input:focus { border: none; box-shadow: none; }
 .add-task-input::placeholder { color: var(--ink-3); }
 .add-when-toggle { color: var(--ink-3); flex: none; }
@@ -458,9 +467,17 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* "Today" is the main event of the whole app — it must unmistakably outweigh Later/Can wait/
    Completed below it, not just be the first section of a longer list. Scoped by container
    (`.dash-today`) rather than a Card prop — same card, just more visual weight where it's the hero. */
-.dash-today .card-main { padding: 26px 22px 26px 38px; }
-.dash-today .card-title { font-size: 17.5px; }
-.dash-today .card::before { left: 16px; top: 30px; width: 9px; height: 9px; }
+/* Mobile-first: the hero boost is a modest bump on a phone (vertical breathing room + type size, where
+   it's actually felt) and only takes the wider insets on a big screen — at the desktop 38px inset a
+   ~375px card had barely any room left for its title. */
+.dash-today .card-main { padding: 22px 14px 22px 30px; }
+.dash-today .card-title { font-size: 16.5px; }
+.dash-today .card::before { left: 12px; top: 26px; width: 9px; height: 9px; }
+@media (min-width: 641px) {
+  .dash-today .card-main { padding: 26px 22px 26px 38px; }
+  .dash-today .card-title { font-size: 17.5px; }
+  .dash-today .card::before { left: 16px; top: 30px; }
+}
 /* Once the list has shown once, later re-renders replay faster and without the stagger — it's an update,
    not a fresh reveal. */
 .list.settled .card { animation-duration: 0.18s; animation-delay: 0s; }
@@ -642,7 +659,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Status dot — the row's single glance-state signal. Repositioned inward now that the card has its own
    border/padding (was 2px/24px against the old flush-left flat row). */
 .card::before {
-  content: ""; position: absolute; left: 14px; top: 26px;
+  content: ""; position: absolute; left: 11px; top: 23px;
   width: 8px; height: 8px; border-radius: 50%;
   background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); /* ready = hairline ring */
 }
@@ -653,11 +670,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 /* The card itself now lifts + gains shadow on hover (see .card:hover) — card-main no longer needs its own
    background tint/translateX, that was the flat-row-era hover cue before the card had any elevation of its own. */
-.card-main { display: flex; align-items: center; gap: 14px; padding: 22px 18px 22px 34px; cursor: pointer; min-height: 58px; border-radius: var(--radius); }
+/* MOBILE-FIRST paddings: the tight phone insets are the base and desktop opens them up below. The old
+   34px left inset (sized for the desktop checkbox) plus the container gutter left very little room for
+   a title on a ~375px screen, forcing extra wrapped lines. */
+.card-main { display: flex; align-items: center; gap: 12px; padding: 18px 14px 18px 28px; cursor: pointer; min-height: 58px; border-radius: var(--radius); }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
    response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
    device (mouse) keeps the existing hover-only feel; this only kicks in where hover doesn't exist. */
-@media (hover: none) { .card-main:active { background: rgba(0, 0, 0, 0.035); transform: scale(0.994); } }
+@media (hover: none) { .card-main:active { background: var(--hover-wash); transform: scale(0.994); } }
 /* The direct check-off control — a normal to-do checkbox. Click fills it and marks the task done in one
    step, no need to open the card first (opening it still works too, via "Looks good"). */
 .card-check {
@@ -707,7 +727,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card.open .caret { transform: rotate(90deg); }
 
 /* ─── Expanded detail ──────────────────────────────────────────────────────── */
-.detail { padding: 2px 6px 18px 26px; }
+.detail { padding: 2px 14px 18px 18px; }
 .detail section { padding: 12px 0; }
 .detail section + section { border-top: 1px solid var(--line-soft); }
 .detail section:first-child { padding-top: 4px; }
@@ -739,7 +759,28 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .chat-msg { font-size: 13.5px; line-height: 1.5; padding: 9px 12px; border-radius: 12px; max-width: 88%; white-space: pre-line; }
 .chat-user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
 .chat-assistant { align-self: flex-start; background: var(--bg-2); color: var(--ink); border-bottom-left-radius: 4px; }
-.chat-typing { opacity: 0.5; }
+/* The in-flight user message sits at slightly reduced opacity until the server confirms it — visibly
+   "sending", not yet part of the saved thread. */
+.chat-pending { opacity: 0.6; }
+/* A real animated typing indicator. The old version was a static "…" glyph at 0.5 opacity, which read as
+   a (very short) actual reply rather than as waiting. */
+.chat-typing { display: flex; align-items: center; gap: 8px; padding: 11px 12px; }
+.typing-dots { display: inline-flex; align-items: center; gap: 4px; }
+.typing-dots i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3);
+  animation: typingBounce 1.2s var(--ease) infinite;
+}
+.typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+.typing-slow { font-size: 12px; color: var(--ink-3); animation: fadeIn 0.3s var(--ease); }
+/* Reduced-motion: no bounce, but the indicator must still read as "waiting" — pulse opacity in place. */
+@media (prefers-reduced-motion: reduce) {
+  .typing-dots i { animation: none !important; opacity: 0.5; }
+}
 .chat-row { display: flex; gap: 8px; }
 .chat-input { flex: 1; font-size: 13.5px; }
 .history-list li { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
@@ -921,9 +962,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ─── Settings — flat, minimalist; sections divided by whitespace + a hairline ─ */
-.settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(44px, 8vh, 88px) 24px 140px; animation: pageIn 0.32s var(--ease) backwards; }
+.settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 14px 120px; animation: pageIn 0.32s var(--ease) backwards; }
 @media (min-width: 1024px) { .settings-page { max-width: 680px; } } /* a touch more room now each section is its own bordered card, not a divider-separated block */
-.settings-title { font-family: var(--display); font-size: 38px; font-weight: 750; letter-spacing: -0.03em; margin-bottom: 16px; }
+.settings-title { font-family: var(--display); font-size: clamp(26px, 7.5vw, 38px); font-weight: 750; letter-spacing: -0.03em; margin-bottom: 16px; }
 .settings { display: flex; flex-direction: column; }
 /* Each section is now its own elevated card — the same surface/border/shadow language the task list
    cards use — instead of divider-separated blocks directly on the page background. Extends the
@@ -1264,45 +1305,65 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .login-legal { text-align: center; font-size: 11.5px; color: var(--ink-3); line-height: 1.5; margin-top: 2px; }
 .login-legal a { color: var(--ink-2); font-weight: 550; }
 
-/* ─── Mobile ───────────────────────────────────────────────────────────────── */
-@media (max-width: 640px) {
-  .topbar { padding: 0 14px; gap: 12px; }
-  .list-wrap, .settings-page { padding-left: 14px; padding-right: 14px; }
-  .week-load-strip { overflow-x: auto; padding-bottom: 4px; }
-  .week-day { min-width: 52px; }
-  /* Grouped lists go edge-to-edge, iOS style. */
-  .list, .empty { border-radius: 0; border-left: none; border-right: none; margin-left: -14px; margin-right: -14px; }
-  /* The 26px left inset (sized for the checkbox on desktop) plus the container's own 14px padding left very
-     little room for card text on a ~375px phone, forcing titles onto extra wrapped lines — the main source
-     of the "everything's crowded" feel. Tightened without losing the checkbox's alignment with detail text. */
-  .card-main { padding-left: 16px; padding-right: 14px; }
-  .detail { padding-left: 16px; padding-right: 14px; }
-  .card-badges .chip { font-size: 10px; padding: 2px 6px; }
-  /* Any two-sided row (label + control) that fit fine on desktop can overflow on a narrow phone instead of
-     shrinking — let it drop to its own line rather than squeezing or clipping. */
-  .set-row, .modal-row, .int-tile, .int-acct { flex-wrap: wrap; row-gap: 6px; }
-  .onboard-card { padding: 22px 18px 24px; }
-  .btn { height: 44px; }
-  .btn.xs { height: 34px; }
-  .addinput, input { height: 44px; font-size: 16px; } /* 16px stops iOS auto-zoom */
-  .addinput.sm, .step-input { height: 38px; font-size: 15px; }
-  .sendable-row .btn { flex: 1; }
-  .sendable-row .btn:first-child { margin-right: 0; }
-  .step { flex-wrap: wrap; }
-  .step .btn { margin-left: 34px; }
-  /* .step-mark stays visually small (22px) but gets a larger invisible hit area — a 44px circle is the
-     minimum comfortable touch target, and the visual dot is well under that. */
-  .step-mark { position: relative; }
-  .step-mark::after { content: ""; position: absolute; inset: -11px; }
-  .card-x { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
-  /* Card actions (Looks good / Dismiss / Refine) wrap instead of squeezing onto one cramped row. */
-  .actions { flex-wrap: wrap; row-gap: 10px; }
-  .actions > .btn.primary { flex: 1 1 auto; }
-  .actions-rest { flex: 1 1 auto; }
-  .hero { padding-top: 56px; }
-  .hero-cta { flex-direction: column; width: 100%; }
-  .hero-cta .btn { width: 100%; }
-  .landing-sec { padding: 40px 20px; }
+/* ─── Mobile-first base behaviours ─────────────────────────────────────────────
+   These used to live inside `@media (max-width: 640px)`. They're now UNCONDITIONAL: wrapping rows,
+   generous hit areas and stacked actions are correct everywhere, and treating them as a phone-only
+   patch is exactly what let new components ship desktop-only and get fixed after the fact. Only the
+   things that genuinely differ on a big screen are overridden in `min-width: 641px` below. */
+/* Grouped lists go edge-to-edge, iOS style. */
+.list, .empty { border-radius: 0; border-left: none; border-right: none; margin-left: -14px; margin-right: -14px; }
+/* Any two-sided row (label + control) can overflow on a narrow phone instead of shrinking — let it drop
+   to its own line rather than squeezing or clipping. Harmless at any width: it only wraps if it must. */
+.set-row, .modal-row, .int-tile, .int-acct { flex-wrap: wrap; row-gap: 6px; }
+.step { flex-wrap: wrap; }
+/* .step-mark stays visually small (22px) but gets a larger invisible hit area — a 44px circle is the
+   minimum comfortable touch target, and the visual dot is well under that. */
+.step-mark { position: relative; }
+.step-mark::after { content: ""; position: absolute; inset: -11px; }
+.card-x { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+/* Card actions (Looks good / Dismiss / Refine) wrap instead of squeezing onto one cramped row. */
+.actions { flex-wrap: wrap; row-gap: 10px; }
+.actions > .btn.primary { flex: 1 1 auto; }
+.actions-rest { flex: 1 1 auto; }
+.sendable-row .btn { flex: 1; }
+.sendable-row .btn:first-child { margin-right: 0; }
+.week-load-strip { overflow-x: auto; padding-bottom: 4px; }
+.week-day { min-width: 52px; }
+.card-badges .chip { font-size: 10px; padding: 2px 6px; }
+.addinput.sm, .step-input { height: 38px; }
+/* iOS auto-zooms the whole page on focusing ANY field under 16px. The `input, textarea { font-size: 16px }`
+   base above is a TYPE selector, so every class-based field (.chat-input 13.5px, .add-task-input 15.5px,
+   .step-input 15px) out-specifies it and would quietly reintroduce the zoom. Pin them here — this block
+   sits late in the file, so it also wins on order. Desktop steps them back down. */
+.chat-input, .add-task-input, .addinput, .addinput.sm, .step-input { font-size: 16px; }
+.onboard-card { padding: 22px 18px 24px; }
+.hero { padding-top: 56px; }
+.hero-cta { flex-direction: column; width: 100%; }
+.hero-cta .btn { width: 100%; }
+.landing-sec { padding: 40px 20px; }
+
+/* ─── Desktop / tablet upgrades ────────────────────────────────────────────────
+   Everything above is the phone layout. This block is the only place a bigger screen earns more: wider
+   gutters, roomier card insets, slightly smaller controls (a mouse doesn't need a 44px target). */
+@media (min-width: 641px) {
+  .topbar { gap: 20px; padding: 0 20px; padding-left: calc(20px + env(safe-area-inset-left)); padding-right: calc(20px + env(safe-area-inset-right)); }
+  .list-wrap, .settings-page { padding-left: 24px; padding-right: 24px; padding-bottom: 140px; }
+  .list, .empty { margin-left: 0; margin-right: 0; }
+  .card-main { gap: 14px; padding: 22px 18px 22px 34px; }
+  .card::before { left: 14px; top: 26px; }
+  .detail { padding: 2px 6px 18px 26px; }
+  .card-badges .chip { font-size: 11px; padding: 2px 8px; }
+  .btn { height: 40px; }
+  .btn.xs { height: 30px; }
+  .btn.big { height: 46px; }
+  input, textarea, .addinput { height: 40px; font-size: 14px; }
+  .addinput.sm, .step-input { height: 34px; font-size: 13px; }
+  .chat-input { font-size: 13.5px; }
+  .add-task-input { font-size: 15.5px; height: 34px; }
+  .hero-cta { flex-direction: row; width: auto; }
+  .hero-cta .btn { width: auto; }
+  .landing-sec { padding: 40px 24px; }
+  .hero { padding-top: 72px; }
 }
 
 /* Minimalist completed list — checked to-do rows, not cards */
