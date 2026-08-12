@@ -94,6 +94,9 @@ body {
 /* Kills the ~300ms tap delay + accidental double-tap-zoom on every interactive control — the single
    biggest "this feels like a website, not an app" tell on a touch device. */
 button, a, input, textarea, .card-main, .week-day, [role="button"] { touch-action: manipulation; }
+/* Same reasoning as .btn's own -webkit-touch-callout above, for every button that isn't a .btn (.card-open,
+   .card-check, .step-mark, .card-x, …) — a long press on any of them shouldn't pop iOS's copy/lookup menu. */
+button { -webkit-touch-callout: none; }
 /* Ambient depth wash — two barely-there cobalt blooms, fixed to the viewport so they never scroll with
    content. Pure atmosphere, not decoration: at this opacity they read as "this app has depth" without
    ever competing with the one-accent rule (nothing here is legible as a shape, just a gradient of light). */
@@ -146,6 +149,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border-radius: var(--radius-sm);
   transition: background 140ms var(--ease), border-color 140ms var(--ease), color 140ms var(--ease), opacity 140ms var(--ease), transform 100ms var(--ease);
   white-space: nowrap; text-decoration: none; user-select: none;
+  /* Without this, a long-press on any button on iOS can trigger the native text-selection/callout menu
+     ("Copy", "Look Up") instead of whatever the app itself does on a long press — reads as a website. */
+  -webkit-touch-callout: none;
 }
 .btn:hover { background: var(--bg-2); }
 .btn:active { background: var(--line); transform: scale(0.97); }
@@ -203,7 +209,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 
 /* ─── Topbar ───────────────────────────────────────────────────────────────── */
-.app { min-height: 100vh; display: flex; flex-direction: column; }
+/* min-height: 100vh alone is sized to the viewport with mobile browser chrome COLLAPSED — taller than
+   what's actually visible while the address bar is showing, which can clip/misjudge layout as the chrome
+   expands and collapses on scroll. 100dvh (dynamic viewport height) tracks the REAL visible area; kept as
+   a fallback pair since older browsers don't support dvh at all. Matches the pattern the task modal
+   already used correctly (styles.css .task-modal). */
+.app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
 .topbar {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 12px;
@@ -1276,7 +1287,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .chip-good { background: var(--accent-soft); color: var(--accent); }
 
 /* ─── Login ────────────────────────────────────────────────────────────────── */
-.login-page { min-height: 100vh; display: flex; flex-direction: column; }
+.login-page { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
 .login-main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .login-card {
   width: min(380px, 100%);
@@ -1294,7 +1305,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .login-back { text-align: center; font-size: 13px; color: var(--ink-2); }
 
 /* ─── Landing ──────────────────────────────────────────────────────────────── */
-.landing { min-height: 100vh; display: flex; flex-direction: column; }
+.landing { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
 .landing-nav {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between;

@@ -1,7 +1,8 @@
 {
-  "name": "Otto — Know what deserves your attention today",
+  "name": "Otto — le prolongement de Pronote qui te guide",
   "short_name": "Otto",
-  "description": "Stop deciding what to do next. Otto reads your inbox, calendar, and tools to rank what genuinely matters, prepare the work, and leave you in total control.",
+  "description": "Otto se branche sur ton Pronote et transforme tes devoirs et contrôles en un plan clair pour aujourd'hui — il te guide pas à pas, jamais l'exercice à ta place.",
+  "lang": "fr",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#EDEEE9",
@@ -16,16 +17,16 @@
   "categories": ["productivity", "utilities"],
   "shortcuts": [
     {
-      "name": "View Tasks",
-      "short_name": "Tasks",
-      "description": "View your to-do list",
+      "name": "Voir mes tâches",
+      "short_name": "Tâches",
+      "description": "Voir ta liste de tâches",
       "url": "/tasks",
       "icons": [{ "src": "/favicon.svg", "sizes": "512x512" }]
     },
     {
-      "name": "Settings",
-      "short_name": "Settings",
-      "description": "Manage integrations and preferences",
+      "name": "Réglages",
+      "short_name": "Réglages",
+      "description": "Gérer tes connexions et préférences",
       "url": "/settings",
       "icons": [{ "src": "/favicon.svg", "sizes": "512x512" }]
     }

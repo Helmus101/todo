@@ -1,4 +1,5 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
+import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
@@ -720,6 +721,19 @@ for (const [mod, names] of [
 ]) {
   const m = await import(mod);
   for (const n of names) check(`${mod.replace("../client/", "")} exports ${n} as a function`, typeof m[n] === "function");
+}
+// Source-order pin, not a real interaction test (no DOM test runner exists — see the module-graph check
+// above for why). `.card-open` is the stretched button that makes a task row keyboard/tap-openable at all;
+// it has to render BEFORE `.card-main` so it paints underneath `.card-check`/`.card-x` (which get an
+// explicit z-index to sit above it) while still covering the row. A future edit that reorders or drops it
+// would silently reintroduce "can't open a task" — catch that here even without a browser to click in.
+{
+  const src = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  const openIdx = src.indexOf('className="card-open"');
+  const mainIdx = src.indexOf('className="card-main"');
+  check("TaskCardRow still renders .card-open", openIdx !== -1);
+  check("TaskCardRow still renders .card-main", mainIdx !== -1);
+  check(".card-open precedes .card-main in source (so it paints underneath, per CSS stacking order)", openIdx !== -1 && mainIdx !== -1 && openIdx < mainIdx);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
