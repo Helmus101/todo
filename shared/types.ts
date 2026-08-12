@@ -475,6 +475,11 @@ export interface WebTask {
   /** In-app multiple-choice quizzes — for CHECKING UNDERSTANDING before a contrôle (flashcards drill raw
    *  recall; a quiz surfaces which part of a chapter isn't solid). Same no-account/no-approval model. */
   quizzes?: TaskQuiz[];
+  /** Human-readable log of what Otto actually did on this task — a tool call, an artifact created, or a
+   *  guardrail refusing to do the student's graded work. Exists so a parent/teacher can verify "never does
+   *  the work" is enforced in practice, not just claimed — see the audit panel on the task card. Capped
+   *  (AUDIT_CAP in tasks.ts) so it can't grow unbounded on a long-lived task. */
+  audit?: { at: string; kind: "tool" | "artifact" | "guardrail"; label: string }[];
 }
 
 export interface TaskNote {

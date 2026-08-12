@@ -227,14 +227,20 @@ import type { PronoteHomeworkItem, PronoteTestItem } from "./pronote.ts";
 
 export interface AcademicContext { homework?: PronoteHomeworkItem[]; tests?: PronoteTestItem[]; }
 
+/** One entry in a task's audit log — see WebTask.audit in shared/types.ts for why this exists. */
+export interface AuditEvent { at: string; kind: "tool" | "artifact" | "guardrail"; label: string }
+
 /** Render the person-profile for prompts so generation + execution are personalized + grounded. */
 function profileBlock(p?: Profile): string {
   if (!p) return "";
   // Newest 12 facts per category go into the prompt (storage keeps up to 40): keeps every call lean —
   // this block ships with EVERY agent request, so its size is a direct cost multiplier.
   const recent = (l?: string[]) => (l || []).slice(-12);
+  // Deliberately NOT sending p.name (or any other direct identifier) to the LLM — it's a minor's real
+  // name and the model has no actual need for it (nothing in these prompts asks it to address the
+  // student by name). Data minimization: don't ship personally-identifying data to a third-party API
+  // just because it happens to be sitting in the profile object.
   const parts: string[] = [];
-  if (p.name) parts.push(`Their name: ${p.name}`);
   if (p.about) parts.push(`About them: ${p.about}`);
   if (recent(p.preferences).length) parts.push(`Preferences: ${recent(p.preferences).join("; ")}`);
   if (recent(p.people).length) parts.push(`Key people: ${recent(p.people).join("; ")}`);
@@ -1188,6 +1194,8 @@ export interface RunOutput {
    *  guardrail input for extractArtifacts(): only ids in here may ever be edited without the user's
    *  explicit approval on a later revision — "Otto may only edit what Otto created," enforced, not assumed. */
   createdDocIds?: string[];
+  /** What Otto actually did this run, verified against real tool calls — see WebTask.audit. */
+  audit?: AuditEvent[];
   /** A tightened title for a raw user-typed task (source==="manual" only) — set ONLY when the model actually
    *  refined it; runById applies it to task.title. Replaces the old separate "refine before queueing" pass:
    *  the title now gets crisped as a side effect of the SAME run that does the work, instead of a distinct
@@ -1667,6 +1675,8 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const notesCreated: TaskNote[] = [];
   const flashcardsCreated: TaskFlashcards[] = [];
   const quizzesCreated: TaskQuiz[] = [];
+  const audit: AuditEvent[] = [];
+  const logAudit = (kind: AuditEvent["kind"], label: string) => audit.push({ at: new Date().toISOString(), kind, label });
   // Backstop for the same class of bug as lastGmailDraft, but for Docs/Sheets/Slides: the model creates a
   // real spreadsheet/doc, mentions it in a "did" bullet, but forgets to add a "links" entry — so the card
   // shows text describing an artifact with no way to actually open it. Tracks only the LAST one created;
@@ -1700,7 +1710,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // FINAL integrity pass — reconcile the narrative with the artifacts that actually survived (runs LAST,
     // after both backstops above have had their chance to re-attach a real draft/doc). A "Drafted a reply…"
     // claim with no sendable to show is a fabrication to the user, so it must not survive to the card.
-    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds], notes: notesCreated.length ? notesCreated : undefined, flashcards: flashcardsCreated.length ? flashcardsCreated : undefined, quizzes: quizzesCreated.length ? quizzesCreated : undefined });
+    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds], notes: notesCreated.length ? notesCreated : undefined, flashcards: flashcardsCreated.length ? flashcardsCreated : undefined, quizzes: quizzesCreated.length ? quizzesCreated : undefined, audit: audit.length ? audit : undefined });
   };
   try {
   for (let i = 0; i < MAX; i++) {
@@ -1795,6 +1805,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // Otto guides; it never claims to have done the student's actual graded/learning work FOR
               // them. Reject every time until the claim is gone, even on the last round (better an honest
               // "Open and handle:" fallback than a false claim a student could act on).
+              logAudit("guardrail", "Bloqué : une réponse ressemblait à un travail fait à la place de l'élève — renvoyée pour reformulation.");
               content = "REJECTED: you claimed to have written/completed/solved the student's actual " +
                 "assignment/essay/exam/problem set FOR them — Otto NEVER does that, no matter how confident " +
                 "or well-researched. Rephrase: whatever you produced must be a GUIDE (outline, checklist, " +
@@ -1929,21 +1940,24 @@ export async function runTask(task: { title: string; why: string; source?: strin
           }
           }
         }
-        else if (toolName === "web_search") { searchedWeb = true; content = await runWebSearch(input); }
+        else if (toolName === "web_search") {
+          searchedWeb = true; content = await runWebSearch(input);
+          logAudit("tool", `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"`);
+        }
         else if (toolName === "CREATE_NOTE") {
           const r = makeNote(input);
           if ("error" in r) content = r.error;
-          else { notesCreated.push(r.note); wroteAny = true; content = JSON.stringify({ ok: true, id: r.note.id }); }
+          else { notesCreated.push(r.note); wroteAny = true; content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", `Fiche créée : « ${r.note.title} »`); }
         }
         else if (toolName === "CREATE_FLASHCARDS") {
           const r = makeDeck(input);
           if ("error" in r) content = r.error;
-          else { flashcardsCreated.push(r.deck); wroteAny = true; content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); }
+          else { flashcardsCreated.push(r.deck); wroteAny = true; content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})`); }
         }
         else if (toolName === "CREATE_QUIZ") {
           const r = makeQuiz(input);
           if ("error" in r) content = r.error;
-          else { quizzesCreated.push(r.quiz); wroteAny = true; content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); }
+          else { quizzesCreated.push(r.quiz); wroteAny = true; content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)`); }
         }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
         // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.
@@ -2383,6 +2397,7 @@ export interface ChatResult {
   notes: TaskNote[];
   flashcards: TaskFlashcards[];
   quizzes: TaskQuiz[];
+  audit: AuditEvent[];
   tokens: { in: number; out: number; cachedIn?: number };
 }
 
@@ -2464,13 +2479,17 @@ export async function chatAboutTask(
     `at most ${CHAT_MAX_ARTIFACTS} per message — pick the ONE thing that actually helps right now.\n\n` +
 
     `HOW YOU SOUND — this matters as much as what you say:\n` +
-    `Write like a real person talking to them, not like an app. This is a CHAT: short lines, contractions, ` +
-    `plain words. Plain prose is the default and almost always right. You may use **bold** for a single key ` +
-    `term, a link as [texte](url), and — only when you're genuinely listing 2-4 parallel things (the steps of ` +
-    `a method, three dates) — a short dash list. Never a header, never a bold "Label:" in front of every line, ` +
-    `never a numbered framework, never a list where a sentence would do. If more than a third of your reply ` +
-    `is formatting, you're writing a document instead of talking. One or two sentences is a great answer. ` +
-    `Three or four is usually the most it should take.\n` +
+    `Write like a real person talking to them, not like an app — and test every reply against this: could you ` +
+    `say it out loud, as-is, and have it sound like a person talking? If it needs to be READ to make sense ` +
+    `(a bullet list, a bolded label, anything you'd only write, never say), rewrite it as something you'd ` +
+    `actually say. This is a CHAT: short lines, contractions, plain words. Plain prose is the default and ` +
+    `almost always right. You may use **bold** for a single key term and a link as [texte](url); reach for a ` +
+    `dash list only when you're genuinely listing 2-4 parallel things AND prose would be more awkward, not ` +
+    `less. Never a header, never a bold "Label:" in front of every line, never a numbered framework, never a ` +
+    `list where a sentence would do. If more than a third of your reply is formatting, you're writing a ` +
+    `document instead of talking. Default to ONE short sentence — think of it as a text message back, not an ` +
+    `answer. Two is already a longer reply than most turns need. Three or four is the ceiling, and that's for ` +
+    `walking through a method, not for a normal exchange.\n` +
     `Say the thing, then stop. Don't restate their question back, don't preamble ("Great question!", "I can ` +
     `definitely help with that!"), don't recap what you just said, don't close every message with an offer of ` +
     `more help. No fake enthusiasm and no therapy-speak — they're stressed, not fragile, and they can tell ` +
@@ -2487,14 +2506,16 @@ export async function chatAboutTask(
   const client = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   const tools = [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, WEB_SEARCH_TOOL];
-  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], tokens: { in: 0, out: 0, cachedIn: 0 } });
+  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 } });
   const result = empty();
+  const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
   const finish = (reply: string): ChatResult => {
     // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
     // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
     // discard them too rather than hand over a chip whose text just got rejected.
     if (CHAT_DOES_WORK.test(reply)) {
       result.notes = []; result.flashcards = []; result.quizzes = [];
+      logAudit("guardrail", "Bloqué : une réponse dans le chat ressemblait à un travail fait à la place de l'élève — remplacée.");
       reply = fr
         ? "Je peux t'aider à débloquer ça, mais je ne vais pas le rédiger à ta place — cette partie est la tienne. On cherche un point de départ ensemble ?"
         : "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?";
@@ -2533,7 +2554,10 @@ export async function chatAboutTask(
       const input = parseToolArgs(tc.function?.arguments);
       let content: string;
       const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length >= CHAT_MAX_ARTIFACTS;
-      if (name === "web_search") content = await runWebSearch(input);
+      if (name === "web_search") {
+        content = await runWebSearch(input);
+        logAudit("tool", `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"`);
+      }
       else if (name === "CREATE_NOTE") {
         if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
         else {
@@ -2541,15 +2565,18 @@ export async function chatAboutTask(
           if ("error" in r) content = r.error;
           // A note is the obvious vector for "here's your essay, wrapped as a study aid" — check the BODY
           // itself, not just the eventual spoken reply (finish() only ever sees the reply text).
-          else if (CHAT_DOES_WORK.test(r.note.body)) content = "REJECTED: that reads like their graded work, not a study aid — a fiche is method/structure/prompts, never the finished essay or solved exercise. Make a structure with prompts instead.";
-          else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); }
+          else if (CHAT_DOES_WORK.test(r.note.body)) {
+            content = "REJECTED: that reads like their graded work, not a study aid — a fiche is method/structure/prompts, never the finished essay or solved exercise. Make a structure with prompts instead.";
+            logAudit("guardrail", "Bloqué : une fiche créée en chat ressemblait à un travail fait à la place de l'élève.");
+          }
+          else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", `Fiche créée : « ${r.note.title} »`); }
         }
       } else if (name === "CREATE_FLASHCARDS") {
         if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-        else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); } }
+        else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})`); } }
       } else if (name === "CREATE_QUIZ") {
         if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-        else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); } }
+        else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)`); } }
       } else content = "ERROR: unknown tool.";
       messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
     }

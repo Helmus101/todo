@@ -1,8 +1,13 @@
-import { useEffect, useState, useCallback, useRef, useContext, createContext, type Dispatch, type SetStateAction, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import type { WebTask, ConnectionStatus, Profile, TaskStep, TaskFlashcards, TaskQuiz } from "../shared/types.ts";
+import { useEffect, useState, useCallback, useRef, useContext, type Dispatch, type SetStateAction } from "react";
+import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
+import {
+  LangContext, useLang, todayIso, fmtDate, relTime, statusChip, sourceBadge, priorityBadge, subtitle,
+  fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
+  withInlineLinks, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal,
+} from "./ui.tsx";
+import { TaskCardRow, TaskFocus } from "./TaskCard.tsx";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
  *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
@@ -22,58 +27,8 @@ function useReveal(deps: readonly unknown[] = []) {
   }, deps);
 }
 
-// App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
-// Profile). `L(fr, en)` picks the right string for whichever language is active — used everywhere instead of
-// hardcoding French so switching the toggle changes the WHOLE interface, not just AI-generated content.
-const LangContext = createContext<"fr" | "en">("fr");
-function useLang(): (fr: string, en: string) => string {
-  const lang = useContext(LangContext);
-  return (fr: string, en: string) => (lang === "en" ? en : fr);
-}
 
-/** Today as a bare "YYYY-MM-DD" — for comparing against a milestone's targetDate (same bare-string
- *  convention as server/workload.ts's BARE_DATE check, so this never drifts across a timezone). */
-const todayIso = (): string => new Date().toISOString().slice(0, 10);
 
-/** "Sep 12" — a milestone target date (YYYY-MM-DD), formatted for display. */
-const fmtDate = (iso: string): string => {
-  const d = new Date(`${iso}T00:00:00`);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
-
-/** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
-const relTime = (iso: string): string => {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return "";
-  const m = Math.floor(ms / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
-
-// Explicit card status: what state is this task ACTUALLY in, in user terms. Derived from the canonical
-// lifecycle + the task's contents (a sendable → "Draft ready"; an open question → "Needs your answer").
-function statusChip(t: WebTask, retrying?: boolean, en?: boolean): { label: string; tone: "muted" | "busy" | "attention" | "bad" | "good" } | null {
-  const c = canonStatus(t.status);
-  if (c === "queued") return { label: en ? "Queued" : "En attente", tone: "muted" };
-  if (c === "executing") return { label: en ? "Working" : "En cours", tone: "busy" };
-  // "Retrying" is only claimed when a REAL queued/running job exists for this task (activeTaskIds from
-  // the kick response) — otherwise the honest state is "Failed" with a Retry button.
-  if (c === "failed_retryable") return retrying ? { label: en ? "Failed — retrying…" : "Échec — nouvel essai…", tone: "busy" } : { label: en ? "Failed" : "Échec", tone: "bad" };
-  if (c === "failed_terminal") return { label: en ? "Failed" : "Échec", tone: "bad" };
-  if (c === "needs_review") {
-    if (t.steps?.some((s) => !s.done && s.question)) return { label: en ? "Needs your answer" : "Réponse nécessaire", tone: "attention" };
-    if (t.steps?.some((s) => !s.done && s.needsPermission)) return { label: en ? "Needs approval" : "Approbation nécessaire", tone: "attention" };
-    if (t.sendables?.some((s) => !s.sent)) return { label: en ? "Draft ready" : "Brouillon prêt", tone: "attention" };
-    const n = (t.steps || []).filter((s) => !s.done && !s.automatable).length;
-    return n
-      ? { label: en ? `${n} need${n > 1 ? "" : "s"} you` : `${n} étape${n > 1 ? "s" : ""} restante${n > 1 ? "s" : ""}`, tone: "attention" }
-      : { label: en ? "Done for you" : "Préparé pour toi", tone: "good" };
-  }
-  return null;
-}
 
 // Translate a sweep job's skip/failure line into user terms — an honest reason, never a fake all-clear.
 function sweepSkipMessage(note: string, en?: boolean): string {
@@ -89,42 +44,10 @@ function sweepSkipMessage(note: string, en?: boolean): string {
   return en ? `Sweep didn't finish: ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}` : `Vérification incomplète : ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}`;
 }
 
-// Short source label for the collapsed card's source badge — same apps as linkKind, just for task.source.
-const SOURCE_BADGE: Record<string, string> = {
-  gmail: "Gmail", calendar: "Calendar", googlecalendar: "Calendar", manual: "You",
-  slack: "Slack", github: "GitHub", notion: "Notion", linear: "Linear", todoist: "Todoist",
-  googledrive: "Drive", pronote: "Pronote",
-};
-const SOURCE_BADGE_EN: Record<string, string> = { ...SOURCE_BADGE, manual: "You" };
-const SOURCE_BADGE_FR: Record<string, string> = { ...SOURCE_BADGE, manual: "Toi" };
-function sourceBadge(s: string, en?: boolean): string {
-  const map = en ? SOURCE_BADGE_EN : SOURCE_BADGE_FR;
-  return map[s] || (s ? s[0].toUpperCase() + s.slice(1) : (en ? "Task" : "Tâche"));
-}
-// Quadrant already encodes urgency+importance (see eisenhower()) — reuse it as a plain-English priority
-// badge instead of asking the user to parse "do/schedule/delegate/later".
-function priorityBadge(q?: string, en?: boolean): string {
-  return q === "do" ? (en ? "Urgent" : "Urgent") : q === "schedule" ? (en ? "Medium" : "Moyen") : (en ? "Low" : "Faible");
-}
-
-// One short context line under the title. The STATUS is carried by the chip on the right — the subtitle
-// never repeats it. So: the "why" for a fresh task, the error for a failed one, nothing when the chip says it.
-function subtitle(t: WebTask): string {
-  const c = canonStatus(t.status);
-  if (c === "failed_retryable" || c === "failed_terminal") return t.lastError || "";
-  if (c === "ready") return t.why;
-  return "";
-}
 // A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date.
 function fmtDay(iso: string): string {
   const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
   return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-// Format a task's deadline: a raw ISO date/datetime → "Jul 27"; already-human text ("late July", "today") as-is.
-function fmtWhen(when: string): string {
-  const s = String(when || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d.getTime())) return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
-  return s;
 }
 
 // Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
@@ -134,288 +57,8 @@ function fmtWhen(when: string): string {
 // one-click execution of them — the card shows the plan as a checklist for the user to work through
 // themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.
 const EXECUTION_ENABLED = false;
-const TAB_GROUP = "Otto"; // all tabs Otto opens go into this one named group
-const extPresent = () => document.documentElement.getAttribute("data-weave-ext") === "1";
-// Open one or many tabs. With the extension, they go into a NAMED tab group (per task); without it,
-// window.open (no grouping possible from a plain page).
-function openTab(url: string, group?: string) {
-  if (extPresent()) window.postMessage({ type: "weave-open-tab", url, group }, window.location.origin);
-  else window.open(url, "_blank", "noopener");
-}
-function openTabs(urls: string[], group?: string) {
-  if (!urls.length) return;
-  if (extPresent()) window.postMessage({ type: "weave-open-tabs", urls, group }, window.location.origin);
-  else urls.forEach((u) => window.open(u, "_blank", "noopener"));
-}
 
-// Auto-open created documents (Doc/Sheet/Slides) when a task finishes — handy, but capped so you're never
-// flooded with tabs, only via the extension (a plain window.open would be popup-blocked without a click),
-// and EACH doc opens at most ONCE EVER. The opened-URL set is PERSISTED (localStorage) so reopening the app
-// never re-opens the same tabs again. Toggle in Settings (default ON).
-const DOC_RE = /docs\.google\.com\/(document|spreadsheets|presentation)/i;
-const OPENED_KEY = "otto-opened-docs";
-const openedDocs: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(OPENED_KEY) || "[]")); } catch { return new Set(); } })();
-const markDocsOpened = (urls: string[]) => {
-  urls.forEach((u) => openedDocs.add(u));
-  try { localStorage.setItem(OPENED_KEY, JSON.stringify([...openedDocs].slice(-300))); } catch { /* ignore */ }
-};
-let sessionDocsOpened = 0;               // burst control: cap how many open within one session load
-const SESSION_DOC_CAP = 4;               // ceiling on auto-opened docs per session load
-const PER_TASK_DOC_CAP = 2;              // and per task
-// Auto-opening created docs is OFF by default — it needs the Tabs extension, so it's opt-in ("1" = on).
-const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") === "1"; } catch { return false; } };
 
-/** Render context/synthesis as a clean bullet list (one bullet per line; leading -/•/* stripped). Full
- *  text always shown — never truncated. Falls back to a single line if there's just one. */
-// Otto is instructed to write inline markdown links ([label](url)) into "did"/"steps" text when it names a
-// specific resource — render those as real clickable buttons instead of leaving the raw "[text](url)" syntax
-// visible. Anything not matching the pattern passes through as plain text.
-const MD_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
-function withInlineLinks(text: string): ReactNode {
-  const parts: ReactNode[] = [];
-  let last = 0, m: RegExpExecArray | null;
-  MD_LINK.lastIndex = 0;
-  while ((m = MD_LINK.exec(text))) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    parts.push(<a key={m.index} href={m[2]} target="_blank" rel="noreferrer" className="inline-link">{m[1]} ↗</a>);
-    last = m.index + m[0].length;
-  }
-  if (!parts.length) return text;
-  if (last < text.length) parts.push(text.slice(last));
-  return parts;
-}
-
-/** Light markdown → JSX for an in-app note (CREATE_NOTE's body): headings, **bold**, and bullet/numbered
- *  lists. Never sent anywhere — this only ever renders inside the popup, so a small hand-rolled pass is
- *  enough (no need for a full markdown library just for this). */
-/** `**bold**` → <b>. Module-scope (not a closure inside renderNoteBody) so renderChatText can reuse it. */
-function boldify(s: string): ReactNode {
-  const parts = s.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b> : p));
-}
-
-function renderNoteBody(md: string): ReactNode {
-  const lines = md.replace(/\r\n/g, "\n").split("\n");
-  const blocks: ReactNode[] = [];
-  let list: string[] | null = null;
-  const flushList = () => {
-    if (list) { blocks.push(<ul key={blocks.length} className="note-list">{list.map((t, i) => <li key={i}>{boldify(t)}</li>)}</ul>); list = null; }
-  };
-  lines.forEach((raw, i) => {
-    const line = raw.trim();
-    if (!line) { flushList(); return; }
-    const h = /^(#{1,3})\s+(.*)/.exec(line);
-    if (h) { flushList(); const Tag = h[1].length === 1 ? "h3" : h[1].length === 2 ? "h4" : "h5"; blocks.push(<Tag key={i}>{boldify(h[2])}</Tag>); return; }
-    const li = /^[-*]\s+(.*)|^\d+[.)]\s+(.*)/.exec(line);
-    if (li) { (list ||= []).push(li[1] ?? li[2]); return; }
-    flushList();
-    blocks.push(<p key={i}>{boldify(line)}</p>);
-  });
-  flushList();
-  return blocks;
-}
-
-/** `*italic*` → <i>, single-asterisk only (run AFTER boldify has already consumed every `**...**` pair, so
- *  a leftover lone `*` can only ever be genuine emphasis, never half of a bold marker). Observed live: the
- *  tutor uses *word* for emphasis on its own even though the prompt only grants **bold** — better to
- *  render it than show a student raw asterisks. */
-function italicize(s: string): ReactNode {
-  const parts = s.split(/(\*[^*]+\*)/g);
-  return parts.map((p, i) => (p.length > 2 && p.startsWith("*") && p.endsWith("*") ? <i key={i}>{p.slice(1, -1)}</i> : p));
-}
-
-/** [text](url) + **bold** + *italic*, composed — links first (so a bolded/italicized link isn't mangled),
- *  then bold, then italic on what's left. Shared by renderChatText below; withInlineLinks alone only
- *  handles links, and renderNoteBody's boldify alone doesn't grant italic (deliberately — a fiche's body
- *  is written by a tool call with its own schema, not free-form chat prose). */
-function withInlineLinksAndBold(text: string): ReactNode {
-  const linked = withInlineLinks(text);
-  const parts = Array.isArray(linked) ? linked : [linked];
-  return parts.map((p, i) => {
-    if (typeof p !== "string") return p; // already a rendered <a> from withInlineLinks
-    const bolded = boldify(p) as ReactNode[]; // boldify always returns an array (parts.map)
-    return <span key={i}>{bolded.map((seg, j) => (typeof seg === "string" ? <span key={j}>{italicize(seg)}</span> : seg))}</span>;
-  });
-}
-
-/** Light markdown for an ASSISTANT chat reply: **bold**, [links](url), and a short dash list — deliberately
- *  NOT the full renderNoteBody treatment (no headings; the tutor prompt explicitly bans them, chat is a
- *  conversation, not a document). User messages are never run through this — a student pasting `**` from
- *  their own notes shouldn't get it silently eaten. */
-function renderChatText(text: string): ReactNode {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const blocks: ReactNode[] = [];
-  let list: string[] | null = null;
-  const flushList = () => {
-    if (list) { blocks.push(<ul key={blocks.length} className="note-list">{list.map((t, i) => <li key={i}>{withInlineLinksAndBold(t)}</li>)}</ul>); list = null; }
-  };
-  lines.forEach((raw, i) => {
-    const line = raw.trim();
-    if (!line) { flushList(); return; }
-    // A stray "#" heading is rendered as a plain bold line, not promoted to an <h3> — chat stays flat.
-    const h = /^#{1,3}\s+(.*)/.exec(line);
-    if (h) { flushList(); blocks.push(<p key={i}><b>{withInlineLinksAndBold(h[1])}</b></p>); return; }
-    const li = /^[-*]\s+(.*)/.exec(line);
-    if (li) { (list ||= []).push(li[1]); return; }
-    flushList();
-    blocks.push(<p key={i}>{withInlineLinksAndBold(line)}</p>);
-  });
-  flushList();
-  return blocks;
-}
-
-/** Drillable flashcard viewer (CREATE_FLASHCARDS): space/click flips the card, → marks it right and
- *  advances, ← marks it wrong and advances. Ends on a score summary with a restart. Keyboard-first so a
- *  student can drill an entire deck without touching the mouse. */
-function FlashcardDeck({ deck }: { deck: TaskFlashcards }) {
-  const L = useLang();
-  const [i, setI] = useState(0);
-  const [flipped, setFlipped] = useState(false);
-  const [right, setRight] = useState<number[]>([]);
-  const [wrong, setWrong] = useState<number[]>([]);
-  const done = i >= deck.cards.length;
-  const card = !done ? deck.cards[i] : null;
-  const mark = (ok: boolean) => {
-    if (!card) return;
-    (ok ? setRight : setWrong)((prev) => [...prev, i]);
-    setFlipped(false);
-    setI((v) => v + 1);
-  };
-  const restart = () => { setI(0); setFlipped(false); setRight([]); setWrong([]); };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (done) return;
-      if (e.key === " " || e.key === "Enter") { e.preventDefault(); setFlipped((v) => !v); }
-      else if (e.key === "ArrowRight") { e.preventDefault(); mark(true); }
-      else if (e.key === "ArrowLeft") { e.preventDefault(); mark(false); }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [done, i, flipped]);
-  if (done) {
-    const pct = deck.cards.length ? Math.round((right.length / deck.cards.length) * 100) : 0;
-    return (
-      <div className="deck-popup deck-done">
-        <h3 className="note-popup-title">{deck.title}</h3>
-        <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
-          <span className="deck-score-pct">{pct}%</span>
-        </div>
-        <p className="deck-score">{L(`${right.length} / ${deck.cards.length} correctes`, `${right.length} / ${deck.cards.length} correct`)}</p>
-        <div className="deck-acts">
-          <button className="btn primary" onClick={restart}>{L("Recommencer", "Restart")}</button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="deck-popup">
-      <h3 className="note-popup-title">{deck.title}</h3>
-      <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / deck.cards.length) * 100}%` }} /></div>
-      <div className="deck-progress">{i + 1} / {deck.cards.length}</div>
-      <div className={`deck-card-3d ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
-        <div className="deck-card-inner">
-          <div className="deck-card-face deck-card-front">
-            <span className="deck-face-label">{L("Question", "Front")}</span>
-            <div className="deck-face-text">{card!.front}</div>
-          </div>
-          <div className="deck-card-face deck-card-back">
-            <span className="deck-face-label">{L("Réponse", "Back")}</span>
-            <div className="deck-face-text">{card!.back}</div>
-          </div>
-        </div>
-      </div>
-      <p className="deck-hint">{L("Espace pour retourner · ← faux · → correct", "Space to flip · ← wrong · → correct")}</p>
-      <div className="deck-acts">
-        <button className="btn ghost deck-btn-wrong" onClick={() => mark(false)}>← {L("Faux", "Wrong")}</button>
-        <button className="btn ghost" onClick={() => setFlipped((v) => !v)}>{L("Retourner", "Flip")}</button>
-        <button className="btn primary deck-btn-right" onClick={() => mark(true)}>{L("Correct", "Correct")} →</button>
-      </div>
-    </div>
-  );
-}
-
-/** An MCQ quiz player — answer, get immediate right/wrong + a one-line explanation, then advance; a score
- *  screen at the end reuses FlashcardDeck's exact done-state markup (.deck-done/.deck-score-ring) so scoring
- *  reads identically across artifact types. Deliberately its own component (not a FlashcardDeck variant):
- *  the interaction — lock on pick, reveal the right answer, explain why — has nothing in common with a flip. */
-function QuizPlayer({ quiz }: { quiz: TaskQuiz }) {
-  const L = useLang();
-  const [i, setI] = useState(0);
-  const [picked, setPicked] = useState<number | null>(null);
-  const [right, setRight] = useState<number[]>([]);
-  // Indices the student got wrong, in order — drives "review my mistakes" without re-deriving anything.
-  const [wrongIdx, setWrongIdx] = useState<number[]>([]);
-  const [order, setOrder] = useState<number[] | null>(null); // null = full quiz, in original order
-  const seq = order ?? quiz.questions.map((_, idx) => idx);
-  const done = i >= seq.length;
-  const qIdx = seq[i];
-  const q = !done ? quiz.questions[qIdx] : null;
-  const pick = (optIdx: number) => {
-    if (picked !== null || !q) return;
-    setPicked(optIdx);
-    if (optIdx === q.correct) setRight((prev) => [...prev, qIdx]);
-    else setWrongIdx((prev) => [...prev, qIdx]);
-  };
-  const next = () => { setPicked(null); setI((v) => v + 1); };
-  const restart = (reviewOnly?: boolean) => {
-    setOrder(reviewOnly && wrongIdx.length ? [...wrongIdx] : null);
-    setI(0); setPicked(null); setRight([]); setWrongIdx([]);
-  };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (done || !q) return;
-      if (picked === null && /^[1-4]$/.test(e.key)) { const n = Number(e.key) - 1; if (n < q.options.length) { e.preventDefault(); pick(n); } }
-      else if (picked !== null && (e.key === "Enter" || e.key === "ArrowRight")) { e.preventDefault(); next(); }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [done, q, picked]);
-  if (done) {
-    const total = seq.length;
-    const pct = total ? Math.round((right.length / total) * 100) : 0;
-    return (
-      <div className="deck-popup deck-done">
-        <h3 className="note-popup-title">{quiz.title}</h3>
-        <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
-          <span className="deck-score-pct">{pct}%</span>
-        </div>
-        <p className="deck-score">{L(`${right.length} / ${total} correctes`, `${right.length} / ${total} correct`)}</p>
-        <div className="deck-acts">
-          {wrongIdx.length > 0 && <button className="btn ghost" onClick={() => restart(true)}>{L(`Revoir mes ${wrongIdx.length} erreurs`, `Review my ${wrongIdx.length} mistake${wrongIdx.length > 1 ? "s" : ""}`)}</button>}
-          <button className="btn primary" onClick={() => restart(false)}>{L("Recommencer", "Restart")}</button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="deck-popup quiz-popup">
-      <h3 className="note-popup-title">{quiz.title}</h3>
-      <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / seq.length) * 100}%` }} /></div>
-      <div className="deck-progress">{i + 1} / {seq.length}</div>
-      <div className="quiz-q">{q!.q}</div>
-      <div className="quiz-opts">
-        {q!.options.map((opt, oi) => {
-          const state = picked === null ? "" : oi === q!.correct ? "correct" : oi === picked ? "wrong" : "";
-          return (
-            <button key={oi} type="button" className={`quiz-opt ${state}`} disabled={picked !== null} onClick={() => pick(oi)}>
-              <span className="quiz-opt-key">{oi + 1}</span>
-              <span className="quiz-opt-text">{opt}</span>
-            </button>
-          );
-        })}
-      </div>
-      {picked !== null && (
-        <>
-          {q!.why && <p className="quiz-why">{q!.why}</p>}
-          <div className="deck-acts">
-            <button className="btn primary" onClick={next}>{L("Suivant", "Next")} →</button>
-          </div>
-        </>
-      )}
-      {picked === null && <p className="deck-hint">{L("1-4 pour répondre", "1-4 to answer")}</p>}
-    </div>
-  );
-}
 
 /** The Otto mark — a ring cut by the consent line. The LEFT half is solid (work Otto already did, done); the
  *  RIGHT half is an open stroke (work still waiting on you); the vertical cobalt line between them is the
@@ -505,6 +148,11 @@ const saveSeenTasks = (s: Set<string>) => {
 
 export function App() {
   const [status, setStatus] = useState<ConnectionStatus | null>(CACHED_STATUS);
+  // index.html hardcodes lang="fr" (the app's actual default), but the EN toggle never followed it — an
+  // English-mode user got French pronunciation applied to English text by every screen reader. This is the
+  // one place the whole app's active language is decided (the LangContext.Provider value below), so it's
+  // the right place to keep the document attribute in sync with it.
+  useEffect(() => { document.documentElement.lang = status?.language === "en" ? "en" : "fr"; }, [status?.language]);
   const [route] = usePathRoute();
   const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
@@ -757,11 +405,16 @@ export function App() {
       const needsYou = t.filter((x) => canonStatus(x.status) === "needs_review" && (x.steps?.some((s) => !s.done && !s.automatable) || x.sendables?.some((s) => !s.sent))).length;
       // "Still running" isn't broken — a sweep is genuinely mid-flight elsewhere (another tab, cron). Say so
       // gently rather than "Sweep didn't finish", which reads as an error when nothing's actually wrong.
-      if (stillRunning) notify(status?.language === "en" ? "Still checking — hang on a moment." : "Vérification en cours — patiente un instant.");
-      else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, status?.language === "en"), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
-      else if (!t.length) notify("Nothing found — nothing actionable in your recent inbox + calendar right now.");
-      else if (!fresh.length) notify(`Swept your apps — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything actionable is already on your list"}.`);
-      else notify(`Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} queued to run` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`);
+      const sweepEn = status?.language === "en";
+      if (stillRunning) notify(sweepEn ? "Still checking — hang on a moment." : "Vérification en cours — patiente un instant.");
+      else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, sweepEn), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
+      else if (!t.length) notify(sweepEn ? "Nothing to do right now — nothing new in Pronote." : "Rien à faire pour l'instant — rien de nouveau sur Pronote.");
+      else if (!fresh.length) notify(sweepEn
+        ? `Checked — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything's already on your list"}.`
+        : `Vérifié — rien de nouveau${needsYou ? ` ; ${needsYou} tâche${needsYou === 1 ? "" : "s"} ${needsYou === 1 ? "attend" : "attendent"} encore toi` : " ; tout est déjà sur ta liste"}.`);
+      else notify(sweepEn
+        ? `Found ${fresh.length} new task${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} getting ready` : ""}${needsYou ? `, ${needsYou} need${needsYou === 1 ? "s" : ""} you` : ""}.`
+        : `${fresh.length} nouvelle${fresh.length === 1 ? "" : "s"} tâche${fresh.length === 1 ? "" : "s"} trouvée${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} en préparation` : ""}${needsYou ? `, ${needsYou} ${needsYou === 1 ? "a besoin" : "ont besoin"} de toi` : ""}.`);
       void loadBudget();
     }
     catch (e: any) { notify(en ? `Couldn't refresh: ${e?.message || "something went wrong — try again."}` : `Actualisation impossible : ${e?.message || "une erreur est survenue — réessaie."}`, "error"); }
@@ -806,15 +459,21 @@ export function App() {
   if (route === "terms") return <LegalPage kind="terms" />;
 
   if (!status) {
-    if (loadError) return (
-      <div className="screen crash">
-        <div className="crash-card">
-          <h1>Can't reach Otto</h1>
-          <p>The server isn't responding. Check your connection and try again.</p>
-          <button className="btn primary big" onClick={() => { setLoadError(false); setReloadKey((k) => k + 1); }}>Try again</button>
+    if (loadError) {
+      // This is the ONE screen that can render before status (and so LangContext) has ever loaded — a
+      // student on a bad connection would see it hardcoded in English on a French-default app. Fall back
+      // to whatever's cached from a previous session; French if there's truly nothing to go on.
+      const crashEn = CACHED_STATUS?.language === "en";
+      return (
+        <div className="screen crash">
+          <div className="crash-card">
+            <h1>{crashEn ? "Can't reach Otto" : "Impossible de contacter Otto"}</h1>
+            <p>{crashEn ? "The server isn't responding. Check your connection and try again." : "Le serveur ne répond pas. Vérifie ta connexion et réessaie."}</p>
+            <button className="btn primary big" onClick={() => { setLoadError(false); setReloadKey((k) => k + 1); }}>{crashEn ? "Try again" : "Réessayer"}</button>
+          </div>
         </div>
-      </div>
-    );
+      );
+    }
     return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
   }
   if (!status.loggedIn) {
@@ -852,8 +511,8 @@ export function App() {
       <header className="topbar">
         <div className="brand"><Logo size={20} /> Otto</div>
         <nav className="tabs">
-          <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} href="/tasks">{status?.language === "en" ? "Tasks" : "Tâches"}{unseenCount > 0 ? <span className="tab-badge">{unseenCount}</span> : null}</a>
-          <a className={`tab ${route === "settings" ? "active" : ""}`} href="/settings">{status?.language === "en" ? "Settings" : "Réglages"}</a>
+          <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} aria-current={(route === "" || route === "tasks" || route.startsWith("task/")) ? "page" : undefined} href="/tasks">{status?.language === "en" ? "Tasks" : "Tâches"}{unseenCount > 0 ? <span className="tab-badge">{unseenCount}</span> : null}</a>
+          <a className={`tab ${route === "settings" ? "active" : ""}`} aria-current={route === "settings" ? "page" : undefined} href="/settings">{status?.language === "en" ? "Settings" : "Réglages"}</a>
         </nav>
         <div className="spacer" />
         {(route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
@@ -956,18 +615,15 @@ export function App() {
                     </div>
                     <div className="list">
                       {focusToday.map((t, i) => (
-                        <Card
+                        <TaskCardRow
                           key={t.id}
                           task={t}
                           index={i}
                           retrying={retryingIds.includes(t.id)}
                           isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
-                          open={false}
-                          onToggle={() => navigate(`task/${t.id}`)}
+                          onOpen={() => navigate(`task/${t.id}`)}
                           onChange={setTasks}
-                          onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
                           onConfirmed={flagJustDone}
-                          onNotify={notify}
                         />
                       ))}
                     </div>
@@ -992,18 +648,15 @@ export function App() {
                       </div>
                       <div className="list">
                         {laterToday.map((t, i) => (
-                          <Card
+                          <TaskCardRow
                             key={t.id}
                             task={t}
                             index={i}
                             retrying={retryingIds.includes(t.id)}
                             isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
-                            open={false}
-                            onToggle={() => navigate(`task/${t.id}`)}
+                            onOpen={() => navigate(`task/${t.id}`)}
                             onChange={setTasks}
-                            onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
                             onConfirmed={flagJustDone}
-                            onNotify={notify}
                           />
                         ))}
                       </div>
@@ -1023,18 +676,15 @@ export function App() {
                           </div>
                           <div className="list">
                             {canWait.map((t, i) => (
-                              <Card
+                              <TaskCardRow
                                 key={t.id}
                                 task={t}
                                 index={i}
                                 retrying={retryingIds.includes(t.id)}
                                 isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
-                                open={false}
-                                onToggle={() => navigate(`task/${t.id}`)}
+                                onOpen={() => navigate(`task/${t.id}`)}
                                 onChange={setTasks}
-                                onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
                                 onConfirmed={flagJustDone}
-                                onNotify={notify}
                               />
                             ))}
                           </div>
@@ -1049,11 +699,13 @@ export function App() {
                   <h3 className="completed-head">{en ? "Completed" : "Terminées"}</h3>
                   {/* Minimalist done-list: checked rows like a to-do app, not full cards. Click to expand details. */}
                   <div className="done-list">{(showCompleted ? completed : completed.slice(0, 8)).map((t) => (
-                    <div key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
-                      <span className="done-check">✓</span>
+                    // A real <button>: reopening a finished task was mouse-only, and this row is the ONLY
+                    // way back into one.
+                    <button type="button" key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
+                      <span className="done-check" aria-hidden="true">✓</span>
                       <span className="done-title">{t.title}</span>
                       <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
-                    </div>
+                    </button>
                   ))}</div>
                   {completed.length > 8 && !showCompleted && (
                     <button className="btn xs ghost" onClick={() => setShowCompleted(true)}>{en ? `Show all ${completed.length}` : `Tout afficher (${completed.length})`}</button>
@@ -1067,13 +719,10 @@ export function App() {
             const openTask = openId ? tasks.find((t) => t.id === openId) : null;
             if (!openTask) return null;
             return (
-              <TaskModal onClose={() => navigate("")}>
-                <Card
+              <TaskModal onClose={() => navigate("")} title={openTask.title}>
+                <TaskFocus
                   task={openTask}
-                  open
-                  inModal
                   retrying={retryingIds.includes(openTask.id)}
-                  onToggle={() => navigate("")}
                   onChange={setTasks}
                   onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
                   onConfirmed={flagJustDone}
@@ -1099,48 +748,6 @@ export function App() {
  *  without a portal, a nested modal's `inset: 0` was resolving against the OUTER modal's box, not the real
  *  viewport (it rendered pinned to the top of the outer card instead of centered on screen). Portaling both
  *  modals to `<body>` sidesteps that entirely, for every popup, not just nested ones. */
-function TaskModal({ onClose, children, nested }: { onClose: () => void; children: ReactNode; nested?: boolean }) {
-  // Closing used to unmount instantly (a hard cut, no exit motion) while opening got a full pop-in —
-  // asymmetric and the one modal-close moment in the app that read as unpolished. Mirror the entrance:
-  // play a quick close animation, THEN unmount (matches the CSS durations below exactly).
-  const [closing, setClosing] = useState(false);
-  const closingRef = useRef(false);
-  const doClose = useCallback(() => {
-    if (closingRef.current) return;
-    closingRef.current = true;
-    setClosing(true);
-    setTimeout(onClose, 160);
-  }, [onClose]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") doClose(); };
-    document.addEventListener("keydown", onKey);
-    // `overflow: hidden` alone does NOT stop background scroll on iOS Safari (a long-standing WebKit quirk)
-    // — the list behind the modal kept scrolling under your thumb while you scrolled inside it, which reads
-    // as badly broken on a phone. Pinning the body at its current scroll position actually blocks it there;
-    // restore both the styles and the scroll offset on close so the list isn't left jumped to the top.
-    const scrollY = window.scrollY;
-    const body = document.body.style;
-    const prev = { overflow: body.overflow, position: body.position, top: body.top, width: body.width };
-    body.overflow = "hidden";
-    body.position = "fixed";
-    body.top = `-${scrollY}px`;
-    body.width = "100%";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      body.overflow = prev.overflow; body.position = prev.position; body.top = prev.top; body.width = prev.width;
-      window.scrollTo(0, scrollY);
-    };
-  }, [doClose]);
-  return createPortal(
-    <div className={`task-modal-overlay ${nested ? "nested" : ""} ${closing ? "closing" : ""}`} onClick={doClose} role="dialog" aria-modal="true">
-      <div className={`task-modal ${nested ? "nested" : ""} ${closing ? "closing" : ""}`} onClick={(e) => e.stopPropagation()}>
-        <button className={`task-modal-x ${nested ? "nested" : ""}`} onClick={doClose} aria-label="Close">✕</button>
-        {children}
-      </div>
-    </div>,
-    document.body,
-  );
-}
 
 /** The IB "big project" milestone breakdown (Extended Essay/TOK/CAS/IA — see isBigIbProject in
  *  server/claude.ts) surfaced at DASHBOARD level, not just as a badge buried inside one task's step
@@ -1307,12 +914,13 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
 /** Thorough loading screen while Otto loads/scans — a spinner, a status line, and shimmer rows so the
  *  whole list arrives at once (never a half-populated flash). */
 function TaskSkeleton() {
+  const L = useLang();
   const widths = ["66%", "52%", "71%", "58%", "63%"];
   return (
     <div className="loading-screen" aria-busy="true" aria-live="polite">
       <div className="loading-head">
         <span className="spinner sm" />
-        <span className="loading-msg">Loading your tasks…</span>
+        <span className="loading-msg">{L("Chargement de tes tâches…", "Loading your tasks…")}</span>
       </div>
       <div className="list" aria-hidden="true">
         {widths.map((w, i) => (
@@ -1342,7 +950,8 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
       <p>{en
         ? "Connect your Pronote and Otto gets to work — it turns your homework and tests into a clear plan for today. It never does the exercise for you, and never checks anything off in Pronote without you."
         : "Connecte ton Pronote et Otto se met au travail — il transforme tes devoirs et contrôles en un plan clair pour aujourd'hui. Il ne fait jamais l'exercice à ta place, et ne coche jamais rien dans Pronote sans toi."}</p>
-      {!status.aiReady && <div className="warn">{en ? "The server has no DEEPSEEK_API_KEY — task generation is disabled." : "Le serveur n'a pas de DEEPSEEK_API_KEY — la génération de tâches est désactivée."}</div>}
+      {/* A raw env-var name means nothing to a student — say what's actually broken instead. */}
+      {!status.aiReady && <div className="warn">{en ? "Otto's AI isn't set up on this server yet — task generation is off for now." : "L'IA d'Otto n'est pas encore configurée sur ce serveur — la génération de tâches est désactivée pour l'instant."}</div>}
       <a className="btn primary big" href="/settings">{en ? "Connect my Pronote" : "Connecter mon Pronote"}</a>
       <p className="fineprint">{en ? "Disconnect Pronote, or pause Otto, any time in Settings. " : "Déconnecte Pronote, ou mets Otto en pause, à tout moment dans les Réglages. "}<a href="/privacy">{en ? "What Otto reads and why →" : "Ce qu'Otto lit et pourquoi →"}</a></p>
     </div>
@@ -1368,9 +977,9 @@ function TrackSection({ profile, onChanged }: { profile: Profile | null; onChang
     <div className="set-row">
       <span className="set-text"><span className="settings-hint">{L("Permet à Otto d'utiliser le bon vocabulaire (IA/CAS/EE, ou spécialité/épreuve) et débloque la découpe en jalons pour les grands projets IB.", "Lets Otto use the right vocabulary (IA/CAS/EE, or spécialité/épreuve) and unlocks the milestone breakdown for big IB projects.")}</span></span>
       <div className="lang-toggle">
-        <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
-        <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>BFI</button>
-        <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
+        <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
+        <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>BFI</button>
+        <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
       </div>
     </div>
   );
@@ -1405,8 +1014,8 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
       <div className="set-row">
         <span className="set-text"><b>{lang === "en" ? "Language" : "Langue"}</b><span className="settings-hint">{lang === "en" ? "Switches the interface and everything Otto writes." : "Change l'interface et tout ce qu'Otto écrit."}</span></span>
         <div className="lang-toggle">
-          <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} onClick={() => void saveLang("fr")}>Français</button>
-          <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} onClick={() => void saveLang("en")}>English</button>
+          <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} aria-pressed={lang === "fr"} onClick={() => void saveLang("fr")}>Français</button>
+          <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} aria-pressed={lang === "en"} onClick={() => void saveLang("en")}>English</button>
         </div>
       </div>
       <div className="set-row">
@@ -1509,7 +1118,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <h3>{L("Compte", "Account")}</h3>
         <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
         {/* French parents care about RGPD more than the AI-spend number itself — show both, but privacy first. */}
-        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Identifiants Pronote chiffrés (AES-256-GCM), données hébergées en France/UE (Supabase EU), jamais revendues.", "Pronote credentials encrypted (AES-256-GCM), data hosted in France/EU (Supabase EU), never resold.")}</span></div>
+        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré, tes données restent hébergées en France/UE, jamais revendues.", "Your Pronote password is encrypted, your data stays hosted in France/EU, never resold.")}</span></div>
         {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn)}</span></div>}
         <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
         {/* GDPR self-serve: download everything stored (Art. 20, portability) and permanently delete it
@@ -1520,8 +1129,10 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         </div>
         <div className="modal-row">
           <span className="lbl">{L("Supprimer le compte", "Delete account")}</span>
+          {/* Vermilion is reserved for exactly this — an irreversible action — everywhere else in the app;
+              this was the one destructive button styled as a plain .btn xs, indistinguishable from "Save". */}
           <button
-            className="btn xs"
+            className="btn xs danger"
             disabled={deletingAccount}
             onClick={async () => {
               if (!window.confirm(L("Supprimer définitivement ton compte Otto et tout ce qui y est associé — tâches, profil, connexions ? C'est irréversible.", "Permanently delete your Otto account and everything tied to it — tasks, profile, connections? This can't be undone."))) return;
@@ -1556,7 +1167,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
             <span className="set-text"><b>{L("Vérifier Pronote", "Check Pronote")}</b><span className="settings-hint">{L("À quelle fréquence Otto regarde ton Pronote chaque jour.", "How often Otto checks your Pronote each day.")}</span></span>
             <div className="seg" role="group" aria-label={L("Vérifications par jour", "Checks per day")}>
               {[1, 2, 3, 4].map((n) => (
-                <button key={n} className={`seg-btn ${genPerDay === n ? "on" : ""}`} onClick={() => changeGen(n)}>{n}×</button>
+                <button key={n} className={`seg-btn ${genPerDay === n ? "on" : ""}`} aria-pressed={genPerDay === n} onClick={() => changeGen(n)}>{n}×</button>
               ))}
             </div>
           </div>
@@ -1579,9 +1190,9 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
-        <button className="sec-toggle" onClick={() => setShowKnows((v) => !v)}>
+        <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
           <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
-          <span className={`caret ${showKnows ? "open" : ""}`}>›</span>
+          <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
         {showKnows && <><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></>}
       </section>
@@ -1651,8 +1262,8 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
           </div>
           <div className="pronote-form-row">
             <div className="seg" role="group" aria-label={L("Type de compte", "Account type")}>
-              <button type="button" className={`seg-btn ${kind === "student" ? "on" : ""}`} onClick={() => setKind("student")}>{L("Élève", "Student")}</button>
-              <button type="button" className={`seg-btn ${kind === "parent" ? "on" : ""}`} onClick={() => setKind("parent")}>{L("Parent", "Parent")}</button>
+              <button type="button" className={`seg-btn ${kind === "student" ? "on" : ""}`} aria-pressed={kind === "student"} onClick={() => setKind("student")}>{L("Élève", "Student")}</button>
+              <button type="button" className={`seg-btn ${kind === "parent" ? "on" : ""}`} aria-pressed={kind === "parent"} onClick={() => setKind("parent")}>{L("Parent", "Parent")}</button>
             </div>
             <button className="btn primary xs" disabled={busy} onClick={() => void connect()}>{busy ? L("Connexion…", "Connecting…") : L("Connecter", "Connect")}</button>
           </div>
@@ -1721,7 +1332,7 @@ function GoogleTiles({ onChanged }: { onChanged?: () => void }) {
 
   const L = useLang();
   if (items === undefined) return null;
-  if (items === null || !items.length) return <div className="warn">{L("Google n'est pas configuré sur le serveur (COMPOSIO_API_KEY).", "Google isn't configured on the server (COMPOSIO_API_KEY).")}</div>;
+  if (items === null || !items.length) return <div className="warn">{L("Google n'est pas encore activé sur ce serveur.", "Google isn't set up on this server yet.")}</div>;
   return (
     <div className="int-group">
       {items.map((item) => (
@@ -1840,7 +1451,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
         {step === 3 && (
           <div className="onboard-step">
             <h2>{L("Connecte ton Pronote", "Connect your Pronote")}</h2>
-            <p className="onboard-lead">{L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés (AES-256-GCM) et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted (AES-256-GCM) and never resold.")}</p>
+            <p className="onboard-lead">{L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted and never resold.")}</p>
             <div className="onboard-apps">
               <PronoteTile onChanged={() => void checkPronote()} />
             </div>
@@ -1881,6 +1492,8 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
 
 /** Dedicated login / sign-up PAGE (routes /login and /signup). Its own clean, centered card. */
 function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; onDone: (isNew?: boolean) => void; initialMode: "login" | "signup" }) {
+  const en = status.language === "en";
+  const L = (fr: string, e: string) => (en ? e : fr);
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
@@ -1891,9 +1504,9 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
     setBusy(true); setErr("");
     try {
       const r = mode === "signup" ? await api.signup(email.trim(), pw) : await api.login(email.trim(), pw);
-      if (r.ok) onDone(mode === "signup"); else setErr(r.error || "Something went wrong.");
+      if (r.ok) onDone(mode === "signup"); else setErr(r.error || L("Une erreur est survenue.", "Something went wrong."));
     } catch {
-      setErr("Couldn't reach the server. Check your connection and try again.");
+      setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
     } finally {
       setBusy(false);
     }
@@ -1903,22 +1516,23 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
       <header className="landing-nav"><a className="brand" href="/"><Logo size={20} /> Otto</a></header>
       <main className="login-main">
         <div className="login-card">
-          <h1 className="login-title">{mode === "signup" ? "Create your account" : "Welcome back"}</h1>
-          <p className="login-sub">{mode === "signup" ? "Two fields and you're in — connect Google next." : "Log in to pick up where Otto left off."}</p>
-          {!status.cloud && <div className="warn">Accounts need Supabase configured on the server.</div>}
-          <label className="field"><span>Email</span>
-            <input className="addinput" type="email" autoComplete="email" placeholder="you@email.com" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+          <h1 className="login-title">{mode === "signup" ? L("Crée ton compte", "Create your account") : L("Content de te revoir", "Welcome back")}</h1>
+          <p className="login-sub">{mode === "signup" ? L("Deux champs et c'est parti — tu connectes Pronote ensuite.", "Two fields and you're in — connect Pronote next.") : L("Connecte-toi pour reprendre où tu en étais.", "Log in to pick up where Otto left off.")}</p>
+          {/* "Supabase"/an env-var name means nothing to a student — say what's actually broken instead. */}
+          {!status.cloud && <div className="warn">{L("Les comptes ne sont pas encore activés sur ce serveur.", "Accounts aren't set up on this server yet.")}</div>}
+          <label className="field"><span>{L("Email", "Email")}</span>
+            <input className="addinput" type="email" autoComplete="email" placeholder="toi@email.com" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
           </label>
-          <label className="field"><span>Password</span>
-            <input className="addinput" type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder="At least 6 characters" value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} />
+          <label className="field"><span>{L("Mot de passe", "Password")}</span>
+            <input className="addinput" type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder={L("6 caractères minimum", "At least 6 characters")} value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} />
           </label>
           {err && <div className="autherr">{err}</div>}
-          <button className="btn primary big" disabled={busy || !email.trim() || !pw} onClick={() => void submit()}>{busy ? "…" : mode === "signup" ? "Create account" : "Log in"}</button>
+          <button className="btn primary big" disabled={busy || !email.trim() || !pw} onClick={() => void submit()}>{busy ? "…" : mode === "signup" ? L("Créer le compte", "Create account") : L("Se connecter", "Log in")}</button>
           <button className="btn ghost" onClick={() => { setMode((m) => (m === "signup" ? "login" : "signup")); setErr(""); }}>
-            {mode === "signup" ? "Have an account? Log in" : "New here? Create an account"}
+            {mode === "signup" ? L("Déjà un compte ? Se connecter", "Have an account? Log in") : L("Nouveau ici ? Créer un compte", "New here? Create an account")}
           </button>
-          <a className="login-back" href="/">← Back to home</a>
-          <div className="login-legal">By continuing you agree to our <a href="/terms">Terms</a> & <a href="/privacy">Privacy Policy</a>.</div>
+          <a className="login-back" href="/">{L("← Retour à l'accueil", "← Back to home")}</a>
+          <div className="login-legal">{L("En continuant, tu acceptes nos ", "By continuing you agree to our ")}<a href="/terms">{L("conditions", "Terms")}</a> {L("et notre", "&")} <a href="/privacy">{L("politique de confidentialité", "Privacy Policy")}</a>.</div>
         </div>
       </main>
     </div>
@@ -2061,7 +1675,7 @@ function Landing() {
         <h2 className="reveal">Un guide, pas un exécutant</h2>
         <div className="features">
           <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>Jamais ton travail à ta place</h3><p>Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle. La compréhension reste la tienne, pas celle d'une IA.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Identifiants chiffrés, données en France/UE</h3><p>Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé (AES-256-GCM). Hébergement Supabase EU. Jamais revendu.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Identifiants chiffrés, données en France/UE</h3><p>Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé. Données hébergées en France/UE. Jamais revendu.</p></div></div>
           <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>Plafond de coût visible</h3><p>Coût de l'IA plafonné et affiché dans les Réglages — pas de surprise.</p></div></div>
         </div>
       </section>
@@ -2357,635 +1971,3 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
   );
 }
 
-function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, onLeft, onNotify, inModal, isNew, index }: { task: WebTask; open: boolean; onToggle: () => void; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void; inModal?: boolean; isNew?: boolean; index?: number }) {
-  const L = useLang();
-  const cardEn = useContext(LangContext) === "en";
-  const [running, setRunning] = useState(false);
-  const [openNote, setOpenNote] = useState<string | null>(null);
-  const [openDeck, setOpenDeck] = useState<string | null>(null);
-  const [openQuiz, setOpenQuiz] = useState<string | null>(null);
-  const [decided, setDecided] = useState<Record<number, string>>({}); // what the user typed for a manual step
-  const [sending, setSending] = useState<number | null>(null); // which sendable is being sent
-  const [viewDraft, setViewDraft] = useState<number | null>(null); // which sendable's draft is expanded for review
-  const [confirmIdx, setConfirmIdx] = useState<number | null>(null); // which sendable is awaiting send confirmation
-  const [changeIdx, setChangeIdx] = useState<number | null>(null);   // which sendable's "what to change" box is open
-  const [changeText, setChangeText] = useState("");
-  const [revising, setRevising] = useState(false);
-  const [reviseError, setReviseError] = useState<string | null>(null);
-  // Manual edits to a draft's own text — separate from changeText (that's a PROMPT for Otto to rewrite it;
-  // this is the user directly typing the replacement). Keyed by sendable index; only the open one is edited.
-  const [draftEdits, setDraftEdits] = useState<Record<number, { subject?: string; body?: string }>>({});
-  const [savingDraft, setSavingDraft] = useState<number | null>(null);
-  const saveDraftEdit = async (i: number) => {
-    const edit = draftEdits[i];
-    if (!edit || savingDraft != null) return;
-    // The textarea is generically bound to "body" client-side; Slack has no subject and stores its
-    // message under "text" server-side — map to whichever field this sendable's app actually uses.
-    const patch = task.sendables?.[i]?.app === "slack" ? { text: edit.body } : { subject: edit.subject, body: edit.body };
-    setSavingDraft(i);
-    try { onTask(await api.editDraft(task.id, i, patch)); setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; }); }
-    catch { /* edit stays pending — the box keeps the user's text so nothing is lost */ }
-    finally { setSavingDraft(null); }
-  };
-  // Context + audit trail live in ONE collapsible section: both answer the same underlying question
-  // ("why am I seeing this / what actually happened"), so splitting them into two separately-toggled
-  // blocks just made the card longer for no benefit. Collapsed by default; history is fetched on first
-  // expand rather than always-on, since it's for the moment someone asks, not every render.
-  const [contextOpen, setContextOpen] = useState(false);
-  const [history, setHistory] = useState<{ kind: string; message?: string; at: string }[] | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const toggleContext = async () => {
-    if (contextOpen) { setContextOpen(false); return; }
-    setContextOpen(true);
-    if (history) return;
-    setHistoryLoading(true);
-    try { setHistory(await api.taskEvents(task.id)); }
-    catch { setHistory([]); }
-    finally { setHistoryLoading(false); }
-  };
-  // Per-task coaching chat — a thread scoped to THIS task so the student can ask for help without
-  // re-explaining their situation. Starts from whatever's already saved on the task (persists across opens).
-  const [chatInput, setChatInput] = useState("");
-  const [chatSending, setChatSending] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
-  // The message currently in flight. Without this the student's own message VANISHED the moment they hit
-  // send (the input clears immediately, but the thread only updates once the server responds) — so for the
-  // several seconds a reasoning-model reply takes, the thread showed no trace of what they just asked.
-  const [pendingMsg, setPendingMsg] = useState<string | null>(null);
-  // Replies from a reasoning model routinely take 5-10s. Past that, a silent indicator starts reading as
-  // "it's broken" — so say it's still going rather than let them wonder.
-  const [chatSlow, setChatSlow] = useState(false);
-  // Set by the per-step "Aide" button — the NEXT message sent is tagged as being about this step (server
-  // validates the range). Cleared once that message actually sends, so a follow-up isn't silently re-tagged.
-  const [chatStep, setChatStep] = useState<number | null>(null);
-  const chatInputRef = useRef<HTMLInputElement | null>(null);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ block: "nearest" }); }, [task.chat?.length, chatSending]);
-  // Two stages, not one: a plain reply is usually back well under 6s, but a turn that looks something up
-  // or makes a deck/quiz is now 2-3 sequential model calls and routinely runs 15-20s+ — a single "still
-  // thinking…" left sitting for that long starts reading as broken. The client can't SEE which kind of
-  // turn is in flight (no streaming), so the second stage is the honest thing: say it might be building
-  // something, not just guess a shorter wait.
-  const [chatVerySlow, setChatVerySlow] = useState(false);
-  useEffect(() => {
-    if (!chatSending) { setChatSlow(false); setChatVerySlow(false); return; }
-    const id1 = setTimeout(() => setChatSlow(true), 6000);
-    const id2 = setTimeout(() => setChatVerySlow(true), 15000);
-    return () => { clearTimeout(id1); clearTimeout(id2); };
-  }, [chatSending]);
-  const sendChat = async () => {
-    const message = chatInput.trim();
-    if (!message || chatSending) return;
-    const stepIndex = chatStep; // captured before clearing — see F ("Aide" button)
-    setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message); setChatStep(null);
-    // Merge the WHOLE returned task, not just `chat` — a tutor turn can create notes/decks/quizzes now,
-    // and the assistant's chat entry references them by id (task.notes/flashcards/quizzes).
-    try { const { task: updated } = await api.chat(task.id, message, stepIndex ?? undefined); onTask({ ...task, ...updated }); }
-    catch (e: any) { setChatError(e?.message || L("Envoi impossible — réessaie.", "Couldn't send that — try again.")); setChatInput(message); }
-    finally { setChatSending(false); setPendingMsg(null); }
-  };
-  const [leaving, setLeaving] = useState(false);
-  const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
-  const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
-  // Confirm ("Looks good") gets a distinct green check-pulse (a small reward for finishing something);
-  // Dismiss keeps the plain slide-away — different actions, so they shouldn't look identical. Both play
-  // WHILE the API call runs, then remove the card, so it never blinks out or lingers waiting on the network.
-  const leave = async (fn: () => Promise<WebTask[]>, kind: "confirm" | "dismiss" = "dismiss") => {
-    if (leaving) return;
-    setLeaveKind(kind);
-    setLeaving(true);
-    // Must match (or slightly exceed) the CSS animation durations (cardConfirm 0.55s / cardOut 0.32s in
-    // styles.css) — the row is removed from state the instant this resolves, so if the timers were shorter
-    // than the animation, React would unmount mid-collapse and cut it off abruptly (the exact jank this is
-    // meant to avoid). Confirm holds a beat longer so the check-pulse reads before it slides away.
-    const holdMs = kind === "confirm" ? 550 : 320;
-    const [list] = await Promise.all([fn(), new Promise((r) => setTimeout(r, holdMs))]);
-    if (kind === "confirm") onConfirmed?.(task.id); // flags the row it lands on in "Completed" for a beat, so
-    // finishing something has a visible destination instead of just vanishing from the list.
-    onChange(list);
-    onLeft?.(task.id); // when open in the task modal, both finishing AND dismissing should close the
-    // popup and drop you back on the list — there's nothing left to look at either way.
-  };
-  // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
-  const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
-  // Per-step tutor entry point (the "Aide" button in .step-act): seed the ONE task-level chat thread
-  // (see the chat-scope decision — no per-step thread) with which step this is about, then let the
-  // student add their own words before sending. Prefilled + focused, NOT auto-sent — they almost always
-  // want to add "je bloque sur la partie b", and auto-sending would burn a paid call on text they didn't
-  // write themselves.
-  const askAboutStep = (i: number, text: string) => {
-    setChatStep(i);
-    setChatInput(L(`Aide-moi avec : ${text}`, `Help me with: ${text}`));
-    chatInputRef.current?.focus();
-    chatEndRef.current?.scrollIntoView({ block: "nearest" });
-  };
-  const run = async (reset?: boolean) => {
-    setRunning(true);
-    try { onTask(await api.run(task.id, reset)); }
-    // A run rejection (paused / over-budget / rate-limited / still-running-elsewhere / a server error) never
-    // touched the task before, so it failed silently. Surface it — the card also reflects any failed state.
-    catch (e: any) { onNotify?.(e?.message || L("Impossible de lancer cette tâche — réessaie.", "Couldn't run this task — try again."), "error"); }
-    finally { setRunning(false); }
-  };
-  // Confirmed send (user clicked through the inline confirm) — the ONLY thing that actually sends.
-  const doSend = async (i: number) => {
-    if (sending != null) return; // guard against a double-send race
-    setConfirmIdx(null); setSending(i);
-    // A failed send used to be swallowed entirely — the button just reset and the user had no idea whether
-    // their email/message went out. For an irreversible action that's the worst possible silence: surface it.
-    try { onTask(await api.sendDraft(task.id, i)); }
-    catch (e: any) { onNotify?.(e?.message || L("Envoi impossible — rien n'a été envoyé. Réessaie.", "Couldn't send — nothing was sent. Try again."), "error"); }
-    finally { setSending(null); }
-  };
-  // The user declined and said what to change → re-run the task with that note so Otto revises the draft.
-  const doRevise = async () => {
-    const note = changeText.trim();
-    if (!note || revising) return;
-    setRevising(true); setReviseError(null);
-    // The re-draft replaces the sendables list, so clear any open draft preview (its index may now be stale).
-    try { onTask(await api.revise(task.id, note)); setChangeIdx(null); setChangeText(""); setViewDraft(null); }
-    // Was previously swallowed silently ("surfaced via task state" — it wasn't: a paused/over-budget/
-    // rate-limited/still-running-elsewhere rejection never touches the task at all, so nothing ever showed).
-    // Note is deliberately KEPT in the box on failure so a rejected revision isn't lost — just retry it.
-    catch (e: any) { setReviseError(e?.message || L("Révision impossible — réessaie.", "Couldn't revise — try again.")); }
-    finally { setRevising(false); }
-  };
-
-  const steps = task.steps || [];
-  const blocked = (s: TaskStep) => s.dependsOn != null && !steps[s.dependsOn]?.done;
-  // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
-  const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
-  // Name WHAT a link is, not just where it points — "Doc" beats "docs.google.com" on the card. Kept short —
-  // this is a button label, not a description, so it should read at a glance next to "Open ↗".
-  const linkKind = (u?: string): string => {
-    const s = u || "";
-    if (/docs\.google\.com\/document/.test(s)) return "Doc";
-    if (/docs\.google\.com\/spreadsheets/.test(s)) return "Sheet";
-    if (/docs\.google\.com\/presentation/.test(s)) return "Slides";
-    if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return "Form";
-    if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? "Draft" : "Email";
-    if (/calendar\.google\.com/.test(s)) return "Event";
-    if (/drive\.google\.com/.test(s)) return "File";
-    if (/maps\.google\.com|google\.com\/maps/.test(s)) return "Directions";
-    if (/^tel:/.test(s)) return "Call";
-    if (/github\.com\/[^/]+\/[^/]+\/pull/.test(s)) return "PR";
-    if (/github\.com\/[^/]+\/[^/]+\/issues/.test(s)) return "Issue";
-    if (/[a-z0-9-]+\.slack\.com/.test(s)) return "Slack";
-    if (/notion\.so/.test(s)) return "Notion";
-    return urlHost(s);
-  };
-  // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
-  const openAllPages = async () => {
-    const idxs = steps.map((s, i) => ({ s, i })).filter(({ s }) => s.url && !s.done && !blocked(s)).map(({ i }) => i).slice(0, 3);
-    if (!idxs.length) return;
-    openTabs(idxs.map((i) => steps[i].url!), TAB_GROUP);
-    let res: WebTask[] | null = null;
-    for (const i of idxs) if (steps[i].automatable) res = await api.stepDone(task.id, i, true, "Opened ↗");
-    if (res) onChange(res);
-  };
-  const openableCount = steps.filter((s) => s.url && !s.done && !blocked(s)).length;
-
-  const cStatus = canonStatus(task.status);
-
-  // Auto-open documents Otto created (Doc/Sheet/Slides) once the task is done — capped per task + per
-  // session, once per URL EVER (persisted), so the same doc never reopens. Works without the extension too:
-  // window.open outside a click may be popup-blocked in some browsers, but when allowed the doc just appears
-  // — best-effort beats waiting for a click. Off if the user toggled it in Settings.
-  useEffect(() => {
-    if (cStatus !== "needs_review" || !autoOpenDocsOn()) return;
-    const room = SESSION_DOC_CAP - sessionDocsOpened;
-    if (room <= 0) return;
-    // Only docs we've NEVER auto-opened (persisted across reloads) — so the same tabs never reopen.
-    const docs = (task.links || []).map((l) => l.url).filter((u) => DOC_RE.test(u) && !openedDocs.has(u));
-    const toOpen = docs.slice(0, Math.min(room, PER_TASK_DOC_CAP));
-    if (!toOpen.length) return;
-    markDocsOpened(toOpen);
-    sessionDocsOpened += toOpen.length;
-    openTabs(toOpen, TAB_GROUP);
-  }, [task.status, task.links]);
-
-  // Bring a deep-linked card into view when it opens (e.g. landing on #/task/<id> directly).
-  const cardRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (open) cardRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [open]);
-
-  // State classes drive the visual language: pulsing node while thinking, soft amber glow when a step
-  // is waiting on the user, dormant/desaturated once handled — readable at a glance, without reading.
-  const isDone = isHandled(task.status);
-  const needsYou = !isDone && cStatus === "needs_review" &&
-    (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
-  const chip = !isDone ? statusChip(task, retrying, cardEn) : null;
-  return (
-    <div ref={cardRef} style={index !== undefined ? { ["--i" as any]: index } : undefined} className={`card ${open ? "open" : ""} ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
-      <div className="card-main" onClick={inModal ? undefined : onToggle} style={inModal ? { cursor: "default" } : undefined}>
-        {/* Direct check-off, like a normal to-do list — no need to open the task first. Still one deliberate
-            click (not automatic): it fires the same confirm as "Looks good" inside the detail view. */}
-        {!isDone ? (
-          <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
-            title={L("Marquer comme fait", "Mark as done")} aria-label={L("Marquer la tâche comme faite", "Mark the task as done")} disabled={leaving}
-            onClick={(e) => { e.stopPropagation(); void leave(() => api.confirm(task.id), "confirm"); }}>
-            {leaving && leaveKind === "confirm" ? "✓" : ""}
-          </button>
-        ) : null}
-        <div className="card-text">
-          <div className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau — pas encore ouvert", "New — not yet opened")} /> : null}{task.title}</div>
-          {/* ONE secondary line, not three: a concrete next action is more useful to scan than the generic
-              "why" once one exists, so it takes priority — "why" only shows as a fallback before there's a
-              next step to point at. The deadline (if any) always stays, since that's a different kind of
-              information (timing, not description). Source badge dropped here entirely — it's one tap away
-              in the Context section, redundant to repeat on every single row. */}
-          {(() => {
-            const w = task.when ? fmtWhen(task.when) : "";
-            // Days-to-deadline, not urgency score, drives the visual — same anti-procrastination curve as
-            // the server's applyDeadlineUrgency, so a card LOOKS as urgent as it's actually ranked.
-            const daysLeft = task.when ? (Date.parse(task.when) - Date.now()) / 86_400_000 : NaN;
-            const soon = !isDone && !isNaN(daysLeft) && daysLeft <= 3;
-            const next = !isDone ? (task.steps || []).find((s) => !s.done) : undefined;
-            const secondary = next ? L(`Suivant : ${next.text}`, `Next: ${next.text}`) : subtitle(task);
-            return (w || secondary) ? <div className="card-sub">{w && <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span>}{secondary}</div> : null;
-          })()}
-          <div className="card-badges">
-            <span className={`chip chip-${task.quadrant === "do" ? "bad" : task.quadrant === "schedule" ? "attention" : "muted"}`}>{priorityBadge(task.quadrant, cardEn)}</span>
-          </div>
-        </div>
-        {/* No button — refinement is fully automatic (immediately if AI's available, else the next background
-            sweep cleans it up and queues it to run, no action needed). This just shows it's in that state. */}
-        {!isDone && task.unrefined ? <span className="chip chip-muted" title={L("Ajouté pendant que l'IA était coupée — Otto va nettoyer et lancer ça automatiquement", "Added while AI was off — Otto will clean this up and run it automatically")}>{L("Nettoyage…", "Cleaning up…")}</span> : null}
-        {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
-        {cStatus === "executing" ? <span className="card-spin" title={L("En cours…", "Working…")} /> : null}
-        {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
-            Hidden once the row is already leaving (dismissing or confirming) — a second click has nothing to do. */}
-        {!isDone && !leaving && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L("Ignorer la tâche", "Dismiss task")} onClick={(e) => { e.stopPropagation(); void leave(() => api.dismiss(task.id)); }}>×</button>}
-        <span className="caret">›</span>
-      </div>
-      {leaving && leaveKind === "confirm" ? <span className="confirm-check" aria-hidden="true">✓</span> : null}
-
-      {open && (
-        <div className="detail">
-          {/* The agent drafted it — review it right here, then fire it (with a confirm). The only time
-              anything sends. FIRST on the card: your next action is the first thing you see. */}
-          {task.sendables?.length ? (
-          <section>
-            {(
-              <div className="sendables">
-                {task.sendables.map((s, i) => {
-                  // Who this goes to — ALWAYS shown before the user sends (a calendar invite lists every attendee).
-                  const recipients = s.app === "gcal" ? (s.attendees || []).join(", ") : (s.to || s.channel || "");
-                  const noun = s.app === "gcal" ? L("l'invitation calendrier", "the calendar invite") : s.app === "slack" ? L("le message Slack", "the Slack message") : L("l'email", "the email");
-                  const sendIcon = "";
-                  return (
-                  <div key={i} className="sendable">
-                    {/* The recipient is on the face of the card, not hidden behind a click — you see who before you send. */}
-                    {recipients ? (
-                      <div className="sendable-to">
-                        <span className="sendable-to-label">{s.app === "gcal" ? L("Invités", "Invites") : L("À", "To")}</span>
-                        <span className="sendable-to-who">{recipients}</span>
-                      </div>
-                    ) : null}
-                    <div className="sendable-row">
-                      {/* Only ONE panel open at a time (draft view, or the send confirm) — stacking both was
-                          the "messy" part: opening one now always closes the other. */}
-                      <button className="btn xs ghost" onClick={() => { setConfirmIdx(null); setViewDraft((v) => (v === i ? null : i)); if (viewDraft !== i) { setChangeIdx(null); setChangeText(""); } }}>{viewDraft === i ? L("Masquer les détails", "Hide details") : s.app === "gcal" ? L("Voir l'événement", "View event") : L("Voir le brouillon", "View draft")}</button>
-                      {/* Not yet blue: clicking this only OPENS the confirm below, it doesn't send anything —
-                          the real "needs you, this is irreversible" signal belongs on "Oui, envoyer" alone.
-                          Two blue buttons for one action (this + the confirm) was the "too many blue buttons"
-                          clutter; only the actual send moment gets the accent now. */}
-                      {s.sent
-                        ? <button className="btn send-btn sent" disabled>{L("Envoyé", "Sent")}</button>
-                        : sending === i
-                          ? <button className="btn send-btn" disabled>{L("Envoi…", "Sending…")}</button>
-                          : <button className="btn send-btn" onClick={() => { setViewDraft(null); setChangeIdx(null); setConfirmIdx(confirmIdx === i ? null : i); }}>{`${sendIcon} ${s.label}`}</button>}
-                    </div>
-                    {/* Confirm step — the recipient is spelled out in full before anything sends. */}
-                    {confirmIdx === i && !s.sent && sending !== i ? (
-                      <div className="confirm">
-                        <div className="confirm-q">{L("Envoyer", "Send")} {noun} {L("à", "to")} <b>{recipients || L("le destinataire", "the recipient")}</b> ?</div>
-                        <div className="confirm-acts">
-                          <button className="btn primary xs" onClick={() => void doSend(i)}>{L("Oui, envoyer", "Yes, send")}</button>
-                          <button className="btn xs" onClick={() => { setConfirmIdx(null); setViewDraft(i); setChangeText(""); setChangeIdx(i); }}>{L("Non — changer quelque chose", "No — change something")}</button>
-                          <button className="btn xs ghost" onClick={() => setConfirmIdx(null)}>{L("Annuler", "Cancel")}</button>
-                        </div>
-                      </div>
-                    ) : null}
-                    {/* ONE panel for everything about the draft's content — view it, edit it directly, or ask
-                        Otto to rewrite it with a prompt. No separate stacked boxes for each. */}
-                    {viewDraft === i ? (
-                      <div className="draft">
-                        {s.app === "gcal" ? (
-                          <>
-                            {s.summary ? <div className="draft-row"><span className="draft-label">{L("Événement", "Event")}</span><span>{s.summary}</span></div> : null}
-                            {s.when ? <div className="draft-row"><span className="draft-label">{L("Quand", "When")}</span><span>{s.when}</span></div> : null}
-                            {recipients ? <div className="draft-row"><span className="draft-label">{L("Invités", "Invites")}</span><span>{recipients}</span></div> : null}
-                          </>
-                        ) : s.sent ? (
-                          <>
-                            {(s.to || s.channel) ? <div className="draft-row"><span className="draft-label">{L("À", "To")}</span><span>{s.to || s.channel}</span></div> : null}
-                            {s.subject ? <div className="draft-row"><span className="draft-label">{L("Objet", "Subject")}</span><span>{s.subject}</span></div> : null}
-                            <pre className="draft-body">{s.body || s.text || L("Envoyé.", "Sent.")}</pre>
-                          </>
-                        ) : (
-                          // Unsent: editable directly — type right in the box. "Ask Otto to rewrite it"
-                          // below opens an inline prompt IN this same panel instead of a separate box.
-                          <>
-                            {(s.to || s.channel) ? <div className="draft-row"><span className="draft-label">{L("À", "To")}</span><span>{s.to || s.channel}</span></div> : null}
-                            {s.app === "gmail" ? (
-                              <input className="addinput sm draft-subject" placeholder={L("Objet", "Subject")} disabled={revising}
-                                value={draftEdits[i]?.subject ?? s.subject ?? ""}
-                                onChange={(e) => setDraftEdits((d) => ({ ...d, [i]: { ...d[i], subject: e.target.value } }))} />
-                            ) : null}
-                            {/* Auto-grows to fit the WHOLE text (up to a cap) instead of a small fixed
-                                box that clips a real email and forces scrolling inside a scrollbox.
-                                Disabled while Otto is rewriting — a manual edit landing mid-rewrite would
-                                just get silently overwritten the moment the AI pass finishes. */}
-                            <textarea className="draft-body-edit" rows={12} disabled={revising}
-                              ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 600)}px`; } }}
-                              value={draftEdits[i]?.body ?? s.body ?? s.text ?? ""}
-                              onChange={(e) => { setDraftEdits((d) => ({ ...d, [i]: { ...d[i], body: e.target.value } })); e.target.style.height = "auto"; e.target.style.height = `${Math.min(e.target.scrollHeight, 600)}px`; }} />
-                            {draftEdits[i] && !revising ? (
-                              <div className="draft-edit-acts">
-                                <button className="btn xs" disabled={savingDraft === i} onClick={() => void saveDraftEdit(i)}>{savingDraft === i ? L("Enregistrement…", "Saving…") : L("Enregistrer les modifications", "Save changes")}</button>
-                                <button className="btn xs ghost" disabled={savingDraft === i} onClick={() => setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; })}>{L("Annuler", "Discard")}</button>
-                              </div>
-                            ) : null}
-                            {changeIdx === i ? (
-                              <div className="rewrite-row">
-                                <input className="addinput sm" autoFocus disabled={revising}
-                                  placeholder={L("Dis à Otto quoi changer — ex : ajoute mes horaires de vol, raccourcis, corrige la date", "Tell Otto what to change — e.g. add my flight times, make it shorter, fix the date")}
-                                  value={changeText} onChange={(e) => setChangeText(e.target.value)}
-                                  onKeyDown={(e) => { if (e.key === "Enter") void doRevise(); }} />
-                                {!revising && <button className="btn xs" disabled={!changeText.trim()} onClick={() => void doRevise()}>{L("Réviser", "Revise")}</button>}
-                                <button className="btn xs ghost" disabled={revising} onClick={() => { setChangeIdx(null); setChangeText(""); setReviseError(null); }}>{L("Annuler", "Cancel")}</button>
-                                {reviseError ? <div className="rewrite-error">{reviseError}</div> : null}
-                              </div>
-                            ) : !revising ? (
-                              <button className="btn xs ghost rewrite-toggle" onClick={() => { setChangeText(""); setReviseError(null); setChangeIdx(i); }}>{L("Demander à Otto de le réécrire →", "Ask Otto to rewrite it →")}</button>
-                            ) : null}
-                            {revising && changeIdx === i ? <div className="rewrite-progress" title={L("Otto réécrit le brouillon…", "Otto is rewriting the draft…")} /> : null}
-                          </>
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-          ) : null}
-          {/* Transparency, collapsed by default: WHERE this came from, WHAT Otto actually found (source
-              badge + inline links — real Gmail/Calendar/Drive/web URLs, never a bare unverifiable claim),
-              AND the full decision trail, in one place so "why am I seeing this" always has a real answer. */}
-          <section className="context-sec">
-            <h4 className="context-toggle" onClick={() => void toggleContext()}>
-              <span className={`caret ${contextOpen ? "open" : ""}`}>›</span> {L("Contexte", "Context")}
-              {task.source ? <span className="chip chip-muted context-source">{sourceBadge(task.source, cardEn)}</span> : null}
-            </h4>
-            {contextOpen ? (
-              <div className="context-body">
-                {task.context?.trim() ? <p className="context-text">{withInlineLinks(task.context)}</p> : null}
-                {historyLoading ? (
-                  <p className="muted small">{L("Chargement de l'historique…", "Loading history…")}</p>
-                ) : history?.length ? (
-                  <ul className="history-list">
-                    {history.map((e, i) => (
-                      <li key={i}><span className="history-when">{relTime(e.at)}</span> {e.message || e.kind}</li>
-                    ))}
-                  </ul>
-                ) : !task.context?.trim() ? <p className="muted small">{L("Rien d'enregistré pour l'instant.", "Nothing recorded yet.")}</p> : null}
-              </div>
-            ) : null}
-          </section>
-          {steps.length > 0 && (
-          <section>
-            <h4>{L("Ce qu'il reste à faire", "What's left")}{openableCount >= 2 && <button className="btn xs ghost head-act" onClick={() => void openAllPages()}>{L(`Tout ouvrir (${openableCount}) ↗`, `Open all (${openableCount}) ↗`)}</button>}</h4>
-              {/* A big IB project (Extended Essay/TOK/CAS/IA — see isBigIbProject in server/claude.ts)
-                  gets a milestone stepper instead of just relying on the plain checklist below: each
-                  segment is one milestone, so progress through a months-long project reads at a glance
-                  instead of being just another line in a step list. Omitted entirely for an ordinary
-                  task (no step ever has targetDate outside a big project). */}
-              {steps.some((s) => s.targetDate) && (
-                <div className="milestone-bar" role="list">
-                  {steps.filter((s) => s.targetDate).map((s, i, arr) => {
-                    const doneIdx = arr.reduce((n, x) => n + (x.done ? 1 : 0), 0);
-                    const late = !s.done && s.targetDate! < todayIso();
-                    const state = s.done ? "done" : late ? "late" : i === doneIdx ? "current" : "upcoming";
-                    return (
-                      <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate)}${late ? ` (${L("en retard", "overdue")})` : ""}` : ""}`}>
-                        <span className="milestone-segment-bar" />
-                        <span className="milestone-segment-label">{s.text}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <ul className="steps">
-                {steps.map((s, i) => {
-                  const blk = blocked(s);
-                  const gatesAnother = steps.some((o, j) => j !== i && o.dependsOn === i); // does a later step wait on this one?
-                  return (
-                    <li key={i} className={`step ${s.done ? "done" : ""} ${blk ? "blocked" : ""}`}>
-                      {/* The mark IS the control for a needs-you step: click ○ to tick it done (no separate button). */}
-                      <button
-                        type="button"
-                        className={`step-mark ${!s.done && !blk ? "tickable" : ""}`}
-                        title={s.done ? L(`Fait${s.doneAt ? " " + relTime(s.doneAt) : ""} — cliquer pour annuler`, `Done${s.doneAt ? " " + relTime(s.doneAt) : ""} — click to undo`) : blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : L("Cliquer pour marquer comme fait", "Click to mark done")}
-                        disabled={blk}
-                        onClick={() => { if (blk) return; s.done ? void act(() => api.stepDone(task.id, i, false)) : void markStepDone(i); }}
-                      >
-                        {s.done ? "✓" : ""}
-                      </button>
-                      <div className="step-body">
-                        <span className="step-text">{withInlineLinks(s.text)}</span>
-                        {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
-                        {/* A milestone target date (big IB projects only — see isBigIbProject in claude.ts) — a
-                            forward-looking due date, distinct from step-when above which only ever shows PAST
-                            completion time. */}
-                        {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
-                        {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
-                        {!s.done && blk ? <span className="step-dep">{L(`attend l'étape ${(s.dependsOn ?? 0) + 1}`, `waits for step ${(s.dependsOn ?? 0) + 1}`)}</span> : null}
-                        {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. */}
-                        {gatesAnother && !s.done && !blk && !s.automatable ? (
-                          <input
-                            className="step-input"
-                            placeholder={L("Qu'as-tu décidé ? (utilisé pour l'étape suivante)", "What did you decide? (used for the next step)")}
-                            value={decided[i] || ""}
-                            onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
-                            onKeyDown={(e) => { if (e.key === "Enter") void markStepDone(i); }}
-                          />
-                        ) : null}
-                      </div>
-                      <div className="step-act">
-                        {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
-                            stays reachable from the task. */}
-                        {s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}</button> : null}
-                        {/* Only inside the modal — that's the one place the "Ask Otto" thread this seeds
-                            actually exists. A finished step has nothing left to help with. */}
-                        {inModal && !s.done ? <button className="btn xs ghost" onClick={() => askAboutStep(i, s.text)}>{L("Aide", "Help")}</button> : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-          </section>
-          )}
-          {/* "What Otto did" shows real output — a resource doc/sheet it created, or other concrete actions.
-              Plan-only mode's one allowed write is creating a new resource doc, so this is genuine, not a stub. */}
-          {(task.did?.length || task.links?.length || task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
-            <section>
-              <h4>{L("Ce qu'Otto a préparé", "What Otto prepared")}</h4>
-              {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul> : null}
-              {/* In-app notes (CREATE_NOTE), flashcard decks (CREATE_FLASHCARDS) and quizzes (CREATE_QUIZ) —
-                  no external tab, open right here in a popup. Shown as their own row of buttons, ahead of
-                  any external links. */}
-              {(task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
-                <div className="note-chips">
-                  {task.notes?.map((n) => (
-                    <button key={n.id} type="button" className="btn xs ghost note-chip" onClick={(e) => { e.stopPropagation(); setOpenNote(n.id); }}>📄 {n.title}</button>
-                  ))}
-                  {task.flashcards?.map((f) => (
-                    <button key={f.id} type="button" className="btn xs ghost note-chip" onClick={(e) => { e.stopPropagation(); setOpenDeck(f.id); }}>🗂 {f.title} ({f.cards.length})</button>
-                  ))}
-                  {task.quizzes?.map((qz) => (
-                    <button key={qz.id} type="button" className="btn xs ghost note-chip" onClick={(e) => { e.stopPropagation(); setOpenQuiz(qz.id); }}>❓ {qz.title} ({qz.questions.length})</button>
-                  ))}
-                </div>
-              ) : null}
-              {task.links?.length ? (
-                <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
-              ) : null}
-            </section>
-          ) : null}
-          {openNote ? (() => {
-            const n = task.notes?.find((x) => x.id === openNote);
-            // A chat-referenced artifact chip can point at an id the cap has since evicted (ARTIFACT_CAP —
-            // notes/flashcards/quizzes keep only the most recent 12) — close quietly rather than crash.
-            if (!n) return null;
-            return (
-              <TaskModal onClose={() => setOpenNote(null)} nested={inModal}>
-                <div className="note-popup">
-                  <h3 className="note-popup-title">{n.title}</h3>
-                  <div className="note-popup-body">{renderNoteBody(n.body)}</div>
-                </div>
-              </TaskModal>
-            );
-          })() : null}
-          {openDeck ? (() => {
-            const f = task.flashcards?.find((x) => x.id === openDeck);
-            if (!f) return null;
-            return (
-              <TaskModal onClose={() => setOpenDeck(null)} nested={inModal}>
-                <FlashcardDeck deck={f} />
-              </TaskModal>
-            );
-          })() : null}
-          {openQuiz ? (() => {
-            const qz = task.quizzes?.find((x) => x.id === openQuiz);
-            if (!qz) return null;
-            return (
-              <TaskModal onClose={() => setOpenQuiz(null)} nested={inModal}>
-                <QuizPlayer quiz={qz} />
-              </TaskModal>
-            );
-          })() : null}
-          {inModal && !isDone ? (
-            // Supportive, task-scoped chat: talking through THIS task specifically ("I'm stuck on step 2",
-            // "can you break this down more?") without having to re-explain what it is — Otto already has
-            // the full context above. Never shown for a finished/dismissed task — nothing left to coach.
-            <section className="task-chat">
-              <h4>{L("Demander à Otto", "Ask Otto")}</h4>
-              <div className="chat-thread">
-                {!task.chat?.length && !pendingMsg ? (
-                  <p className="muted small">{L("Explique-lui ce qui te bloque et il t'aidera à comprendre — pas à te donner la réponse. Montre-lui ton essai, dis-lui quelle étape te perd, ou demande-lui de réexpliquer autrement.", "Tell it what's blocking you and it'll help you understand — not hand you the answer. Show it your attempt, say which step loses you, or ask it to explain a different way.")}</p>
-                ) : task.chat?.map((m, i) => (
-                  <div key={i} className={`chat-msg chat-${m.role}`}>
-                    {/* Which step this USER message was about (see F) — a small tag above the bubble.
-                        stepText, not a live lookup by index: steps are regenerated on every rerun, so a
-                        bare index could point at the wrong step (or none) by the time this renders. */}
-                    {m.role === "user" && m.stepText ? <span className="chat-step-tag">{L("Étape", "Step")} {(m.stepIndex ?? 0) + 1} · {m.stepText}</span> : null}
-                    {/* Assistant replies get light markdown (bold/links/short lists); a student's own
-                        message stays literal — pasting "**" from their notes shouldn't get eaten. */}
-                    {m.role === "assistant" ? renderChatText(m.text) : m.text}
-                    {/* Artifacts the tutor made THIS turn — chips into the same notes/flashcards/quizzes
-                        popups the "What Otto prepared" section uses. A dangling id (evicted by
-                        ARTIFACT_CAP) simply doesn't render rather than crashing. */}
-                    {m.artifacts?.length ? (
-                      <div className="chat-artifact-chips">
-                        {m.artifacts.map((a) => {
-                          const exists = a.kind === "note" ? task.notes?.some((n) => n.id === a.id)
-                            : a.kind === "deck" ? task.flashcards?.some((f) => f.id === a.id)
-                            : task.quizzes?.some((q) => q.id === a.id);
-                          if (!exists) return null;
-                          const icon = a.kind === "note" ? "📄" : a.kind === "deck" ? "🗂" : "❓";
-                          const open = a.kind === "note" ? setOpenNote : a.kind === "deck" ? setOpenDeck : setOpenQuiz;
-                          return <button key={a.id} type="button" className="btn xs ghost note-chip" onClick={() => open(a.id)}>{icon} {a.title}</button>;
-                        })}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-                {/* Echo the in-flight message immediately (see pendingMsg) so the thread reads like a real
-                    conversation while waiting, instead of swallowing what they just typed. */}
-                {pendingMsg ? <div className="chat-msg chat-user chat-pending">{pendingMsg}</div> : null}
-                {chatSending ? (
-                  <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
-                    <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
-                    {chatVerySlow ? <span className="typing-slow">{L("il prépare peut-être quelque chose…", "might be putting something together…")}</span>
-                      : chatSlow ? <span className="typing-slow">{L("il réfléchit encore…", "still thinking…")}</span> : null}
-                  </div>
-                ) : null}
-                <div ref={chatEndRef} />
-              </div>
-              {chatError ? (
-                <div className="rewrite-error">
-                  {chatError}
-                  {/* sendChat() restores chatInput to the failed message on error, so retrying is just
-                      calling it again — no need to re-type anything. */}
-                  <button type="button" className="btn xs ghost" onClick={() => void sendChat()} disabled={chatSending}>{L("Réessayer", "Retry")}</button>
-                </div>
-              ) : null}
-              <div className="chat-row">
-                <input
-                  ref={chatInputRef}
-                  className="chat-input" placeholder={L("ex : je bloque à la question 3…", "e.g. I'm stuck on question 3…")}
-                  value={chatInput} onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendChat(); } }}
-                  disabled={chatSending}
-                />
-                <button className="btn xs" disabled={chatSending || !chatInput.trim()} onClick={() => void sendChat()}>{L("Envoyer", "Send")}</button>
-              </div>
-            </section>
-          ) : null}
-          <div className="actions">
-            {isDone ? (
-              // A finished task is CLOSED, not just another item with the usual buttons — "Run now" here
-              // read as an invitation to re-do already-done work (drafting a duplicate, re-creating a doc),
-              // and "Dismiss" doesn't mean anything for something that already happened. Just say when.
-              <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt)}` : ""}</span>
-            ) : cStatus === "needs_review" ? (
-              <>
-                <button className="btn primary" title={L("C'est bon — marquer comme fait", "Looks good — mark as done")} onClick={() => void leave(() => api.confirm(task.id), "confirm")}>{L("C'est bon", "Looks good")}</button>
-                <div className="actions-rest">
-                  <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id))}>{L("Ignorer", "Dismiss")}</button>
-                </div>
-              </>
-            ) : (
-              <>
-                {cStatus === "failed_retryable" && retrying ? (
-                  <button className="btn primary" disabled>{L("Nouvel essai…", "Retrying…")}</button>
-                ) : cStatus === "failed_terminal" || cStatus === "failed_retryable" ? (
-                  <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? L("En cours…", "Working…") : L("Réessayer", "Retry")}</button>
-                ) : isInFlight(task.status) ? (
-                  <button className="btn primary" disabled>{cStatus === "queued" ? L("En attente…", "Queued…") : L("En cours…", "Working…")}</button>
-                ) : (
-                  <button className="btn primary" disabled={running} onClick={() => void run()}>{running ? L("En cours…", "Working…") : L("Lancer", "Start")}</button>
-                )}
-                <div className="actions-rest">
-                  <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id))}>{L("Ignorer", "Dismiss")}</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}

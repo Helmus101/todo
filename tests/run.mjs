@@ -1,5 +1,5 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
@@ -687,6 +687,40 @@ check("DOES_STUDENT_WORK catches a FR claim of having written the dissertation",
 check("DOES_STUDENT_WORK catches a FR claim of having finished the homework", DOES_STUDENT_WORK.test("J'ai terminé le devoir de maths"));
 check("DOES_STUDENT_WORK does NOT flag preparing a fiche FOR a contrôle", !DOES_STUDENT_WORK.test("Fiche de révision préparée pour le contrôle"));
 check("DOES_STUDENT_WORK does NOT flag a plan to help them write", !DOES_STUDENT_WORK.test("Plan pour rédiger ta dissertation"));
+
+section("forceWeekCoverage — everything due this week gets a task, no matter what the classifier decided");
+{
+  const now = new Date("2026-08-12T08:00:00Z");
+  const candidates = [
+    { sourceApp: "pronote", anchorKey: "pronote:hw1", snippet: "Exercices 12 à 15 p.87 — mécanique du point", timestamp: "2026-08-14T00:00:00Z", subject: "Physique", labels: ["homework"] },
+    { sourceApp: "pronote", anchorKey: "pronote-test:maths:2026-08-15", snippet: "Test on 2026-08-15", timestamp: "2026-08-15T00:00:00Z", subject: "Maths", labels: ["test"] },
+    { sourceApp: "pronote", anchorKey: "pronote:hw2", snippet: "Devoir déjà couvert par le classifier", timestamp: "2026-08-13T00:00:00Z", subject: "SES", labels: ["homework"] },
+    { sourceApp: "pronote", anchorKey: "pronote:hw3", snippet: "Trop loin dans le temps", timestamp: "2026-09-01T00:00:00Z", subject: "Anglais", labels: ["homework"] },
+    { sourceApp: "gmail", anchorKey: "gmail:xyz", snippet: "not pronote at all", timestamp: "2026-08-13T00:00:00Z", subject: undefined, labels: [] },
+  ];
+  const out = forceWeekCoverage(candidates, ["pronote:hw2"], { now });
+  check("covers homework the classifier skipped", out.some((t) => t.anchorKey === "pronote:hw1"));
+  check("covers a test the classifier skipped", out.some((t) => t.anchorKey === "pronote-test:maths:2026-08-15"));
+  check("does NOT duplicate an anchor already covered", !out.some((t) => t.anchorKey === "pronote:hw2"));
+  check("skips anything outside the 7-day window", !out.some((t) => t.anchorKey === "pronote:hw3"));
+  check("skips non-Pronote sources entirely", !out.some((t) => t.anchorKey === "gmail:xyz"));
+  check("carries the real énoncé as sourceDetail, verbatim", out.find((t) => t.anchorKey === "pronote:hw1")?.sourceDetail === "Exercices 12 à 15 p.87 — mécanique du point");
+  check("a bare test marker (no real énoncé) leaves sourceDetail undefined", out.find((t) => t.anchorKey === "pronote-test:maths:2026-08-15")?.sourceDetail === undefined);
+  check("every forced task clears applyQualityBar's own floor", out.every((t) => t.urgency >= 0.35 || t.importance >= 0.35));
+}
+
+// The client is split across App.tsx / TaskCard.tsx / ui.tsx, which import each other. An ES-module import
+// CYCLE doesn't fail `tsc` or `vite build` — it resolves to `undefined` at runtime and the app renders a
+// blank screen. There are no DOM/render tests in this suite, so this is the one automated guard for it:
+// import the client modules for real and assert every component actually came through as a function.
+section("client module graph — no import cycle leaves a component undefined");
+for (const [mod, names] of [
+  ["../client/ui.tsx", ["FlashcardDeck", "QuizPlayer", "TaskModal", "renderNoteBody", "renderChatText", "statusChip"]],
+  ["../client/TaskCard.tsx", ["TaskCardRow", "TaskFocus"]],
+]) {
+  const m = await import(mod);
+  for (const n of names) check(`${mod.replace("../client/", "")} exports ${n} as a function`, typeof m[n] === "function");
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

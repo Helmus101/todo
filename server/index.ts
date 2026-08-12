@@ -560,6 +560,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.notes.length) t.notes = [...(t.notes || []), ...out.notes].slice(-tasks.ARTIFACT_CAP);
     if (out.flashcards.length) t.flashcards = [...(t.flashcards || []), ...out.flashcards].slice(-tasks.ARTIFACT_CAP);
     if (out.quizzes.length) t.quizzes = [...(t.quizzes || []), ...out.quizzes].slice(-tasks.ARTIFACT_CAP);
+    if (out.audit.length) t.audit = [...(t.audit || []), ...out.audit].slice(-tasks.AUDIT_CAP);
     t.chat = [
       ...history,
       { role: "user" as const, text: message, at: now, ...(stepIndex != null ? { stepIndex, stepText: t.steps![stepIndex].text.slice(0, 80) } : {}) },

@@ -18,7 +18,11 @@
   --surface: #F7F7F4;       /* card — raised panels, review column */
   --ink: #101317;           /* primary text, the mark, dark surfaces */
   --ink-2: #5C6270;         /* secondary body text */
-  --ink-3: #8A8FA0;         /* graphite — Otto's own output, metadata */
+  /* Darkened from #8A8FA0 (~2.8:1 on --bg, fails WCAG AA's 4.5:1 floor) — it was used for real content at
+     10-12px throughout (deadlines, step metadata, timestamps), not just decoration, so it had to actually
+     pass, not just look intentionally muted. #656B80 clears 4.5:1+ on both --bg and --surface. Dark mode's
+     value below was already fine (~5.4-6:1) and is untouched. */
+  --ink-3: #656B80;         /* graphite — Otto's own output, metadata */
   --line: #D3D5CE;          /* 1px hairlines */
   --line-soft: rgba(16, 19, 23, 0.06);  /* row dividers */
   /* ONE accent — cobalt — means exactly one thing: NEEDS YOU. Nothing else is blue. Vermilion is destructive
@@ -26,6 +30,10 @@
   --accent: #2F4DE0;        /* cobalt */
   --accent-hover: #2740C4;
   --accent-soft: rgba(47, 77, 224, 0.08);
+  /* A dedicated, opaque focus-ring color — --accent-soft (8% alpha) measures ~1.05:1 against --bg, well
+     under the 3:1 WCAG 2.4.11 floor, which made the keyboard focus indicator effectively invisible
+     app-wide. This is --accent itself, just named for what it's used for. */
+  --focus-ring: var(--accent);
   --bg-2: #E4E5E0;          /* subtle grey fill (banners, chips) */
   --graphite: #8A8FA0;      /* alias — Otto's completed work */
   --vermilion: #C6462F;     /* destructive confirm ONLY */
@@ -99,7 +107,10 @@ body::before {
 #root, .app, .landing, .login-page { position: relative; z-index: 1; }
 a { color: var(--accent); text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
-:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); border-radius: var(--radius-sm); }
+/* A solid, offset outline rather than a box-shadow wash: visible at 3:1+ against every surface in both
+   themes, and — unlike box-shadow — `outline` survives Windows High Contrast / forced-colors mode, where
+   box-shadow is dropped entirely and a shadow-only ring would vanish with no fallback. */
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 
 /* MOBILE-FIRST: 16px is the base font size because anything smaller makes iOS Safari auto-zoom the whole
    page on focus — the single most jarring mobile bug in a form-heavy app. Desktop steps down to 14px. */
@@ -112,7 +123,7 @@ input, textarea {
   transition: border-color 160ms var(--ease), box-shadow 160ms var(--ease);
 }
 input::placeholder, textarea::placeholder { color: var(--ink-3); }
-input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -151,7 +162,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Destructive confirm ONLY (delete / payment) — vermilion, never a marketing accent. */
 .btn.danger { background: var(--vermilion); border-color: var(--vermilion); color: #fff; }
 .btn.danger:hover { background: #b03d29; border-color: #b03d29; }
-.btn.xs { height: 34px; padding: 0 11px; font-size: 12.5px; border-radius: 9px; }
+/* 34px drawn height is below the file's own declared 44px mobile floor — used for real actions ("Aide",
+   "Ouvrir ↗", chat "Envoyer", artifact chips), not decoration. A full ::after hit expander on every side
+   would overlap a neighboring .btn.xs where they sit only 6-8px apart in a row (sendable/confirm rows,
+   step-act) — so this only grows vertically (nothing else stacks above/below a button row) and a little
+   horizontally, which safely reaches 44px without touching the next button's own expanded hit area. */
+.btn.xs { position: relative; height: 34px; padding: 0 11px; font-size: 12.5px; border-radius: 9px; }
+.btn.xs::after { content: ""; position: absolute; inset: -5px -3px; }
 .btn.big { height: 48px; padding: 0 22px; font-size: 15px; border-radius: 10px; transition: background 140ms var(--ease), border-color 140ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease); }
 .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(37, 99, 235, 0.28); }
 .btn.primary.big:active { transform: translateY(0); }
@@ -221,7 +238,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   font-size: 10.5px; font-weight: 700; line-height: 1; vertical-align: middle;
 }
 .spacer { flex: 1; }
-.ext-chip { font-size: 12px; font-weight: 600; color: var(--accent); white-space: nowrap; }
 
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
 /* MOBILE-FIRST: 14px gutters are the base (a 375px phone has no room to give away); desktop widens them
@@ -427,7 +443,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .add-task-row:hover { border-color: var(--ink-3); }
 /* On focus it commits: solid edge + the standard accent focus ring, so typing feels like a real field. */
-.add-task-row:focus-within { border-style: solid; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.add-task-row:focus-within { border-style: solid; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 .add-plus { color: var(--ink-3); font-size: 20px; font-weight: 300; line-height: 1; flex: none; transition: color 160ms var(--ease); }
 .add-task-row:focus-within .add-plus { color: var(--accent); }
 .add-task-input { flex: 1; height: 40px; border: none; background: transparent; padding: 0; font-size: 15.5px; }
@@ -551,15 +567,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   display: flex; align-items: center; justify-content: center; transition: background 120ms var(--ease), color 120ms var(--ease);
 }
 .task-modal-x:hover { background: var(--bg-2); color: var(--ink); }
-/* Inside the modal the whole card IS the detail — drop the collapsed-row chrome (caret, hover, the ✕). */
-.task-modal .card, .task-modal .card.open { background: transparent; }
-.task-modal .card-main { cursor: default; padding-left: 6px; }
-.task-modal .card-main:hover { background: transparent; }
-/* The ✕ close button sits absolutely over the top-right corner — a long task title (which wraps normally,
-   no line-clamp) could run straight under it with nothing reserving that corner. note-popup-title already
-   does this via margin; the task card's own title needed the same treatment. */
-.task-modal .card-title { padding-right: 34px; }
-.task-modal .caret, .task-modal .card-x { display: none; }
+/* The modal renders TaskFocus, which has its own header — the old `.task-modal .card*` overrides that
+   stripped collapsed-row chrome (caret, hover, the ✕) are gone with the markup they targeted. The ✕ still
+   sits absolutely over the top-right corner, so .tf-title reserves that space via its own right margin. */
 @keyframes modalPop { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
 .task-modal-overlay.closing { animation: fadeOut 0.16s var(--ease) forwards; pointer-events: none; }
 .task-modal.closing { animation: modalOut 0.16s var(--ease) forwards; }
@@ -614,6 +624,18 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   .note-popup, .deck-popup { max-height: none; overflow-y: visible; }
 }
 .note-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+/* Audit log — what Otto actually did, so it's verifiable rather than just claimed. Kept to ink/bg-2 tones
+   per the one-accent-color rule; guardrail entries get a subtle bg emphasis (still not a new color), same
+   idea as the quiz option states. */
+.audit-log { margin-top: 6px; }
+.audit-toggle { font-size: 12.5px; }
+.audit-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+.audit-list li { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; padding: 4px 6px; border-radius: 6px; color: var(--ink-2, #666); }
+.audit-list li.audit-guardrail { background: var(--bg-2, #f3f3f3); font-weight: 600; color: var(--ink, #111); }
+.audit-label { flex: 1; }
+/* Was opacity: 0.65 on top of the already-secondary --ink-2 text color — stacking the two dropped contrast
+   to ~2.65:1 against the page, well under AA. Small size alone is enough hierarchy; drop the opacity. */
+.audit-at { font-size: 11px; color: var(--ink-3); white-space: nowrap; }
 .note-popup { padding: 6px 2px 2px; max-height: 74vh; overflow-y: auto; }
 .note-popup-title { margin: 0 28px 12px 0; }
 .note-popup-body h3, .note-popup-body h4, .note-popup-body h5 { margin: 16px 0 6px; }
@@ -704,10 +726,20 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    34px left inset (sized for the desktop checkbox) plus the container gutter left very little room for
    a title on a ~375px screen, forcing extra wrapped lines. */
 .card-main { display: flex; align-items: center; gap: 12px; padding: 18px 14px 18px 28px; cursor: pointer; min-height: 58px; border-radius: var(--radius); }
+/* The stretched "open this task" button — covers the whole card, sits UNDER the real controls (see the
+   z-index on .card-check/.card-x below) so they stay clickable. Replaces a div onClick that no keyboard
+   user could ever reach. Transparent by design: the card itself is the visual affordance. */
+.card-open {
+  position: absolute; inset: 0; z-index: 0; padding: 0;
+  background: none; border: 0; border-radius: var(--radius); cursor: pointer;
+}
+.card-check, .card-x { position: relative; z-index: 1; }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
    response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
    device (mouse) keeps the existing hover-only feel; this only kicks in where hover doesn't exist. */
-@media (hover: none) { .card-main:active { background: var(--hover-wash); transform: scale(0.994); } }
+/* The tap now lands on the .card-open overlay (a preceding sibling), not on .card-main itself — so the
+   press feedback has to be driven from there, or touching a row would give no response at all. */
+@media (hover: none) { .card-main:active, .card-open:active ~ .card-main { background: var(--hover-wash); transform: scale(0.994); } }
 /* The direct check-off control — a normal to-do checkbox. Click fills it and marks the task done in one
    step, no need to open the card first (opening it still works too, via "Looks good"). */
 .card-check {
@@ -717,6 +749,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   display: inline-flex; align-items: center; justify-content: center;
   transition: border-color 140ms var(--ease), background 140ms var(--ease), transform 140ms var(--ease);
 }
+/* 22px is the drawn size, but the TAP target has to clear 44px — this is the primary "mark done" control
+   and it sits right next to the full-card open overlay, so a near-miss used to open the task instead of
+   completing it. Same ::after trick .step-mark and .card-x already use. */
+.card-check::after { content: ""; position: absolute; inset: -11px; border-radius: 50%; }
 .card-check:hover { border-color: var(--accent); transform: scale(1.08); }
 .card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms cubic-bezier(0.34, 1.4, 0.64, 1); }
 .card-check.checked:hover { transform: none; }
@@ -771,6 +807,55 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .detail .muted { color: var(--ink-2); }
 .muted { color: var(--ink-2); }
 .small { font-size: 12.5px; }
+/* Visible only to screen readers — for labels the sighted layout already conveys some other way (a chat
+   bubble's alignment and colour say who's talking; a screen reader gets nothing from either). */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* ─── The focused task view (TaskFocus) ─────────────────────────────────────────
+   One question answered at a time: a header, a progress bar, the current step as a hero with ONE primary
+   button, then everything else collapsed into counted disclosure rows. Uses the same .deck-progress-*
+   and .deck-score-ring pieces the flashcard/quiz players use, so "one at a time" reads identically
+   wherever the student meets it. */
+.task-focus { display: flex; flex-direction: column; gap: 16px; padding: 4px 2px 2px; }
+.tf-head { display: flex; flex-direction: column; gap: 8px; }
+.tf-title { font-size: 20px; font-weight: 640; letter-spacing: -0.02em; line-height: 1.3; margin: 0 34px 0 0; }
+.tf-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+
+/* The hero — the single thing to do right now. Deliberately the heaviest element on the screen. */
+.step-hero {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
+  background: var(--bg-2); border-radius: var(--radius); padding: 18px 16px;
+}
+.hero-kicker { font-size: 10.5px; font-weight: 650; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; }
+.hero-step { font-size: 17px; font-weight: 560; line-height: 1.45; margin: 0; }
+.hero-line { font-size: 14.5px; line-height: 1.5; margin: 0; color: var(--ink-2); }
+.hero-acts { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+/* Pushed to the right edge so it never sits where the eye expects the primary action. */
+.hero-stuck { margin-left: auto; }
+.step-hero .step-input { width: 100%; }
+.hero-waiting, .hero-done { flex-direction: row; align-items: center; gap: 10px; }
+.hero-complete { align-items: center; text-align: center; }
+.hero-complete .deck-score-ring { margin: 0 auto; }
+.hero-sendable { background: transparent; padding: 0; }
+
+/* Counted, collapsed sections. The COUNT is what makes "closed" safe — the student sees that five steps
+   exist without having to open anything, so nothing feels hidden behind a click. */
+.tf-panels { display: flex; flex-direction: column; }
+.disclosure { border-top: 1px solid var(--line-soft); }
+.disclosure:last-child { border-bottom: 1px solid var(--line-soft); }
+.disclosure-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 6px 2px;
+  background: none; border: 0; text-align: left; font: inherit; color: var(--ink); cursor: pointer;
+}
+.disclosure-head .caret { transition: transform 200ms var(--ease); }
+.disclosure.open .disclosure-head .caret { transform: rotate(90deg); }
+.disclosure-label { flex: 1; font-size: 14px; font-weight: 560; }
+.disclosure-count { font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.disclosure-body { padding: 2px 2px 14px; }
+.tf-foot { display: flex; justify-content: flex-end; }
 
 .bullets { margin: 0; padding-left: 18px; }
 .bullets li { font-size: 14px; line-height: 1.55; margin-bottom: 4px; }
@@ -785,7 +870,22 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 /* ─── Per-task coaching chat ─────────────────────────────────────────────── */
 .task-chat { border-top: 1px solid var(--line-soft); padding-top: 16px; }
+/* Was an <h4> inheriting `.detail h4`; TaskFocus has no .detail wrapper, so it carries its own style now
+   (and is an <h3> so the modal's heading order runs h2 → h3 rather than skipping a level). */
+.task-chat h3 {
+  font-size: 10.5px; font-weight: 600; color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: 0.07em; margin: 0 0 8px;
+}
 .chat-thread { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; margin-bottom: 10px; }
+/* Inside the focused task view the modal is ALREADY the scroller, so a 260px cap here created a second,
+   independently-scrolling box — on a phone that meant reading the tutor conversation (the core feature)
+   through a small window inside a full-screen sheet. Let the thread run its natural height and pin the
+   composer instead, so the input stays reachable however long the conversation gets. */
+.task-focus .chat-thread { max-height: none; overflow-y: visible; }
+.task-focus .chat-row {
+  position: sticky; bottom: 0; z-index: 2;
+  background: var(--surface); padding: 8px 0 2px; margin-top: 2px;
+}
 .chat-msg { font-size: 13.5px; line-height: 1.5; padding: 9px 12px; border-radius: 12px; max-width: 88%; white-space: pre-line; }
 /* renderChatText emits <p>/<ul> blocks for assistant replies — tighten their default block margins to fit
    a chat bubble (they're sized for the note popup, which has room to breathe). */
@@ -936,7 +1036,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   resize: vertical; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
   padding: 12px; margin-top: 8px; transition: opacity 140ms var(--ease);
 }
-.draft-body-edit:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.draft-body-edit:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 .draft-body-edit:disabled, .draft-subject:disabled { opacity: 0.55; cursor: not-allowed; }
 .draft-edit-acts { display: flex; gap: 8px; margin-top: 8px; }
 .rewrite-toggle { margin-top: 10px; }
@@ -1027,7 +1127,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .set-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .set-text > b { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
 .set-text .settings-hint { margin: 0; }
-.set-row > .btn, .set-row > .ext-chip { flex: none; }
+.set-row > .btn { flex: none; }
 .pref-hours { display: flex; align-items: center; gap: 8px; flex: none; }
 .pref-hours input[type="time"] { width: 100px; }
 .lang-toggle { display: flex; gap: 6px; flex: none; }
@@ -1044,19 +1144,13 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 
 /* Segmented control (scans/day) — pill of choices, accent for the active one. */
 .seg { display: inline-flex; flex: none; background: var(--bg-2); border-radius: 9px; padding: 2px; gap: 2px; }
-.seg-btn { min-width: 34px; height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; border-radius: 9px; transition: background 140ms var(--ease), color 140ms var(--ease); }
+/* 28px is the smallest tap target in the app. Segments sit only 2px apart inside .seg, so the hit expander
+   is vertical-only (nothing else stacks above/below the row) — a horizontal one would overlap the next
+   segment's own expanded area. */
+.seg-btn { position: relative; min-width: 34px; height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; border-radius: 9px; transition: background 140ms var(--ease), color 140ms var(--ease); }
+.seg-btn::after { content: ""; position: absolute; inset: -8px 0; }
 .seg-btn:hover { color: var(--ink); }
 .seg-btn.on { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
-
-/* Extension install panel — revealed under the "open docs" toggle when it's on. */
-.ext-panel { padding: 14px 0 4px; display: flex; flex-direction: column; gap: 10px; animation: fadeIn 0.2s var(--ease); }
-.ext-panel.ok { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; }
-.ext-panel.ok .settings-hint { margin: 0; }
-.ext-primary { align-self: flex-start; }
-.ext-how-title { font-size: 12.5px; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; }
-.ext-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
-.ext-steps li { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
-.ext-steps code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--bg-2); padding: 1px 5px; border-radius: 4px; color: var(--ink); }
 
 .int-group { margin-bottom: 6px; }
 .pronote-form { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 14px; padding: 12px; background: var(--bg-2); border-radius: var(--radius-sm); }
@@ -1401,7 +1495,9 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .done-list { display: flex; flex-direction: column; }
 /* Tokenised (was hardcoded rgba(127,127,127,…) — the one place in the dashboard that didn't follow the
    theme, so it drifted slightly off in dark mode instead of tracking --line-soft like every other divider). */
-.done-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 8px; cursor: pointer; border-bottom: 1px solid var(--line-soft); border-radius: var(--radius-sm); transition: background 140ms var(--ease); }
+/* A <button> (it was a div onClick — unreachable by keyboard, and the only route back into a finished
+   task), so it needs the usual button reset to keep reading as a row: full width, left-aligned, no chrome. */
+.done-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 8px; cursor: pointer; border-bottom: 1px solid var(--line-soft); border-radius: var(--radius-sm); transition: background 140ms var(--ease); width: 100%; text-align: left; background: none; border-left: 0; border-right: 0; border-top: 0; font: inherit; color: inherit; }
 .done-row:last-child { border-bottom: none; }
 .done-row:hover { background: var(--bg-2); }
 .done-check { color: var(--ink-3); font-weight: 700; }

@@ -3,7 +3,7 @@ import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/t
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
-import { discoverSourceItems, filterCandidates } from "./discover.ts";
+import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
 
 /** Fold a learned fact into the person-profile. 'name'/'about' replace. List facts REPLACE an existing
  *  same-entity fact (newest wording wins — so a correction actually takes effect; dedupeFacts alone keeps
@@ -326,6 +326,9 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
  *  them on request (6 was sized for "one run makes one fiche"); a chat message referencing an evicted
  *  artifact renders as a dead chip, so the cap directly bounds how far back those stay clickable. */
 export const ARTIFACT_CAP = 12;
+/** Cap on audit-log entries kept per task — enough to inspect the last several runs/chat turns without
+ *  growing unbounded on a long-lived task. See WebTask.audit. */
+export const AUDIT_CAP = 100;
 /** Union the three IN-APP STUDY artifact lists (fiches/decks/quizzes) across two copies of a task, by id.
  *  Distinct from `unionArtifacts` below, which tracks EXTERNAL artifacts (Google doc/draft/event ids) for
  *  rerun de-duplication — different lists, different purpose. Returns only the keys that actually changed
@@ -456,6 +459,62 @@ export function applyQualityBar<T extends { anchorKey?: string; when?: string; u
   });
 }
 
+/** Days-ahead window used for "this week" everywhere — must match workload.ts's own DAYS_AHEAD (7) so the
+ *  WeekLoad widget and the guarantee below mean the same 7 days. Duplicated rather than imported to avoid
+ *  tasks.ts ↔ workload.ts pulling into each other over one constant. */
+const WEEK_COVERAGE_DAYS = 7;
+
+/**
+ * Guarantee: every Pronote homework/test due within WEEK_COVERAGE_DAYS gets a task card, independent of the
+ * AI classifier's judgment. The classifier (classifyCandidates) is DELIBERATELY selective — right for a
+ * noisy inbox, wrong here: computeWorkload (workload.ts) builds the "This week" widget straight from raw
+ * Pronote homework/tests with no AI filtering at all, so without this, a test the classifier didn't pick
+ * could show in "This week" while never existing as an actual task anywhere else in the app.
+ *
+ * Only fills the GAP — candidates already covered by a classified-and-kept task (matched by anchorKey) are
+ * left alone, so this never creates a duplicate alongside a richer AI-written task for the same assignment.
+ */
+export function forceWeekCoverage(
+  candidates: { sourceApp: string; anchorKey: string; snippet: string; timestamp?: string; subject?: string; labels: string[] }[],
+  coveredAnchors: (string | undefined)[],
+  opts?: { daysAhead?: number; now?: Date; en?: boolean },
+): { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }[] {
+  const daysAhead = opts?.daysAhead ?? WEEK_COVERAGE_DAYS;
+  const now = opts?.now ?? new Date();
+  const cutoff = now.getTime() + daysAhead * 86_400_000;
+  const covered = new Set(coveredAnchors.filter((a): a is string => !!a).map(normKey));
+  const en = !!opts?.en;
+  const out: ReturnType<typeof forceWeekCoverage> = [];
+  for (const c of candidates) {
+    if (c.sourceApp !== "pronote") continue;
+    if (covered.has(normKey(c.anchorKey))) continue;
+    if (!c.timestamp) continue;
+    const due = Date.parse(c.timestamp);
+    // A small grace window (1 day back) for something due "today" that's already slightly in the past by
+    // the time this runs — still worth a task, not a stale item to silently skip.
+    if (!Number.isFinite(due) || due < now.getTime() - 86_400_000 || due > cutoff) continue;
+    const isTest = c.labels.includes("test");
+    const daysLeft = (due - now.getTime()) / 86_400_000;
+    // Scores only need to clear applyQualityBar's floor and rank sensibly — the classifier's own scoring
+    // (when it DOES cover an item) is far more nuanced; this is purely the safety-net case.
+    const urgency = Math.max(0.35, Math.min(0.9, (isTest ? 0.4 : 0.5) + (isTest ? 7 - daysLeft : 2 - daysLeft) * (isTest ? 0.08 : 0.15)));
+    const importance = isTest ? 0.75 : 0.55;
+    out.push({
+      title: (isTest
+        ? (en ? `Start reviewing for the ${c.subject || "class"} test` : `Commencer à réviser pour le contrôle de ${c.subject || "la matière"}`)
+        : (en ? `${c.subject || "Homework"}` : `${c.subject || "Devoir"}`)).slice(0, 120),
+      why: en ? "Due this week — from Pronote." : "À faire cette semaine — vu sur Pronote.",
+      when: c.timestamp,
+      source: "pronote", risk: "low", urgency, importance,
+      anchorKey: c.anchorKey,
+      sourceDetail: hasAssignmentText(c.snippet) ? c.snippet.slice(0, 1200) : undefined,
+      sourceSubject: c.subject,
+      sourceDue: c.timestamp,
+    });
+  }
+  return out;
+}
+
 /** Local calendar day (YYYY-MM-DD) of an instant in the user's timezone — for the once-per-day force gate.
  *  Duplicated tiny helper (not imported from jobs.ts) to avoid a circular module dependency. */
 function localDayOf(iso: string, timezone?: string): string {
@@ -509,7 +568,15 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
         // Model suggests scores; CODE decides what clears the bar (VIPs + deadline'd commitments always do).
         const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
-        const folded = foldGenerated(existing, kept, profile.highPriorityPeople || []);
+        // Safety net: anything the classifier skipped or the quality bar dropped, but is due THIS WEEK per
+        // Pronote, gets a task anyway — see forceWeekCoverage's own comment for why (the "This week" widget
+        // has no such filter, so it must never show something with no task behind it). coveredAnchors spans
+        // both prior sweeps (existing) and this sweep's own classified picks (kept), so nothing doubles up.
+        const weekCovered = forceWeekCoverage(
+          candidates, [...existing.map((t) => t.anchorKey), ...kept.map((k) => k.anchorKey)],
+          { en: profile.language === "en" },
+        );
+        const folded = foldGenerated(existing, [...kept, ...weekCovered], profile.highPriorityPeople || []);
         // Pipeline visibility: where do candidates go? A sudden "0 new" is now diagnosable at a glance —
         // was it the classifier (classified 0), the quality bar (kept 0), or dedupe (folded == existing).
         const newCards = folded.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
@@ -765,6 +832,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     task.notes = out.notes?.length ? [...(task.notes || []), ...out.notes].slice(-ARTIFACT_CAP) : task.notes; // in-app fiches, accumulated (a rerun can add another)
     task.flashcards = out.flashcards?.length ? [...(task.flashcards || []), ...out.flashcards].slice(-ARTIFACT_CAP) : task.flashcards;
     task.quizzes = out.quizzes?.length ? [...(task.quizzes || []), ...out.quizzes].slice(-ARTIFACT_CAP) : task.quizzes;
+    task.audit = out.audit?.length ? [...(task.audit || []), ...out.audit].slice(-AUDIT_CAP) : task.audit;
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out, out.createdDocIds));
     task.lastRunTokens = out.tokens;
@@ -855,6 +923,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   if (out.notes?.length) task.notes = [...(task.notes || []), ...out.notes].slice(-ARTIFACT_CAP);
   if (out.flashcards?.length) task.flashcards = [...(task.flashcards || []), ...out.flashcards].slice(-ARTIFACT_CAP);
   if (out.quizzes?.length) task.quizzes = [...(task.quizzes || []), ...out.quizzes].slice(-ARTIFACT_CAP);
+  if (out.audit?.length) task.audit = [...(task.audit || []), ...out.audit].slice(-AUDIT_CAP);
   if (out.sendables?.length) {
     const key = (s: Sendable) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
     const seen = new Set((task.sendables || []).map(key));
