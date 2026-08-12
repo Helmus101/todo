@@ -101,7 +101,10 @@ export const api = {
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
   usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string }> => req("/api/usage").then(j),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
-  chat: (id: string, message: string): Promise<{ chat: { role: "user" | "assistant"; text: string; at: string }[] }> => post(`/api/tasks/${id}/chat`, { message }),
+  // stepIndex: set by the per-step "Aide" button (see F) — the server validates the range itself.
+  // Returns the WHOLE updated task, not just `chat` — a tutor turn can now create notes/decks/quizzes,
+  // and the chat entries reference them by id, so the client needs task.notes/flashcards/quizzes too.
+  chat: (id: string, message: string, stepIndex?: number): Promise<{ chat: WebTask["chat"]; task: WebTask }> => post(`/api/tasks/${id}/chat`, { message, stepIndex }),
   // Drain one queued job server-side and return the fresh task list + how many jobs remain active.
   kick: (): Promise<{ processed: number; failed: number; active: number; activeTaskIds?: string[]; tasks: WebTask[] }> => post("/api/jobs/kick"),
 };

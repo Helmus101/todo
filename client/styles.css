@@ -653,6 +653,36 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-score-ring.good { border-color: var(--accent); }
 .deck-score-pct { font-size: 20px; font-weight: 700; }
 .deck-done .deck-score { font-size: 15px; color: var(--ink-2); margin: 0 0 18px; }
+
+/* ─── Quiz player (QuizPlayer) ─── shares .deck-popup, .deck-progress-bar/-fill, .deck-done and the
+   .deck-score rules with the flashcard deck (same modal shell, same score screen) — these are the parts
+   genuinely unique to MCQ. */
+.quiz-popup { text-align: left; }
+.quiz-q { font-size: 16px; font-weight: 600; line-height: 1.4; margin: 4px 0 14px; }
+.quiz-opts { display: flex; flex-direction: column; gap: 8px; }
+.quiz-opt {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  padding: 11px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); font-size: 14px; color: var(--ink); cursor: pointer;
+  transition: border-color 140ms var(--ease), background 140ms var(--ease);
+}
+.quiz-opt:hover:not(:disabled) { border-color: var(--ink-3); background: var(--bg-2); }
+.quiz-opt:disabled { cursor: default; }
+.quiz-opt-key {
+  flex: none; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11px; font-weight: 700; color: var(--ink-3);
+  border: 1px solid var(--line);
+}
+.quiz-opt-text { flex: 1; }
+/* Right/wrong feedback deliberately stays within the app's one-accent system (see .chip-bad/.milestone-
+   segment.late) — the CORRECT option gets the accent (it's the one thing worth pointing at), a wrong PICK
+   gets ink/bg-2 emphasis instead of a red, since red never appears anywhere else in this app. */
+.quiz-opt.correct { border-color: var(--accent); background: var(--accent-soft); }
+.quiz-opt.correct .quiz-opt-key { border-color: var(--accent); color: var(--accent); background: var(--surface); }
+.quiz-opt.wrong { border-color: var(--ink); background: var(--bg-2); }
+.quiz-opt.wrong .quiz-opt-key { border-color: var(--ink); color: var(--ink); }
+.quiz-why { font-size: 13px; color: var(--ink-2); line-height: 1.5; margin: 14px 0 4px; padding: 10px 12px; background: var(--bg-2); border-radius: var(--radius-sm); }
+
 .card.is-done { opacity: 0.5; }
 .card.is-done:hover { opacity: 0.8; }
 
@@ -757,8 +787,21 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-chat { border-top: 1px solid var(--line-soft); padding-top: 16px; }
 .chat-thread { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; margin-bottom: 10px; }
 .chat-msg { font-size: 13.5px; line-height: 1.5; padding: 9px 12px; border-radius: 12px; max-width: 88%; white-space: pre-line; }
+/* renderChatText emits <p>/<ul> blocks for assistant replies — tighten their default block margins to fit
+   a chat bubble (they're sized for the note popup, which has room to breathe). */
+.chat-msg p { margin: 0; }
+.chat-msg p + p { margin-top: 6px; }
+.chat-msg .note-list { margin: 4px 0; padding-left: 18px; }
 .chat-user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
 .chat-assistant { align-self: flex-start; background: var(--bg-2); color: var(--ink); border-bottom-left-radius: 4px; }
+.chat-assistant .inline-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+/* Which step a user message was about (see the "Aide" button, client-side state chatStep) — a small tag
+   above the bubble, quieter than the message itself. */
+.chat-step-tag { display: block; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,0.75); margin-bottom: 3px; letter-spacing: 0.02em; }
+/* Artifacts the tutor made this turn, inline in the thread — same .note-chip look as "What Otto prepared",
+   just nested inside a bubble instead of a section. */
+.chat-artifact-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chat-assistant .note-chip { background: var(--surface); }
 /* The in-flight user message sits at slightly reduced opacity until the server confirms it — visibly
    "sending", not yet part of the saved thread. */
 .chat-pending { opacity: 0.6; }
@@ -865,18 +908,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .step-act { flex: none; }
 .step .btn { margin-left: auto; flex: none; }
 .step-input { height: 34px; font-size: 13px; margin-top: 6px; width: 100%; }
-
-.step-q {
-  display: flex; flex-direction: column; gap: 8px;
-  background: var(--bg); border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
-  padding: 12px; margin-top: 8px; width: 100%;
-}
-.step-q-text { font-size: 13px; font-weight: 550; }
-.step-q-opts { display: flex; flex-wrap: wrap; gap: 6px; }
-.step-q-free { display: flex; gap: 8px; }
-.step-q-free .step-input { margin-top: 0; flex: 1; }
-.step-q-row { display: flex; gap: 8px; }
-.step-q-row input { flex: 1; }
 
 /* Sendables — review-then-send */
 .sendables { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }

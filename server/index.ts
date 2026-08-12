@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
@@ -517,7 +517,7 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
 // talk it through with Otto without re-explaining the situation. Rate-limited + budget-gated like every
 // other interactive AI call; capped history (CHAT_CAP) keeps a long-running task's thread bounded.
 const CHAT_CAP = 60;
-app.post("/api/tasks/:id/chat", requireAuth, rateLimit(20, 60_000), async (req, res) => {
+app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
@@ -525,6 +525,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(20, 60_000), async (req, 
   if (!message) { res.status(400).json({ error: "Say something first." }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: "not found" }); return; }
+  // The "Aide" button on a step (see F) sends its own index — validate the range server-side, never trust
+  // it blindly (steps get regenerated on every rerun, so a stale index from an old page load could point
+  // anywhere or nowhere).
+  const stepIndexRaw = req.body?.stepIndex;
+  const stepIndex = Number.isInteger(stepIndexRaw) && stepIndexRaw >= 0 && stepIndexRaw < (t.steps?.length || 0) ? stepIndexRaw : undefined;
   const history = t.chat || [];
   try {
     let academic: { homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>>; tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> } | undefined;
@@ -534,18 +539,35 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(20, 60_000), async (req, 
         if (homework.length || tests.length) academic = { homework, tests };
       }
     } catch { /* best-effort */ }
-    const reply = await chatAboutTask(
-      { title: t.title, why: t.why, context: t.context, steps: t.steps },
+    const out = await chatAboutTask(
+      { title: t.title, why: t.why, context: t.context, steps: t.steps, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       req.session.profile,
       academic,
+      { stepIndex },
     );
+    addUsage(req.session.profile ||= emptyProfile(), out.tokens); // untracked before — a tool-calling turn can now cost like a small run
     const now = new Date().toISOString();
-    t.chat = [...history, { role: "user" as const, text: message, at: now }, { role: "assistant" as const, text: reply, at: now }].slice(-CHAT_CAP);
+    // Accumulate this turn's artifacts onto the task exactly like a run does (same ARTIFACT_CAP), and
+    // reference them from the assistant's own message so the thread can render an inline chip — the
+    // content lives once (task.notes/flashcards/quizzes); the chat entry only points at it by id.
+    const artifacts = [
+      ...out.notes.map((n) => ({ kind: "note" as const, id: n.id, title: n.title })),
+      ...out.flashcards.map((f) => ({ kind: "deck" as const, id: f.id, title: f.title })),
+      ...out.quizzes.map((q) => ({ kind: "quiz" as const, id: q.id, title: q.title })),
+    ];
+    if (out.notes.length) t.notes = [...(t.notes || []), ...out.notes].slice(-tasks.ARTIFACT_CAP);
+    if (out.flashcards.length) t.flashcards = [...(t.flashcards || []), ...out.flashcards].slice(-tasks.ARTIFACT_CAP);
+    if (out.quizzes.length) t.quizzes = [...(t.quizzes || []), ...out.quizzes].slice(-tasks.ARTIFACT_CAP);
+    t.chat = [
+      ...history,
+      { role: "user" as const, text: message, at: now, ...(stepIndex != null ? { stepIndex, stepText: t.steps![stepIndex].text.slice(0, 80) } : {}) },
+      { role: "assistant" as const, text: out.reply, at: now, ...(artifacts.length ? { artifacts } : {}) },
+    ].slice(-CHAT_CAP);
     t.updatedAt = now;
     await commit(req);
-    res.json({ chat: t.chat });
+    res.json({ chat: t.chat, task: t });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "chat failed" });
   }

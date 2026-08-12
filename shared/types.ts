@@ -421,6 +421,19 @@ export interface WebTask {
   /** Multi-Gmail: the Composio connected-account id this task's source came from, so execution acts on the
    *  right inbox (drafts the reply in the account that received the mail). Undefined for single-account users. */
   sourceAccountId?: string;
+  /** VERBATIM text of the source item — for Pronote, the teacher's own assignment description ("Exercices
+   *  12 à 15 p.87 — mécanique du point"). This is the SUBJECT MATTER of the task, not background: the run,
+   *  the research planner and the tutor chat all quote it so the artifacts they produce are about the real
+   *  exercise instead of being written from the title alone.
+   *
+   *  NEVER model-authored — it is copied straight off the SourceItem, exactly like `anchorKey`. The
+   *  agent-sweep fallback path (parseGenerated) has no source item and deliberately leaves this undefined
+   *  rather than letting the model invent an "énoncé". Never overwritten by a run (unlike `context`). */
+  sourceDetail?: string;
+  /** The real subject as Pronote names it ("Physique-Chimie") — drives per-subject artifact shaping. */
+  sourceSubject?: string;
+  /** The source item's own due date (ISO) — Pronote's, not the model's reading of it. */
+  sourceDue?: string;
   createdAt: string;
   /** Bumped on every mutation (status change, step tick, run result) — breaks cross-device merge ties so a
    *  STALE copy can never overwrite a newer one. */
@@ -439,7 +452,19 @@ export interface WebTask {
    *  it broken down further, needs encouragement) and get a reply grounded in the task's own context/steps,
    *  without re-explaining the situation every time. Capped (see CHAT_CAP in tasks.ts) so a long-running
    *  task's thread can't grow unbounded in storage. */
-  chat?: { role: "user" | "assistant"; text: string; at: string }[];
+  chat?: {
+    role: "user" | "assistant"; text: string; at: string;
+    /** Artifacts the TUTOR created during this assistant turn — rendered as chips inline in the thread.
+     *  Ids point into task.notes/flashcards/quizzes, which is where the content actually lives (one
+     *  storage, two entry points: the thread and "Ce qu'Otto a préparé"). A chip whose id has since been
+     *  evicted by ARTIFACT_CAP renders as nothing rather than crashing — see the client lookup. */
+    artifacts?: { kind: "note" | "deck" | "quiz"; id: string; title: string }[];
+    /** Which step (by index at send-time) a USER message was about — set by the "Aide" button on a step.
+     *  `stepText` is the step's own wording at that moment, stored alongside because steps are regenerated
+     *  on every rerun: a bare index could later point at a different step, or none. */
+    stepIndex?: number;
+    stepText?: string;
+  }[];
   /** In-app fiches/checklists/reference notes Otto prepared for THIS task — no external account, no
    *  approval needed (nothing leaves the app). This is the DEFAULT artifact for a study guide: rendered
    *  as a button on the card that opens the content in a popup, instead of a Google Doc. */
@@ -447,6 +472,9 @@ export interface WebTask {
   /** In-app flashcard decks Otto prepared for THIS task — for vocab/definitions/concept review, where
    *  drilling front→back beats a written guide. Same no-account/no-approval model as notes. */
   flashcards?: TaskFlashcards[];
+  /** In-app multiple-choice quizzes — for CHECKING UNDERSTANDING before a contrôle (flashcards drill raw
+   *  recall; a quiz surfaces which part of a chapter isn't solid). Same no-account/no-approval model. */
+  quizzes?: TaskQuiz[];
 }
 
 export interface TaskNote {
@@ -461,6 +489,27 @@ export interface TaskFlashcards {
   id: string;
   title: string;
   cards: { front: string; back: string }[];
+  createdAt: string;
+}
+
+/** A drillable multiple-choice quiz attached to a task. Deliberately NOT the same thing as a flashcard
+ *  deck: a deck drills recall (front → back), a quiz checks whether the student can DISCRIMINATE between
+ *  plausible answers, which is what actually reveals a shaky notion before a contrôle. */
+export interface TaskQuiz {
+  id: string;
+  title: string;
+  questions: {
+    q: string;
+    /** 2-4 options. Exactly one is correct; the rest must be plausible — an obviously-silly distractor
+     *  teaches nothing and turns the quiz into a reading exercise. */
+    options: string[];
+    /** Index into `options`. Validated server-side; a question whose correct option didn't survive
+     *  sanitisation is dropped rather than silently re-pointed at the wrong answer. */
+    correct: number;
+    /** One line on WHY the right answer is right, shown after answering. This is what makes a quiz teach
+     *  rather than just score — without it a wrong answer leaves the student no better off. */
+    why?: string;
+  }[];
   createdAt: string;
 }
 

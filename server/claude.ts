@@ -1,8 +1,9 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
+import { hasAssignmentText } from "./discover.ts";
 
 // Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
 // email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
@@ -82,7 +83,7 @@ const MISSION =
   `for these, and USE what's already remembered — e.g. give more lead time on a course where they historically ` +
   `start late, reference a professor's known preferences when prepping for their class. This is what makes ` +
   `Otto visibly better by junior year than freshman year, not just aware of how the student writes emails.`;
-const PLAN_ONLY_OVERRIDE =
+export const PLAN_ONLY_OVERRIDE =
   MISSION +
   `\n\nPLAN-ONLY MODE IS ACTIVE — OVERRIDES ALL "ACT NOW"/"CREATE"/"DRAFT" INSTRUCTIONS ABOVE: follow this exact ` +
   `four-stage process, every task:` +
@@ -106,7 +107,15 @@ const PLAN_ONLY_OVERRIDE =
   `call and buries the signal; a targeted query finds it. ` +
   `(d) QUERY THE WEB WITH THOSE ENTITIES + A QUALIFIER — build web_search queries as entity + qualifier suited ` +
   `to the task ("<entity> deadline 2026", "<entity> official rules", "<entity> requirements", "<entity> most ` +
-  `common"), never the bare task title. ` +
+  `common"), never the bare task title. FOR AN ACADEMIC TASK (schoolwork, revision, a fiche/deck/quiz), the ` +
+  `entity is the NOTION, not the school — search the topic the way a teacher would name it ("<notion> ` +
+  `<niveau> méthode", "<notion> programme <classe> fiche", "<chapitre> définitions cours", "<type d'exercice> ` +
+  `méthode type"). You're looking for HOW this topic is taught and tested at this level — the standard ` +
+  `method, the formulas/vocabulary/dates that always come up, the classic traps — which is what makes a ` +
+  `fiche/deck/quiz specific instead of generic. HARD LINE: never search for, and never use, the ANSWER to the ` +
+  `student's OWN exercise ("corrigé exercice 12 p.87 <manuel>", a solved version of their specific ` +
+  `dissertation subject). If a result IS their answer key, don't read it into the artifact — you're building ` +
+  `the method they apply, never the result they hand in. ` +
   `(e) CROSS-REFERENCE AND FOLLOW UP — if any result surfaces a NEW entity (a person's name, a linked doc, a ` +
   `specific date), do ONE more targeted search/read using THAT entity before concluding — this is what catches ` +
   `the connections a single flat pass misses. Stop once you genuinely understand the task, not just its title ` +
@@ -139,19 +148,24 @@ const PLAN_ONLY_OVERRIDE =
   `earlier one (a score, a choice, an answer), the earlier step's OWN text must name exactly what to note down ` +
   `(e.g. "Take the practice test and record your score by section", not just "Take the practice test") — the ` +
   `user should never see a blank "what did you decide?" box with no idea what it's asking for.` +
-  `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT, A BRIEF, OR FLASHCARDS? — ` +
-  `you have FOUR write actions available: creating a brand-new Google Doc/Sheet/Slides, drafting a Gmail email ` +
-  `(GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send), CREATE_NOTE ` +
-  `for a SHORT in-app brief (a quick checklist, reference sheet, or outline the student opens right on the ` +
-  `card — no account, no approval, nothing external), and CREATE_FLASHCARDS for a drillable deck (vocabulary, ` +
-  `definitions, formulas, dates — anything that's naturally a list of discrete front→back facts to memorize, ` +
-  `where testing yourself beats reading a written guide). Pick per subject: a language/vocab/definitions/ ` +
-  `history-dates topic → CREATE_FLASHCARDS; a process/checklist/outline/plan → CREATE_NOTE; something ` +
-  `genuinely long-form or that needs to leave the app → a real Google Doc/Sheet/Slides. CREATE_NOTE and ` +
-  `CREATE_FLASHCARDS are both the default over a Google Doc — only reach for a real document when the content ` +
-  `is genuinely long-form (a full multi-section guide, a real spreadsheet, a deck) or needs to be shared/ ` +
-  `emailed/edited outside the app. A task can legitimately produce BOTH a note and a flashcard deck if it ` +
-  `genuinely calls for both (e.g. a study plan note plus a vocab deck). ` +
+  `\n(3) GO THROUGH EACH STEP FROM STAGE 2 AND ASK: DOES THIS ONE NEED A DOCUMENT, A BRIEF, FLASHCARDS, OR A ` +
+  `QUIZ? — you have FIVE write actions available: creating a brand-new Google Doc/Sheet/Slides, drafting a ` +
+  `Gmail email (GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send), ` +
+  `CREATE_NOTE for a SHORT in-app brief (a quick checklist, reference sheet, or outline the student opens ` +
+  `right on the card — no account, no approval, nothing external), CREATE_FLASHCARDS for a drillable deck ` +
+  `(vocabulary, definitions, formulas, dates — anything that's naturally a list of discrete front→back facts ` +
+  `to memorize, where testing yourself beats reading a written guide), and CREATE_QUIZ for a multiple-choice ` +
+  `self-check (NEW questions on the notion, with a one-line explanation each — for CHECKING whether a chapter ` +
+  `is actually solid before a contrôle, not for memorizing facts). Pick per subject: a language/vocab/ ` +
+  `definitions/history-dates topic → CREATE_FLASHCARDS; a process/checklist/outline/plan → CREATE_NOTE; ` +
+  `revising for an upcoming test/contrôle where the student wants to know what they don't yet understand → ` +
+  `CREATE_QUIZ (in addition to or instead of a note); something genuinely long-form or that needs to leave ` +
+  `the app → a real Google Doc/Sheet/Slides. CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ are all the default ` +
+  `over a Google Doc — only reach for a real document when the content is genuinely long-form (a full ` +
+  `multi-section guide, a real spreadsheet, a deck) or needs to be shared/emailed/edited outside the app. A ` +
+  `task can legitimately produce more than one of these if it genuinely calls for it (e.g. a study plan note ` +
+  `plus a vocab deck plus a quiz to self-check before the test) — but don't manufacture a quiz just because ` +
+  `you can; make one only when checking understanding is actually what this task needs. ` +
   `A NOTE/DECK MUST EARN ITS PLACE — it exists to hold real content the student would otherwise lose or have ` +
   `to redo, never to restate the steps list in different words. Academic prep (studying, revising, a subject- ` +
   `specific deliverable) is the main case where one pulls real weight — see the subject-by-subject shaping ` +
@@ -162,6 +176,11 @@ const PLAN_ONLY_OVERRIDE =
   `— real compiled options with prices/links, actual confirmation details, a real comparison — never a ` +
   `placeholder checklist standing in for research you didn't actually do. When in doubt for a logistics task, ` +
   `leave it as steps and skip the note. ` +
+  `A FICHE IS ONLY WORTH MAKING IF IT HAS THE REAL CONTENT — the actual formulas, the actual vocabulary, the ` +
+  `actual dates/authors of THIS chapter, which means you LOOKED THEM UP (stage 1d) before writing it. A fiche ` +
+  `that could have been written from the title alone ("revoir le cours", "faire les exercices", "réviser les ` +
+  `définitions") is a failure, not a shortcut — it gives the student nothing they didn't already know from ` +
+  `Pronote. ` +
   `SHAPE A NOTE TO ITS SUBJECT, NEVER ONE GENERIC TEMPLATE — Maths/Physique/Chimie: key formulas up top, then ` +
   `a worked example structure (steps shown, not the final numeric answer to THEIR specific exercise), then a ` +
   `short practice set with no answer key. Histoire/Géo/SES: a timeline or cause→consequence structure, key ` +
@@ -259,6 +278,29 @@ function academicBlock(a?: AcademicContext): string {
   return parts.length ? `\nTHEIR CURRENT PRONOTE WORKLOAD — use this to judge real urgency/conflicts, never invent or assume beyond it:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
 }
 
+/** The source item's OWN words for THIS task — for Pronote, the teacher's assignment text. Distinct from
+ *  academicBlock in both content and FRAMING: academicBlock is ambient "what else is on your plate,
+ *  judge urgency by it, don't assume beyond it"; this is "this is the actual thing you are working on,
+ *  research it and build the artifact around it".
+ *
+ *  Before this existed, the énoncé was read by the classifier and then dropped, so a run only ever saw
+ *  "Physique homework" — which is exactly why fiches came out generic ("revoir le cours") instead of
+ *  being about mécanique du point. */
+export function assignmentBlock(t: { sourceSubject?: string; sourceDetail?: string; sourceDue?: string }): string {
+  if (!t.sourceDetail?.trim()) return "";
+  const fmt = (iso?: string) => { if (!iso) return ""; try { return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }); } catch { return iso; } };
+  const due = fmt(t.sourceDue);
+  return `\nTHE ASSIGNMENT ITSELF — copied VERBATIM from Pronote; these are the teacher's own words.\n` +
+    `This is the SUBJECT MATTER of this task, not background context. Everything you look up and every\n` +
+    `artifact you build must be about THIS, in this subject, at this level.\n` +
+    (t.sourceSubject ? `- Subject: ${t.sourceSubject}\n` : "") +
+    (due ? `- Due: ${due}\n` : "") +
+    `- What the teacher wrote: "${t.sourceDetail.trim()}"\n` +
+    `Never invent parts of the énoncé that aren't quoted above — if you'd need the full question text or\n` +
+    `the textbook page to go further, say so plainly (it's on the student's own sheet) instead of guessing\n` +
+    `at what the exercise asks.\n`;
+}
+
 /** Current date + time, injected into every agent prompt so "today"/"tomorrow"/deadlines/scheduling are
  *  grounded. (Server runtime — new Date() is fine here; this is not a workflow script.) */
 function nowBlock(): string {
@@ -352,7 +394,11 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // falls back to an empty query list on any parse failure, so a truncation here degrades silently
 // (the research loop just improvises live instead of following a planned query list) rather than
 // producing a visible bug — but it's still worth closing before it causes one.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 2000 } as const;
+// chat: 8000 (was 2000) — DeepSeek v4 is a REASONING model, its thinking tokens count against max_tokens.
+// A plain "just talking" turn still only spends ~200 tokens; this is a CEILING for the rare turn that
+// thinks, calls a tool, then emits a 12-question quiz with explanations — a real payload that size would
+// silently truncate at 2000. CHAT_MAX_ROUNDS/CHAT_TOKEN_CEILING (near chatAboutTask) bound the real cost.
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -470,6 +516,11 @@ export interface GeneratedTask {
   link?: string;
   /** Multi-Gmail: the Composio connected-account id this item came from, so execution acts on the right inbox. */
   accountId?: string;
+  /** Verbatim source text (Pronote's assignment description) + the source's own subject/due — copied off
+   *  the SourceItem, never model-authored. See WebTask.sourceDetail for why this exists. */
+  sourceDetail?: string;
+  sourceSubject?: string;
+  sourceDue?: string;
 }
 
 const GEN_SYSTEM =
@@ -614,6 +665,84 @@ const CREATE_FLASHCARDS_TOOL = {
     },
   }, required: ["title", "cards"] },
 };
+
+// An in-app multiple-choice quiz. Distinct purpose from a deck: a deck drills recall, a quiz makes the
+// student DISCRIMINATE between plausible answers, which is what actually exposes a shaky notion.
+const CREATE_QUIZ_TOOL = {
+  name: "CREATE_QUIZ",
+  description: "Create an in-app multiple-choice quiz attached to this task — the student answers each question, gets immediate feedback with a one-line explanation, and a score at the end. Use this to CHECK UNDERSTANDING before a contrôle (which parts of the chapter aren't solid), where CREATE_FLASHCARDS is for drilling raw recall. NEVER turn the student's OWN assigned exercise into a quiz — write NEW questions on the same notion.",
+  input_schema: { type: "object", properties: {
+    title: { type: "string", description: "short label shown on the button, e.g. 'Quiz — Mécanique du point'" },
+    questions: {
+      type: "array",
+      description: "5-12 questions on the task's real subject matter — never placeholders, never the student's own assigned exercise reworded.",
+      items: { type: "object", properties: {
+        q: { type: "string", description: "the question — one clear sentence" },
+        options: { type: "array", description: "3-4 answer options. EXACTLY ONE is correct; the wrong ones must be genuinely plausible (a common misconception, an off-by-one, the right idea applied to the wrong case). An obviously-silly option teaches nothing.", items: { type: "string" } },
+        correct: { type: "number", description: "0-based index into options of the CORRECT one" },
+        why: { type: "string", description: "one line on why that answer is right — this is what makes the quiz teach instead of just score" },
+      }, required: ["q", "options", "correct"] },
+    },
+  }, required: ["title", "questions"] },
+};
+
+// ── Shared in-app artifact factories ──────────────────────────────────────────
+// Pure, no I/O. Used by BOTH runTask's tool loop and the tutor chat's tool loop, so validation can't drift
+// between "the artifact Otto made during a run" and "the artifact Otto made when you asked in chat".
+// Each returns either the artifact or an `error` string that goes straight back to the model as the tool
+// result (so it can retry properly rather than silently producing something empty).
+
+/** A note whose body is empty/near-empty used to be ACCEPTED and still set `wroteAny`, which satisfied every
+ *  artifact-enforcement check in the run loop with nothing to show the student — a real hole in the chain.
+ *  40 chars is comfortably below any genuine fiche and comfortably above "TODO". */
+const MIN_NOTE_BODY = 40;
+export function makeNote(input: any): { note: TaskNote } | { error: string } {
+  const title = String(input?.title || "Note").trim().slice(0, 120) || "Note";
+  const body = String(input?.body || "").trim().slice(0, 8000);
+  if (body.length < MIN_NOTE_BODY) return { error: "ERROR: the note body is empty or too short — write the ACTUAL content (the real formulas/definitions/steps), not a placeholder or a title with nothing under it." };
+  return { note: { id: randomUUID(), title, body, createdAt: new Date().toISOString() } };
+}
+
+export function makeDeck(input: any): { deck: TaskFlashcards } | { error: string } {
+  const title = String(input?.title || "Flashcards").trim().slice(0, 120) || "Flashcards";
+  const cards = (Array.isArray(input?.cards) ? input.cards : [])
+    .map((c: any) => ({ front: String(c?.front || "").trim().slice(0, 300), back: String(c?.back || "").trim().slice(0, 300) }))
+    .filter((c: { front: string; back: string }) => c.front && c.back)
+    .slice(0, 30);
+  if (!cards.length) return { error: "ERROR: no valid cards (each needs a non-empty front and back)." };
+  return { deck: { id: randomUUID(), title, cards, createdAt: new Date().toISOString() } };
+}
+
+export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
+  const title = String(input?.title || "Quiz").trim().slice(0, 120) || "Quiz";
+  const raw = Array.isArray(input?.questions) ? input.questions : [];
+  const questions = raw
+    .map((item: any) => {
+      const q = String(item?.q || "").trim().slice(0, 300);
+      const correctIdx = Number(item?.correct);
+      if (!q || !Array.isArray(item?.options) || !Number.isInteger(correctIdx)) return null;
+      // Sanitise options while tracking WHICH one was flagged correct, by identity — not by index. Trimming
+      // empties and de-duplicating shifts every later index, so carrying the raw `correct` through would
+      // silently mark a DIFFERENT option as the right answer: a quiz that confidently teaches the wrong
+      // thing, which is worse than no quiz. If the flagged option doesn't survive, drop the question.
+      const seen = new Set<string>();
+      const kept: { text: string; wasCorrect: boolean }[] = [];
+      (item.options as any[]).forEach((o, i) => {
+        const text = String(o ?? "").trim().slice(0, 200);
+        if (!text || seen.has(text.toLowerCase())) return;
+        seen.add(text.toLowerCase());
+        kept.push({ text, wasCorrect: i === correctIdx });
+      });
+      const correct = kept.findIndex((o) => o.wasCorrect);
+      if (kept.length < 2 || kept.length > 4 || correct < 0) return null;
+      const why = item?.why ? String(item.why).trim().slice(0, 300) : undefined;
+      return { q, options: kept.map((o) => o.text), correct, ...(why ? { why } : {}) };
+    })
+    .filter(Boolean)
+    .slice(0, 15) as TaskQuiz["questions"];
+  if (!questions.length) return { error: "ERROR: no valid questions (each needs a question, 2-4 distinct options, and a `correct` index pointing at one of them)." };
+  return { quiz: { id: randomUUID(), title, questions, createdAt: new Date().toISOString() } };
+}
 
 // Sources where every item HAS a stable id/link the tools return — a task claiming to come from one of
 // these without either is unverifiable (likely hallucinated or sloppily reported) and gets dropped.
@@ -773,7 +902,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
  * and source on the resulting task is copied from the item itself, so references cannot be hallucinated.
  */
 export async function classifyCandidates(
-  items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string }[],
+  items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string; subject?: string }[],
   profile?: Profile,
   activeTitles?: string[],
   handledTitles?: string[],
@@ -877,6 +1006,12 @@ export async function classifyCandidates(
           anchorKey: it.anchorKey,           // from the SOURCE — never the model
           link: it.url,
           accountId: it.accountId,
+          // The source's OWN words + subject/date, carried through verbatim. This is the whole reason a
+          // fiche can be about "mécanique du point" instead of about "Physique homework": before this,
+          // the snippet was read by the classifier and then dropped right here, so the run never saw it.
+          sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 1200) : undefined,
+          sourceSubject: it.subject,
+          sourceDue: it.timestamp,
         };
       })
       .slice(0, 12);
@@ -923,7 +1058,7 @@ export async function classifyCandidates(
  * wishing someone happy birthday or a light follow-up), but still never a newsletter/receipt.
  */
 export async function pickOneTask(
-  items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string }[],
+  items: { sourceApp: string; anchorKey: string; url?: string; title: string; snippet: string; sender?: string; timestamp?: string; labels: string[]; accountId?: string; subject?: string }[],
   profile?: Profile,
   activeTitles?: string[],
   handledTitles?: string[],
@@ -973,6 +1108,11 @@ export async function pickOneTask(
       anchorKey: it.anchorKey,
       link: it.url,
       accountId: it.accountId,
+      // Same verbatim source carry-through as classifyCandidates — the daily-minimum path must produce
+      // just as specific an artifact as the normal one.
+      sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 1200) : undefined,
+      sourceSubject: it.subject,
+      sourceDue: it.timestamp,
     };
     console.log(`${new Date().toISOString()} [ai] pickOneTask: "${task.title}" (${tokens.in} in / ${tokens.out} out)`);
     return { task, tokens };
@@ -1059,6 +1199,8 @@ export interface RunOutput {
   /** In-app flashcard decks (CREATE_FLASHCARDS) created THIS run — verified, persisted onto
    *  WebTask.flashcards and rendered as a drillable popup on the card. */
   flashcards?: TaskFlashcards[];
+  /** In-app MCQ quizzes (CREATE_QUIZ) created THIS run — verified, persisted onto WebTask.quizzes. */
+  quizzes?: TaskQuiz[];
 }
 
 const RUN_SYSTEM =
@@ -1370,7 +1512,7 @@ const RUN_TOOLS = [
  * single call trying to plan-and-research-and-write all at once. Falls back to an empty plan (the loop's own
  * algorithmic instructions still apply) on any failure — this is an enhancement, never a blocker.
  */
-async function planResearch(task: { title: string; why: string }, connectedApps: string[]): Promise<string[]> {
+async function planResearch(task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string }, connectedApps: string[]): Promise<string[]> {
   try {
     const client = deepseekClient();
     const appsLine = connectedApps.length ? connectedApps.join(", ") : "none connected";
@@ -1381,9 +1523,21 @@ async function planResearch(task: { title: string; why: string }, connectedApps:
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}"\nWHY: "${task.why}"\nCONNECTED APPS: ${appsLine}\n\n` +
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n` +
+          (task.sourceSubject ? `SUBJECT: "${task.sourceSubject}"\n` : "") +
+          (task.sourceDetail ? `THE ASSIGNMENT, VERBATIM FROM PRONOTE: "${task.sourceDetail}"\n` : "") +
+          `CONNECTED APPS: ${appsLine}\n\n` +
           `(This is for a student — the research should support them doing the work themselves, never gather ` +
           `answers meant to replace their own effort.)\n` +
+          (task.sourceDetail
+            ? `This is SCHOOLWORK with a real énoncé above. At least 2 of your queries must be about the ` +
+              `ACADEMIC TOPIC ITSELF — the notion, the method, how it's taught and tested at this level — ` +
+              `not about the logistics of the task. Name the notion the way a teacher would ` +
+              `("<notion> méthode", "<notion> programme lycée", "<chapitre> définitions cours", ` +
+              `"<type d'exercice> méthode type"). NEVER plan a search for the ANSWER to this specific ` +
+              `exercise (no "corrigé exercice 12 p.87", no solved version of their dissertation subject) — ` +
+              `you are finding the method they will apply, never the result they hand in.\n`
+            : "") +
           `Before researching, PLAN it. First extract the key entities (names, people, organizations, places, ` +
           `dates, subjects) from the task. Then list 3-6 concrete search actions to actually run — each one ` +
           `naming a SPECIFIC query, not a vague instruction. For a connected app, phrase it as "Search <app> for ` +
@@ -1403,14 +1557,14 @@ async function planResearch(task: { title: string; why: string }, connectedApps:
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
-export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[] }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
+export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
   const profileUpdates: ProfileUpdate[] = [];
   // Plan-only mode: withhold every irreversible/other-people-facing write tool structurally, so the agent
   // physically cannot send/post/delete/schedule — same "deny by absence" pattern already used for irreversible
   // sends (see isGatedAction). It DOES still get two prep actions: creating a resource doc/sheet/slides, and
   // drafting (never sending) a Gmail email — see readOnlyPlusPrep.
   const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusPrep(extras);
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
     ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus creating a resource doc/sheet/slides or drafting a Gmail email — never sending"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
@@ -1438,11 +1592,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
     : "";
   // FIRST PASS: plan the research before doing it (see planResearch) — skipped for a focused single-step
   // re-run, which already knows exactly what it's doing and doesn't need a fresh research plan.
-  const researchPlan = (!EXECUTION_ENABLED && !focus) ? await planResearch({ title: task.title, why: task.why }, extras?.connected || []) : [];
+  const researchPlan = (!EXECUTION_ENABLED && !focus) ? await planResearch({ title: task.title, why: task.why, sourceSubject: task.sourceSubject, sourceDetail: task.sourceDetail }, extras?.connected || []) : [];
   const researchPlanBlock = researchPlan.length
     ? `\nRESEARCH PLAN — run these searches, in order, before writing "context":\n${researchPlan.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n(This plan is a starting point, not a ceiling — follow up on anything it turns up, per the GATHER CONTEXT algorithm below.)\n`
     : "";
-  const head = nowBlock() + `TASK: ${task.title}\nWHY: ${task.why}\n` + profileBlock(profile) + academicBlock(academic) + artifactsBlock + connectedLine + researchPlanBlock;
+  // assignmentBlock goes FIRST (before the ambient workload in academicBlock) so the model reads "this is
+  // the exercise I am working on" before "this is everything else that is due".
+  const head = nowBlock() + `TASK: ${task.title}\nWHY: ${task.why}\n` + assignmentBlock(task) + profileBlock(profile) + academicBlock(academic) + artifactsBlock + connectedLine + researchPlanBlock;
   const deadlineHint = deadlineBlock(`${task.title}\n${task.why}`);
   const messages: any[] = [{
     role: "user",
@@ -1475,7 +1631,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // left artifact creation as a step (incl. the "Approve creating a Google Doc" dodge) instead of doing it.
   // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
   // doc genuinely needs approval).
-  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?|flashcards?)\b/i;
+  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?|flashcards?|quiz(?:zes)?)\b/i;
   // "context" describing the REQUEST or the SEARCH PROCESS instead of what was actually found — e.g. "User
   // requested information about Gabrielle; performed searches across multiple Google services" or "Assistant
   // retrieved calendar event for essay writing, read emails about X, and searched for Y on Drive and Gmail
@@ -1489,7 +1645,6 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // (the model's own narrative of what it produced), the same place every other claim-verification check in
   // this file looks — a false claim here is worse than a fabricated artifact claim, because a student could
   // actually act on it (hand in what Otto wrote) instead of just seeing a broken card.
-  const DOES_STUDENT_WORK = /\b(wrote|completed|finished|did|solved|answered) (?:your |the |his |her |their )?(essay|assignment|homework|problem set|paper|report|exam|quiz|test|worksheet|questions?)\b|\bsolved (?:all |every )?(?:the )?(?:problems?|questions?)\b|\b(answers? (?:to|for) (?:the |your )?(?:exam|quiz|test|questions?))\b/i;
   let wroteAny = false;
   // Real integration reads (Gmail/Calendar/Drive/Slack/… — NOT web_search, NOT submit/remember) actually
   // succeeded this run. Drives the plan-only "don't submit a shallow plan" enforcement below: a plan built
@@ -1511,6 +1666,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // Briefs created THIS run via CREATE_NOTE — a real tool call each, same "verified, not claimed" bar.
   const notesCreated: TaskNote[] = [];
   const flashcardsCreated: TaskFlashcards[] = [];
+  const quizzesCreated: TaskQuiz[] = [];
   // Backstop for the same class of bug as lastGmailDraft, but for Docs/Sheets/Slides: the model creates a
   // real spreadsheet/doc, mentions it in a "did" bullet, but forgets to add a "links" entry — so the card
   // shows text describing an artifact with no way to actually open it. Tracks only the LAST one created;
@@ -1544,7 +1700,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // FINAL integrity pass — reconcile the narrative with the artifacts that actually survived (runs LAST,
     // after both backstops above have had their chance to re-attach a real draft/doc). A "Drafted a reply…"
     // claim with no sendable to show is a fabrication to the user, so it must not survive to the card.
-    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds], notes: notesCreated.length ? notesCreated : undefined, flashcards: flashcardsCreated.length ? flashcardsCreated : undefined });
+    return reconcileArtifactClaims({ ...o, did, links, sendables, tokens: { in: tokIn, out: tokOut, cachedIn: tokCached }, createdDocIds: [...createdDocIds], notes: notesCreated.length ? notesCreated : undefined, flashcards: flashcardsCreated.length ? flashcardsCreated : undefined, quizzes: quizzesCreated.length ? quizzesCreated : undefined });
   };
   try {
   for (let i = 0; i < MAX; i++) {
@@ -1763,7 +1919,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
             content = "REJECTED: the deliverable here is a document/brief/deck, and you left CREATING it as a " +
               "step instead of doing it. Creating it needs NO approval — it is YOUR job, not the user's (never " +
               "phrase it as 'approve creating a doc'). Call the create tool NOW — CREATE_NOTE for a short " +
-              "brief, CREATE_FLASHCARDS for vocab/definitions/facts to drill, or GOOGLEDOCS_CREATE_DOCUMENT / " +
+              "brief, CREATE_FLASHCARDS for vocab/definitions/facts to drill, CREATE_QUIZ to check understanding, or GOOGLEDOCS_CREATE_DOCUMENT / " +
               "GOOGLESHEETS_CREATE_GOOGLE_SHEET1 / GOOGLESLIDES_CREATE_PRESENTATION for something long-form — " +
               "write the actual compiled content INTO it, add a links entry with its URL, THEN submit.";
           } else {
@@ -1775,26 +1931,19 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         else if (toolName === "web_search") { searchedWeb = true; content = await runWebSearch(input); }
         else if (toolName === "CREATE_NOTE") {
-          const title = String(input?.title || "Note").trim().slice(0, 120) || "Note";
-          const body = String(input?.body || "").trim().slice(0, 8000);
-          const id = randomUUID();
-          notesCreated.push({ id, title, body, createdAt: new Date().toISOString() });
-          wroteAny = true; // a real, verified artifact — counts toward the write-enforcement checks below
-          content = JSON.stringify({ ok: true, id });
+          const r = makeNote(input);
+          if ("error" in r) content = r.error;
+          else { notesCreated.push(r.note); wroteAny = true; content = JSON.stringify({ ok: true, id: r.note.id }); }
         }
         else if (toolName === "CREATE_FLASHCARDS") {
-          const title = String(input?.title || "Flashcards").trim().slice(0, 120) || "Flashcards";
-          const cards = (Array.isArray(input?.cards) ? input.cards : [])
-            .map((c: any) => ({ front: String(c?.front || "").trim().slice(0, 300), back: String(c?.back || "").trim().slice(0, 300) }))
-            .filter((c: { front: string; back: string }) => c.front && c.back)
-            .slice(0, 30);
-          if (!cards.length) { content = "ERROR: no valid cards (each needs a non-empty front and back)."; }
-          else {
-            const id = randomUUID();
-            flashcardsCreated.push({ id, title, cards, createdAt: new Date().toISOString() });
-            wroteAny = true;
-            content = JSON.stringify({ ok: true, id, count: cards.length });
-          }
+          const r = makeDeck(input);
+          if ("error" in r) content = r.error;
+          else { flashcardsCreated.push(r.deck); wroteAny = true; content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); }
+        }
+        else if (toolName === "CREATE_QUIZ") {
+          const r = makeQuiz(input);
+          if ("error" in r) content = r.error;
+          else { quizzesCreated.push(r.quiz); wroteAny = true; content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); }
         }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
         // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.
@@ -2213,29 +2362,62 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
 
 function clamp01(n: number): number { return Math.max(0, Math.min(1, Number(n) || 0)); }
 
+// Otto's OWN narrative claiming it did the student's graded work — checked against `did`/`synthesis` in
+// runTask (the model's report of what it produced). Both languages: languageLine makes those FRENCH by
+// default (this app's default language), so an English-only guard would leave the actual default path
+// unprotected. Exported for tests/run.mjs (pinning both the true-positive AND the false-positive that
+// would break legitimate tutoring, e.g. "rédigé" appearing in "aide à rédiger ton plan").
+export const DOES_STUDENT_WORK = /\b(wrote|completed|finished|did|solved|answered) (?:your |the |his |her |their )?(essay|assignment|homework|problem set|paper|report|exam|quiz|test|worksheet|questions?)\b|\bsolved (?:all |every )?(?:the )?(?:problems?|questions?)\b|\b(answers? (?:to|for) (?:the |your )?(?:exam|quiz|test|questions?))\b|\b(rédigé|terminé|fini|résolu|répondu)\s+(?:à |aux )?(?:ta |ton |tes |ses |sa |son |les? |la |l['’])?(dissertation|devoir|exercices?|contrôle|examen|quiz|questions?|rédaction)\b|\br(?:é|e)ponses? (?:au?|aux) (?:contrôle|examen|quiz|exercices?)\b/i;
+
 // Same integrity line runTask() enforces on itself — a coaching reply must never cross into doing the
 // student's actual work either (a student stuck on an essay could easily ask the chat to "just write the
 // intro paragraph for me", which is exactly the failure mode this guards against).
 // Both languages — the app defaults to FRENCH, so an English-only guard left the actual default path
 // unprotected ("Voici l'introduction :" would have sailed straight through).
-const CHAT_DOES_WORK = /\bhere('s| is)?\s+(the|your|an?)\s+(essay|paragraph|answer|solution|response)\b|\bwrote (?:it|the|your) (essay|paragraph|answer|solution)\b|\bvoici\s+(?:donc\s+)?(?:l['’]|la |le |ta |ton |une |un )?(introduction|conclusion|dissertation|paragraphe|réponse|solution|corrigé|traduction|rédaction)\b|\bje (?:l['’]ai|t['’]ai) (?:rédigé|écrit)\b/i;
+export const CHAT_DOES_WORK = /\bhere('s| is)?\s+(the|your|an?)\s+(essay|paragraph|answer|solution|response)\b|\bwrote (?:it|the|your) (essay|paragraph|answer|solution)\b|\bvoici\s+(?:donc\s+)?(?:l['’]|la |le |ta |ton |une |un )?(introduction|conclusion|dissertation|paragraphe|réponse|solution|corrigé|traduction|rédaction)\b|\bje (?:l['’]ai|t['’]ai) (?:rédigé|écrit)\b/i;
+
+/** What `chatAboutTask` returns: the spoken reply, plus any artifacts the tutor made this turn (empty
+ *  arrays, never undefined — the route accumulates these straight onto the task). */
+export interface ChatResult {
+  reply: string;
+  notes: TaskNote[];
+  flashcards: TaskFlashcards[];
+  quizzes: TaskQuiz[];
+  tokens: { in: number; out: number; cachedIn?: number };
+}
+
+// The tutor's own tool loop is bounded much tighter than runTask's: a chat turn is "maybe look something
+// up, maybe make ONE thing, then talk" — never a research pass. Also caps how many artifacts one message
+// can produce (a wall of chips defeats the point of a CONVERSATION) and a small total-token ceiling so a
+// pathological turn can't cost like a small run.
+const CHAT_MAX_ROUNDS = 3;
+const CHAT_MAX_ARTIFACTS = 2;
+const CHAT_TOKEN_CEILING = 40_000;
 
 /**
  * Reply in a per-task coaching thread. Grounded in that ONE task's own context/steps/why so the student
  * never has to re-explain their situation, and scoped to being a supportive guide — never a ghostwriter.
- * No tools: this is a conversation, not another research/execution pass (those already happened in runTask).
+ * Tool-capable (web_search + the three CREATE_* artifact tools, bounded) so the tutor can look something up
+ * or hand over a deck/quiz/fiche mid-conversation instead of only ever talking — but NEVER Composio: chat
+ * must not be able to touch the student's connected accounts.
  */
 export async function chatAboutTask(
-  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean }[] },
+  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string },
   history: { role: "user" | "assistant"; text: string }[],
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-): Promise<string> {
-  const stepsBlock = (task.steps || []).length
-    ? `\nSteps (${(task.steps || []).filter((s) => s.done).length}/${(task.steps || []).length} done):\n` +
-      (task.steps || []).map((s) => `- [${s.done ? "x" : " "}] ${s.text}`).join("\n")
+  opts?: { stepIndex?: number },
+): Promise<ChatResult> {
+  const steps = task.steps || [];
+  const stepsBlock = steps.length
+    ? `\nSteps (${steps.filter((s) => s.done).length}/${steps.length} done):\n` +
+      steps.map((s, i) => `- [${s.done ? "x" : " "}] ${s.text}${opts?.stepIndex === i ? "  ← THEY TAPPED \"HELP\" ON THIS ONE" : ""}`).join("\n")
     : "";
+  const stepHint = (opts?.stepIndex != null && steps[opts.stepIndex])
+    ? `\nThey just asked for help specifically on "${steps[opts.stepIndex].text}" (marked above) — start FROM THERE, don't re-open the whole task or restate the step back at them. Still diagnose before explaining (rule 1).\n`
+    : "";
+  const fr = profile?.language !== "en";
   const sys = languageLine(profile) + trackLine(profile) + MISSION +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
@@ -2271,19 +2453,32 @@ export async function chatAboutTask(
     `action that unblocks them (open the cours to p.X, write one bad first sentence, set a 10-minute timer, ` +
     `do just part a). Never lecture them about integrity; just redirect and help.\n\n` +
 
+    `THINGS YOU CAN MAKE, RIGHT HERE IN THE CHAT: a fiche (CREATE_NOTE), a flashcard deck, or a quick MCQ ` +
+    `quiz — and you can web_search first if you need real subject content to make it specific. Make one when ` +
+    `it genuinely helps THEM practise: they ask for cards/a quiz/a summary, or you can see they need to drill ` +
+    `something before Friday. Same line as everywhere else: a fiche is method, structure, prompts and real ` +
+    `course content — NEVER their essay, their solved exercise, or their translated passage. A quiz is NEW ` +
+    `questions on the notion, never their own exercise reformatted into multiple choice. Don't announce it ` +
+    `before you make it and don't describe it at length after — make it, then say ONE short line ("je t'ai ` +
+    `fait 10 cartes sur les dérivées"). Default is still: no artifact, most turns are just talking. You get ` +
+    `at most ${CHAT_MAX_ARTIFACTS} per message — pick the ONE thing that actually helps right now.\n\n` +
+
     `HOW YOU SOUND — this matters as much as what you say:\n` +
     `Write like a real person talking to them, not like an app. This is a CHAT: short lines, contractions, ` +
-    `plain words. NO markdown headers, NO bullet lists, NO bold labels, NO numbered frameworks — if you catch ` +
-    `yourself formatting a reply, you're writing a document instead of talking. One or two sentences is a ` +
-    `great answer. Three or four is usually the most it should take.\n` +
+    `plain words. Plain prose is the default and almost always right. You may use **bold** for a single key ` +
+    `term, a link as [texte](url), and — only when you're genuinely listing 2-4 parallel things (the steps of ` +
+    `a method, three dates) — a short dash list. Never a header, never a bold "Label:" in front of every line, ` +
+    `never a numbered framework, never a list where a sentence would do. If more than a third of your reply ` +
+    `is formatting, you're writing a document instead of talking. One or two sentences is a great answer. ` +
+    `Three or four is usually the most it should take.\n` +
     `Say the thing, then stop. Don't restate their question back, don't preamble ("Great question!", "I can ` +
     `definitely help with that!"), don't recap what you just said, don't close every message with an offer of ` +
     `more help. No fake enthusiasm and no therapy-speak — they're stressed, not fragile, and they can tell ` +
     `when they're being managed. Dry warmth beats cheerleading.\n` +
     `Ask ONE question at a time, never a list of them. Go longer only to walk through a method or a parallel ` +
     `worked example — and even then keep it plain prose, in small steps, pausing to check they're with you.` +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}` +
-    profileBlock(profile) + academicBlock(academic);
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}` +
+    assignmentBlock(task) + profileBlock(profile) + academicBlock(academic);
   const messages: any[] = [
     { role: "system", content: sys },
     ...history.slice(-16).map((h) => ({ role: h.role, content: h.text })),
@@ -2291,21 +2486,73 @@ export async function chatAboutTask(
   ];
   const client = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-  const res: any = await retryRequest(() => client.chat.completions.create({
-    model: actualModel, max_tokens: OUT.chat, temperature: 0.6, messages,
-  }));
-  // 2400 (was 1200): a genuine tutoring turn — a method walked through step by step, or a parallel worked
-  // example — legitimately runs longer than a one-line nudge, and truncating mid-explanation is worse than
-  // no explanation. The prompt still pushes hard for SHORT by default; this only stops the rare long-but-
-  // warranted reply from being cut off mid-sentence.
-  let reply = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 2400);
-  const fr = profile?.language !== "en";
-  if (CHAT_DOES_WORK.test(reply)) {
-    reply = fr
-      ? "Je peux t'aider à débloquer ça, mais je ne vais pas le rédiger à ta place — cette partie est la tienne. On cherche un point de départ ensemble ?"
-      : "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?";
+  const tools = [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, WEB_SEARCH_TOOL];
+  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], tokens: { in: 0, out: 0, cachedIn: 0 } });
+  const result = empty();
+  const finish = (reply: string): ChatResult => {
+    // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
+    // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
+    // discard them too rather than hand over a chip whose text just got rejected.
+    if (CHAT_DOES_WORK.test(reply)) {
+      result.notes = []; result.flashcards = []; result.quizzes = [];
+      reply = fr
+        ? "Je peux t'aider à débloquer ça, mais je ne vais pas le rédiger à ta place — cette partie est la tienne. On cherche un point de départ ensemble ?"
+        : "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?";
+    }
+    // 2400 (was 1200): a genuine tutoring turn — a method walked through step by step, or a parallel worked
+    // example — legitimately runs longer than a one-line nudge, and truncating mid-explanation is worse than
+    // no explanation. The prompt still pushes hard for SHORT by default; this only stops the rare long-but-
+    // warranted reply from being cut off mid-sentence.
+    result.reply = reply.trim().slice(0, 2400) || (fr ? "Je suis là — qu'est-ce qui te bloque exactement ?" : "I'm here — what part of this is giving you trouble?");
+    return result;
+  };
+
+  for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
+    if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) break; // circuit breaker — see CHAT_TOKEN_CEILING
+    const lastRound = round === CHAT_MAX_ROUNDS - 1;
+    const apiMessages = lastRound
+      ? [...messages, { role: "user" as const, content: "Out of tool calls for this turn — reply in plain words now, no more tool use." }]
+      : messages;
+    let res: any;
+    try {
+      res = await retryRequest(() => client.chat.completions.create({
+        model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+        messages: apiMessages,
+        // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
+        // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
+        ...(lastRound ? {} : { tools: tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
+      }));
+    } catch { return finish(""); } // network/API failure → the honest fallback line, never a throw to the route
+    { const u = usageOf(res); result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn; }
+    const toolCalls = res.choices?.[0]?.message?.tool_calls || [];
+    const textContent = res.choices?.[0]?.message?.content || "";
+    if (!toolCalls.length) return finish(textContent);
+    messages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
+    for (const tc of toolCalls) {
+      const name = tc.function?.name;
+      const input = parseToolArgs(tc.function?.arguments);
+      let content: string;
+      const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length >= CHAT_MAX_ARTIFACTS;
+      if (name === "web_search") content = await runWebSearch(input);
+      else if (name === "CREATE_NOTE") {
+        if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+        else {
+          const r = makeNote(input);
+          if ("error" in r) content = r.error;
+          // A note is the obvious vector for "here's your essay, wrapped as a study aid" — check the BODY
+          // itself, not just the eventual spoken reply (finish() only ever sees the reply text).
+          else if (CHAT_DOES_WORK.test(r.note.body)) content = "REJECTED: that reads like their graded work, not a study aid — a fiche is method/structure/prompts, never the finished essay or solved exercise. Make a structure with prompts instead.";
+          else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); }
+        }
+      } else if (name === "CREATE_FLASHCARDS") {
+        if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+        else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); } }
+      } else if (name === "CREATE_QUIZ") {
+        if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+        else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); } }
+      } else content = "ERROR: unknown tool.";
+      messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
+    }
   }
-  return reply || (fr
-    ? "Je suis là — qu'est-ce qui te bloque exactement ?"
-    : "I'm here — what part of this is giving you trouble?");
+  return finish(""); // exhausted CHAT_MAX_ROUNDS still calling tools — the honest fallback line, not silence
 }

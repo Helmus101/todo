@@ -1,9 +1,9 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, isBigIbProject } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
-import { isNoise, filterCandidates, calendarToItems, dedupeByThread } from "../server/discover.ts";
+import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade } from "../shared/types.ts";
 import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
@@ -596,6 +596,97 @@ check("the slipped milestone snaps to today", replanned.steps[1].targetDate === 
 check("later milestones shift by the same slip amount, preserving spacing", replanned.steps[2].targetDate === "2026-06-26" && replanned.steps[3].targetDate === "2026-07-07");
 const noSlip = replanMilestones([{ text: "Submit", automatable: false, targetDate: "2026-07-01" }], msNow);
 check("nothing changes when no milestone has slipped", noSlip.changed === false);
+
+// ── Pronote → sourceDetail/Subject/Due plumbing (the "extension of Pronote" root-cause fix) ────────────
+section("pronoteToItems carries the real énoncé + subject");
+const hwItems = pronoteToItems([{ id: "hw1", subject: "Physique-Chimie", description: "Exercices 12 à 15 p.87 — mécanique du point", deadline: "2026-09-02T08:00:00Z", done: false }]);
+check("snippet is the teacher's real words", hwItems[0].snippet === "Exercices 12 à 15 p.87 — mécanique du point");
+check("subject carried onto the item", hwItems[0].subject === "Physique-Chimie");
+const emptyHw = pronoteToItems([{ id: "hw2", subject: "Anglais", description: "", deadline: "2026-09-02T08:00:00Z", done: false }]);
+check("no description falls back to a bare due-date placeholder", /^Due /.test(emptyHw[0].snippet));
+const testItems = pronoteTestsToItems([{ id: "t1", subject: "Maths", deadline: "2026-09-03T08:00:00Z" }]);
+check("a test's snippet is a bare marker, not a real énoncé", testItems[0].snippet.startsWith("Test on"));
+
+section("hasAssignmentText — real énoncé vs synthesized placeholder");
+check("real assignment text passes", hasAssignmentText("Exercices 12 à 15 p.87 — mécanique du point"));
+check("the 'Due <date>' fallback is rejected", !hasAssignmentText("Due 2026-09-02T08:00:00Z"));
+check("the 'Test on <date>' marker is rejected", !hasAssignmentText("Test on 2026-09-02T08:00:00Z"));
+check("too-short text is rejected", !hasAssignmentText("DM"));
+
+section("sourceDetail survives fold/dedupe/merge (the mergeProfileStates-class trap)");
+const genWithDetail = [{ title: "Physique — exercices mécanique", why: "Due Wednesday", source: "pronote", risk: "low", urgency: 0.7, importance: 0.6, anchorKey: "pronote:hw1", sourceDetail: "Exercices 12 à 15 p.87 — mécanique du point", sourceSubject: "Physique-Chimie", sourceDue: "2026-09-02T08:00:00Z" }];
+const foldedWithDetail = foldGenerated([], genWithDetail);
+// This is the field-forgotten-in-a-structural-literal trap the plumbing plan flagged — TypeScript will NOT
+// catch it if `candidates.push` in foldGenerated forgets a field that IS listed in its param type.
+check("foldGenerated keeps sourceDetail (not silently dropped like `track` was)", foldedWithDetail[0]?.sourceDetail === "Exercices 12 à 15 p.87 — mécanique du point");
+check("foldGenerated keeps sourceSubject", foldedWithDetail[0]?.sourceSubject === "Physique-Chimie");
+const olderNoDetail = { ...foldedWithDetail[0], id: "old", status: "done", sourceDetail: undefined, sourceSubject: undefined };
+const dedupedSurvives = dedupeTasks([olderNoDetail, { ...foldedWithDetail[0], id: "fresh" }]);
+check("dedupeTasks carries sourceDetail onto the winner even when the higher-ranked copy lacks it", dedupedSurvives.length === 1 && dedupedSurvives[0].sourceDetail === "Exercices 12 à 15 p.87 — mécanique du point");
+const mergedA = { ...foldedWithDetail[0], id: "x", updatedAt: "2026-01-01T00:00:00Z" };
+const mergedB = { ...foldedWithDetail[0], id: "x", updatedAt: "2026-01-02T00:00:00Z", sourceDetail: undefined, sourceSubject: undefined };
+check("mergeTaskLists carries sourceDetail across devices even when the newer/winning copy lacks it", mergeTaskLists([mergedA], [mergedB])[0].sourceDetail === "Exercices 12 à 15 p.87 — mécanique du point");
+check("mergeTaskLists carries it regardless of merge direction", mergeTaskLists([mergedB], [mergedA])[0].sourceDetail === "Exercices 12 à 15 p.87 — mécanique du point");
+check("parseGenerated (the agent-sweep fallback path) never invents sourceDetail — no source item to copy it from", parseGenerated([{ title: "Reply to Sarah about budget", why: "Sarah asked Tuesday", source: "web" }])[0].sourceDetail === undefined);
+
+section("mergeTaskLists unions in-app study artifacts across devices (notes/flashcards/quizzes)");
+const taskBase = { title: "t", why: "w", source: "pronote", risk: "low", urgency: 0.5, importance: 0.5, quadrant: "do", score: 1, status: "ready", createdAt: "2026-01-01T00:00:00Z" };
+const deviceA = { ...taskBase, id: "y", updatedAt: "2026-01-01T00:00:00Z", notes: [{ id: "n1", title: "Fiche A", body: "x", createdAt: "2026-01-01T00:00:00Z" }] };
+const deviceB = { ...taskBase, id: "y", updatedAt: "2026-01-02T00:00:00Z", notes: [{ id: "n2", title: "Fiche B", body: "y", createdAt: "2026-01-02T00:00:00Z" }] };
+const mergedNotes = mergeTaskLists([deviceA], [deviceB])[0].notes;
+check("both devices' notes survive the merge", mergedNotes?.length === 2 && mergedNotes.some((n) => n.id === "n1") && mergedNotes.some((n) => n.id === "n2"));
+check("unioned artifacts come out chronological (createdAt order), not loser-appended-last", mergedNotes[0].id === "n1" && mergedNotes[1].id === "n2");
+
+section("assignmentBlock — the run/chat prompt's own view of the assignment");
+check("empty when there's no real sourceDetail", assignmentBlock({}) === "");
+const ab = assignmentBlock({ sourceSubject: "Physique-Chimie", sourceDetail: "Exercices 12 à 15 p.87 — mécanique du point", sourceDue: "2026-09-02T08:00:00Z" });
+check("quotes the teacher's real wording", ab.includes("Exercices 12 à 15 p.87 — mécanique du point"));
+check("carries the subject", ab.includes("Physique-Chimie"));
+check("frames it as never-invent", /never invent/i.test(ab));
+
+// ── Prompt content — pins the academic-research + specificity instructions (house style: trackLine
+// vocabulary above is already tested this same way) ───────────────────────────────────────────────────
+section("PLAN_ONLY_OVERRIDE — academic research guidance");
+check("tells the model to research the NOTION, not just admin logistics", /notion/i.test(PLAN_ONLY_OVERRIDE));
+check("explicitly forbids fetching the answer key", /corrigé/i.test(PLAN_ONLY_OVERRIDE));
+check("calls out a title-only fiche as a failure", /revoir le cours/i.test(PLAN_ONLY_OVERRIDE));
+check("mentions CREATE_QUIZ as one of the write actions", /CREATE_QUIZ/.test(PLAN_ONLY_OVERRIDE));
+
+// ── CREATE_QUIZ / CREATE_NOTE / CREATE_FLASHCARDS validation (makeQuiz/makeNote/makeDeck) ──────────────
+section("makeQuiz validation");
+const validQuiz = makeQuiz({ title: "Quiz", questions: [
+  { q: "2+2?", options: ["3", "4", "5"], correct: 1, why: "basic addition" },
+  { q: "Capital of France?", options: ["Lyon", "Paris", "Nice"], correct: 1 },
+] });
+check("a valid payload produces a quiz", "quiz" in validQuiz && validQuiz.quiz.questions.length === 2);
+check("an out-of-range `correct` drops that question", "error" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "b"], correct: 5 }] }));
+// The remap-by-identity case: duplicate options collapse, and `correct` must follow the SAME text, not the
+// original numeric index (which shifts once a preceding duplicate is dropped) — asserting on the option
+// TEXT is what actually catches a broken remap; asserting on the index alone would pass even if it now
+// pointed at the wrong answer.
+const remapped = makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["la bonne", "fausse", "la bonne", "fausse2"], correct: 0 }] });
+check("duplicate options collapse and `correct` still points at the RIGHT TEXT after the shift", "quiz" in remapped && remapped.quiz.questions[0].options[remapped.quiz.questions[0].correct] === "la bonne");
+const manyQuestions = Array.from({ length: 20 }, (_, i) => ({ q: `q${i}`, options: ["a", "b"], correct: 0 }));
+check("questions capped at 15", makeQuiz({ title: "Q", questions: manyQuestions }).quiz.questions.length === 15);
+check("all-invalid questions produce an error, no artifact", "error" in makeQuiz({ title: "Q", questions: [{ q: "", options: [], correct: 0 }] }));
+check("a question left with only 1 surviving option (after dedupe) is dropped", "error" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "a", "a"], correct: 0 }] }));
+
+section("makeNote / makeDeck validation");
+check("an empty/whitespace-only note body is rejected (was silently accepted before this pass)", "error" in makeNote({ title: "x", body: "   " }));
+check("a real note body is accepted", "note" in makeNote({ title: "x", body: "a real fiche body with plenty of actual content in it, more than forty chars" }));
+check("a deck with at least one valid card is accepted", "deck" in makeDeck({ title: "D", cards: [{ front: "a", back: "b" }] }));
+check("a deck with no valid cards is rejected", "error" in makeDeck({ title: "D", cards: [{ front: "", back: "" }] }));
+
+// ── Guardrails: the graded-work detector must catch the real thing without flagging legitimate tutoring
+section("CHAT_DOES_WORK / DOES_STUDENT_WORK — true positives without false positives");
+check("catches an EN reply that hands over the essay", CHAT_DOES_WORK.test("Here's your essay introduction, ready to submit"));
+check("catches a FR reply that hands over the intro", CHAT_DOES_WORK.test("Voici l'introduction :"));
+check("does NOT flag legitimate structural help", !CHAT_DOES_WORK.test("Voici comment structurer ton introduction"));
+check("DOES_STUDENT_WORK catches an EN claim of having done the homework", DOES_STUDENT_WORK.test("I solved all the problems for you"));
+check("DOES_STUDENT_WORK catches a FR claim of having written the dissertation", DOES_STUDENT_WORK.test("J'ai rédigé ta dissertation pour toi"));
+check("DOES_STUDENT_WORK catches a FR claim of having finished the homework", DOES_STUDENT_WORK.test("J'ai terminé le devoir de maths"));
+check("DOES_STUDENT_WORK does NOT flag preparing a fiche FOR a contrôle", !DOES_STUDENT_WORK.test("Fiche de révision préparée pour le contrôle"));
+check("DOES_STUDENT_WORK does NOT flag a plan to help them write", !DOES_STUDENT_WORK.test("Plan pour rédiger ta dissertation"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

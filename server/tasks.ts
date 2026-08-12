@@ -197,6 +197,20 @@ const rankStatus = (t: WebTask) => {
     : c === "queued" ? 2 : 1;
 };
 const betterOf = (a: WebTask, b: WebTask) => rankStatus(b) > rankStatus(a) ? b : a; // ties keep `a` (added first)
+/** The source's VERBATIM context (Pronote's énoncé/subject/due) must survive a merge even when the
+ *  more-progressed copy is the one that lacks it — which is the normal case: a freshly classified card
+ *  carries `sourceDetail`, and it gets absorbed into an older, higher-ranked `ready`/`done` copy that
+ *  predates the field. Whole-object winner-takes-all silently drops it, and the artifact goes generic
+ *  again with nothing in the logs. (Same class of bug as the `track` field dropping out of
+ *  mergeProfileStates.) Prefer the winner's own value; fall back to either side's. */
+const carrySource = (winner: WebTask, a: WebTask, b: WebTask): WebTask => {
+  const sourceDetail = winner.sourceDetail ?? a.sourceDetail ?? b.sourceDetail;
+  const sourceSubject = winner.sourceSubject ?? a.sourceSubject ?? b.sourceSubject;
+  const sourceDue = winner.sourceDue ?? a.sourceDue ?? b.sourceDue;
+  return (sourceDetail === winner.sourceDetail && sourceSubject === winner.sourceSubject && sourceDue === winner.sourceDue)
+    ? winner
+    : { ...winner, sourceDetail, sourceSubject, sourceDue };
+};
 // Titles must near-match, or (same source AND same trigger). The old cross-field checks (title vs why)
 // were loose enough to swallow genuinely NEW tasks into old done ones — "Refresh finds nothing".
 // MANUAL tasks are exempt from the fuzzy path: a manual add is a deliberate, explicit user action, not the
@@ -249,7 +263,7 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       if ((t.source === "manual" || k.source === "manual") && (isHandled(k.status) || isHandled(t.status))) return false;
       return sameTask(k, t);
     });
-    if (i >= 0) kept[i] = betterOf(kept[i], t);
+    if (i >= 0) kept[i] = carrySource(betterOf(kept[i], t), kept[i], t);
     else kept.push(t);
   }
   return kept;
@@ -291,9 +305,48 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
             .slice(-60);
         })()
       : undefined;
-    map.set(t.id, steps || chat ? { ...winner, ...(steps ? { steps } : {}), ...(chat ? { chat } : {}) } : winner);
+    // In-app study artifacts (fiches, decks, quizzes) are append-only per device, exactly like chat — and
+    // now that the TUTOR CHAT can create them, two devices genuinely diverge (device A asks Otto for a
+    // deck; device B ticks a step a second later and wins the whole-object race). Without a union, A's
+    // deck vanishes while the chat message that announced it survives — a chip pointing at nothing.
+    // Union by id, newest last, same cap as the run path.
+    const artifacts = unionStudyArtifacts(winner, loser);
+    // carrySource here too, NOT just in dedupeTasks: by the time dedupeTasks runs at the bottom, these two
+    // copies have already collapsed into one map entry (same id), so it never sees the loser to carry from.
+    map.set(t.id, carrySource(
+      steps || chat || artifacts
+        ? { ...winner, ...(steps ? { steps } : {}), ...(chat ? { chat } : {}), ...artifacts }
+        : winner,
+      winner, loser));
   }
   return dedupeTasks(Array.from(map.values()));
+}
+
+/** Cap on in-app study artifacts kept per task. Raised from 6 → 12 now that the tutor chat can create
+ *  them on request (6 was sized for "one run makes one fiche"); a chat message referencing an evicted
+ *  artifact renders as a dead chip, so the cap directly bounds how far back those stay clickable. */
+export const ARTIFACT_CAP = 12;
+/** Union the three IN-APP STUDY artifact lists (fiches/decks/quizzes) across two copies of a task, by id.
+ *  Distinct from `unionArtifacts` below, which tracks EXTERNAL artifacts (Google doc/draft/event ids) for
+ *  rerun de-duplication — different lists, different purpose. Returns only the keys that actually changed
+ *  so an unchanged winner can be returned as-is (avoids a pointless object clone). */
+function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebTask, "notes" | "flashcards" | "quizzes">> | null {
+  const merge = <T extends { id: string; createdAt: string }>(a?: T[], b?: T[]): T[] | undefined => {
+    if (!b?.length) return undefined;                       // nothing on the losing side → keep winner's
+    const seen = new Set((a || []).map((x) => x.id));
+    const extra = b.filter((x) => !seen.has(x.id));
+    if (!extra.length) return undefined;
+    // Chronological, so the chips read in the order they were made on BOTH devices (a plain concat puts
+    // the loser's older artifact last) — and so `slice(-CAP)` evicts the genuinely oldest, not the loser's.
+    return [...(a || []), ...extra]
+      .sort((x, y) => (Date.parse(x.createdAt) || 0) - (Date.parse(y.createdAt) || 0))
+      .slice(-ARTIFACT_CAP);
+  };
+  const notes = merge(winner.notes, loser.notes);
+  const flashcards = merge(winner.flashcards, loser.flashcards);
+  const quizzes = merge(winner.quizzes, loser.quizzes);
+  if (!notes && !flashcards && !quizzes) return null;
+  return { ...(notes ? { notes } : {}), ...(flashcards ? { flashcards } : {}), ...(quizzes ? { quizzes } : {}) };
 }
 
 /** Cross-device profile merge: entity-level fact dedupe; `paused` follows the most RECENT toggle. */
@@ -516,7 +569,10 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
 /** Pure post-processing of a sweep's output: absorb duplicates into the existing list, cap genuinely NEW
  *  cards at MAX_NEW_PER_SWEEP (top by score), prune old handled records. Split out so it's unit-testable
  *  without an AI call. */
-export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string; accountId?: string }[], highPriorityPeople: string[] = [], now_: Date = new Date()): WebTask[] {
+// NOTE: `genTasks` is a structural literal, so TypeScript will NOT complain if a field is listed here
+// but forgotten in the `candidates.push` below — that silent-drop is exactly how source context gets
+// lost. tests/run.mjs pins sourceDetail survival for this reason.
+export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string; accountId?: string; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }[], highPriorityPeople: string[] = [], now_: Date = new Date()): WebTask[] {
   const now = now_.toISOString();
   // Idle "ready" cards — Otto surfaced them, but nothing ever happened: never opened, never run, no step
   // touched. After ~2 weeks whatever made them relevant has almost certainly passed (the thread got handled
@@ -557,6 +613,7 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
       id, title: g.title, why: g.why, when: g.when, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
+      sourceDetail: g.sourceDetail, sourceSubject: g.sourceSubject, sourceDue: g.sourceDue,
     });
   }
   const deduped = dedupeTasks(candidates);
@@ -688,7 +745,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     const withArtifacts = extras?.withAllowedArtifacts && priorArtifactIds.length ? extras.withAllowedArtifacts(priorArtifactIds) : extras;
     const scoped = withArtifacts ? scopeTools(withArtifacts, task) : undefined;
     if (extras && scoped) console.log(`${new Date().toISOString()} [tasks] run "${task.title.slice(0, 40)}": ${scoped.tools.length}/${extras.tools.length} tools after scoping`);
-    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts }, profile, focus, scoped, academic);
+    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, scoped, academic);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     // A manually-added task's raw title gets tightened as a side effect of THIS run (no separate "clean
@@ -705,8 +762,9 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
       return old ? { ...s, done: true, doneAt: old.doneAt, result: s.result || old.result } : s;
     });
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
-    task.notes = out.notes?.length ? [...(task.notes || []), ...out.notes].slice(-6) : task.notes; // in-app fiches, accumulated (a rerun can add another)
-    task.flashcards = out.flashcards?.length ? [...(task.flashcards || []), ...out.flashcards].slice(-6) : task.flashcards;
+    task.notes = out.notes?.length ? [...(task.notes || []), ...out.notes].slice(-ARTIFACT_CAP) : task.notes; // in-app fiches, accumulated (a rerun can add another)
+    task.flashcards = out.flashcards?.length ? [...(task.flashcards || []), ...out.flashcards].slice(-ARTIFACT_CAP) : task.flashcards;
+    task.quizzes = out.quizzes?.length ? [...(task.quizzes || []), ...out.quizzes].slice(-ARTIFACT_CAP) : task.quizzes;
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out, out.createdDocIds));
     task.lastRunTokens = out.tokens;
@@ -775,7 +833,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
       : `\nInfo from the user for this step: "${answer.trim()}". Use it.`
     : "";
   const focus = (decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text) + qa;
-  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links }, profile, focus, extras, academic);
+  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, extras, academic);
   addUsage(profile, out.tokens);
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);
@@ -794,8 +852,9 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   if (freshArtifacts.length) {
     task.artifacts = unionArtifacts(task.artifacts, freshArtifacts);
   }
-  if (out.notes?.length) task.notes = [...(task.notes || []), ...out.notes].slice(-6);
-  if (out.flashcards?.length) task.flashcards = [...(task.flashcards || []), ...out.flashcards].slice(-6);
+  if (out.notes?.length) task.notes = [...(task.notes || []), ...out.notes].slice(-ARTIFACT_CAP);
+  if (out.flashcards?.length) task.flashcards = [...(task.flashcards || []), ...out.flashcards].slice(-ARTIFACT_CAP);
+  if (out.quizzes?.length) task.quizzes = [...(task.quizzes || []), ...out.quizzes].slice(-ARTIFACT_CAP);
   if (out.sendables?.length) {
     const key = (s: Sendable) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
     const seen = new Set((task.sendables || []).map(key));

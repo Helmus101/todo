@@ -24,6 +24,9 @@ export interface SourceItem {
   labels: string[];       // e.g. ["inbox"], ["sent"] (a sent item = a commitment the user made), ["event"], ["shared"]
   accountId?: string;     // Composio connected-account id this came from (multi-Gmail: routes execution back)
   accountEmail?: string;  // the account's own address (for display / disambiguation)
+  /** Pronote only: the school subject as Pronote names it ("Physique-Chimie"). Carried onto the task as
+   *  `sourceSubject` so the run can shape the artifact per subject (formulas vs timeline vs vocab deck). */
+  subject?: string;
 }
 
 // Deterministic noise filters — mass mail never even reaches the model.
@@ -129,7 +132,9 @@ function githubToItems(data: any, label: string, account?: { id?: string; email?
   }).filter((x): x is SourceItem => !!x);
 }
 
-function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean }[]): SourceItem[] {
+// Exported for tests (same precedent as calendarToItems) — the énoncé this carries is what makes every
+// downstream artifact specific, so it's worth pinning that `snippet`/`subject` survive.
+export function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean }[]): SourceItem[] {
   return items.map((a): SourceItem => ({
     sourceApp: "pronote",
     externalId: a.id,
@@ -139,10 +144,11 @@ function pronoteToItems(items: { id: string; subject: string; description: strin
     snippet: a.description || `Due ${a.deadline}`,
     timestamp: a.deadline,
     labels: ["homework"],
+    subject: a.subject,
   }));
 }
 
-function pronoteTestsToItems(items: { id: string; subject: string; deadline: string }[]): SourceItem[] {
+export function pronoteTestsToItems(items: { id: string; subject: string; deadline: string }[]): SourceItem[] {
   return items.map((t): SourceItem => ({
     sourceApp: "pronote",
     // Timetable lesson ids aren't stable across re-fetches, so anchor on subject+date instead — this is
@@ -150,10 +156,22 @@ function pronoteTestsToItems(items: { id: string; subject: string; deadline: str
     externalId: t.id,
     anchorKey: `pronote-test:${t.subject}:${t.deadline.slice(0, 10)}`,
     title: `${t.subject} test`.slice(0, 140),
+    // Pronote's timetable exposes no description for a test — only subject + date. Deliberately left as a
+    // bare marker: `hasAssignmentText` below rejects it so a test never produces a fake "énoncé" block.
     snippet: `Test on ${t.deadline}`,
     timestamp: t.deadline,
     labels: ["test"],
+    subject: t.subject,
   }));
+}
+
+/** Is this snippet the source's REAL words, or just a synthesized placeholder ("Due 2026-09-02",
+ *  "Test on …")? Only real text is worth carrying onto the task as `sourceDetail` — a placeholder
+ *  would give the run a confident-looking énoncé block containing nothing but a date it already has. */
+export function hasAssignmentText(snippet: string): boolean {
+  const s = String(snippet || "").trim();
+  if (s.length < 12) return false;
+  return !/^(due|test on)\b/i.test(s);
 }
 
 /**

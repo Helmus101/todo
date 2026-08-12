@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useContext, createContext, type Dispatch, type SetStateAction, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { WebTask, ConnectionStatus, Profile, TaskStep, TaskFlashcards } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, TaskStep, TaskFlashcards, TaskQuiz } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 
@@ -188,11 +188,13 @@ function withInlineLinks(text: string): ReactNode {
 /** Light markdown → JSX for an in-app note (CREATE_NOTE's body): headings, **bold**, and bullet/numbered
  *  lists. Never sent anywhere — this only ever renders inside the popup, so a small hand-rolled pass is
  *  enough (no need for a full markdown library just for this). */
+/** `**bold**` → <b>. Module-scope (not a closure inside renderNoteBody) so renderChatText can reuse it. */
+function boldify(s: string): ReactNode {
+  const parts = s.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b> : p));
+}
+
 function renderNoteBody(md: string): ReactNode {
-  const boldify = (s: string): ReactNode => {
-    const parts = s.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b> : p));
-  };
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let list: string[] | null = null;
@@ -208,6 +210,55 @@ function renderNoteBody(md: string): ReactNode {
     if (li) { (list ||= []).push(li[1] ?? li[2]); return; }
     flushList();
     blocks.push(<p key={i}>{boldify(line)}</p>);
+  });
+  flushList();
+  return blocks;
+}
+
+/** `*italic*` → <i>, single-asterisk only (run AFTER boldify has already consumed every `**...**` pair, so
+ *  a leftover lone `*` can only ever be genuine emphasis, never half of a bold marker). Observed live: the
+ *  tutor uses *word* for emphasis on its own even though the prompt only grants **bold** — better to
+ *  render it than show a student raw asterisks. */
+function italicize(s: string): ReactNode {
+  const parts = s.split(/(\*[^*]+\*)/g);
+  return parts.map((p, i) => (p.length > 2 && p.startsWith("*") && p.endsWith("*") ? <i key={i}>{p.slice(1, -1)}</i> : p));
+}
+
+/** [text](url) + **bold** + *italic*, composed — links first (so a bolded/italicized link isn't mangled),
+ *  then bold, then italic on what's left. Shared by renderChatText below; withInlineLinks alone only
+ *  handles links, and renderNoteBody's boldify alone doesn't grant italic (deliberately — a fiche's body
+ *  is written by a tool call with its own schema, not free-form chat prose). */
+function withInlineLinksAndBold(text: string): ReactNode {
+  const linked = withInlineLinks(text);
+  const parts = Array.isArray(linked) ? linked : [linked];
+  return parts.map((p, i) => {
+    if (typeof p !== "string") return p; // already a rendered <a> from withInlineLinks
+    const bolded = boldify(p) as ReactNode[]; // boldify always returns an array (parts.map)
+    return <span key={i}>{bolded.map((seg, j) => (typeof seg === "string" ? <span key={j}>{italicize(seg)}</span> : seg))}</span>;
+  });
+}
+
+/** Light markdown for an ASSISTANT chat reply: **bold**, [links](url), and a short dash list — deliberately
+ *  NOT the full renderNoteBody treatment (no headings; the tutor prompt explicitly bans them, chat is a
+ *  conversation, not a document). User messages are never run through this — a student pasting `**` from
+ *  their own notes shouldn't get it silently eaten. */
+function renderChatText(text: string): ReactNode {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let list: string[] | null = null;
+  const flushList = () => {
+    if (list) { blocks.push(<ul key={blocks.length} className="note-list">{list.map((t, i) => <li key={i}>{withInlineLinksAndBold(t)}</li>)}</ul>); list = null; }
+  };
+  lines.forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line) { flushList(); return; }
+    // A stray "#" heading is rendered as a plain bold line, not promoted to an <h3> — chat stays flat.
+    const h = /^#{1,3}\s+(.*)/.exec(line);
+    if (h) { flushList(); blocks.push(<p key={i}><b>{withInlineLinksAndBold(h[1])}</b></p>); return; }
+    const li = /^[-*]\s+(.*)/.exec(line);
+    if (li) { (list ||= []).push(li[1]); return; }
+    flushList();
+    blocks.push(<p key={i}>{withInlineLinksAndBold(line)}</p>);
   });
   flushList();
   return blocks;
@@ -279,6 +330,89 @@ function FlashcardDeck({ deck }: { deck: TaskFlashcards }) {
         <button className="btn ghost" onClick={() => setFlipped((v) => !v)}>{L("Retourner", "Flip")}</button>
         <button className="btn primary deck-btn-right" onClick={() => mark(true)}>{L("Correct", "Correct")} →</button>
       </div>
+    </div>
+  );
+}
+
+/** An MCQ quiz player — answer, get immediate right/wrong + a one-line explanation, then advance; a score
+ *  screen at the end reuses FlashcardDeck's exact done-state markup (.deck-done/.deck-score-ring) so scoring
+ *  reads identically across artifact types. Deliberately its own component (not a FlashcardDeck variant):
+ *  the interaction — lock on pick, reveal the right answer, explain why — has nothing in common with a flip. */
+function QuizPlayer({ quiz }: { quiz: TaskQuiz }) {
+  const L = useLang();
+  const [i, setI] = useState(0);
+  const [picked, setPicked] = useState<number | null>(null);
+  const [right, setRight] = useState<number[]>([]);
+  // Indices the student got wrong, in order — drives "review my mistakes" without re-deriving anything.
+  const [wrongIdx, setWrongIdx] = useState<number[]>([]);
+  const [order, setOrder] = useState<number[] | null>(null); // null = full quiz, in original order
+  const seq = order ?? quiz.questions.map((_, idx) => idx);
+  const done = i >= seq.length;
+  const qIdx = seq[i];
+  const q = !done ? quiz.questions[qIdx] : null;
+  const pick = (optIdx: number) => {
+    if (picked !== null || !q) return;
+    setPicked(optIdx);
+    if (optIdx === q.correct) setRight((prev) => [...prev, qIdx]);
+    else setWrongIdx((prev) => [...prev, qIdx]);
+  };
+  const next = () => { setPicked(null); setI((v) => v + 1); };
+  const restart = (reviewOnly?: boolean) => {
+    setOrder(reviewOnly && wrongIdx.length ? [...wrongIdx] : null);
+    setI(0); setPicked(null); setRight([]); setWrongIdx([]);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (done || !q) return;
+      if (picked === null && /^[1-4]$/.test(e.key)) { const n = Number(e.key) - 1; if (n < q.options.length) { e.preventDefault(); pick(n); } }
+      else if (picked !== null && (e.key === "Enter" || e.key === "ArrowRight")) { e.preventDefault(); next(); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [done, q, picked]);
+  if (done) {
+    const total = seq.length;
+    const pct = total ? Math.round((right.length / total) * 100) : 0;
+    return (
+      <div className="deck-popup deck-done">
+        <h3 className="note-popup-title">{quiz.title}</h3>
+        <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
+          <span className="deck-score-pct">{pct}%</span>
+        </div>
+        <p className="deck-score">{L(`${right.length} / ${total} correctes`, `${right.length} / ${total} correct`)}</p>
+        <div className="deck-acts">
+          {wrongIdx.length > 0 && <button className="btn ghost" onClick={() => restart(true)}>{L(`Revoir mes ${wrongIdx.length} erreurs`, `Review my ${wrongIdx.length} mistake${wrongIdx.length > 1 ? "s" : ""}`)}</button>}
+          <button className="btn primary" onClick={() => restart(false)}>{L("Recommencer", "Restart")}</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="deck-popup quiz-popup">
+      <h3 className="note-popup-title">{quiz.title}</h3>
+      <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / seq.length) * 100}%` }} /></div>
+      <div className="deck-progress">{i + 1} / {seq.length}</div>
+      <div className="quiz-q">{q!.q}</div>
+      <div className="quiz-opts">
+        {q!.options.map((opt, oi) => {
+          const state = picked === null ? "" : oi === q!.correct ? "correct" : oi === picked ? "wrong" : "";
+          return (
+            <button key={oi} type="button" className={`quiz-opt ${state}`} disabled={picked !== null} onClick={() => pick(oi)}>
+              <span className="quiz-opt-key">{oi + 1}</span>
+              <span className="quiz-opt-text">{opt}</span>
+            </button>
+          );
+        })}
+      </div>
+      {picked !== null && (
+        <>
+          {q!.why && <p className="quiz-why">{q!.why}</p>}
+          <div className="deck-acts">
+            <button className="btn primary" onClick={next}>{L("Suivant", "Next")} →</button>
+          </div>
+        </>
+      )}
+      {picked === null && <p className="deck-hint">{L("1-4 pour répondre", "1-4 to answer")}</p>}
     </div>
   );
 }
@@ -2229,6 +2363,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   const [running, setRunning] = useState(false);
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [openDeck, setOpenDeck] = useState<string | null>(null);
+  const [openQuiz, setOpenQuiz] = useState<string | null>(null);
   const [decided, setDecided] = useState<Record<number, string>>({}); // what the user typed for a manual step
   const [sending, setSending] = useState<number | null>(null); // which sendable is being sent
   const [viewDraft, setViewDraft] = useState<number | null>(null); // which sendable's draft is expanded for review
@@ -2280,18 +2415,32 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   // Replies from a reasoning model routinely take 5-10s. Past that, a silent indicator starts reading as
   // "it's broken" — so say it's still going rather than let them wonder.
   const [chatSlow, setChatSlow] = useState(false);
+  // Set by the per-step "Aide" button — the NEXT message sent is tagged as being about this step (server
+  // validates the range). Cleared once that message actually sends, so a follow-up isn't silently re-tagged.
+  const [chatStep, setChatStep] = useState<number | null>(null);
+  const chatInputRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ block: "nearest" }); }, [task.chat?.length, chatSending]);
+  // Two stages, not one: a plain reply is usually back well under 6s, but a turn that looks something up
+  // or makes a deck/quiz is now 2-3 sequential model calls and routinely runs 15-20s+ — a single "still
+  // thinking…" left sitting for that long starts reading as broken. The client can't SEE which kind of
+  // turn is in flight (no streaming), so the second stage is the honest thing: say it might be building
+  // something, not just guess a shorter wait.
+  const [chatVerySlow, setChatVerySlow] = useState(false);
   useEffect(() => {
-    if (!chatSending) { setChatSlow(false); return; }
-    const id = setTimeout(() => setChatSlow(true), 6000);
-    return () => clearTimeout(id);
+    if (!chatSending) { setChatSlow(false); setChatVerySlow(false); return; }
+    const id1 = setTimeout(() => setChatSlow(true), 6000);
+    const id2 = setTimeout(() => setChatVerySlow(true), 15000);
+    return () => { clearTimeout(id1); clearTimeout(id2); };
   }, [chatSending]);
   const sendChat = async () => {
     const message = chatInput.trim();
     if (!message || chatSending) return;
-    setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
-    try { const { chat } = await api.chat(task.id, message); onTask({ ...task, chat }); }
+    const stepIndex = chatStep; // captured before clearing — see F ("Aide" button)
+    setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message); setChatStep(null);
+    // Merge the WHOLE returned task, not just `chat` — a tutor turn can create notes/decks/quizzes now,
+    // and the assistant's chat entry references them by id (task.notes/flashcards/quizzes).
+    try { const { task: updated } = await api.chat(task.id, message, stepIndex ?? undefined); onTask({ ...task, ...updated }); }
     catch (e: any) { setChatError(e?.message || L("Envoi impossible — réessaie.", "Couldn't send that — try again.")); setChatInput(message); }
     finally { setChatSending(false); setPendingMsg(null); }
   };
@@ -2319,6 +2468,17 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
   };
   // Mark a manual step done, recording what the user decided (so dependent auto-steps can use it).
   const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
+  // Per-step tutor entry point (the "Aide" button in .step-act): seed the ONE task-level chat thread
+  // (see the chat-scope decision — no per-step thread) with which step this is about, then let the
+  // student add their own words before sending. Prefilled + focused, NOT auto-sent — they almost always
+  // want to add "je bloque sur la partie b", and auto-sending would burn a paid call on text they didn't
+  // write themselves.
+  const askAboutStep = (i: number, text: string) => {
+    setChatStep(i);
+    setChatInput(L(`Aide-moi avec : ${text}`, `Help me with: ${text}`));
+    chatInputRef.current?.focus();
+    chatEndRef.current?.scrollIntoView({ block: "nearest" });
+  };
   const run = async (reset?: boolean) => {
     setRunning(true);
     try { onTask(await api.run(task.id, reset)); }
@@ -2657,6 +2817,9 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                         {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it — so the page
                             stays reachable from the task. */}
                         {s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}</button> : null}
+                        {/* Only inside the modal — that's the one place the "Ask Otto" thread this seeds
+                            actually exists. A finished step has nothing left to help with. */}
+                        {inModal && !s.done ? <button className="btn xs ghost" onClick={() => askAboutStep(i, s.text)}>{L("Aide", "Help")}</button> : null}
                       </div>
                     </li>
                   );
@@ -2666,19 +2829,23 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           )}
           {/* "What Otto did" shows real output — a resource doc/sheet it created, or other concrete actions.
               Plan-only mode's one allowed write is creating a new resource doc, so this is genuine, not a stub. */}
-          {(task.did?.length || task.links?.length || task.notes?.length || task.flashcards?.length) ? (
+          {(task.did?.length || task.links?.length || task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
             <section>
               <h4>{L("Ce qu'Otto a préparé", "What Otto prepared")}</h4>
               {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul> : null}
-              {/* In-app notes (CREATE_NOTE) and flashcard decks (CREATE_FLASHCARDS) — no external tab, open
-                  right here in a popup. Shown as their own row of buttons, ahead of any external links. */}
-              {(task.notes?.length || task.flashcards?.length) ? (
+              {/* In-app notes (CREATE_NOTE), flashcard decks (CREATE_FLASHCARDS) and quizzes (CREATE_QUIZ) —
+                  no external tab, open right here in a popup. Shown as their own row of buttons, ahead of
+                  any external links. */}
+              {(task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
                 <div className="note-chips">
                   {task.notes?.map((n) => (
                     <button key={n.id} type="button" className="btn xs ghost note-chip" onClick={(e) => { e.stopPropagation(); setOpenNote(n.id); }}>📄 {n.title}</button>
                   ))}
                   {task.flashcards?.map((f) => (
                     <button key={f.id} type="button" className="btn xs ghost note-chip" onClick={(e) => { e.stopPropagation(); setOpenDeck(f.id); }}>🗂 {f.title} ({f.cards.length})</button>
+                  ))}
+                  {task.quizzes?.map((qz) => (
+                    <button key={qz.id} type="button" className="btn xs ghost note-chip" onClick={(e) => { e.stopPropagation(); setOpenQuiz(qz.id); }}>❓ {qz.title} ({qz.questions.length})</button>
                   ))}
                 </div>
               ) : null}
@@ -2689,6 +2856,8 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
           ) : null}
           {openNote ? (() => {
             const n = task.notes?.find((x) => x.id === openNote);
+            // A chat-referenced artifact chip can point at an id the cap has since evicted (ARTIFACT_CAP —
+            // notes/flashcards/quizzes keep only the most recent 12) — close quietly rather than crash.
             if (!n) return null;
             return (
               <TaskModal onClose={() => setOpenNote(null)} nested={inModal}>
@@ -2708,6 +2877,15 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               </TaskModal>
             );
           })() : null}
+          {openQuiz ? (() => {
+            const qz = task.quizzes?.find((x) => x.id === openQuiz);
+            if (!qz) return null;
+            return (
+              <TaskModal onClose={() => setOpenQuiz(null)} nested={inModal}>
+                <QuizPlayer quiz={qz} />
+              </TaskModal>
+            );
+          })() : null}
           {inModal && !isDone ? (
             // Supportive, task-scoped chat: talking through THIS task specifically ("I'm stuck on step 2",
             // "can you break this down more?") without having to re-explain what it is — Otto already has
@@ -2718,7 +2896,31 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                 {!task.chat?.length && !pendingMsg ? (
                   <p className="muted small">{L("Explique-lui ce qui te bloque et il t'aidera à comprendre — pas à te donner la réponse. Montre-lui ton essai, dis-lui quelle étape te perd, ou demande-lui de réexpliquer autrement.", "Tell it what's blocking you and it'll help you understand — not hand you the answer. Show it your attempt, say which step loses you, or ask it to explain a different way.")}</p>
                 ) : task.chat?.map((m, i) => (
-                  <div key={i} className={`chat-msg chat-${m.role}`}>{m.text}</div>
+                  <div key={i} className={`chat-msg chat-${m.role}`}>
+                    {/* Which step this USER message was about (see F) — a small tag above the bubble.
+                        stepText, not a live lookup by index: steps are regenerated on every rerun, so a
+                        bare index could point at the wrong step (or none) by the time this renders. */}
+                    {m.role === "user" && m.stepText ? <span className="chat-step-tag">{L("Étape", "Step")} {(m.stepIndex ?? 0) + 1} · {m.stepText}</span> : null}
+                    {/* Assistant replies get light markdown (bold/links/short lists); a student's own
+                        message stays literal — pasting "**" from their notes shouldn't get eaten. */}
+                    {m.role === "assistant" ? renderChatText(m.text) : m.text}
+                    {/* Artifacts the tutor made THIS turn — chips into the same notes/flashcards/quizzes
+                        popups the "What Otto prepared" section uses. A dangling id (evicted by
+                        ARTIFACT_CAP) simply doesn't render rather than crashing. */}
+                    {m.artifacts?.length ? (
+                      <div className="chat-artifact-chips">
+                        {m.artifacts.map((a) => {
+                          const exists = a.kind === "note" ? task.notes?.some((n) => n.id === a.id)
+                            : a.kind === "deck" ? task.flashcards?.some((f) => f.id === a.id)
+                            : task.quizzes?.some((q) => q.id === a.id);
+                          if (!exists) return null;
+                          const icon = a.kind === "note" ? "📄" : a.kind === "deck" ? "🗂" : "❓";
+                          const open = a.kind === "note" ? setOpenNote : a.kind === "deck" ? setOpenDeck : setOpenQuiz;
+                          return <button key={a.id} type="button" className="btn xs ghost note-chip" onClick={() => open(a.id)}>{icon} {a.title}</button>;
+                        })}
+                      </div>
+                    ) : null}
+                  </div>
                 ))}
                 {/* Echo the in-flight message immediately (see pendingMsg) so the thread reads like a real
                     conversation while waiting, instead of swallowing what they just typed. */}
@@ -2726,7 +2928,8 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
                 {chatSending ? (
                   <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
                     <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
-                    {chatSlow && <span className="typing-slow">{L("il réfléchit encore…", "still thinking…")}</span>}
+                    {chatVerySlow ? <span className="typing-slow">{L("il prépare peut-être quelque chose…", "might be putting something together…")}</span>
+                      : chatSlow ? <span className="typing-slow">{L("il réfléchit encore…", "still thinking…")}</span> : null}
                   </div>
                 ) : null}
                 <div ref={chatEndRef} />
@@ -2741,6 +2944,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               ) : null}
               <div className="chat-row">
                 <input
+                  ref={chatInputRef}
                   className="chat-input" placeholder={L("ex : je bloque à la question 3…", "e.g. I'm stuck on question 3…")}
                   value={chatInput} onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendChat(); } }}
