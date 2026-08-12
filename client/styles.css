@@ -37,6 +37,10 @@
   --shadow-pop: 0 8px 30px rgba(16, 19, 23, 0.12); /* overlays/modals only */
   --shadow-card: 0 1px 2px rgba(16, 19, 23, 0.04), 0 1px 1px rgba(16, 19, 23, 0.03);
   --shadow-card-hover: 0 14px 28px rgba(16, 19, 23, 0.10), 0 3px 8px rgba(16, 19, 23, 0.06);
+  /* Translucent sticky-bar fill + the generic hover wash. Both were hardcoded light values with no dark
+     override, so in dark mode the topbar stayed near-WHITE against a near-black page. */
+  --bar: rgba(250, 250, 250, 0.85);
+  --hover-wash: rgba(0, 0, 0, 0.04);
   --display: "Archivo Expanded", "Archivo", "Helvetica Neue", Arial, sans-serif; /* headings / wordmark — 600/700 */
   --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; /* machine output: counts, spend, state */
@@ -53,6 +57,8 @@
     --shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.5);
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-card-hover: 0 16px 32px rgba(0, 0, 0, 0.5), 0 3px 10px rgba(0, 0, 0, 0.35);
+    --bar: rgba(11, 13, 16, 0.82);
+    --hover-wash: rgba(255, 255, 255, 0.06);
   }
 }
 
@@ -186,7 +192,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   height: calc(52px + env(safe-area-inset-top));
   padding-left: calc(20px + env(safe-area-inset-left));
   padding-right: calc(20px + env(safe-area-inset-right));
-  background: rgba(250, 250, 250, 0.85);
+  background: var(--bar);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
   border-bottom: 1px solid var(--line-soft);
@@ -196,7 +202,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   position: relative; padding: 6px 10px; font-size: 13.5px; font-weight: 500;
   color: var(--ink-2); border-radius: 9px; transition: color 140ms var(--ease), background 140ms var(--ease);
 }
-.tab:hover { color: var(--ink); background: rgba(0, 0, 0, 0.04); }
+.tab:hover { color: var(--ink); background: var(--hover-wash); }
 .tab.active { color: var(--ink); font-weight: 600; }
 .tab.active::after {
   content: ""; position: absolute; left: 10px; right: 10px; bottom: -11px;
@@ -327,8 +333,34 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Machine output — counts, queue state, spend — is mono per the brand (if a human wrote it, it isn't mono). */
 .list-status { margin-top: 10px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; color: var(--ink-3); }
 .list-status b { font-weight: 500; color: var(--ink-2); }
-.scan-note { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; color: var(--ink-3); }
+/* The dashboard's own summary is a SENTENCE a person wrote, so it is deliberately NOT mono (that's the
+   brand's rule for machine output) — the old mono "3 active · 1 processing" readout is what made the top
+   of the app read like a status console instead of something addressed to the student. */
+.dash-line {
+  margin-top: 12px; font-size: 15px; line-height: 1.5; color: var(--ink-2);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  animation: rise 0.5s var(--ease) 0.06s backwards;
+}
+/* Secondary signals ride the same line as small pills rather than more sentences — glanceable, and they
+   collapse onto their own row on a narrow phone instead of stretching the sentence. */
+.dash-late, .dash-working {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+}
+/* Overdue is the one thing that outranks everything — ink-on-grey, not a new colour (one-accent rule). */
+.dash-late { background: var(--bg-2); color: var(--ink); font-weight: 600; }
+.dash-working { background: var(--accent-soft); color: var(--accent); }
+.scan-note { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 12px; }
 .scan-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s infinite; }
+/* Today's progress — a hairline the width of the header, filled in ink (Otto's finished work reads
+   graphite/ink; cobalt is reserved for "needs you", so a cobalt progress bar would misuse the accent). */
+.dash-progress {
+  margin-top: 18px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden;
+  animation: rise 0.5s var(--ease) 0.12s backwards;
+}
+.dash-progress-fill {
+  height: 100%; border-radius: 2px; background: var(--ink);
+  transition: width 600ms var(--ease);
+}
 
 .intro {
   display: flex; align-items: flex-start; gap: 14px;
@@ -375,8 +407,20 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .empty-state p { font-size: 13.5px; color: var(--ink-2); line-height: 1.6; max-width: 360px; margin: 2px 0 14px; }
 
 /* ─── Add task — clean "+ Add task" row (Minimalist-style) ─────────────────── */
-.add-task-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px 14px; margin-bottom: 28px; border-bottom: 1px solid var(--line-soft); }
-.add-plus { color: var(--ink-3); font-size: 20px; font-weight: 300; line-height: 1; flex: none; }
+/* A bare hairline-underline row read as orphaned once the task cards below gained real surfaces + shadow —
+   it looked like leftover chrome rather than the first thing you can act on. Same surface language as a
+   card, but deliberately flatter (no shadow, dashed edge) so it reads as an EMPTY slot to fill, not as
+   another task competing with the real ones. */
+.add-task-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px; margin-bottom: 28px;
+  background: var(--surface); border: 1px dashed var(--line); border-radius: var(--radius);
+  transition: border-color 160ms var(--ease), background 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+.add-task-row:hover { border-color: var(--ink-3); }
+/* On focus it commits: solid edge + the standard accent focus ring, so typing feels like a real field. */
+.add-task-row:focus-within { border-style: solid; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.add-plus { color: var(--ink-3); font-size: 20px; font-weight: 300; line-height: 1; flex: none; transition: color 160ms var(--ease); }
+.add-task-row:focus-within .add-plus { color: var(--accent); }
 .add-task-input { flex: 1; height: 34px; border: none; background: transparent; padding: 0; font-size: 15.5px; }
 .add-task-input:focus { border: none; box-shadow: none; }
 .add-task-input::placeholder { color: var(--ink-3); }
@@ -852,7 +896,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .connect-card .btn { margin-top: 12px; }
 
 /* ─── Completed / skeleton ─────────────────────────────────────────────────── */
-.completed-section { margin-top: 32px; }
+/* Clear air above it — finished work is an archive you glance at, not part of the active list, and at
+   32px it was reading as just another section of things to do. */
+.completed-section { margin-top: 52px; padding-top: 28px; border-top: 1px solid var(--line); }
 .completed-head { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
 
 /* Loading screen — one clear "loading" state so the whole list arrives at once (no half-populated flash). */
@@ -1087,7 +1133,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between;
   height: 56px; padding: 0 clamp(20px, 4vw, 40px);
-  background: rgba(250, 250, 250, 0.85);
+  background: var(--bar);
   backdrop-filter: blur(14px) saturate(160%); -webkit-backdrop-filter: blur(14px) saturate(160%);
   border-bottom: 1px solid var(--line-soft);
 }
@@ -1261,11 +1307,14 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 
 /* Minimalist completed list — checked to-do rows, not cards */
 .done-list { display: flex; flex-direction: column; }
-.done-row { display: flex; align-items: baseline; gap: 10px; padding: 7px 4px; cursor: pointer; border-bottom: 1px solid rgba(127,127,127,.12); border-radius: var(--radius-sm); transition: background 140ms var(--ease); }
-.done-row:hover { background: rgba(127,127,127,.06); }
+/* Tokenised (was hardcoded rgba(127,127,127,…) — the one place in the dashboard that didn't follow the
+   theme, so it drifted slightly off in dark mode instead of tracking --line-soft like every other divider). */
+.done-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 8px; cursor: pointer; border-bottom: 1px solid var(--line-soft); border-radius: var(--radius-sm); transition: background 140ms var(--ease); }
+.done-row:last-child { border-bottom: none; }
+.done-row:hover { background: var(--bg-2); }
 .done-check { color: var(--ink-3); font-weight: 700; }
-.done-title { flex: 1; text-decoration: line-through; opacity: .65; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.done-when { font-size: 12px; opacity: .5; flex-shrink: 0; }
+.done-title { flex: 1; text-decoration: line-through; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.done-when { font-family: var(--mono); font-size: 11px; color: var(--ink-3); flex-shrink: 0; }
 /* The row a just-confirmed task lands on gets a brief accent wash + its check tinted in — the visible
    "destination" for the card that just slid out of the active list above. */
 .done-row.just-done { animation: justDone 1.5s var(--ease); }
@@ -1277,10 +1326,17 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 
 /* ─── Focus Groups & Decision Engine Dashboard Styling ────────────────────── */
 .list-focus-wrap { display: flex; flex-direction: column; gap: 40px; }
-.focus-group { display: flex; flex-direction: column; gap: 10px; }
+/* 12px, not 10 — the cards carry a real shadow now (they were flat/borderless when this gap was set), and
+   at 10px adjacent shadows visually bleed into each other instead of reading as separate objects. */
+.focus-group { display: flex; flex-direction: column; gap: 12px; }
 .focus-group-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
 .focus-title { font-family: var(--display); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-2); }
-.focus-badge { font-family: var(--mono); font-size: 11px; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 12px; font-weight: 500; }
+/* "Today" is the hero section — its heading carries more weight than Later/Can wait so the hierarchy is
+   legible before you read a single task title. */
+.dash-today .focus-title { font-size: 15px; color: var(--ink); letter-spacing: 0.07em; }
+/* Grey, not cobalt: "Top 3" is a LABEL, not a call to action, and cobalt in this app means exactly one
+   thing — needs you. An accent-tinted count here quietly spends the one signal that has to stay scarce. */
+.focus-badge { font-family: var(--mono); font-size: 11px; color: var(--ink-3); background: var(--bg-2); padding: 2px 9px; border-radius: 999px; font-weight: 500; }
 .show-more-btn { margin-top: 8px; width: 100%; justify-content: center; }
 
 /* ─── Repositioned Landing Page Styling ────────────────────────────────────── */

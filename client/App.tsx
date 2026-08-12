@@ -704,6 +704,13 @@ export function App() {
   const focusToday = live.slice(0, 3);
   const laterToday = live.slice(3, 6);
   const canWait = live.slice(6);
+  // Today's real momentum — the ALL-TIME done count only ever grows, so a bar based on it would sit near
+  // full forever and mean nothing. What a student actually wants to see is "how much of TODAY is left".
+  const doneToday = completed.filter((t) => (t.updatedAt || t.createdAt || "").slice(0, 10) === todayIso()).length;
+  const todayTotal = doneToday + live.length;
+  // Any big-project milestone already past its date — the highest-urgency thing on the whole dashboard,
+  // so it gets said in the header sentence rather than only living in the rail widget.
+  const overdueCount = live.reduce((n, t) => n + (t.steps || []).filter((s) => !s.done && s.targetDate && s.targetDate < todayIso()).length, 0);
 
   return (
     <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
@@ -728,12 +735,30 @@ export function App() {
         <main className="list-wrap" key="dash">
           <div className="dash-head">
             <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span className="accent-num">{status.name || firstName(status.user)}</span></> : null}.</h1>
-            <div className="list-status">
-              <span><b>{live.length}</b> {en ? "active" : "en cours"}</span>
-              {working ? <span> · <b>{working}</b> {en ? "processing" : "en cours de traitement"}</span> : null}
-              {handled ? <span> · <b>{handled}</b> {en ? "done" : "terminées"}</span> : null}
-              {scanning && <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification en cours…"}</span>}
-            </div>
+            {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
+                that read like debug output, not like something written for a stressed 17-year-old. */}
+            <p className="dash-line">
+              {live.length === 0
+                ? (doneToday > 0
+                    ? (en ? "That's everything for today." : "C'est tout pour aujourd'hui.")
+                    : (en ? "Nothing waiting on you right now." : "Rien ne t'attend pour l'instant."))
+                : (en
+                    ? `${live.length} thing${live.length > 1 ? "s" : ""} left today${doneToday > 0 ? ` — ${doneToday} already done` : ""}.`
+                    : `${live.length} chose${live.length > 1 ? "s" : ""} à faire aujourd'hui${doneToday > 0 ? ` — ${doneToday} déjà faite${doneToday > 1 ? "s" : ""}` : ""}.`)}
+              {overdueCount > 0 && (
+                <span className="dash-late">
+                  {en ? `${overdueCount} milestone${overdueCount > 1 ? "s" : ""} overdue` : `${overdueCount} jalon${overdueCount > 1 ? "s" : ""} en retard`}
+                </span>
+              )}
+              {working > 0 && <span className="dash-working">{en ? `Otto is working on ${working}` : `Otto en prépare ${working}`}</span>}
+              {scanning && <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification…"}</span>}
+            </p>
+            {/* Today's progress, not all-time — see doneToday. Hidden when there's nothing to measure. */}
+            {todayTotal > 0 && (
+              <div className="dash-progress" role="img" aria-label={en ? `${doneToday} of ${todayTotal} done today` : `${doneToday} sur ${todayTotal} faites aujourd'hui`}>
+                <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
+              </div>
+            )}
           </div>
           {note && (
             <div className={`toast ${noteKind}`} role="status" aria-live="polite">
@@ -1861,13 +1886,13 @@ function Landing() {
       </header>
 
       <main className="hero">
-        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>Ton Pronote, transformé en plan du jour.</h1>
-        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Dimanche 19h, 11 devoirs et 2 contrôles sur Pronote — panique. Otto lit ton Pronote et transforme tout ça en 3 tâches claires pour aujourd'hui, avec un temps estimé et un point de départ. Jamais l'exercice à ta place.</p>
+        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>Le prolongement de Pronote qui te guide — jamais qui fait à ta place.</h1>
+        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Dimanche 19h, 11 devoirs et 2 contrôles sur Pronote — panique. Otto se branche sur ton Pronote et transforme le mur de devoirs en 3 tâches claires pour aujourd'hui, avec un temps estimé et un point de départ pour chacune. Il t'accompagne pas à pas ; l'exercice, la dissertation, la réponse au contrôle restent toujours les tiens.</p>
         <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.25s" }}>
           <a className="btn primary big" href="/signup">Connecter mon Pronote</a>
           <a className="btn ghost" href="/login">Se connecter</a>
         </div>
-        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>Otto ne fait jamais tes devoirs à ta place — il t'aide à t'y mettre.</div>
+        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>Un guide, pas un exécutant — Otto ne fait jamais tes devoirs à ta place.</div>
         {/* One product visual: a Pronote-wall-of-devoirs → 3-card plan, not a Gmail draft. */}
         <div className="hero-demo hero-in" style={{ ["--d" as any]: "0.42s" }} aria-hidden="true">
           <div className="hero-demo-label"><span className="live-dot" /> Exemple — ton plan du jour</div>
@@ -1894,14 +1919,14 @@ function Landing() {
 
       <section className="landing-sec">
         <h2 className="reveal">Comment ça marche</h2>
-        <p className="lead reveal">Connecte ton Pronote une fois. Otto surveille tes devoirs et contrôles, et prépare le travail avant que tu paniques. Clique pour voir les étapes.</p>
+        <p className="lead reveal">Connecte ton Pronote une fois — Otto vit à côté, pas à la place. Il surveille tes devoirs et contrôles et prépare le terrain avant que tu paniques ; le travail noté reste le tien. Clique pour voir les étapes.</p>
         <Walkthrough />
       </section>
 
       <section className="landing-sec">
-        <h2 className="reveal">Pensé pour être fiable</h2>
+        <h2 className="reveal">Un guide, pas un exécutant</h2>
         <div className="features">
-          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>Jamais ton travail à ta place</h3><p>Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>Jamais ton travail à ta place</h3><p>Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle. La compréhension reste la tienne, pas celle d'une IA.</p></div></div>
           <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Identifiants chiffrés, données en France/UE</h3><p>Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé (AES-256-GCM). Hébergement Supabase EU. Jamais revendu.</p></div></div>
           <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>Plafond de coût visible</h3><p>Coût de l'IA plafonné et affiché dans les Réglages — pas de surprise.</p></div></div>
         </div>
@@ -2679,7 +2704,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               <h4>{L("Demander à Otto", "Ask Otto")}</h4>
               <div className="chat-thread">
                 {!task.chat?.length ? (
-                  <p className="muted small">{L("Bloqué, dépassé, ou juste besoin d'un plan pour t'y mettre ? Demande ci-dessous.", "Stuck, overwhelmed, or just need a plan to get started? Ask below.")}</p>
+                  <p className="muted small">{L("Explique-lui ce qui te bloque et il t'aidera à comprendre — pas à te donner la réponse. Montre-lui ton essai, dis-lui quelle étape te perd, ou demande-lui de réexpliquer autrement.", "Tell it what's blocking you and it'll help you understand — not hand you the answer. Show it your attempt, say which step loses you, or ask it to explain a different way.")}</p>
                 ) : task.chat.map((m, i) => (
                   <div key={i} className={`chat-msg chat-${m.role}`}>{m.text}</div>
                 ))}
@@ -2696,7 +2721,7 @@ function Card({ task, open, onToggle, onChange, onTask, retrying, onConfirmed, o
               ) : null}
               <div className="chat-row">
                 <input
-                  className="chat-input" placeholder={L("ex : je n'arrive pas à démarrer…", "e.g. I can't get started…")}
+                  className="chat-input" placeholder={L("ex : je bloque à la question 3…", "e.g. I'm stuck on question 3…")}
                   value={chatInput} onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendChat(); } }}
                   disabled={chatSending}
