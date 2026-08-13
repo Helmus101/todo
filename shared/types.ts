@@ -78,12 +78,6 @@ export interface Profile {
   // Daily briefing settings — sent every morning with top priorities + upcoming risks
   dailyBriefingEnabled?: boolean;
   lastBriefingSentAt?: string; // ISO timestamp of last successful briefing send
-  // Explicit opt-in: lets Otto block self-study time on Calendar (GOOGLECALENDAR_QUICK_ADD) for a step it
-  // gave a time estimate to — e.g. "Réviser Maths 15h-15h35". This is the user's ADVANCE acceptance for
-  // that one category of write, same trust model as autoApprove — never per-event confirmation, and never
-  // for anything but a self-study block Otto is proposing (never edits/deletes an existing event, never
-  // invites anyone). Off by default; asked once in onboarding, changeable any time in Settings.
-  calendarAutoBlock?: boolean;
   // Otto Lycée defaults to French; a student can switch the whole app (UI + AI-generated content) to
   // English in Settings. Undefined/anything else is treated as "fr".
   language?: "fr" | "en";
@@ -137,7 +131,6 @@ export function normalizeProfile(p: any): Profile {
       : undefined,
     dailyBriefingEnabled: !!p?.dailyBriefingEnabled,
     lastBriefingSentAt: typeof p?.lastBriefingSentAt === "string" ? p.lastBriefingSentAt : undefined,
-    calendarAutoBlock: !!p?.calendarAutoBlock,
     language: p?.language === "en" ? "en" : "fr",
     grades: Array.isArray(p?.grades)
       ? p.grades.map((g: any) => ({

@@ -903,8 +903,6 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     // Which connected account a multi-account app (Gmail, Calendar, Docs…) defaults to when a task isn't
     // tied to a specific one (a manual task, a brand-new doc) — see integrations.getAgentTools.
     (p.primaryAccounts ||= {})[value.app] = value.accountId;
-  } else if (key === "calendarAutoBlock") {
-    p.calendarAutoBlock = value === true;
   } else if (key === "language" && (value === "fr" || value === "en")) {
     p.language = value;
   } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {

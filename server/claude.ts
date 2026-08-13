@@ -22,41 +22,35 @@ export function languageLine(p?: Profile): string {
       `not an administrator) — task titles, "why", steps, context, synthesis, chat replies — regardless of what ` +
       `language the source material (an email, a document) happens to be in.\n`;
 }
-/** Which school track this student is on (captured once at onboarding) — gives Otto the right vocabulary
- *  for what it's looking at, so it never mislabels a discipline-specific deliverable as a generic
- *  "assignment"/"test". Vocabulary only: this does NOT change scoring/priority — see server/workload.ts
- *  and classifyCandidates, which stay track-agnostic until there's real usage data to justify weighting
- *  one track's deliverables over another's. */
-export function trackLine(p?: Profile): string {
-  if (p?.track === "ib") {
-    return `\n\nTRACK: this student is on the IB Diploma — use its real vocabulary instead of generic terms. ` +
-      `Subjects are HL or SL (Higher/Standard Level — HL carries more depth and workload). Real deliverables: ` +
-      `CAS (Creativity, Activity, Service — logged hours/experiences, not an "assignment"), the Extended Essay ` +
-      `(EE — a months-long independent research paper with supervisor check-ins, not a one-off task), TOK ` +
-      `(Theory of Knowledge — an essay AND a separate oral presentation), and per-subject Internal Assessments ` +
-      `(IAs — graded coursework, call it an "IA" not "a test"; IAs often aren't in Pronote at all since they're ` +
-      `not scheduled exams). Only use this vocabulary when it clearly applies — don't force it onto something ` +
-      `that's actually just an ordinary homework or reading.\n`;
-  }
-  if (p?.track === "bac") {
-    return `\n\nTRACK: this student is on the Baccalauréat Français International (BFI) — the standard bac ` +
-      `général structure (spécialités, contrôle continu, a Grand Oral in Terminale) PLUS an international ` +
-      `component: two subjects (a literature course and a history-géo-géopolitique course) taught partly in a ` +
-      `foreign language, assessed by their own dedicated written + oral épreuves distinct from the regular bac ` +
-      `exams. Use "spécialité", "contrôle continu", "épreuve" naturally where they fit — don't assume a generic ` +
-      `bac techno/pro structure, and don't force this vocabulary onto something that's just ordinary homework.\n`;
-  }
-  return "";
+/** No track picker anymore — the student never declares IB vs BFI vs other, so Otto has to recognize the
+ *  vocabulary from what actually shows up in the data (subject names, assignment text) rather than a
+ *  profile flag. Polyvalent: hand the model BOTH vocabularies as "use this term if you see it", so a
+ *  mixed-signal account (e.g. a sibling's shared login, a student who transferred track mid-year) still
+ *  gets labeled correctly instead of silently falling back to generic "assignment"/"test". Vocabulary
+ *  only: this does NOT change scoring/priority — see server/workload.ts and classifyCandidates, which
+ *  stay track-agnostic. */
+export function trackLine(_p?: Profile): string {
+  return `\n\nVOCABULARY: use the RIGHT term for what you're actually looking at, never a generic ` +
+    `"assignment"/"test" when a more specific one applies — infer which from the subject/content itself, ` +
+    `not from any track the student picked (there isn't one). IB Diploma deliverables, if you see them: ` +
+    `HL/SL (Higher/Standard Level), CAS (Creativity, Activity, Service — logged hours, not an "assignment"), ` +
+    `the Extended Essay (EE — a months-long independent research paper with supervisor check-ins, not a ` +
+    `one-off task), TOK (Theory of Knowledge — an essay AND a separate oral), and per-subject Internal ` +
+    `Assessments (IAs — graded coursework, call it an "IA" not "a test"; often absent from Pronote since ` +
+    `they're not scheduled exams). Baccalauréat Français International (BFI) deliverables, if you see them: ` +
+    `spécialités, contrôle continu, a Grand Oral in Terminale, plus the international component's dedicated ` +
+    `written + oral épreuves. Use whichever vocabulary the evidence actually points to — never force IB terms ` +
+    `onto plain bac homework or vice versa, and default to plain language when neither clearly applies.\n`;
 }
-// A big IB coursework project (Extended Essay, TOK, CAS, an Internal Assessment, a group project) isn't
-// like an ordinary task — it runs for weeks/months, has real intermediate milestones (research question,
+// A big coursework project (Extended Essay, TOK, CAS, an Internal Assessment, a group project) isn't like
+// an ordinary task — it runs for weeks/months, has real intermediate milestones (research question,
 // outline, supervisor check-in, draft, final submission), and a flat "next 3 actions" list either buries
 // the timeline or reads as one giant undifferentiated step. Detected by keyword rather than a model call —
-// cheap, and these terms are specific enough on an IB track that false positives are rare (gated to
-// `track === "ib"` anyway, so this never fires for a non-IB student's ordinary "group project" for class).
+// cheap, and these terms (EE, IA, TOK, CAS) are specific enough that false positives are rare even without
+// gating on a declared track (there isn't one anymore — see trackLine above).
 const BIG_IB_PROJECT_RE = /extended essay\b|\bee\b|theory of knowledge|\btok\b|\bcas\b|internal assessment|\bia\b|group project/i;
-export function isBigIbProject(profile: Profile | undefined, title: string, why: string): boolean {
-  return profile?.track === "ib" && BIG_IB_PROJECT_RE.test(`${title} ${why}`);
+export function isBigIbProject(_profile: Profile | undefined, title: string, why: string): boolean {
+  return BIG_IB_PROJECT_RE.test(`${title} ${why}`);
 }
 // Hardcoded mission — this is what Otto IS, not a preference that can drift with prompt tweaks. Otto is
 // built for STUDENTS: a companion that keeps them moving, never a do-it-all that does their work for them.

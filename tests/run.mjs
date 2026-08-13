@@ -569,18 +569,17 @@ const wlTz = computeWorkload({
 check("a bare YYYY-MM-DD reschedule date lands on that exact day, not the day before", wlTz.days[3]?.date === "2026-08-08" && wlTz.days[3].items.some((it) => it.taskId === "task3"));
 check("...and NOT on the previous day (the timezone round-trip bug)", !wlTz.days[2]?.items.some((it) => it.taskId === "task3"));
 
-// ── Track-aware prompt vocabulary (IB / BFI) ──────────────────────────────────
+// ── Polyvalent prompt vocabulary (no track picker — IB/BFI both always offered) ──
 section("trackLine vocabulary");
-check("ib mentions CAS/IA vocabulary", /CAS/.test(trackLine({ track: "ib" })) && /IA/.test(trackLine({ track: "ib" })));
-check("bac mentions Grand Oral / BFI vocabulary", /Grand Oral/.test(trackLine({ track: "bac" })) && /BFI/.test(trackLine({ track: "bac" })));
-check("other/undefined track adds nothing", trackLine({ track: "other" }) === "" && trackLine(undefined) === "" && trackLine({}) === "");
+check("mentions CAS/IA vocabulary regardless of profile", /CAS/.test(trackLine({ track: "ib" })) && /IA/.test(trackLine(undefined)));
+check("mentions Grand Oral / BFI vocabulary regardless of profile", /Grand Oral/.test(trackLine({})) && /BFI/.test(trackLine(undefined)));
+check("same output no matter what's in the (now-unused) track field", trackLine({ track: "ib" }) === trackLine(undefined) && trackLine({ track: "bac" }) === trackLine({}));
 
-// ── Big IB project detection + milestone re-plan ──────────────────────────────
+// ── Big project detection + milestone re-plan (no track gate — polyvalent) ────
 section("isBigIbProject");
-check("EE on an IB student is a big project", isBigIbProject({ track: "ib" }, "Extended Essay research question", ""));
-check("CAS on an IB student is a big project", isBigIbProject({ track: "ib" }, "Log CAS hours", "for the CAS reflection"));
-check("an ordinary homework on an IB student is NOT a big project", !isBigIbProject({ track: "ib" }, "Finish the worksheet", "due tomorrow"));
-check("EE on a bac/other student does NOT trigger (track-gated)", !isBigIbProject({ track: "bac" }, "Extended Essay", "") && !isBigIbProject(undefined, "Extended Essay", ""));
+check("EE is a big project regardless of profile", isBigIbProject({ track: "ib" }, "Extended Essay research question", "") && isBigIbProject(undefined, "Extended Essay research question", ""));
+check("CAS is a big project regardless of profile", isBigIbProject({ track: "ib" }, "Log CAS hours", "for the CAS reflection") && isBigIbProject({}, "Log CAS hours", "for the CAS reflection"));
+check("an ordinary homework is NOT a big project", !isBigIbProject({ track: "ib" }, "Finish the worksheet", "due tomorrow") && !isBigIbProject(undefined, "Finish the worksheet", "due tomorrow"));
 
 section("replanMilestones");
 const msNow = new Date("2026-06-15T12:00:00Z");

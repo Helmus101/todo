@@ -411,15 +411,21 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <p className="hero-step">{withInlineLinks(s.text)}</p>
       {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
       {s.result ? <span className="step-result note">{s.result}</span> : null}
-      {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. */}
+      {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. A
+          persistent label (not just a placeholder, which vanishes once typing starts) so it stays clear
+          this is required to move on, not optional extra info. */}
       {gatesAnother && !s.automatable ? (
+        <>
+        <label className="step-input-label" htmlFor="step-input-hero">{L("Réponds ici pour continuer :", "Answer here to continue:")}</label>
         <input
+          id="step-input-hero"
           className="step-input"
-          placeholder={L("Qu'as-tu décidé ? (utilisé pour l'étape suivante)", "What did you decide? (used for the next step)")}
+          placeholder={L("Écris ta réponse ici pour débloquer la suite…", "Type your answer here to unlock the next step…")}
           value={decided[currentIdx] || ""}
           onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
           onKeyDown={(e) => { if (e.key === "Enter") onStepDone(currentIdx); }}
         />
+        </>
       ) : null}
       <div className="hero-acts">
         {s.url ? <button className="btn primary" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}</button> : null}
@@ -501,15 +507,19 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
                 {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
                 {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
-                {!s.done && blk ? <span className="step-dep">{L(`attend l'étape ${(s.dependsOn ?? 0) + 1}`, `waits for step ${(s.dependsOn ?? 0) + 1}`)}</span> : null}
+                {!s.done && blk ? <span className="step-dep">{L(`Rien à faire ici pour l'instant — se débloque une fois l'étape ${(s.dependsOn ?? 0) + 1} faite`, `Nothing to do here yet — unlocks once step ${(s.dependsOn ?? 0) + 1} is done`)}</span> : null}
                 {gatesAnother && !s.done && !blk && !s.automatable ? (
+                  <>
+                  <label className="step-input-label" htmlFor={`step-input-${i}`}>{L("Réponds ici pour continuer :", "Answer here to continue:")}</label>
                   <input
+                    id={`step-input-${i}`}
                     className="step-input"
-                    placeholder={L("Qu'as-tu décidé ? (utilisé pour l'étape suivante)", "What did you decide? (used for the next step)")}
+                    placeholder={L("Écris ta réponse ici pour débloquer la suite…", "Type your answer here to unlock the next step…")}
                     value={decided[i] || ""}
                     onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === "Enter") onStepDone(i); }}
                   />
+                  </>
                 ) : null}
               </div>
               <div className="step-act">

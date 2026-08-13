@@ -337,18 +337,20 @@ export function App() {
   // list is never stuck waiting for a tab-switch to show up.
   useEffect(() => {
     if (!connected) return;
-    const on = () => { if (!document.hidden) { void syncTasks(); void loadBudget(); void sweepIfDue(); } };
+    const on = () => { if (!document.hidden) { void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); } };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
     // A backend-generated task (from cron, another device, or a queued-but-not-auto-run item) is only ever
     // shown by a task re-fetch. The old 15-min tick meant such a task could sit INVISIBLE on an open, idle
     // tab for up to 15 minutes ("it generated but doesn't show"). Poll the cheap /api/tasks GET every 45s so
     // new tasks surface quickly; the heavier sweep it also triggers stays gated by the user's cadence
-    // (sweepIfDue is a fast no-op until due), so this doesn't sweep more often.
-    const syncTick = setInterval(() => { if (!document.hidden) { void syncTasks(); } }, 45_000);
+    // (sweepIfDue is a fast no-op until due), so this doesn't sweep more often. Also re-pull /api/status on
+    // the same tick — account-level fields (language, in particular) can change in another tab/device, and
+    // without this an already-open session would show a stale language until reload.
+    const syncTick = setInterval(() => { if (!document.hidden) { void syncTasks(); void loadStatus(); } }, 45_000);
     const fullTick = setInterval(on, 5 * 60_000); // periodic budget refresh + cadence-gated sweep check
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
-  }, [connected, syncTasks, sweepIfDue, loadBudget]);
+  }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus]);
 
   // THE SERVER OWNS EXECUTION. The browser no longer decides what runs — sweeps queue execution jobs
   // server-side, cron drains them offline. While anything is queued/executing, the OPEN client "kicks"
@@ -957,50 +959,20 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
   );
 }
 
-/** Working-hours + calendar-auto-block controls — shared between Settings and Onboarding so the same
- *  question/UI isn't built twice. Renders bare rows (no wrapping section) so it drops into either
- *  container's own `.set-list`/step markup. `onChanged` receives the fresh profile after each save. */
-/** Track (IB/BFI/Other) used to be one row among many in PreferencesFields — but it's a student-
- *  identity decision (which vocabulary Otto uses, and whether the milestone breakdown for big
- *  projects even exists for this account), not a toggle-tier preference. Pulled out into its own
- *  leading Settings section so it's the first thing under the page title, not buried mid-list. */
-function TrackSection({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
-  const L = useLang();
-  const [track, setTrack] = useState<"ib" | "bac" | "other" | undefined>(profile?.track);
-  useEffect(() => { setTrack(profile?.track); }, [profile?.track]);
-  const saveTrack = async (v: "ib" | "bac" | "other") => {
-    setTrack(v);
-    onChanged?.(await api.setProfilePreference("track", v));
-  };
-  return (
-    <div className="set-row">
-      <span className="set-text"><span className="settings-hint">{L("Permet à Otto d'utiliser le bon vocabulaire (IA/CAS/EE, ou spécialité/épreuve) et débloque la découpe en jalons pour les grands projets IB.", "Lets Otto use the right vocabulary (IA/CAS/EE, or spécialité/épreuve) and unlocks the milestone breakdown for big IB projects.")}</span></span>
-      <div className="lang-toggle">
-        <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
-        <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>BFI</button>
-        <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
-      </div>
-    </div>
-  );
-}
-
+/** Working-hours controls — shared between Settings and Onboarding so the same question/UI isn't built
+ *  twice. Renders bare rows (no wrapping section) so it drops into either container's own
+ *  `.set-list`/step markup. `onChanged` receives the fresh profile after each save. */
 function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
   const [start, setStart] = useState(profile?.workingHours?.start || "16:00");
   const [end, setEnd] = useState(profile?.workingHours?.end || "19:00");
-  const [autoBlock, setAutoBlock] = useState(!!profile?.calendarAutoBlock);
   useEffect(() => {
     setStart(profile?.workingHours?.start || "16:00");
     setEnd(profile?.workingHours?.end || "19:00");
-    setAutoBlock(!!profile?.calendarAutoBlock);
-  }, [profile?.workingHours?.start, profile?.workingHours?.end, profile?.calendarAutoBlock]);
+  }, [profile?.workingHours?.start, profile?.workingHours?.end]);
   const saveHours = async (s: string, e: string) => {
     setStart(s); setEnd(e);
     const timezone = profile?.workingHours?.timezone || (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return "UTC"; } })();
     onChanged?.(await api.setProfilePreference("workingHours", { start: s, end: e, timezone }));
-  };
-  const saveAutoBlock = async (v: boolean) => {
-    setAutoBlock(v);
-    onChanged?.(await api.setProfilePreference("calendarAutoBlock", v));
   };
   const [lang, setLang] = useState<"fr" | "en">(profile?.language === "en" ? "en" : "fr");
   useEffect(() => { setLang(profile?.language === "en" ? "en" : "fr"); }, [profile?.language]);
@@ -1025,10 +997,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           <input type="time" className="addinput sm" value={end} onChange={(e) => void saveHours(start, e.target.value)} />
         </div>
       </div>
-      <label className="set-row">
-        <span className="set-text"><b>{lang === "en" ? "Block study time on Calendar" : "Bloquer du temps de révision sur Calendar"}</b><span className="settings-hint">{lang === "en" ? "Otto can add a study slot to your Google Calendar to help you plan — never to do the work for you." : "Otto peut créer un créneau de révision dans ton Google Calendar pour t'aider à t'organiser — jamais pour faire le travail à ta place."}</span></span>
-        <span className="switch"><input type="checkbox" checked={autoBlock} onChange={(e) => void saveAutoBlock(e.target.checked)} /><span className="switch-track" /></span>
-      </label>
     </>
   );
 }
@@ -1051,10 +1019,19 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
   // No manual "sync" button — Pronote grades pull in automatically (on connect, and again with every
   // daily sweep; see applyPronoteGrades in server/pronote.ts). A passive status line, not a button the
   // student has to remember to press, matches how the rest of Otto works (things just happen for you).
+  // Overall average — each subject normalized to /20 first (grades can be entered on any scale) so a
+  // subject graded /10 doesn't silently drag the average down relative to one graded /20.
+  const overallAvg20 = grades.length ? grades.reduce((sum, g) => sum + (g.grade / g.scale) * 20, 0) / grades.length : null;
   return (
     <div className="grades-editor">
       {pronoteConnected && grades.length > 0 && (
         <p className="settings-hint grades-sync-note">{L("Synchronisées automatiquement depuis Pronote", "Synced automatically from Pronote")}</p>
+      )}
+      {overallAvg20 !== null && (
+        <div className={`grade-average ${isLowGrade(overallAvg20, 20) ? "low" : ""}`}>
+          <span className="grade-average-label">{L("Moyenne générale", "Overall average")}</span>
+          <span className="grade-average-value">{overallAvg20.toFixed(1)}/20</span>
+        </div>
       )}
       {grades.length > 0 && (
         <ul className="grade-list">
@@ -1107,11 +1084,6 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
   return (
     <main className="settings-page">
       <h1 className="settings-title">{L("Réglages", "Settings")}</h1>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0s" }}>
-        <h3>{L("Filière", "Track")}</h3>
-        <TrackSection profile={profile} onChanged={setProfile} />
-      </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
         <h3>{L("Compte", "Account")}</h3>
@@ -1178,7 +1150,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
             </span></span>
             <span className="switch"><input type="checkbox" disabled={!status.googleConnected} checked={dailyBriefingEnabled && status.googleConnected} onChange={(e) => { const v = e.target.checked; setDailyBriefingEnabledLocal(v); void api.setDailyBriefing(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
           </label>
-          <PreferencesFields profile={profile} onChanged={setProfile} />
+          <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
       </section>
 
@@ -1355,11 +1327,11 @@ function GoogleTiles({ onChanged }: { onChanged?: () => void }) {
   );
 }
 
-/** First-run ONBOARDING for a brand-new account — the ONE place Otto is explained. A guided 4-step overlay:
- *  welcome + name → how it works → connect first apps → done. Each connect opens in a new tab; we re-check
- *  on focus so a tile flips to ✓ when the user comes back. Shown once after sign-up; finishing (or "Skip")
- *  clears the otto-onboard flag. */
-const OB_STEPS = 6;
+/** First-run ONBOARDING for a brand-new account — the ONE place Otto is explained. A guided 5-step overlay:
+ *  welcome + name → how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
+ *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
+ *  finishing (or "Skip") clears the otto-onboard flag. */
+const OB_STEPS = 5;
 /** Otto Lycée v1: onboarding is now just name → what Otto does → connect Pronote (the ONE data source) →
  *  done. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone — every extra sign-in step is a
  *  dropout for a lycéen without a work Google account, and Pronote's connect flow (URL + identifiants,
@@ -1369,12 +1341,6 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [pronoteConnected, setPronoteConnected] = useState(false);
-  const [track, setTrack] = useState<"ib" | "bac" | "other" | undefined>(undefined);
-  const saveTrack = async (t: "ib" | "bac" | "other") => {
-    setTrack(t);
-    try { await api.setProfilePreference("track", t); } catch { /* non-blocking */ }
-    setStep(2);
-  };
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { /* non-blocking */ } }
@@ -1424,31 +1390,6 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
 
         {step === 2 && (
           <div className="onboard-step">
-            <h2>{L("Tu es en quelle filière ?", "What track are you on?")}</h2>
-            <p className="onboard-lead">{L("Ça aide Otto à mieux comprendre ton emploi du temps — rien de bloquant, modifiable plus tard.", "This helps Otto understand your workload better — nothing is locked in, changeable later.")}</p>
-            <div className="ob-states">
-              <button type="button" className="ob-state ob-state-btn" onClick={() => void saveTrack("ib")}>
-                <span className={`ob-dot ${track === "ib" ? "done" : "need"}`} />
-                <div><b>{L("Bac international (IB)", "IB Diploma")}</b><span>{L("6 matières, CAS/EE/TOK.", "6 subjects, CAS/EE/TOK.")}</span></div>
-              </button>
-              <button type="button" className="ob-state ob-state-btn" onClick={() => void saveTrack("bac")}>
-                <span className={`ob-dot ${track === "bac" ? "done" : "need"}`} />
-                <div><b>{L("Bac général français", "French national bac")}</b><span>{L("Spécialités, contrôle continu.", "Specialités, continuous assessment.")}</span></div>
-              </button>
-              <button type="button" className="ob-state ob-state-btn" onClick={() => void saveTrack("other")}>
-                <span className={`ob-dot ${track === "other" ? "done" : "need"}`} />
-                <div><b>{L("Autre / pas sûr", "Other / not sure")}</b><span>{L("Pas grave, Otto s'adapte.", "That's fine, Otto adapts.")}</span></div>
-              </button>
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(1)}>{L("Retour", "Back")}</button>
-              <button className="btn ghost" onClick={() => setStep(3)}>{L("Passer", "Skip")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 3 && (
-          <div className="onboard-step">
             <h2>{L("Connecte ton Pronote", "Connect your Pronote")}</h2>
             <p className="onboard-lead">{L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted and never resold.")}</p>
             <div className="onboard-apps">
@@ -1456,13 +1397,13 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             </div>
             <p className="muted small">{L("Tu peux te connecter plus tard depuis les Réglages.", "You can connect later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(4)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
+              <button className="btn ghost" onClick={() => setStep(1)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(3)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
             </div>
           </div>
         )}
 
-        {step === 4 && (
+        {step === 3 && (
           <div className="onboard-step">
             <h2>{L("Tes préférences", "Your preferences")}</h2>
             <p className="onboard-lead">{L("Ça aide Otto à proposer des créneaux de révision au bon moment — modifiable à tout moment dans les Réglages.", "This helps Otto propose study slots at the right time — changeable any time in Settings.")}</p>
@@ -1470,13 +1411,13 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <PreferencesFields profile={null} />
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(5)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(4)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 5 && (
+        {step === 4 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>

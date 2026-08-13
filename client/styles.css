@@ -228,13 +228,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .topbar {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 12px;
-  height: 52px; padding: 0 14px;
+  height: 52px; padding: 0 16px;
   /* viewport-fit=cover (index.html) lets iOS draw under the notch/Dynamic Island — clear it here instead
      of leaving a fixed header stuck partway under the status bar. env() is 0 on devices without a notch. */
   padding-top: env(safe-area-inset-top);
   height: calc(52px + env(safe-area-inset-top));
-  padding-left: calc(14px + env(safe-area-inset-left));
-  padding-right: calc(14px + env(safe-area-inset-right));
+  padding-left: calc(16px + env(safe-area-inset-left));
+  padding-right: calc(16px + env(safe-area-inset-right));
   background: var(--bar);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
@@ -261,9 +261,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .spacer { flex: 1; }
 
 /* ─── Dashboard ────────────────────────────────────────────────────────────── */
-/* MOBILE-FIRST: 14px gutters are the base (a 375px phone has no room to give away); desktop widens them
-   in the min-width:641px block below. */
-.list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 14px 120px; animation: pageIn 0.32s var(--ease) backwards; }
+/* MOBILE-FIRST: 16px gutters are the base (a 375px phone has little room to give away, but 14px read as
+   cramped against the edge — 16px is the standard mobile-app minimum margin); desktop widens them
+   further in the min-width:641px block below. */
+.list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 16px 120px; animation: pageIn 0.32s var(--ease) backwards; }
 .dash-head { margin-bottom: 28px; }
 
 /* ─── Two-zone dashboard ──────────────────────────────────────────────────────
@@ -497,7 +498,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .card {
   position: relative;
-  display: flex; align-items: center; gap: 12px; padding: 18px 14px 18px 28px; min-height: 58px;
+  display: flex; align-items: center; gap: 12px; padding: 18px 16px 18px 28px; min-height: 58px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -523,7 +524,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Mobile-first: the hero boost is a modest bump on a phone (vertical breathing room + type size, where
    it's actually felt) and only takes the wider insets on a big screen — at the desktop 38px inset a
    ~375px card had barely any room left for its title. */
-.dash-today .card { padding: 22px 14px 22px 30px; }
+.dash-today .card { padding: 22px 16px 22px 30px; }
 .dash-today .card-title { font-size: 16.5px; }
 .dash-today .card::before { left: 12px; top: 26px; width: 9px; height: 9px; }
 @media (min-width: 641px) {
@@ -1045,7 +1046,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .step-target { font-size: 11.5px; color: var(--accent); }
 .step-act { flex: none; }
 .step .btn { margin-left: auto; flex: none; }
-.step-input { height: 34px; font-size: 13px; margin-top: 6px; width: 100%; }
+.step-input-label { display: block; font-size: 12px; font-weight: 650; color: var(--ink-2); margin-top: 8px; }
+.step-input { height: 34px; font-size: 13px; margin-top: 4px; width: 100%; }
 
 /* Sendables — review-then-send */
 .sendables { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
@@ -1127,7 +1129,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ─── Settings — flat, minimalist; sections divided by whitespace + a hairline ─ */
-.settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 14px 120px; animation: pageIn 0.32s var(--ease) backwards; }
+.settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 16px 120px; animation: pageIn 0.32s var(--ease) backwards; }
 @media (min-width: 1024px) { .settings-page { max-width: 680px; } } /* a touch more room now each section is its own bordered card, not a divider-separated block */
 .settings-title { font-family: var(--display); font-size: clamp(26px, 7.5vw, 38px); font-weight: 750; letter-spacing: -0.03em; margin-bottom: 16px; }
 .settings { display: flex; flex-direction: column; }
@@ -1226,6 +1228,10 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .profile-list .x:hover, .memory-list .x:hover, .grade-list .x:hover { color: var(--warn); background: var(--bg-2); }
 .profile-list .x:active, .memory-list .x:active, .grade-list .x:active { transform: scale(0.85); }
+.grade-average { display: flex; align-items: baseline; justify-content: space-between; padding: 10px 12px; margin: 4px 0 10px; border-radius: var(--radius); background: var(--bg-2); }
+.grade-average-label { font-size: 12.5px; color: var(--ink-2); font-weight: 550; }
+.grade-average-value { font-family: var(--mono, ui-monospace, monospace); font-size: 16px; font-weight: 650; }
+.grade-average.low .grade-average-value { color: var(--accent); }
 .grade-list { list-style: none; margin: 4px 0 12px; }
 .grade-row { padding: 9px 0; }
 .grade-row + .grade-row { border-top: 1px solid var(--line-soft); }

@@ -386,7 +386,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
           .slice(-100)
       : undefined,
     dailyBriefingEnabled: p2.dailyBriefingEnabled ?? p1.dailyBriefingEnabled,
-    calendarAutoBlock: p2.calendarAutoBlock ?? p1.calendarAutoBlock,
     language: p2.language ?? p1.language,
     // Grades are a small, deliberately-edited list — merge by subject, newest updatedAt per subject wins
     // (same idea as autoArchivePatterns/preferences, but keyed instead of just concatenated/deduped by text).
