@@ -571,8 +571,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   100% { opacity: 0; transform: translateY(-50%) scale(1); }
 }
 
-.card.open { background: transparent; }
-
 /* ─── Task detail modal ─────────────────────────────────────────────────────── */
 .task-modal-overlay {
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center;
@@ -834,21 +832,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   flex: none; color: var(--ink-3); font-size: 17px; font-weight: 400; line-height: 1;
   transition: transform 200ms var(--ease);
 }
-.card.open .caret { transform: rotate(90deg); }
-
-/* ─── Expanded detail ──────────────────────────────────────────────────────── */
-.detail { padding: 2px 14px 18px 18px; }
-.detail section { padding: 12px 0; }
-.detail section + section { border-top: 1px solid var(--line-soft); }
-.detail section:first-child { padding-top: 4px; }
-.detail section:last-child { padding-bottom: 0; }
-.detail h4 {
-  display: flex; align-items: center;
-  font-size: 10.5px; font-weight: 600; color: var(--ink-3);
-  text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 8px;
-}
-.detail p { font-size: 13.5px; line-height: 1.5; }
-.detail .muted { color: var(--ink-2); }
 .muted { color: var(--ink-2); }
 .small { font-size: 12.5px; }
 /* Visible only to screen readers — for labels the sighted layout already conveys some other way (a chat
@@ -904,10 +887,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .bullets { margin: 0; padding-left: 18px; }
 .bullets li { font-size: 14px; line-height: 1.55; margin-bottom: 4px; }
 
-.context-source { margin-left: 6px; font-weight: 500; text-transform: none; vertical-align: middle; }
 .context-text { white-space: pre-line; }
-.context-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
-.context-toggle .caret.open { transform: rotate(90deg); }
 .context-body { margin-top: 8px; }
 
 .history-list { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 5px; }
@@ -1097,10 +1077,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   animation: rewriteSweep 1.1s ease-in-out infinite;
 }
 @keyframes rewriteSweep { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
-
-.actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
-.actions .actions-rest { margin-left: auto; }
-.actions-rest { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ─── Connect card (first-run) — calm, centered CTA ────────────────────────── */
 .connect-card {
@@ -1498,10 +1474,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .step-mark { position: relative; }
 .step-mark::after { content: ""; position: absolute; inset: -11px; background: rgba(0, 0, 0, 0.01); }
 .card-x { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
-/* Card actions (Looks good / Dismiss / Refine) wrap instead of squeezing onto one cramped row. */
-.actions { flex-wrap: wrap; row-gap: 10px; }
-.actions > .btn.primary { flex: 1 1 auto; }
-.actions-rest { flex: 1 1 auto; }
 .sendable-row .btn { flex: 1; }
 .sendable-row .btn:first-child { margin-right: 0; }
 .week-load-strip { overflow-x: auto; padding-bottom: 4px; }

@@ -96,9 +96,9 @@ function Disclosure({ label, count, open, onToggle, children }: { label: string;
 
 /* ─────────────────────────────── collapsed row ─────────────────────────────── */
 
-export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, index, onOpen }: {
+export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, index, onOpen, onNotify }: {
   task: WebTask; onChange: (t: WebTask[]) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
-  isNew?: boolean; index?: number; onOpen: () => void;
+  isNew?: boolean; index?: number; onOpen: () => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
 }) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
@@ -138,7 +138,12 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
           covers the whole card underneath the real controls (which sit above it via z-index), so a click
           anywhere still opens, Tab reaches it, and the focus ring outlines the entire card. Its accessible
           name is the task title, since the visible title isn't inside it. */}
-      <button type="button" className="card-open" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)} />
+      {/* TEMP DIAGNOSTIC — remove once the live "tasks won't open on mobile" bug is confirmed fixed. Fires
+          an unmissable toast the instant this is tapped, BEFORE navigating, so a phone with no devtools
+          access can still tell us definitively: toast-but-no-popup means the tap IS reaching this handler
+          and the bug is in rendering the modal; no-toast-at-all means the tap never reaches this handler
+          at all (an interaction/CSS problem, not a routing one). */}
+      <button type="button" className="card-open" onClick={() => { onNotify?.("tap ok →" + task.title.slice(0, 24)); onOpen(); }} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)} />
       <div className="card-main">
         {/* Direct check-off, like a normal to-do list — no need to open the task first. Still one deliberate
             click (not automatic): it fires the same confirm as "Looks good" inside the detail view. */}

@@ -1,12 +1,8 @@
-import { useEffect, useState, useCallback, useRef, useContext, type Dispatch, type SetStateAction } from "react";
-import type { WebTask, ConnectionStatus, Profile, TaskStep } from "../shared/types.ts";
+import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
-import {
-  LangContext, useLang, todayIso, fmtDate, relTime, statusChip, sourceBadge, priorityBadge, subtitle,
-  fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
-  withInlineLinks, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal,
-} from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal } from "./ui.tsx";
 import { TaskCardRow, TaskFocus } from "./TaskCard.tsx";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
@@ -624,6 +620,7 @@ export function App() {
                           onOpen={() => navigate(`task/${t.id}`)}
                           onChange={setTasks}
                           onConfirmed={flagJustDone}
+                          onNotify={notify}
                         />
                       ))}
                     </div>
@@ -657,6 +654,7 @@ export function App() {
                             onOpen={() => navigate(`task/${t.id}`)}
                             onChange={setTasks}
                             onConfirmed={flagJustDone}
+                            onNotify={notify}
                           />
                         ))}
                       </div>
@@ -685,6 +683,7 @@ export function App() {
                                 onOpen={() => navigate(`task/${t.id}`)}
                                 onChange={setTasks}
                                 onConfirmed={flagJustDone}
+                                onNotify={notify}
                               />
                             ))}
                           </div>

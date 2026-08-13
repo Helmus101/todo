@@ -121,7 +121,7 @@ export function openTabs(urls: string[], group?: string) {
 // never re-opens the same tabs again. Toggle in Settings (default ON).
 const DOC_RE = /docs\.google\.com\/(document|spreadsheets|presentation)/i;
 const OPENED_KEY = "otto-opened-docs";
-export const openedDocs: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(OPENED_KEY) || "[]")); } catch { return new Set(); } })();
+const openedDocs: Set<string> = (() => { try { return new Set<string>(JSON.parse(localStorage.getItem(OPENED_KEY) || "[]")); } catch { return new Set(); } })();
 const markDocsOpened = (urls: string[]) => {
   urls.forEach((u) => openedDocs.add(u));
   try { localStorage.setItem(OPENED_KEY, JSON.stringify([...openedDocs].slice(-300))); } catch { /* ignore */ }
@@ -130,7 +130,7 @@ let sessionDocsOpened = 0;               // burst control: cap how many open wit
 const SESSION_DOC_CAP = 4;               // ceiling on auto-opened docs per session load
 const PER_TASK_DOC_CAP = 2;              // and per task
 // Auto-opening created docs is OFF by default — it needs the Tabs extension, so it's opt-in ("1" = on).
-export const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") === "1"; } catch { return false; } };
+const autoOpenDocsOn = () => { try { return localStorage.getItem("otto-autoopen-docs") === "1"; } catch { return false; } };
 
 /** Auto-open the docs a finished task created, respecting every cap. Encapsulated here (rather than inlined
  *  in the card, where it used to live) because `sessionDocsOpened` is module-level mutable state and an
