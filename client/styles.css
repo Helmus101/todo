@@ -161,7 +161,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   background: linear-gradient(155deg, var(--accent-hover), var(--accent) 55%); border-color: var(--accent); color: #fff;
   box-shadow: 0 1px 2px rgba(16, 19, 23, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.16);
 } /* the irreversible act — cobalt */
-.btn.primary:hover { background: linear-gradient(155deg, var(--accent-hover), var(--accent-hover) 55%); border-color: var(--accent-hover); box-shadow: 0 4px 14px rgba(47, 77, 224, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.16); transform: translateY(-1px); }
+/* hover: hover — see .card:hover's comment: an unscoped :hover transform can shift a real button out from
+   under a finger between touchdown and touchup on iOS Safari, silently dropping the tap. */
+@media (hover: hover) {
+  .btn.primary:hover { background: linear-gradient(155deg, var(--accent-hover), var(--accent-hover) 55%); border-color: var(--accent-hover); box-shadow: 0 4px 14px rgba(47, 77, 224, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.16); transform: translateY(-1px); }
+}
 .btn.primary:active { transform: translateY(0) scale(0.97); box-shadow: 0 1px 2px rgba(16, 19, 23, 0.1); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--accent); }
 .btn.ghost:hover { background: var(--accent-soft); }
@@ -178,7 +182,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    hit-testing quirk this works around. Applies to every ::after hit-expander in this file. */
 .btn.xs::after { content: ""; position: absolute; inset: -5px -3px; background: rgba(0, 0, 0, 0.01); }
 .btn.big { height: 48px; padding: 0 22px; font-size: 15px; border-radius: 10px; transition: background 140ms var(--ease), border-color 140ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease); }
-.btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(37, 99, 235, 0.28); }
+@media (hover: hover) {
+  .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(37, 99, 235, 0.28); }
+}
 .btn.primary.big:active { transform: translateY(0); }
 .btn.opt { background: var(--surface); }               /* MCQ option — secondary look */
 .btn.forget { color: var(--warn); }
@@ -303,7 +309,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border-left: 3px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); min-width: 100px;
   transition: border-color 120ms var(--ease), transform 120ms var(--ease);
 }
-.exam-chip:hover { transform: translateY(-1px); }
+@media (hover: hover) {
+  .exam-chip:hover { transform: translateY(-1px); }
+}
 .exam-chip.soon { border-left-color: var(--accent); background: var(--accent-soft); }
 .exam-days { font-family: var(--mono, ui-monospace, monospace); font-size: 15px; font-weight: 700; }
 .exam-chip.soon .exam-days { color: var(--accent); }
@@ -320,7 +328,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border-left: 3px solid var(--accent); border-radius: var(--radius-sm); background: var(--surface); min-width: 160px; max-width: 220px;
   transition: transform 120ms var(--ease);
 }
-.milestone-chip:hover { transform: translateY(-1px); }
+@media (hover: hover) {
+  .milestone-chip:hover { transform: translateY(-1px); }
+}
 .milestone-date { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; font-weight: 700; color: var(--accent); }
 /* Overdue: emphasis via weight/ink, not a new color — the app stays black/white/grey + one accent (see
    .chip-bad); a red flag here would be the one place that rule breaks. */
@@ -337,7 +347,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); min-width: 0;
   transition: border-color 120ms var(--ease), transform 120ms var(--ease), background 120ms var(--ease);
 }
-.week-day:hover { transform: translateY(-1px); }
+@media (hover: hover) {
+  .week-day:hover { transform: translateY(-1px); }
+}
 .week-day.is-today { border-color: var(--ink-3); }
 .week-day.heavy { border-color: var(--accent); background: var(--accent-soft); }
 .week-day.open { border-color: var(--accent); }
@@ -492,7 +504,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   animation-delay: min(calc(var(--i, 0) * 45ms), 300ms);
   transition: box-shadow 240ms var(--ease), transform 240ms var(--ease), border-color 240ms var(--ease);
 }
-.card:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-3px); }
+/* Scoped to real hover (mouse/trackpad) ONLY — this is very likely the actual live-confirmed "tasks won't
+   open on iPhone" bug. iOS Safari applies :hover styles on touchDOWN (a long-documented WebKit quirk), so
+   an unscoped transform here shifts the whole row 3px between finger-down and finger-up; if the element
+   under the finger has physically moved by the time the finger lifts, WebKit can silently drop the tap
+   instead of firing a click. This predates the .card-open overlay entirely — the OLD div-onClick row sat
+   inside this exact same lifting `.card`, so it would have had the identical failure. `hover: hover` is
+   the codebase's own established pattern for this class of problem (see the `hover: none` rules nearby). */
+@media (hover: hover) {
+  .card:hover { box-shadow: var(--shadow-card-hover); transform: translateY(-3px); }
+}
 /* "Today" is the main event of the whole app — it must unmistakably outweigh Later/Can wait/
    Completed below it, not just be the first section of a longer list. Scoped by container
    (`.dash-today`) rather than a Card prop — same card, just more visual weight where it's the hero. */
@@ -772,9 +793,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    and it sits right next to the full-card open overlay, so a near-miss used to open the task instead of
    completing it. Same ::after trick .step-mark and .card-x already use. */
 .card-check::after { content: ""; position: absolute; inset: -11px; border-radius: 50%; background: rgba(0, 0, 0, 0.01); }
-.card-check:hover { border-color: var(--accent); transform: scale(1.08); }
+@media (hover: hover) {
+  .card-check:hover { border-color: var(--accent); transform: scale(1.08); }
+}
 .card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms cubic-bezier(0.34, 1.4, 0.64, 1); }
-.card-check.checked:hover { transform: none; }
+@media (hover: hover) {
+  .card-check.checked:hover { transform: none; }
+}
 .card-check:disabled { cursor: default; }
 .card-text { flex: 1; min-width: 0; }
 .card-title { font-size: 16.5px; font-weight: 620; letter-spacing: -0.015em; line-height: 1.4; }
@@ -1010,7 +1035,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   transition: border-color 140ms var(--ease), background 140ms var(--ease), transform 140ms var(--ease);
 }
 .step-mark.tickable { cursor: pointer; }
-.step-mark.tickable:hover { border-color: var(--accent); transform: scale(1.08); }
+@media (hover: hover) {
+  .step-mark.tickable:hover { border-color: var(--accent); transform: scale(1.08); }
+}
 .step.done .step-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
 .step-mark.busy {
   border-color: var(--line);
@@ -1380,7 +1407,9 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 
 .how { display: flex; flex-direction: column; }
 .how-step { display: flex; gap: 18px; padding: 18px 14px; margin: 0 -14px; border-radius: 10px; transition: background 200ms var(--ease), transform 200ms var(--ease); }
-.how-step:hover { background: var(--accent-soft); transform: translateX(4px); }
+@media (hover: hover) {
+  .how-step:hover { background: var(--accent-soft); transform: translateX(4px); }
+}
 .how-step + .how-step { border-top: 1px solid var(--line-soft); }
 .how-step .n { font-size: 13px; font-weight: 650; color: var(--accent); padding-top: 2px; }
 .how-step h3 { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 3px; }
@@ -1388,7 +1417,9 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 
 .features { display: flex; flex-direction: column; margin-top: 20px; }
 .feature { display: flex; padding: 16px 14px; margin: 0 -14px; border-radius: 10px; transition: background 200ms var(--ease), transform 200ms var(--ease); }
-.feature:hover { background: var(--accent-soft); transform: translateX(4px); }
+@media (hover: hover) {
+  .feature:hover { background: var(--accent-soft); transform: translateX(4px); }
+}
 .feature + .feature { border-top: 1px solid var(--line-soft); }
 .feature h3 { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 3px; }
 .feature p { font-size: 13.5px; color: var(--ink-2); line-height: 1.6; }
@@ -1414,7 +1445,9 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 /* Outcomes — concrete "what you get" rows. */
 .outcomes { display: flex; flex-direction: column; margin-top: 4px; }
 .outcome { display: flex; gap: 14px; padding: 18px 14px; margin: 0 -14px; border-radius: 10px; transition: background 200ms var(--ease), transform 200ms var(--ease); }
-.outcome:hover { background: var(--accent-soft); transform: translateX(4px); }
+@media (hover: hover) {
+  .outcome:hover { background: var(--accent-soft); transform: translateX(4px); }
+}
 .outcome + .outcome { border-top: 1px solid var(--line-soft); }
 .outcome-mark { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .outcome h3 { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 3px; }
