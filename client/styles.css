@@ -174,7 +174,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    step-act) — so this only grows vertically (nothing else stacks above/below a button row) and a little
    horizontally, which safely reaches 44px without touching the next button's own expanded hit area. */
 .btn.xs { position: relative; height: 34px; padding: 0 11px; font-size: 12.5px; border-radius: 9px; }
-.btn.xs::after { content: ""; position: absolute; inset: -5px -3px; }
+/* background must NOT be fully transparent — see .card-open's comment (styles.css) for the iOS Safari
+   hit-testing quirk this works around. Applies to every ::after hit-expander in this file. */
+.btn.xs::after { content: ""; position: absolute; inset: -5px -3px; background: rgba(0, 0, 0, 0.01); }
 .btn.big { height: 48px; padding: 0 22px; font-size: 15px; border-radius: 10px; transition: background 140ms var(--ease), border-color 140ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease); }
 .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(37, 99, 235, 0.28); }
 .btn.primary.big:active { transform: translateY(0); }
@@ -739,10 +741,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card-main { display: flex; align-items: center; gap: 12px; padding: 18px 14px 18px 28px; cursor: pointer; min-height: 58px; border-radius: var(--radius); }
 /* The stretched "open this task" button — covers the whole card, sits UNDER the real controls (see the
    z-index on .card-check/.card-x below) so they stay clickable. Replaces a div onClick that no keyboard
-   user could ever reach. Transparent by design: the card itself is the visual affordance. */
+   user could ever reach.
+   background MUST NOT be `none`/fully transparent: iOS Safari has a long-documented WebKit quirk where a
+   fully-transparent absolutely-positioned element can fail to hit-test touch events reliably — nothing to
+   "paint" there, so nothing to tap, even though it's visually and semantically identical. This is exactly
+   what was reported live: .card-check/.card-x (which DO paint something — a border, a glyph) worked fine
+   on the same row while this one didn't. rgba(0,0,0,0.01) is visually indistinguishable from `none` in
+   every theme but forces WebKit to treat the layer as real and hit-testable. */
 .card-open {
   position: absolute; inset: 0; z-index: 0; padding: 0;
-  background: none; border: 0; border-radius: var(--radius); cursor: pointer;
+  background: rgba(0, 0, 0, 0.01); border: 0; border-radius: var(--radius); cursor: pointer;
 }
 .card-check, .card-x { position: relative; z-index: 1; }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
@@ -763,7 +771,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* 22px is the drawn size, but the TAP target has to clear 44px — this is the primary "mark done" control
    and it sits right next to the full-card open overlay, so a near-miss used to open the task instead of
    completing it. Same ::after trick .step-mark and .card-x already use. */
-.card-check::after { content: ""; position: absolute; inset: -11px; border-radius: 50%; }
+.card-check::after { content: ""; position: absolute; inset: -11px; border-radius: 50%; background: rgba(0, 0, 0, 0.01); }
 .card-check:hover { border-color: var(--accent); transform: scale(1.08); }
 .card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms cubic-bezier(0.34, 1.4, 0.64, 1); }
 .card-check.checked:hover { transform: none; }
@@ -1159,7 +1167,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
    is vertical-only (nothing else stacks above/below the row) — a horizontal one would overlap the next
    segment's own expanded area. */
 .seg-btn { position: relative; min-width: 34px; height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; border-radius: 9px; transition: background 140ms var(--ease), color 140ms var(--ease); }
-.seg-btn::after { content: ""; position: absolute; inset: -8px 0; }
+.seg-btn::after { content: ""; position: absolute; inset: -8px 0; background: rgba(0, 0, 0, 0.01); }
 .seg-btn:hover { color: var(--ink); }
 .seg-btn.on { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 
@@ -1455,7 +1463,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 /* .step-mark stays visually small (22px) but gets a larger invisible hit area — a 44px circle is the
    minimum comfortable touch target, and the visual dot is well under that. */
 .step-mark { position: relative; }
-.step-mark::after { content: ""; position: absolute; inset: -11px; }
+.step-mark::after { content: ""; position: absolute; inset: -11px; background: rgba(0, 0, 0, 0.01); }
 .card-x { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
 /* Card actions (Looks good / Dismiss / Refine) wrap instead of squeezing onto one cramped row. */
 .actions { flex-wrap: wrap; row-gap: 10px; }
