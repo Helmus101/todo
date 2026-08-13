@@ -274,10 +274,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    needed. At 1024px+ it becomes a real two-column grid: Today (+Later/Completed below it) stays the
    main column, the widgets move into a sticky right rail so they're always-visible ambient context
    instead of blocking the task list above the fold. */
+/* Mobile: the rail (Milestones/exam countdown/This week — "at a glance" context, not the task list itself)
+   used to fall in DOM order AFTER the whole Today list, which on a long list pushed "This week" off the
+   bottom of the screen where it was easy to miss entirely. `order` puts it right after Add task, ahead of
+   Today, so the week's shape is visible before scrolling into the task list — desktop's explicit grid
+   placement below (min-width:1024px) isn't affected, since named grid-row/column wins over `order` there. */
 .dash-grid { display: flex; flex-direction: column; }
-.dash-addtask { margin-bottom: 28px; }
-.dash-rail { display: flex; flex-direction: column; gap: 28px; margin: 4px 0 28px; }
-.dash-more { margin-top: 8px; }
+.dash-addtask { margin-bottom: 28px; order: 0; }
+.dash-rail { display: flex; flex-direction: column; gap: 28px; margin: 4px 0 28px; order: 1; }
+.dash-today { order: 2; }
+.dash-more { margin-top: 8px; order: 3; }
 @media (min-width: 1024px) {
   .list-wrap { max-width: 1320px; }
   .dash-grid {
