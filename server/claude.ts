@@ -1205,6 +1205,13 @@ export interface RunOutput {
   flashcards?: TaskFlashcards[];
   /** In-app MCQ quizzes (CREATE_QUIZ) created THIS run — verified, persisted onto WebTask.quizzes. */
   quizzes?: TaskQuiz[];
+  /** The model's OWN judgment, from the same call that did the actual research — not a keyword guess on
+   *  the title — that this is a big multi-week/multi-stage project (a full essay, an IB EE/TOK/CAS/IA, a
+   *  dissertation) that needs a milestone breakdown rather than a flat step list. Threaded into
+   *  writeStepsFromContext so a task with real signal for this (genuinely large, but never named an
+   *  acronym and has nothing to research — so the keyword pre-filter AND the empty-context bail would
+   *  otherwise both miss it) still gets the milestone treatment. */
+  isBigProject?: boolean;
 }
 
 const RUN_SYSTEM =
@@ -1454,6 +1461,7 @@ const RUN_TOOLS = [
   { name: "remember", description: "Save a durable fact about WHO THIS PERSON IS for future tasks. category: 'name' (what to call them — save it the moment you learn their name, e.g. from their email signature or how others address them; fact = just the name), 'preference' (how they work/write), 'person' (a key relationship), 'project' (an ongoing effort), 'course' (a class/course-specific pattern that should compound over the term/degree — a professor's grading style or communication quirks, how far ahead of THIS course's deadlines the student actually starts work, what kind of feedback they got, e.g. 'BIO 201 — Prof. Martinez wants a topic sentence in every paragraph' or 'Starts CS 101 problem sets ~2 days before due and it stresses them out'), or 'about' (a one-line summary of them).", input_schema: { type: "object", properties: { category: { type: "string", enum: ["name", "about", "preference", "person", "project", "course"] }, fact: { type: "string" } }, required: ["category", "fact"] } },
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
     title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (≤9 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
+    isBigProject: { type: "boolean", description: "true ONLY if this is a genuinely BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/mémoire, an IB Extended Essay/TOK/CAS/Internal Assessment, a group project, a major report — where progress happens over weeks/months with real intermediate milestones, not a task doable in one sitting or a few short steps. Judge this from what the task ACTUALLY is, not from whether its title happens to name an acronym. Omit or false for anything ordinary." },
     context: { type: "string", description: "the SURROUNDING FACTS about this task — real, specific, substantive: who's involved, what they actually said/asked, what the doc/event/thread contains, dates, numbers, links. NEVER a meta-description of the task or your own process — 'User requested information about X', 'Performed searches across multiple services', 'Looked into Y' are WORTHLESS filler, not context, and will be rejected. If you truly found nothing useful after a real attempt, say the SPECIFIC thing that's missing ('No upcoming meetings with Gabrielle on the calendar; her last email was 3 weeks ago about the budget') — never a vague description of the search itself. 2-4 bullets, each starting with '- '." },
     synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' NO caveats, NO explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
     did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
@@ -1875,7 +1883,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // draft.steps already passed the on-topic/drift checks above; the refined steps have NOT, so
               // re-validate them and fall back to the original (already-validated) steps if the refinement
               // pass itself drifted off-topic — never let a second-pass failure produce a WORSE result.
-              const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps, draft.did, profile);
+              const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps, draft.did, profile, draft.isBigProject);
               draft.steps = (stepsMatchTitle(task.title, refined) && !isFolderHousekeepingDrift(task.title, refined)) ? refined : draft.steps;
               submitted = draft; content = "submitted";
             }
@@ -2095,8 +2103,13 @@ async function writeStepsFromContext(
   fallbackSteps: TaskStep[],
   did: string[] = [],
   profile?: Profile,
+  // The model's OWN "is this big?" judgment from the main research call (see RunOutput.isBigProject) —
+  // it saw the actual content, not just the title, so this is the real detector. The keyword regex below
+  // is only a cheap pre-filter for when this wasn't asked/answered; a `true` here always counts as a hit
+  // even if the regex found nothing, which is exactly the case a paraphrased/acronym-free title needs.
+  modelJudgedBigProject?: boolean,
 ): Promise<TaskStep[]> {
-  const keywordHit = isBigIbProject(profile, task.title, task.why);
+  const keywordHit = modelJudgedBigProject === true || isBigIbProject(profile, task.title, task.why);
   // Normally: no distilled research context means nothing to refine, so bail to the loop's own steps.
   // But a big project (EE/TOK/CAS/IA/a full essay) doesn't need research context to know it needs a
   // milestone breakdown instead of a flat list — that structure comes from the project TYPE, not from
@@ -2415,6 +2428,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     profileUpdates,
     ...(followUps.length ? { followUps } : {}),
     ...(title ? { title } : {}),
+    ...(typeof out?.isBigProject === "boolean" ? { isBigProject: out.isBigProject } : {}),
   };
 }
 

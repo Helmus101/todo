@@ -267,6 +267,14 @@ section("finalize run report");
 const docLink = { label: "Q3 budget doc", url: "https://docs.google.com/document/d/1xVdKvq8GjwskuuAmuAbCdEfGhIjKlMnOp/edit" };
 const fin1 = finalize({ context: "c", synthesis: "Created the budget doc.", steps: [], links: [docLink], sendables: [] }, "", []);
 check("links with no steps/sendables get a Review checklist", fin1.steps.length === 1 && fin1.steps[0].text.startsWith("Review") && fin1.steps[0].url === docLink.url);
+// The model's own "is this big?" judgment (not a keyword guess) rides through finalize() so
+// writeStepsFromContext can use it even when the title never names an acronym — see RunOutput.isBigProject.
+const finBig = finalize({ context: "c", synthesis: "Gathered sources.", steps: [], links: [], sendables: [], isBigProject: true }, "", []);
+check("finalize passes through a true isBigProject flag", finBig.isBigProject === true);
+const finNotBig = finalize({ context: "c", synthesis: "Done.", steps: [], links: [], sendables: [], isBigProject: false }, "", []);
+check("finalize passes through a false isBigProject flag", finNotBig.isBigProject === false);
+const finNoFlag = finalize({ context: "c", synthesis: "Done.", steps: [], links: [], sendables: [] }, "", []);
+check("finalize omits isBigProject when the model didn't answer (no silent default)", finNoFlag.isBigProject === undefined);
 const fin2 = finalize({ context: "c", synthesis: "Drafted a reply to Sarah.", steps: [], links: [],
   sendables: [{ app: "gmail", label: "Send reply", to: "s@a.com", subject: "Re", body: "hi", draftId: "r-1234567890" }] }, "", []);
 check("sendable needs no backstop step", fin2.steps.length === 0 && fin2.sendables.length === 1);

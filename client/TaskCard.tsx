@@ -403,6 +403,10 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
         <p className="hero-line">{subtitle(task) || task.why}</p>
         <div className="hero-acts">
           <button className="btn primary" disabled={running} onClick={() => onRun()}>{running ? L("En cours…", "Working…") : L("Lancer", "Start")}</button>
+          {/* Without this, a task Otto hasn't planned yet (or never needed a plan — already handled
+              elsewhere, a duplicate, a quick manual note) had no way to be marked done except "Lancer"
+              first. Secondary/ghost so it never competes with Start as the obvious next action. */}
+          <button className="btn ghost" disabled={running} onClick={onConfirm}>{L("C'est bon", "Looks good")}</button>
         </div>
       </div>
     );
@@ -459,6 +463,13 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
   const toggleSubstep = async (i: number, subIndex: number, done: boolean) => {
     onChange(await api.substepDone(task.id, i, subIndex, done));
   };
+  // "Détailler cette étape" only makes sense on a milestone within a detected big project (Extended
+  // Essay/TOK/CAS/IA, a full essay, a dissertation — see isBigIbProject in server/claude.ts) — an
+  // ordinary task's steps are already small/one-sitting by design (writeStepsFromContext caps them at
+  // ≤8 words each), so offering to break THOSE down further would just be noise. A milestone step is
+  // the only shape carrying a `targetDate`, so that's the same signal the milestone-bar above already
+  // uses to detect a big project client-side, without needing a separate flag threaded through.
+  const isBigProjectTask = steps.some((s) => s.targetDate);
   const openableCount = steps.filter((s) => s.url && !s.done && !stepBlocked(steps, s)).length;
   // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
   const openAllPages = async () => {
@@ -550,7 +561,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                       </li>
                     ))}
                   </ul>
-                ) : !s.done && !blk ? (
+                ) : isBigProjectTask && !s.done && !blk ? (
                   <button type="button" className="btn xs ghost substep-expand" disabled={expanding === i} onClick={() => void expandStep(i)}>
                     {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler cette étape", "Break this step down")}
                   </button>
