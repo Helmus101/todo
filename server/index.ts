@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -396,13 +396,6 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
   res.json(p);
 });
 
-app.post("/api/settings/daily-briefing", requireAuth, async (req, res) => {
-  const p = (req.session.profile ||= emptyProfile());
-  p.dailyBriefingEnabled = req.body?.enabled === true;
-  await commit(req);
-  res.json(p);
-});
-
 // Live integration check — create → verify → clean up against the REAL connected account, on the user's
 // explicit click. No AI involved (direct hardcoded steps), so it works even while AI is paused.
 app.post("/api/settings/smoke", requireAuth, rateLimit(3, 60_000), async (req, res) => {
@@ -701,6 +694,41 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
   }
   res.json(req.session.tasks || []);
 });
+// Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.
+// Costs one AI call, so it's gated the same as any other interactive AI action (paused/budget).
+app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to use this." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
+  const id = String(req.params.id);
+  const index = Number(req.params.index);
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  const step = task?.steps?.[index];
+  if (!task || !step) { res.status(404).json({ error: "not found" }); return; }
+  const substeps = await expandStep({ title: task.title, why: task.why }, { text: step.text }, req.session.profile);
+  if (substeps.length) {
+    step.substeps = substeps;
+    task.updatedAt = new Date().toISOString();
+    await commit(req);
+  }
+  res.json(req.session.tasks || []);
+});
+// Tick/untick one sub-step — independent of the parent step's own "done" (see the Profile.grades-style
+// comment on TaskStep.substeps: a working checklist, not a completion gate).
+app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateLimit(120, 60_000), async (req, res) => {
+  const id = String(req.params.id);
+  const index = Number(req.params.index);
+  const subIndex = Number(req.params.subIndex);
+  const done = req.body?.done !== false;
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  const sub = task?.steps?.[index]?.substeps?.[subIndex];
+  if (sub) {
+    sub.done = done;
+    task!.updatedAt = new Date().toISOString();
+    await commit(req);
+  }
+  res.json(req.session.tasks || []);
+});
 // "Move to a lighter day" from the workload widget — a manual, reversible nudge (never AI-driven): the
 // student picks the day, Otto just relabels the task's own `when` and re-scores it, same deadline-urgency
 // math every other task already goes through (tasks.applyDeadlineUrgency). Only meant for tasks with a
@@ -837,7 +865,7 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
       loadState(user), getLatestJob(user, "sweep"), countActiveJobs(user),
     ]);
     const profile = state.profile || emptyProfile();
-    const tz = profile.workingHours?.timezone;
+    const tz = tzOf(profile);
     res.json({
       lastSweepAt: profile.lastSweepAt || null,
       lastSweepDay: profile.lastSweepAt ? jobs.localDay(profile.lastSweepAt, tz) : null,
@@ -882,13 +910,7 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   const key = String(req.body?.key || "");
   const value = req.body?.value;
-  if (key === "workingHours" && typeof value === "object") {
-    p.workingHours = {
-      start: String(value.start || "09:00"),
-      end: String(value.end || "18:00"),
-      timezone: String(value.timezone || "UTC"),
-    };
-  } else if (key === "responseStyle" && ["concise", "detailed", "casual", "formal"].includes(value)) {
+  if (key === "responseStyle" && ["concise", "detailed", "casual", "formal"].includes(value)) {
     p.responseStyle = value;
   } else if (key === "autoApprove" && Array.isArray(value)) {
     p.autoApprove = value.map(String);

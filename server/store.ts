@@ -235,7 +235,7 @@ export async function deleteAccount(email: string): Promise<{ ok: boolean; error
 // only the anon key + locked-down RLS, or no Supabase at all), an in-memory queue keeps a single dev
 // process fully working — same interface, no durability.
 
-export type JobType = "sweep" | "execute_task" | "execute_step" | "revise" | "send_briefing";
+export type JobType = "sweep" | "execute_task" | "execute_step" | "revise";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed_retryable" | "failed_terminal" | "cancelled";
 export interface Job {
   id: string;

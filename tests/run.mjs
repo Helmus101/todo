@@ -117,11 +117,11 @@ applyProfileUpdate(p, { category: "person", fact: "Sarah (sarah@acme.com) now le
 check("correction replaces same-entity fact", p.people.length === 1 && p.people[0].includes("marketing"));
 check("dedupeFacts caps at 40", dedupeFacts(Array.from({ length: 60 }, (_, i) => `Fact ${i} about very distinct topic ${i} x${i}`)).length <= 40);
 const pm = mergeProfileStates(
-  { ...emptyProfile(), paused: true, pausedAt: older, workingHours: { start: "09:00", end: "18:00", timezone: "UTC" } },
+  { ...emptyProfile(), paused: true, pausedAt: older, responseStyle: "concise" },
   { ...emptyProfile(), paused: false, pausedAt: newer },
 );
 check("newer pause toggle wins", pm.paused === false);
-check("structured settings survive merge", pm.workingHours?.start === "09:00");
+check("structured settings survive merge", pm.responseStyle === "concise");
 const pmAcct = mergeProfileStates(
   { ...emptyProfile(), primaryAccounts: { gmail: "acct-a" } },
   { ...emptyProfile(), primaryAccounts: { googlecalendar: "acct-b" } },
@@ -390,7 +390,7 @@ check("step duplicating a did-bullet dropped", fin7.steps.length === 1 && /Print
 // ── Durable daily sweep (WS1) ─────────────────────────────────────────────────
 section("daily sweep timing");
 const utcProfile = { ...emptyProfile() };
-const nyProfile = { ...emptyProfile(), workingHours: { start: "09:00", end: "18:00", timezone: "America/New_York" } };
+const nyProfile = { ...emptyProfile(), timezone: "America/New_York" };
 check("no prior sweep is due", sweepDueForDay(undefined, utcProfile, new Date("2026-07-20T08:00:00Z")));
 check("swept earlier same UTC day is NOT due", !sweepDueForDay("2026-07-20T06:00:00Z", utcProfile, new Date("2026-07-20T08:00:00Z")));
 check("swept yesterday IS due", sweepDueForDay("2026-07-19T23:00:00Z", utcProfile, new Date("2026-07-20T08:00:00Z")));
@@ -453,8 +453,7 @@ check("23:00 UTC is off-peak", !isPeakHourUtc(new Date("2026-07-20T23:00:00Z")))
 
 // ── Timezone resolution ───────────────────────────────────────────────────────
 section("timezone");
-check("tzOf prefers profile.timezone", tzOf({ ...emptyProfile(), timezone: "Europe/Paris", workingHours: { start: "9", end: "18", timezone: "UTC" } }) === "Europe/Paris");
-check("tzOf falls back to workingHours", tzOf({ ...emptyProfile(), workingHours: { start: "9", end: "18", timezone: "America/New_York" } }) === "America/New_York");
+check("tzOf uses profile.timezone", tzOf({ ...emptyProfile(), timezone: "Europe/Paris" }) === "Europe/Paris");
 check("tzOf falls back to UTC", tzOf(emptyProfile()) === "UTC");
 check("isValidTz accepts a real zone", isValidTz("Europe/Paris"));
 check("isValidTz rejects junk", !isValidTz("Mars/Olympus"));
@@ -610,6 +609,13 @@ section("isBigIbProject");
 check("EE is a big project regardless of profile", isBigIbProject({ track: "ib" }, "Extended Essay research question", "") && isBigIbProject(undefined, "Extended Essay research question", ""));
 check("CAS is a big project regardless of profile", isBigIbProject({ track: "ib" }, "Log CAS hours", "for the CAS reflection") && isBigIbProject({}, "Log CAS hours", "for the CAS reflection"));
 check("an ordinary homework is NOT a big project", !isBigIbProject({ track: "ib" }, "Finish the worksheet", "due tomorrow") && !isBigIbProject(undefined, "Finish the worksheet", "due tomorrow"));
+// Broadened beyond IB-specific acronyms: a full essay/dissertation/thesis is just as multi-week as an EE,
+// even for a non-IB student — this is the fast pre-filter half of the "not only by keywords" fix (the
+// other half, letting the model self-classify from actual content, calls the network and isn't testable
+// here — see the writeStepsFromContext prompt itself).
+check("a full essay is a big project even without IB vocabulary", isBigIbProject(undefined, "Write a full essay on climate policy", ""));
+check("a dissertation/thesis/mémoire is a big project", isBigIbProject(undefined, "Finish my dissertation", "") && isBigIbProject(undefined, "Work on my thesis", "") && isBigIbProject(undefined, "Avancer mon mémoire", ""));
+check("ordinary homework mentioning neither essay nor acronym is still NOT a big project", !isBigIbProject(undefined, "Finish exercise 4", "due tomorrow"));
 // Live bug: a task like "Start the Extended Essay" needs no web research (nothing to look up — the
 // student just needs the plan), so writeStepsFromContext's `context` argument comes back empty. The
 // milestone rewrite used to bail out on ANY empty context before it ever checked bigProject, silently
@@ -619,7 +625,7 @@ check("an ordinary homework is NOT a big project", !isBigIbProject({ track: "ib"
 // big-project task must NOT be short-circuited by an empty context.
 {
   const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
-  check("writeStepsFromContext does not bail on empty context for a big project", /if \(!context\.trim\(\)[^)]*!bigProject\)/.test(src));
+  check("writeStepsFromContext does not bail on empty context for a big project", /if \(!context\.trim\(\)[^)]*!keywordHit\)/.test(src));
 }
 
 section("replanMilestones");

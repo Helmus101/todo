@@ -372,8 +372,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     genPerDay: p2.genPerDay ?? p1.genPerDay,
     timezone: p2.timezone ?? p1.timezone,
     // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
-    // p2's explicit `undefined` keys from normalizeProfile — the bug that silently dropped workingHours).
-    workingHours: p2.workingHours ?? p1.workingHours,
+    // p2's explicit `undefined` keys from normalizeProfile).
     responseStyle: p2.responseStyle ?? p1.responseStyle,
     autoApprove: p2.autoApprove ?? p1.autoApprove,
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
@@ -385,7 +384,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
           .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0))
           .slice(-100)
       : undefined,
-    dailyBriefingEnabled: p2.dailyBriefingEnabled ?? p1.dailyBriefingEnabled,
     language: p2.language ?? p1.language,
     // Grades are a HISTORY now (see the Profile.grades type comment), not one row per subject — a manual
     // entry from device A must not be dropped just because device B's copy doesn't have it yet. Union by
@@ -401,7 +399,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
       }
       return [...map.values()];
     })() : undefined,
-    lastBriefingSentAt: (Date.parse(p2.lastBriefingSentAt || "") || 0) >= (Date.parse(p1.lastBriefingSentAt || "") || 0) ? (p2.lastBriefingSentAt ?? p1.lastBriefingSentAt) : (p1.lastBriefingSentAt ?? p2.lastBriefingSentAt),
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
     // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.

@@ -49,7 +49,6 @@ export interface Profile {
                           // otherwise have surfaced nothing) — so we guarantee at most one forced task per local day
   genPerDay?: number;     // how many times/day Otto scans for new tasks (1–4; default 1). Sets the sweep cadence.
   // Structured preferences for autonomous behavior
-  workingHours?: { start: string; end: string; timezone: string }; // e.g. { start: "09:00", end: "18:00", timezone: "America/New_York" }
   responseStyle?: "concise" | "detailed" | "casual" | "formal"; // how AI should draft responses
   autoApprove?: string[]; // categories of actions AI can do without approval (e.g., ["schedule_meetings_under_30min", "archive_newsletters"])
   highPriorityPeople?: string[]; // people whose messages get higher priority
@@ -75,9 +74,6 @@ export interface Profile {
   // a real calendar event) always route back to THAT account regardless of this setting — this only
   // resolves the otherwise-ambiguous "which inbox does this new draft/doc belong to" case.
   primaryAccounts?: Record<string, string>;
-  // Daily briefing settings — sent every morning with top priorities + upcoming risks
-  dailyBriefingEnabled?: boolean;
-  lastBriefingSentAt?: string; // ISO timestamp of last successful briefing send
   // Otto Lycée defaults to French; a student can switch the whole app (UI + AI-generated content) to
   // English in Settings. Undefined/anything else is treated as "fr".
   language?: "fr" | "en";
@@ -116,11 +112,6 @@ export function normalizeProfile(p: any): Profile {
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
     timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
     // Structured preferences
-    workingHours: p?.workingHours && typeof p.workingHours === "object" ? {
-      start: String(p.workingHours.start || "09:00"),
-      end: String(p.workingHours.end || "18:00"),
-      timezone: String(p.workingHours.timezone || "UTC"),
-    } : undefined,
     responseStyle: ["concise", "detailed", "casual", "formal"].includes(p?.responseStyle) ? p.responseStyle : undefined,
     autoApprove: Array.isArray(p?.autoApprove) ? p.autoApprove.map(String) : undefined,
     highPriorityPeople: Array.isArray(p?.highPriorityPeople) ? p.highPriorityPeople.map(String) : undefined,
@@ -138,8 +129,6 @@ export function normalizeProfile(p: any): Profile {
     primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object"
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
       : undefined,
-    dailyBriefingEnabled: !!p?.dailyBriefingEnabled,
-    lastBriefingSentAt: typeof p?.lastBriefingSentAt === "string" ? p.lastBriefingSentAt : undefined,
     language: p?.language === "en" ? "en" : "fr",
     grades: Array.isArray(p?.grades)
       ? p.grades.map((g: any) => ({
@@ -185,9 +174,9 @@ export function gradesBySubject(grades: NonNullable<Profile["grades"]> | undefin
 export function isValidTz(tz: string): boolean {
   try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
 }
-/** The user's timezone for all "local day" math — their captured zone, then legacy workingHours, then UTC. */
+/** The user's timezone for all "local day" math — their captured zone, else UTC. */
 export function tzOf(profile?: Profile | null): string {
-  return profile?.timezone || profile?.workingHours?.timezone || "UTC";
+  return profile?.timezone || "UTC";
 }
 
 /** DeepSeek's peak-pricing windows (UTC): 01:00-04:00 and 06:00-10:00 — every billing item costs 2x during
@@ -393,6 +382,12 @@ export interface TaskStep {
    *  (Extended Essay, TOK, CAS, an IA, a group project), never for an ordinary short task. Lets the sweep
    *  detect a slipped milestone and re-plan the remaining ones deterministically (see `replanMilestones`). */
   targetDate?: string;
+  /** A step can be broken down further on request ("Détailler cette étape") — e.g. a milestone like
+   *  "Write the introduction" expands into its own small checklist. Persisted on the step itself (not
+   *  ephemeral chat output), so it survives reloads and reads as part of the task's real plan, not
+   *  advice that scrolled away. Generated once per step; the student ticks them off independently of the
+   *  parent step (the parent still needs its own "C'est fait" — sub-steps are a working aid, not a gate). */
+  substeps?: { text: string; done: boolean }[];
 }
 
 /** A reviewed message/invite the agent prepared (a Gmail draft / a composed Slack message / a calendar event

@@ -451,6 +451,14 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
   onChange: (t: WebTask[]) => void;
 }) {
   const L = useLang();
+  const [expanding, setExpanding] = useState<number | null>(null);
+  const expandStep = async (i: number) => {
+    setExpanding(i);
+    try { onChange(await api.expandStep(task.id, i)); } finally { setExpanding((cur) => (cur === i ? null : cur)); }
+  };
+  const toggleSubstep = async (i: number, subIndex: number, done: boolean) => {
+    onChange(await api.substepDone(task.id, i, subIndex, done));
+  };
   const openableCount = steps.filter((s) => s.url && !s.done && !stepBlocked(steps, s)).length;
   // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
   const openAllPages = async () => {
@@ -525,6 +533,27 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                     onKeyDown={(e) => { if (e.key === "Enter") onStepDone(i); }}
                   />
                   </>
+                ) : null}
+                {/* On-demand sub-checklist — a step can need its own breakdown ("Write the introduction"
+                    inside an essay) without forcing every step through it. Persisted on the step, not
+                    ephemeral chat output, so it's there next time the task is opened. */}
+                {s.substeps?.length ? (
+                  <ul className="substeps">
+                    {s.substeps.map((sub, si) => (
+                      <li key={si} className={`substep ${sub.done ? "done" : ""}`}>
+                        <button type="button" className="substep-mark" aria-pressed={sub.done}
+                          aria-label={sub.done ? L(`Marquer « ${sub.text} » comme pas encore faite`, `Mark "${sub.text}" as not done`) : L(`Marquer « ${sub.text} » comme faite`, `Mark "${sub.text}" as done`)}
+                          onClick={() => void toggleSubstep(i, si, !sub.done)}>
+                          <span aria-hidden="true">{sub.done ? "✓" : ""}</span>
+                        </button>
+                        <span className="substep-text">{sub.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : !s.done && !blk ? (
+                  <button type="button" className="btn xs ghost substep-expand" disabled={expanding === i} onClick={() => void expandStep(i)}>
+                    {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler cette étape", "Break this step down")}
+                  </button>
                 ) : null}
               </div>
               <div className="step-act">

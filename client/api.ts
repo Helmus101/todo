@@ -82,6 +82,8 @@ export const api = {
   dismiss: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/dismiss`),
   runStep: (id: string, index: number, answer?: string): Promise<WebTask> => post(`/api/tasks/${id}/step/${index}/run`, answer ? { answer } : undefined),
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
+  expandStep: (id: string, index: number): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/expand`),
+  substepDone: (id: string, index: number, subIndex: number, done = true): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/substep/${subIndex}/done`, { done }),
   sendDraft: (id: string, index: number): Promise<WebTask> => post(`/api/tasks/${id}/send/${index}`),
   editDraft: (id: string, index: number, patch: { subject?: string; body?: string; text?: string }): Promise<WebTask> => post(`/api/tasks/${id}/sendable/${index}/edit`, patch),
   // Profile responses are normalized to a valid shape (and fall back to empty on a 401/odd body) so the
@@ -96,7 +98,6 @@ export const api = {
   deleteAccount: (): Promise<{ ok: boolean; errors: string[] }> => post("/api/account/delete"),
   exportDataUrl: (): string => "/api/account/export",
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
-  setDailyBriefing: (enabled: boolean): Promise<Profile> => post("/api/settings/daily-briefing", { enabled }).then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
   usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string }> => req("/api/usage").then(j),

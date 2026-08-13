@@ -42,15 +42,18 @@ export function trackLine(_p?: Profile): string {
     `written + oral épreuves. Use whichever vocabulary the evidence actually points to — never force IB terms ` +
     `onto plain bac homework or vice versa, and default to plain language when neither clearly applies.\n`;
 }
-// A big coursework project (Extended Essay, TOK, CAS, an Internal Assessment, a group project) isn't like
-// an ordinary task — it runs for weeks/months, has real intermediate milestones (research question,
-// outline, supervisor check-in, draft, final submission), and a flat "next 3 actions" list either buries
-// the timeline or reads as one giant undifferentiated step. Detected by keyword rather than a model call —
-// cheap, and these terms (EE, IA, TOK, CAS) are specific enough that false positives are rare even without
-// gating on a declared track (there isn't one anymore — see trackLine above).
-const BIG_IB_PROJECT_RE = /extended essay\b|\bee\b|theory of knowledge|\btok\b|\bcas\b|internal assessment|\bia\b|group project/i;
+// A big multi-week project (Extended Essay, TOK, CAS, an Internal Assessment, a group project, a full
+// essay/dissertation, a thesis/mémoire) isn't like an ordinary task — it runs for weeks/months, has real
+// intermediate milestones (research question, outline, supervisor check-in, draft, final submission), and
+// a flat "next 3 actions" list either buries the timeline or reads as one giant undifferentiated step.
+// This regex is only a FAST PRE-FILTER, not the only detector — a title can name the project type without
+// these exact acronyms (a raw "ia" typed as a manual task can come back reworded by refineManualTask into
+// something that drops the literal acronym, and "write a full essay" never mentions IB at all). The real
+// decision also asks the model itself in writeStepsFromContext's own prompt — this regex just short-
+// circuits the obvious cases without waiting on that call's judgment.
+const BIG_PROJECT_RE = /extended essay\b|\bee\b|theory of knowledge|\btok\b|\bcas\b|internal assessment|\bia\b|group project|\bessay\b|dissertation|\bthesis\b|m[ée]moire|research paper|long[- ]term project|big project/i;
 export function isBigIbProject(_profile: Profile | undefined, title: string, why: string): boolean {
-  return BIG_IB_PROJECT_RE.test(`${title} ${why}`);
+  return BIG_PROJECT_RE.test(`${title} ${why}`);
 }
 // Hardcoded mission — this is what Otto IS, not a preference that can drift with prompt tweaks. Otto is
 // built for STUDENTS: a companion that keeps them moving, never a do-it-all that does their work for them.
@@ -243,7 +246,6 @@ function profileBlock(p?: Profile): string {
   // course's deadlines the student actually starts) — see MEMORY IS A LEAD, NOT A FACT in PLAN_ONLY_OVERRIDE:
   // still only a lead to verify against fresh research, never grounds for asserting something is CURRENT.
   if (recent(p.courses).length) parts.push(`Course patterns (leads to verify, not guaranteed still current): ${recent(p.courses).join("; ")}`);
-  if (p.workingHours) parts.push(`Working hours: ${p.workingHours.start}-${p.workingHours.end} (${p.workingHours.timezone})`);
   // NOTE: responseStyle is deliberately NOT injected — reply tone/formality comes from the THREAD, not a
   // global preference (a "formal" default would fight a casual thread and vice-versa).
   // Auto-approve entries are the user's PREFERENCE, never permission: the code-enforced action policy
@@ -2094,19 +2096,25 @@ async function writeStepsFromContext(
   did: string[] = [],
   profile?: Profile,
 ): Promise<TaskStep[]> {
-  const bigProject = isBigIbProject(profile, task.title, task.why);
+  const keywordHit = isBigIbProject(profile, task.title, task.why);
   // Normally: no distilled research context means nothing to refine, so bail to the loop's own steps.
-  // But a big project (EE/TOK/CAS/IA) doesn't need research context to know it needs a milestone
-  // breakdown instead of a flat list — that structure comes from the project TYPE, not from what was
-  // found online. Bailing here was the actual bug: "Start the Extended Essay" (a task with nothing to
-  // research — the student just needs the plan) produced empty context, short-circuited before bigProject
-  // was even checked, and silently kept the ordinary dependsOn-chained steps from the initial draft
-  // instead of ever getting milestone dates. Only skip the call for a NON-big-project task with no context.
-  if (!context.trim() && !bigProject) return fallbackSteps;
+  // But a big project (EE/TOK/CAS/IA/a full essay) doesn't need research context to know it needs a
+  // milestone breakdown instead of a flat list — that structure comes from the project TYPE, not from
+  // what was found online. Bailing here was the actual bug: "Start the Extended Essay" (a task with
+  // nothing to research — the student just needs the plan) produced empty context, short-circuited
+  // before this was even checked, and silently kept ordinary dependsOn-chained steps instead of ever
+  // getting milestone dates. Only skip the call when there's neither context NOR an obvious keyword hit.
+  if (!context.trim() && !keywordHit) return fallbackSteps;
   try {
     const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY FOUND/CREATED:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
     const didBlock = did.length ? `\n\nWHAT WAS ALREADY DONE THIS RUN (do not re-list these as steps):\n${did.map((d) => `- ${d}`).join("\n")}` : "";
+    // The keyword regex is only a FAST PRE-FILTER (catches "IA"/"EE"/"essay" etc. verbatim); it misses a
+    // paraphrased title (refineManualTask can reword a raw "ia" into something that drops the literal
+    // acronym) or a big project that's real but never named as one ("write my English coursework" is
+    // just as multi-week as an EE). So don't hard-branch on the regex alone — hand the model BOTH shapes
+    // and let it decide which this task actually is, with the regex hit only as a strong hint, not the
+    // final word. This is a single unified call either way (never two round-trips).
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
@@ -2115,41 +2123,42 @@ async function writeStepsFromContext(
       messages: [{
         role: "user",
         content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\n${context.trim() ? `CONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}\n\n` +
-          languageLine(profile) + trackLine(profile) + (bigProject ? nowBlock() : "") +
-          (bigProject
-            ? `This is a BIG, multi-week IB project (Extended Essay / TOK / CAS / an Internal Assessment / a group ` +
-              `project), not a short task — a flat "next 3 actions" list would bury the real timeline. Break it ` +
-              `into an ORDERED list of MILESTONES from where it stands now through final submission (e.g. research ` +
-              `question, source-gathering, outline, supervisor check-in, first draft, revision, final submission — ` +
-              `adapt to what this specific project actually needs, don't force every category to apply). Each ` +
-              `milestone needs a realistic "targetDate" (YYYY-MM-DD, relative to the CURRENT DATE above) spaced ` +
-              `out over the weeks/months a project like this genuinely takes — don't cram them all into the next ` +
-              `few days. This is for a STUDENT: never phrase the graded/learning work itself (writing the essay, ` +
-              `doing the research, forming the argument) as if it were already done or as Otto's job — that work ` +
-              `always stays theirs. Return ONLY this JSON: ` +
-              `{"steps": [{"text": "...", "targetDate": "YYYY-MM-DD"}, ...]} — 4 to 8 milestones, each text ` +
-              `≤10 words.`
-            : `Based ONLY on this task and this context, break the remaining work into a clear, ORDERED list of ` +
-              `concrete, actionable steps for the user — each a SHORT one-liner (≤8 words: imperative verb + the ` +
-              `specific thing, no hedging, no filler) naming a specific action (not a vague category like "look ` +
-              `into options"), small enough that the list feels doable, not overwhelming. ` +
-              `If a resource above was already CREATED (not just found), do NOT list "create X" as a step — that's ` +
-              `done; instead say what to DO with it now (review it, send it, use it, decide something). Only list ` +
-              `creating a document/draft as a step if none of the resources above cover it yet. This is for a ` +
-              `STUDENT: every step must be something THEY do — never phrase the graded/learning work itself (writing ` +
-              `the essay, solving the problem, answering the question) as if it were already done or as Otto's job; ` +
-              `that work always stays a step for them. Every step must be directly about "${task.title}" — no ` +
-              `unrelated tangents. The context above may mention OTHER people/threads/obligations that came up ` +
-              `during research but aren't actually part of this task (a different person's invitation, an ` +
-              `unrelated message to someone else) — DO NOT turn those into steps just because they're in the ` +
-              `context; only steps that move "${task.title}" itself forward belong here. Order them; set ` +
-              `"dependsOn" to an earlier step's index (0-based, in THIS list) when one must happen first — e.g. ` +
-              `an automatable step that's blocked until the user makes a call on an earlier step.\n\n` +
-              `Return ONLY this JSON: {"steps": [{"text": "...", "automatable": false, "dependsOn": 0}, ...]} — ` +
-              `1 to 6 steps, omit "dependsOn" when a step doesn't wait on another.`),
+          languageLine(profile) + trackLine(profile) + nowBlock() +
+          `FIRST, decide: is this a BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/` +
+          `mémoire, an IB Extended Essay/TOK/CAS/Internal Assessment, a group project, a major report — where a ` +
+          `flat "next 3 actions" list would bury the real timeline? Or an ordinary task that's actually doable ` +
+          `in one sitting or a few short steps?` +
+          (keywordHit ? ` (This one LOOKS like a big project from its title/why — confirm that reading unless the ` +
+            `actual content clearly contradicts it.)` : "") + `\n\n` +
+          `IF BIG: break it into an ORDERED list of MILESTONES from where it stands now through final submission ` +
+          `(e.g. research question, source-gathering, outline, supervisor check-in, first draft, revision, final ` +
+          `submission — adapt to what this specific project actually needs, don't force every category to apply). ` +
+          `Each milestone needs a realistic "targetDate" (YYYY-MM-DD, relative to the CURRENT DATE above) spaced ` +
+          `out over the weeks/months a project like this genuinely takes — don't cram them all into the next few ` +
+          `days. 4 to 8 milestones, each text ≤10 words.\n\n` +
+          `IF ORDINARY: break the remaining work into a clear, ORDERED list of concrete, actionable steps — each ` +
+          `a SHORT one-liner (≤8 words: imperative verb + the specific thing, no hedging, no filler) naming a ` +
+          `specific action (not a vague category like "look into options"), small enough that the list feels ` +
+          `doable, not overwhelming. If a resource above was already CREATED (not just found), do NOT list ` +
+          `"create X" as a step — that's done; instead say what to DO with it now (review it, send it, use it, ` +
+          `decide something). Only list creating a document/draft as a step if none of the resources above cover ` +
+          `it yet. Order them; set "dependsOn" to an earlier step's index (0-based, in THIS list) when one must ` +
+          `happen first — e.g. an automatable step that's blocked until the user makes a call on an earlier one. ` +
+          `1 to 6 steps, omit "dependsOn" when a step doesn't wait on another.\n\n` +
+          `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
+          `graded/learning work itself (writing the essay, doing the research, forming the argument, solving the ` +
+          `problem) as if it were already done or as Otto's job; that work always stays theirs. Every item must ` +
+          `be directly about "${task.title}" — no unrelated tangents; the context above may mention OTHER people/` +
+          `threads/obligations that came up during research but aren't actually part of this task — don't turn ` +
+          `those into steps just because they're in the context.\n\n` +
+          `Return ONLY this JSON: {"isBigProject": true|false, "steps": [{"text": "...", "targetDate": "YYYY-MM-DD" ` +
+          `(big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only)}, ...]}.`,
       }],
     }));
-    const out = firstJson<{ steps?: { text?: string; automatable?: boolean; targetDate?: string; dependsOn?: number }[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const out = firstJson<{ isBigProject?: boolean; steps?: { text?: string; automatable?: boolean; targetDate?: string; dependsOn?: number }[] }>(String(res.choices?.[0]?.message?.content || ""));
+    // The model's own judgment wins when it answers at all — it saw the actual content, the regex only
+    // saw the title. Fall back to the keyword hit only if the response is malformed/missing the field.
+    const bigProject = typeof out?.isBigProject === "boolean" ? out.isBigProject : keywordHit;
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     const rawSteps = out?.steps || [];
     const steps = rawSteps
@@ -2167,6 +2176,40 @@ async function writeStepsFromContext(
       .slice(0, bigProject ? 8 : 6);
     return steps.length ? steps : fallbackSteps;
   } catch { return fallbackSteps; } // a failed refinement pass falls back to the loop's own steps, never blocks submission
+}
+
+/** Break ONE step down into its own small checklist — "Write the introduction" (a milestone inside a big
+ *  project, but the same is useful for an ordinary step too) becomes 3-6 concrete sub-actions. On-demand
+ *  only (a "Détailler cette étape" button), never generated automatically — most steps are fine as-is,
+ *  and forcing every step through this would bury the plan in sub-lists nobody asked for. Persisted on
+ *  the step itself by the caller (server/index.ts), not returned as throwaway chat text. */
+export async function expandStep(task: { title: string; why: string }, step: { text: string }, profile?: Profile): Promise<{ text: string; done: boolean }[]> {
+  try {
+    const client = deepseekClient();
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
+      max_tokens: OUT.steps,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [{
+        role: "user",
+        content: `TASK: "${task.title}" (${task.why})\nSTEP TO BREAK DOWN: "${step.text}"\n\n` +
+          languageLine(profile) +
+          `Break this ONE step into 3 to 6 small, concrete sub-actions the student can tick off one at a time — ` +
+          `each a SHORT imperative (≤10 words), specific enough to just start doing, no vague categories like ` +
+          `"plan it out". This is for a STUDENT: every sub-step is something THEY do — never phrase the graded/` +
+          `learning work itself (writing, arguing, solving) as if it were already done or as Otto's job. Stay ` +
+          `strictly inside the scope of "${step.text}" — do not re-plan the whole task, only this one step.\n\n` +
+          `Return ONLY this JSON: {"substeps": ["...", "...", ...]}.`,
+      }],
+    }));
+    const out = firstJson<{ substeps?: string[] }>(String(res.choices?.[0]?.message?.content || ""));
+    return (out?.substeps || [])
+      .map((t) => String(t || "").trim().slice(0, 140))
+      .filter(Boolean)
+      .slice(0, 6)
+      .map((text) => ({ text, done: false }));
+  } catch { return []; }
 }
 
 /**

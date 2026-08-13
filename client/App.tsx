@@ -327,9 +327,12 @@ export function App() {
   }, [connected, status?.paused, SWEEP_EVERY_MS]);
 
   // Once Google is connected: load tasks + budget, trigger the daily sweep (silent, in background).
+  // These three are INDEPENDENT requests — `await syncTasks()` before starting the other two used to
+  // serialize budget/sweep behind the task-list fetch for no reason, adding its full round-trip to time-
+  // to-first-paint of unrelated UI (the budget banner, the sweep indicator). Fire all three at once.
   useEffect(() => {
     if (!connected) return;
-    void (async () => { await syncTasks(); void loadBudget(); void sweepIfDue(); })();
+    void syncTasks(); void loadBudget(); void sweepIfDue();
   }, [connected, status?.aiReady, syncTasks, sweepIfDue, loadBudget]);
 
   // Returning to the tab re-syncs the list (tasks finished elsewhere appear WITHOUT a manual reload) and
@@ -959,21 +962,10 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
   );
 }
 
-/** Working-hours controls — shared between Settings and Onboarding so the same question/UI isn't built
- *  twice. Renders bare rows (no wrapping section) so it drops into either container's own
- *  `.set-list`/step markup. `onChanged` receives the fresh profile after each save. */
+/** Language toggle — shared between Settings and Onboarding so the same question/UI isn't built twice.
+ *  Renders bare rows (no wrapping section) so it drops into either container's own `.set-list`/step
+ *  markup. `onChanged` receives the fresh profile after each save. */
 function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
-  const [start, setStart] = useState(profile?.workingHours?.start || "16:00");
-  const [end, setEnd] = useState(profile?.workingHours?.end || "19:00");
-  useEffect(() => {
-    setStart(profile?.workingHours?.start || "16:00");
-    setEnd(profile?.workingHours?.end || "19:00");
-  }, [profile?.workingHours?.start, profile?.workingHours?.end]);
-  const saveHours = async (s: string, e: string) => {
-    setStart(s); setEnd(e);
-    const timezone = profile?.workingHours?.timezone || (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return "UTC"; } })();
-    onChanged?.(await api.setProfilePreference("workingHours", { start: s, end: e, timezone }));
-  };
   const [lang, setLang] = useState<"fr" | "en">(profile?.language === "en" ? "en" : "fr");
   useEffect(() => { setLang(profile?.language === "en" ? "en" : "fr"); }, [profile?.language]);
   const saveLang = async (v: "fr" | "en") => {
@@ -987,14 +979,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         <div className="lang-toggle">
           <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} aria-pressed={lang === "fr"} onClick={() => void saveLang("fr")}>Français</button>
           <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} aria-pressed={lang === "en"} onClick={() => void saveLang("en")}>English</button>
-        </div>
-      </div>
-      <div className="set-row">
-        <span className="set-text"><b>{lang === "en" ? "When you work/study" : "Quand tu bosses/révises"}</b><span className="settings-hint">{lang === "en" ? "Otto only proposes study slots inside this window." : "Otto ne propose des créneaux de révision que dans cette plage."}</span></span>
-        <div className="pref-hours">
-          <input type="time" className="addinput sm" value={start} onChange={(e) => void saveHours(e.target.value, end)} />
-          <span>–</span>
-          <input type="time" className="addinput sm" value={end} onChange={(e) => void saveHours(start, e.target.value)} />
         </div>
       </div>
     </>
@@ -1028,13 +1012,23 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
   // of every entry: a subject with 5 logged grades shouldn't outweigh one with a single Pronote average
   // just because it has more rows.
   const overallAvg20 = bySubject.length ? bySubject.reduce((sum, s) => sum + s.avg20, 0) / bySubject.length : null;
-  // Fires from Settings, which has no access to the dashboard's task-list state — the new task lands on
-  // the server immediately and shows up next time the Tasks page syncs (its 45s poll or a tab focus), not
-  // instantly here. A brief local confirmation stands in for a toast so the tap doesn't feel like a no-op.
+  const [addTaskError, setAddTaskError] = useState<{ subject: string; message: string } | null>(null);
+  // Fires from Settings, which has no access to the dashboard's task-list state (that lives in the top-
+  // level App component). The original version just awaited api.add() and flashed a small "Ajoutée ✓" —
+  // with no try/catch, a failed call (session hiccup, AI refinement erroring) threw silently and the
+  // button visually did nothing, which is exactly what got reported as "the button doesn't work". Now:
+  // errors surface inline, and success navigates straight to the Tasks page so the new task is actually
+  // visible immediately instead of trusting the student to notice a checkmark and go look for it later.
   const addTask = async (subj: string) => {
-    await api.add(L(`Réviser ${subj}`, `Review ${subj}`));
+    setAddTaskError(null);
     setAddedTaskFor(subj);
-    setTimeout(() => setAddedTaskFor((cur) => (cur === subj ? null : cur)), 2500);
+    try {
+      await api.add(L(`Réviser ${subj}`, `Review ${subj}`));
+      navigate("tasks");
+    } catch (e: any) {
+      setAddedTaskFor(null);
+      setAddTaskError({ subject: subj, message: e?.message || L("Échec de l'ajout — réessaie.", "Couldn't add it — try again.") });
+    }
   };
   return (
     <div className="grades-editor">
@@ -1063,8 +1057,8 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
                 <div className="grade-bar"><div className={`grade-bar-fill ${low ? "low" : ""}`} style={{ width: `${pct}%` }} /></div>
                 {low ? (
                   <div className="grade-nudge">
-                    <span>{L("En difficulté dans cette matière — un peu plus de révision pourrait aider.", "Struggling in this subject — a bit more review time could help.")}</span>
-                    <button type="button" className="btn xs ghost" disabled={addedTaskFor === s.subject} onClick={() => void addTask(s.subject)}>{addedTaskFor === s.subject ? L("Ajoutée ✓", "Added ✓") : L("Ajouter une révision", "Add a study task")}</button>
+                    <span>{addTaskError?.subject === s.subject ? addTaskError.message : L("En difficulté dans cette matière — un peu plus de révision pourrait aider.", "Struggling in this subject — a bit more review time could help.")}</span>
+                    <button type="button" className="btn xs ghost" disabled={addedTaskFor === s.subject} onClick={() => void addTask(s.subject)}>{addedTaskFor === s.subject ? L("Ajout…", "Adding…") : L("Ajouter une révision", "Add a study task")}</button>
                   </div>
                 ) : null}
                 {open ? (
@@ -1104,13 +1098,9 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
   const [showKnows, setShowKnows] = useState(false);
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
-  const [genPerDay, setGenPerDay] = useState(Math.min(4, Math.max(1, status.genPerDay || 1)));
-  const [dailyBriefingEnabled, setDailyBriefingEnabledLocal] = useState(profile?.dailyBriefingEnabled ?? false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
-  useEffect(() => { setGenPerDay(Math.min(4, Math.max(1, status.genPerDay || 1))); }, [status.genPerDay]);
-  useEffect(() => { void api.profile().then((p) => { setProfile(p); setDailyBriefingEnabledLocal(p?.dailyBriefingEnabled ?? false); }); void api.usage().then(setUsage).catch(() => {}); }, []);
-  const changeGen = (n: number) => { setGenPerDay(n); void api.setProfilePreference("genPerDay", n).then(() => onChanged()); };
+  useEffect(() => { void api.profile().then(setProfile); void api.usage().then(setUsage).catch(() => {}); }, []);
   // Month-to-date AI spend vs. the cap — both computed server-side (EUR, approximate; for visibility + the cap).
   const fmtEur = (n: number) => n <= 0 ? "0€" : n < 0.01 ? "< 0,01€" : `${n.toFixed(2).replace(".", ",")}€`;
   useReveal(); // fades each settings section in on first paint (see `.reveal` in styles.css)
@@ -1167,22 +1157,6 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
           <label className="set-row">
             <span className="set-text"><b>{L("Mettre Otto en pause", "Pause Otto")}</b><span className="settings-hint">{L("Arrête toute l'IA. Tes tâches restent en place.", "Stops all AI activity. Your tasks stay as they are.")}</span></span>
             <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => { const v = e.target.checked; setPausedLocal(v); void api.setPaused(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
-          </label>
-          <div className="set-row">
-            <span className="set-text"><b>{L("Vérifier Pronote", "Check Pronote")}</b><span className="settings-hint">{L("À quelle fréquence Otto regarde ton Pronote chaque jour.", "How often Otto checks your Pronote each day.")}</span></span>
-            <div className="seg" role="group" aria-label={L("Vérifications par jour", "Checks per day")}>
-              {[1, 2, 3, 4].map((n) => (
-                <button key={n} className={`seg-btn ${genPerDay === n ? "on" : ""}`} aria-pressed={genPerDay === n} onClick={() => changeGen(n)}>{n}×</button>
-              ))}
-            </div>
-          </div>
-          <label className={`set-row ${status.googleConnected ? "" : "disabled"}`}>
-            <span className="set-text"><b>{L("Bilan quotidien", "Daily briefing")}</b><span className="settings-hint">
-              {status.googleConnected
-                ? L("Reçois un email chaque matin avec tes 3 priorités du jour.", "Get an email each morning with your top 3 priorities.")
-                : L("Connecte Gmail dans Sources pour recevoir un email chaque matin — c'est par là que le bilan part.", "Connect Gmail under Sources to get a morning email — that's what the briefing sends through.")}
-            </span></span>
-            <span className="switch"><input type="checkbox" disabled={!status.googleConnected} checked={dailyBriefingEnabled && status.googleConnected} onChange={(e) => { const v = e.target.checked; setDailyBriefingEnabledLocal(v); void api.setDailyBriefing(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
           </label>
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
@@ -1439,8 +1413,8 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
 
         {step === 3 && (
           <div className="onboard-step">
-            <h2>{L("Tes préférences", "Your preferences")}</h2>
-            <p className="onboard-lead">{L("Ça aide Otto à proposer des créneaux de révision au bon moment — modifiable à tout moment dans les Réglages.", "This helps Otto propose study slots at the right time — changeable any time in Settings.")}</p>
+            <h2>{L("Ta langue", "Your language")}</h2>
+            <p className="onboard-lead">{L("Change l'interface et tout ce qu'Otto écrit — modifiable à tout moment dans les Réglages.", "Switches the interface and everything Otto writes — changeable any time in Settings.")}</p>
             <div className="set-list onboard-prefs">
               <PreferencesFields profile={null} />
             </div>

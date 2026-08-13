@@ -1081,6 +1081,20 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .step .btn { margin-left: auto; flex: none; }
 .step-input-label { display: block; font-size: 12px; font-weight: 650; color: var(--ink-2); margin-top: 8px; }
 .step-input { height: 34px; font-size: 13px; margin-top: 4px; width: 100%; }
+.substep-expand { margin-top: 6px; }
+/* A step's own on-demand checklist — indented under the step text so it visually reads as "part of this
+   step", one level down from the main .steps list rather than a sibling of it. */
+.substeps { list-style: none; margin: 8px 0 0; padding-left: 4px; display: flex; flex-direction: column; gap: 4px; }
+.substep { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
+.substep.done .substep-text { color: var(--ink-3); text-decoration: line-through; }
+.substep-mark {
+  flex: none; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%;
+  border: 1.5px solid var(--line); background: transparent; color: transparent;
+  font-size: 9px; line-height: 1; cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color 140ms var(--ease), background 140ms var(--ease);
+}
+.substep.done .substep-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* Sendables — review-then-send */
 .sendables { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
@@ -1197,8 +1211,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .set-text > b { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
 .set-text .settings-hint { margin: 0; }
 .set-row > .btn { flex: none; }
-.pref-hours { display: flex; align-items: center; gap: 8px; flex: none; }
-.pref-hours input[type="time"] { width: 100px; }
 .lang-toggle { display: flex; gap: 6px; flex: none; }
 .more-settings-btn { margin-top: 10px; align-self: flex-start; }
 
