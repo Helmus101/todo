@@ -610,6 +610,17 @@ section("isBigIbProject");
 check("EE is a big project regardless of profile", isBigIbProject({ track: "ib" }, "Extended Essay research question", "") && isBigIbProject(undefined, "Extended Essay research question", ""));
 check("CAS is a big project regardless of profile", isBigIbProject({ track: "ib" }, "Log CAS hours", "for the CAS reflection") && isBigIbProject({}, "Log CAS hours", "for the CAS reflection"));
 check("an ordinary homework is NOT a big project", !isBigIbProject({ track: "ib" }, "Finish the worksheet", "due tomorrow") && !isBigIbProject(undefined, "Finish the worksheet", "due tomorrow"));
+// Live bug: a task like "Start the Extended Essay" needs no web research (nothing to look up — the
+// student just needs the plan), so writeStepsFromContext's `context` argument comes back empty. The
+// milestone rewrite used to bail out on ANY empty context before it ever checked bigProject, silently
+// keeping the ordinary dependsOn-chained steps instead of ever generating milestone dates — invisible in
+// isBigIbProject's own tests since those never touch the context-gating logic. Source-string pin (no
+// network-calling function to unit test directly, and this file is deliberately network-free): a
+// big-project task must NOT be short-circuited by an empty context.
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("writeStepsFromContext does not bail on empty context for a big project", /if \(!context\.trim\(\)[^)]*!bigProject\)/.test(src));
+}
 
 section("replanMilestones");
 const msNow = new Date("2026-06-15T12:00:00Z");

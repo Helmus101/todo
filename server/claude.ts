@@ -2094,8 +2094,15 @@ async function writeStepsFromContext(
   did: string[] = [],
   profile?: Profile,
 ): Promise<TaskStep[]> {
-  if (!context.trim()) return fallbackSteps; // nothing distilled to work from — the loop's own steps are all there is
   const bigProject = isBigIbProject(profile, task.title, task.why);
+  // Normally: no distilled research context means nothing to refine, so bail to the loop's own steps.
+  // But a big project (EE/TOK/CAS/IA) doesn't need research context to know it needs a milestone
+  // breakdown instead of a flat list — that structure comes from the project TYPE, not from what was
+  // found online. Bailing here was the actual bug: "Start the Extended Essay" (a task with nothing to
+  // research — the student just needs the plan) produced empty context, short-circuited before bigProject
+  // was even checked, and silently kept the ordinary dependsOn-chained steps from the initial draft
+  // instead of ever getting milestone dates. Only skip the call for a NON-big-project task with no context.
+  if (!context.trim() && !bigProject) return fallbackSteps;
   try {
     const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY FOUND/CREATED:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
@@ -2107,7 +2114,7 @@ async function writeStepsFromContext(
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\nCONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}${linksBlock}${didBlock}\n\n` +
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\n${context.trim() ? `CONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}\n\n` +
           languageLine(profile) + trackLine(profile) + (bigProject ? nowBlock() : "") +
           (bigProject
             ? `This is a BIG, multi-week IB project (Extended Essay / TOK / CAS / an Internal Assessment / a group ` +
