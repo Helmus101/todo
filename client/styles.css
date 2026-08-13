@@ -497,6 +497,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .card {
   position: relative;
+  display: flex; align-items: center; gap: 12px; padding: 18px 14px 18px 28px; min-height: 58px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -522,11 +523,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Mobile-first: the hero boost is a modest bump on a phone (vertical breathing room + type size, where
    it's actually felt) and only takes the wider insets on a big screen — at the desktop 38px inset a
    ~375px card had barely any room left for its title. */
-.dash-today .card-main { padding: 22px 14px 22px 30px; }
+.dash-today .card { padding: 22px 14px 22px 30px; }
 .dash-today .card-title { font-size: 16.5px; }
 .dash-today .card::before { left: 12px; top: 26px; width: 9px; height: 9px; }
 @media (min-width: 641px) {
-  .dash-today .card-main { padding: 26px 22px 26px 38px; }
+  .dash-today .card { padding: 26px 22px 26px 38px; }
   .dash-today .card-title { font-size: 17.5px; }
   .dash-today .card::before { left: 16px; top: 30px; }
 }
@@ -766,12 +767,18 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    register at all, consistently, across multiple browsers, with no JS error and no plausible CSS cause
    found after extensive testing (two independent targeted WebKit-specific fixes shipped and confirmed live
    with zero effect). Rather than keep chasing an unexplained bug in that pattern, it was removed entirely:
-   .card-main IS the button now, so there's no invisible layer for anything to fail to hit-test. Needs a
-   full button reset (border/background/font/text-align/width) since it's real content, not a styled div. */
+   .card-main IS the button now, so there's no invisible layer for anything to fail to hit-test.
+   It's ONE OF THREE flex siblings inside `.card` now (with .card-check/.card-x), not the sole content of
+   the row anymore — `.card` itself carries the row's padding/gap/min-height. `flex: 1; min-width: 0` (NOT
+   width: 100%) is what makes it correctly take just the REMAINING space next to its siblings instead of
+   overlapping them — the earlier width:100% here silently stretched .card-main on top of .card-check and
+   .card-x, which is exactly why taps that should open a task were landing on the checkbox instead and
+   marking it done. Still needs a full button reset (border/background/font/text-align) since it's real
+   content, not a styled div. */
 .card-main {
-  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
-  padding: 18px 14px 18px 28px; cursor: pointer; min-height: 58px; border-radius: var(--radius);
-  border: 0; background: none; font: inherit; color: inherit;
+  display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; text-align: left;
+  cursor: pointer; border-radius: var(--radius);
+  border: 0; background: none; font: inherit; color: inherit; padding: 0;
 }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
    response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
@@ -864,7 +871,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Pushed to the right edge so it never sits where the eye expects the primary action. */
 .hero-stuck { margin-left: auto; }
 .step-hero .step-input { width: 100%; }
-.hero-waiting, .hero-done { flex-direction: row; align-items: center; gap: 10px; }
+.hero-waiting { flex-direction: row; align-items: center; gap: 10px; }
+/* .hero-done now carries an "Annuler" (undo) action below the status line, not just the spinner-style
+   icon+text pairing .hero-waiting uses — stays in the default column layout so the button sits under the
+   text instead of squeezed into the same row. */
 .hero-complete { align-items: center; text-align: center; }
 .hero-complete .deck-score-ring { margin: 0 auto; }
 .hero-sendable { background: transparent; padding: 0; }
@@ -1499,9 +1509,8 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   .topbar { gap: 20px; padding: 0 20px; padding-left: calc(20px + env(safe-area-inset-left)); padding-right: calc(20px + env(safe-area-inset-right)); }
   .list-wrap, .settings-page { padding-left: 24px; padding-right: 24px; padding-bottom: 140px; }
   .list, .empty { margin-left: 0; margin-right: 0; }
-  .card-main { gap: 14px; padding: 22px 18px 22px 34px; }
+  .card { gap: 14px; padding: 22px 18px 22px 34px; }
   .card::before { left: 14px; top: 26px; }
-  .detail { padding: 2px 6px 18px 26px; }
   .card-badges .chip { font-size: 11px; padding: 2px 8px; }
   .btn { height: 40px; }
   .btn.xs { height: 30px; }
