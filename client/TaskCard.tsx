@@ -546,22 +546,42 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
   const [showAudit, setShowAudit] = useState(false);
+  const artifactCount = (task.notes?.length || 0) + (task.flashcards?.length || 0) + (task.quizzes?.length || 0);
   return (
     <>
-      {task.did?.length ? <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul> : null}
-      {/* In-app notes, flashcard decks and quizzes — no external tab, they open right here in a popup. */}
-      {(task.notes?.length || task.flashcards?.length || task.quizzes?.length) ? (
-        <div className="note-chips">
-          {task.notes?.map((n) => (
-            <button key={n.id} type="button" className="btn xs ghost note-chip" onClick={() => onOpenNote(n.id)}><span aria-hidden="true">📄</span> {n.title}</button>
-          ))}
-          {task.flashcards?.map((f) => (
-            <button key={f.id} type="button" className="btn xs ghost note-chip" onClick={() => onOpenDeck(f.id)}><span aria-hidden="true">🗂</span> {L(`${f.title}, ${f.cards.length} cartes`, `${f.title}, ${f.cards.length} cards`)}</button>
-          ))}
-          {task.quizzes?.map((qz) => (
-            <button key={qz.id} type="button" className="btn xs ghost note-chip" onClick={() => onOpenQuiz(qz.id)}><span aria-hidden="true">❓</span> {L(`${qz.title}, ${qz.questions.length} questions`, `${qz.title}, ${qz.questions.length} questions`)}</button>
-          ))}
-        </div>
+      {task.did?.length ? (
+        <>
+          {artifactCount > 0 ? <span className="prepared-label">{L("Fait", "Done")}</span> : null}
+          <ul className="bullets">{task.did.map((d, i) => <li key={i}>{withInlineLinks(d)}</li>)}</ul>
+        </>
+      ) : null}
+      {/* In-app notes, flashcard decks and quizzes — no external tab, they open right here in a popup.
+          Row-card layout (icon badge + title + meta) rather than an inline pill: these are real artifacts
+          worth a proper tap target, not tags, and stacking them makes it obvious there are several. */}
+      {artifactCount > 0 ? (
+        <>
+          {task.did?.length ? <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span> : null}
+          <div className="note-chips prepared-chips">
+            {task.notes?.map((n) => (
+              <button key={n.id} type="button" className="note-chip" onClick={() => onOpenNote(n.id)}>
+                <span className="note-chip-icon" aria-hidden="true">📄</span>
+                <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
+              </button>
+            ))}
+            {task.flashcards?.map((f) => (
+              <button key={f.id} type="button" className="note-chip" onClick={() => onOpenDeck(f.id)}>
+                <span className="note-chip-icon" aria-hidden="true">🗂</span>
+                <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
+              </button>
+            ))}
+            {task.quizzes?.map((qz) => (
+              <button key={qz.id} type="button" className="note-chip" onClick={() => onOpenQuiz(qz.id)}>
+                <span className="note-chip-icon" aria-hidden="true">❓</span>
+                <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions`, `${qz.questions.length} questions`)}</span></span>
+              </button>
+            ))}
+          </div>
+        </>
       ) : null}
       {task.links?.length ? (
         <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>

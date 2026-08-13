@@ -905,6 +905,28 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .bullets { margin: 0; padding-left: 18px; }
 .bullets li { font-size: 14px; line-height: 1.55; margin-bottom: 4px; }
 
+/* "What Otto prepared" section labels — quiet uppercase tags separating "Fait" (plain-text actions) from
+   "Créé pour toi" (real openable artifacts), so the two don't blur into one undifferentiated list. */
+.prepared-label { display: block; font-size: 10.5px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.07em; margin: 14px 0 6px; }
+.prepared-label:first-child { margin-top: 0; }
+/* Artifact rows — a real card each (icon badge, title, meta), not an inline pill: these are things the
+   student actually opens and reads/drills, so they get a full-width tap target and room to show what
+   they are, instead of competing for space as a wrapped row of tags. Stacked, not wrapped — .note-chips
+   still wraps for the chat-inline pill variant (see .chat-artifact-chips below), just not here. */
+.prepared-chips { flex-direction: column; gap: 6px; }
+.prepared-chips .note-chip {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px;
+  padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); text-align: left; cursor: pointer;
+  transition: border-color 140ms var(--ease), background 140ms var(--ease), transform 140ms var(--ease);
+}
+@media (hover: hover) { .prepared-chips .note-chip:hover { border-color: var(--ink-3); background: var(--bg-2); } }
+.prepared-chips .note-chip:active { transform: scale(0.99); }
+.note-chip-icon { flex: none; font-size: 18px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--bg-2); }
+.note-chip-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.note-chip-title { font-size: 13.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-chip-meta { font-size: 11.5px; color: var(--ink-3); }
+
 .context-text { white-space: pre-line; }
 .context-body { margin-top: 8px; }
 
