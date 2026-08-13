@@ -734,6 +734,23 @@ for (const [mod, names] of [
   check("TaskCardRow does not reintroduce the invisible .card-open overlay pattern", !src.includes('"card-open"'));
   check("TaskCardRow's .card-main is a real <button>, not a styled <div>", /<button[^>]*className="card-main"/.test(src));
 }
+// The ACTUAL live-confirmed root cause of "tapping a task marks it done instead of opening it": any element
+// using the `::after { position: absolute; inset: -Npx }` hit-expander pattern MUST itself have
+// `position: relative`, or the ::after positions relative to the nearest positioned ANCESTOR instead (here,
+// `.card`) — silently blowing the invisible hit-expander up to cover almost the entire row instead of just
+// the small control it belongs to. This exact regression (removing `.card-check`'s `position: relative` as
+// apparently-dead code during an unrelated cleanup) shipped and was live for multiple rounds before being
+// found. Pin the coupling directly: every selector with this ::after pattern must also declare position:
+// relative somewhere in the file.
+{
+  const css = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  const hitExpanders = [...css.matchAll(/([.\w-]+)::after\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*-\d/g)].map((m) => m[1]);
+  check("found the known ::after hit-expanders to check (styles.css structure changed?)", hitExpanders.length >= 3);
+  for (const sel of hitExpanders) {
+    const re = new RegExp(`(^|[,\\s}])${sel.replace(".", "\\.")}\\s*\\{[^}]*position:\\s*relative`, "m");
+    check(`${sel} (has an ::after hit-expander) also declares position: relative`, re.test(css));
+  }
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

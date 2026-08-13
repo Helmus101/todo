@@ -241,9 +241,6 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
     catch (e: any) { onNotify?.(e?.message || L("Impossible de lancer cette tâche — réessaie.", "Couldn't run this task — try again."), "error"); }
     finally { setRunning(false); }
   };
-  // Undo a confirm or dismiss — a done task isn't a dead end. Restores it to the live list; the hero then
-  // re-derives what to show from the task's own steps, same as any other open task.
-  const reopen = () => act(() => api.reopen(task.id));
 
   const steps = task.steps || [];
   const doneCount = steps.filter((s) => s.done).length;
@@ -280,7 +277,6 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         retrying={retrying} running={running} decided={decided} setDecided={setDecided}
         onStepDone={markStepDone} onAsk={askAboutStep} onRun={run}
         onConfirm={() => void leave(() => api.confirm(task.id), "confirm")}
-        onReopen={reopen}
         onTask={onTask} onNotify={onNotify}
       />
 
@@ -335,12 +331,12 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
 
 /** Exactly one shape, by precedence. Ticking the current step advances it in place — that's what makes
  *  "one thing at a time" self-evident without a word of instruction. */
-function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onAsk, onRun, onConfirm, onReopen, onTask, onNotify }: {
+function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onAsk, onRun, onConfirm, onTask, onNotify }: {
   task: WebTask; steps: TaskStep[]; currentIdx: number; isDone: boolean; cStatus: string;
   retrying?: boolean; running: boolean;
   decided: Record<number, string>; setDecided: Dispatch<SetStateAction<Record<number, string>>>;
   onStepDone: (i: number) => void; onAsk: (i: number, text: string) => void; onRun: (reset?: boolean) => void;
-  onConfirm: () => void; onReopen: () => void; onTask: (t: WebTask) => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
+  onConfirm: () => void; onTask: (t: WebTask) => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
 }) {
   const L = useLang();
   const pendingSendable = (task.sendables || []).findIndex((s) => !s.sent);
@@ -349,11 +345,6 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     return (
       <div className="step-hero hero-done">
         <p className="hero-line">{task.status === "dismissed" ? L("Tâche ignorée.", "Task dismissed.") : L("Tâche terminée.", "Task finished.")}</p>
-        {/* A done task isn't a dead end — one tap undoes a mis-tap or a "actually, not yet" without having
-            to redo any of the underlying work (steps/artifacts are untouched, only the status changes). */}
-        <div className="hero-acts">
-          <button className="btn ghost" onClick={onReopen}>{L("Annuler", "Undo")}</button>
-        </div>
       </div>
     );
   }

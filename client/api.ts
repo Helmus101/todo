@@ -80,7 +80,6 @@ export const api = {
   confirm: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/confirm`),
   reject: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reject`),
   dismiss: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/dismiss`),
-  reopen: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reopen`),
   runStep: (id: string, index: number, answer?: string): Promise<WebTask> => post(`/api/tasks/${id}/step/${index}/run`, answer ? { answer } : undefined),
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
   sendDraft: (id: string, index: number): Promise<WebTask> => post(`/api/tasks/${id}/send/${index}`),

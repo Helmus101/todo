@@ -787,6 +787,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* The direct check-off control — a normal to-do checkbox. Click fills it and marks the task done in one
    step, no need to open the card first (opening it still works too, via "Looks good"). */
 .card-check {
+  position: relative; /* REQUIRED: without this, ::after's `inset: -11px` positions relative to the nearest
+  positioned ANCESTOR instead (`.card`), which made the invisible hit-expander cover almost the entire card
+  — every tap anywhere on the row, including squarely on the title, landed on this and marked the task done
+  instead of opening it. This was the actual live-confirmed "tap on task marks it done" bug. */
   flex: none; width: 22px; height: 22px; margin: -2px 0; border-radius: 50%;
   border: 1.5px solid var(--line); background: transparent; color: transparent;
   font-size: 12px; font-weight: 650; line-height: 1; cursor: pointer; padding: 0;
@@ -871,10 +875,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Pushed to the right edge so it never sits where the eye expects the primary action. */
 .hero-stuck { margin-left: auto; }
 .step-hero .step-input { width: 100%; }
-.hero-waiting { flex-direction: row; align-items: center; gap: 10px; }
-/* .hero-done now carries an "Annuler" (undo) action below the status line, not just the spinner-style
-   icon+text pairing .hero-waiting uses — stays in the default column layout so the button sits under the
-   text instead of squeezed into the same row. */
+.hero-waiting, .hero-done { flex-direction: row; align-items: center; gap: 10px; }
 .hero-complete { align-items: center; text-align: center; }
 .hero-complete .deck-score-ring { margin: 0 auto; }
 .hero-sendable { background: transparent; padding: 0; }

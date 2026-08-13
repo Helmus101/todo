@@ -660,23 +660,6 @@ app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => {
   }
   res.json(req.session.tasks || []);
 });
-// Undo a confirm or dismiss — puts a done/dismissed task back into the live list. Restores to
-// "needs_review" rather than trying to reconstruct whatever raw status it had before: that's exactly what
-// every real task's status was the instant before confirm was ever offered (see StepHero's own precedent
-// table client-side — "Looks good"/confirm only ever appears once steps are done or there are none), and
-// the UI derives what to actually show (remaining steps vs. the done screen) from the task's own
-// steps/sendables, not from this raw label, so it renders correctly either way.
-app.post("/api/tasks/:id/reopen", requireAuth, rateLimit(60, 60_000), async (req, res) => {
-  const id = String(req.params.id);
-  const task = (req.session.tasks || []).find((t) => t.id === id);
-  if (task && isHandled(task.status)) {
-    task.status = "needs_review";
-    task.updatedAt = new Date().toISOString();
-    await commit(req);
-    void recordEvent(req.session.user!, "reopened", { taskId: id, message: "You undid marking it done" });
-  }
-  res.json(req.session.tasks || []);
-});
 app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
   const task = (req.session.tasks || []).find((t) => t.id === id);
