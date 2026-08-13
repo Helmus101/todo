@@ -175,6 +175,12 @@ function boldify(s: string): ReactNode {
   return parts.map((p, i) => (p.startsWith("**") && p.endsWith("**") ? <b key={i}>{p.slice(2, -2)}</b> : p));
 }
 
+// A GFM-style pipe row: "| a | b | c |" (leading/trailing pipes optional). Splits on unescaped `|`.
+const splitRow = (line: string): string[] =>
+  line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+// The separator row under a table header: "|---|:---:|---|" — dashes (+ optional colons), nothing else.
+const isTableSep = (line: string): boolean => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(line);
+
 export function renderNoteBody(md: string): ReactNode {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
@@ -182,16 +188,40 @@ export function renderNoteBody(md: string): ReactNode {
   const flushList = () => {
     if (list) { blocks.push(<ul key={blocks.length} className="note-list">{list.map((t, i) => <li key={i}>{boldify(t)}</li>)}</ul>); list = null; }
   };
-  lines.forEach((raw, i) => {
-    const line = raw.trim();
-    if (!line) { flushList(); return; }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) { flushList(); continue; }
+    // A table: this line and the next both look like pipe rows, and the next is specifically the
+    // dashes separator. Otto's own note-writing tool has no table syntax granted (fiches are meant to be
+    // scannable prose/lists), but a student can still paste one in, or the model can slip into GFM habits
+    // it picked up elsewhere — render it properly instead of dumping raw "| a | b |" text.
+    if (line.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1].trim())) {
+      flushList();
+      const header = splitRow(line);
+      let j = i + 2;
+      const rows: string[][] = [];
+      while (j < lines.length && lines[j].trim().includes("|") && !isTableSep(lines[j].trim())) {
+        rows.push(splitRow(lines[j].trim()));
+        j++;
+      }
+      blocks.push(
+        <div key={i} className="note-table-wrap">
+          <table className="note-table">
+            <thead><tr>{header.map((c, ci) => <th key={ci}>{boldify(c)}</th>)}</tr></thead>
+            <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci}>{boldify(c)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      );
+      i = j - 1;
+      continue;
+    }
     const h = /^(#{1,3})\s+(.*)/.exec(line);
-    if (h) { flushList(); const Tag = h[1].length === 1 ? "h3" : h[1].length === 2 ? "h4" : "h5"; blocks.push(<Tag key={i}>{boldify(h[2])}</Tag>); return; }
+    if (h) { flushList(); const Tag = h[1].length === 1 ? "h3" : h[1].length === 2 ? "h4" : "h5"; blocks.push(<Tag key={i}>{boldify(h[2])}</Tag>); continue; }
     const li = /^[-*]\s+(.*)|^\d+[.)]\s+(.*)/.exec(line);
-    if (li) { (list ||= []).push(li[1] ?? li[2]); return; }
+    if (li) { (list ||= []).push(li[1] ?? li[2]); continue; }
     flushList();
     blocks.push(<p key={i}>{boldify(line)}</p>);
-  });
+  }
   flushList();
   return blocks;
 }

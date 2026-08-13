@@ -644,7 +644,7 @@ const CREATE_NOTE_TOOL = {
   description: "Create a SHORT in-app brief/note attached to this task — a quick checklist, reference sheet, or outline the student opens in a popup right on the card. No account, no approval, nothing external. Use this by default for anything short; only create a real Google Doc/Sheet/Slides when the content is genuinely long-form or needs to leave the app.",
   input_schema: { type: "object", properties: {
     title: { type: "string", description: "short label shown on the button, e.g. 'Fiche de révision — Suites numériques'" },
-    body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists) — this IS the brief, not a placeholder." },
+    body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists, and a GFM pipe table — `| col | col |` with a `|---|---|` separator row — when the content is naturally tabular, e.g. a timing/schedule breakdown) — this IS the brief, not a placeholder." },
   }, required: ["title", "body"] },
 };
 

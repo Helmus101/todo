@@ -714,12 +714,35 @@ section("forceWeekCoverage — everything due this week gets a task, no matter w
 // blank screen. There are no DOM/render tests in this suite, so this is the one automated guard for it:
 // import the client modules for real and assert every component actually came through as a function.
 section("client module graph — no import cycle leaves a component undefined");
+let uiModule;
 for (const [mod, names] of [
   ["../client/ui.tsx", ["FlashcardDeck", "QuizPlayer", "TaskModal", "renderNoteBody", "renderChatText", "statusChip"]],
   ["../client/TaskCard.tsx", ["TaskCardRow", "TaskFocus"]],
 ]) {
   const m = await import(mod);
+  if (mod.endsWith("ui.tsx")) uiModule = m;
   for (const n of names) check(`${mod.replace("../client/", "")} exports ${n} as a function`, typeof m[n] === "function");
+}
+
+// A note's markdown body can contain a GFM pipe table (a schedule, a comparison) — the hand-rolled
+// renderNoteBody parser (no full markdown library) must actually turn "| a | b |\n|---|---|\n| 1 | 2 |"
+// into a <table>, not dump raw pipe characters as plain paragraphs. Render it for real via
+// react-dom/server rather than just introspecting the element tree — this is the one place in the suite
+// that can assert actual HTML output, since react-dom is already a real dependency.
+section("renderNoteBody — GFM pipe table support");
+{
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const table = "| Étape | Durée |\n|---|---|\n| Module 1 | 32 min |\n| Module 2 | 32 min |";
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, uiModule.renderNoteBody(table)));
+  check("renders a <table>", /<table/.test(html));
+  check("renders the header cells", /<th[^>]*>Étape<\/th>/.test(html) && /<th[^>]*>Durée<\/th>/.test(html));
+  check("renders every data row", /Module 1/.test(html) && /Module 2/.test(html) && /32 min/.test(html));
+  check("does not leak raw pipe characters into the output", !html.includes("|"));
+  // Non-table content must still render exactly as before — a heading, list, and paragraph, no stray table.
+  const plain = renderToStaticMarkup(React.createElement(React.Fragment, null, uiModule.renderNoteBody("# Titre\n- un\n- deux\n\nTexte.")));
+  check("plain markdown (no pipes) renders no table", !plain.includes("<table"));
+  check("plain markdown still renders the heading/list/paragraph", /<h3/.test(plain) && /<ul/.test(plain) && /Texte\./.test(plain));
 }
 // Source-order pin, not a real interaction test (no DOM test runner exists — see the module-graph check
 // above for why). .card-main is the task row's real "open this task" control. An earlier version used a

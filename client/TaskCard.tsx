@@ -257,6 +257,11 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           hero (in-flight state) or was dropped (priority chip). */}
       <div className="tf-head">
         <h2 className="tf-title">{task.title}</h2>
+        {/* A title alone can be opaque when it references something not named IN the title itself
+            ("the 5 places", "the program") — the antecedent lives in `why`, which used to be shown only
+            inside the collapsed Contexte panel. Surface it here unconditionally so the student never has
+            to go hunting for what a vague-sounding task is actually about. */}
+        {task.why ? <p className="tf-why">{task.why}</p> : null}
         <div className="tf-meta">
           {task.when ? <span className={`when ${(Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{fmtWhen(task.when)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
