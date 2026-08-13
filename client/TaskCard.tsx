@@ -133,38 +133,33 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
 
   return (
     <div style={index !== undefined ? { ["--i" as any]: index } : undefined} className={`card ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
-      {/* Opening the task was a `div onClick` — completely unreachable by keyboard, and the app has no other
-          way in. A stretched overlay button fixes that without restructuring the row's flex layout: it
-          covers the whole card underneath the real controls (which sit above it via z-index), so a click
-          anywhere still opens, Tab reaches it, and the focus ring outlines the entire card. Its accessible
-          name is the task title, since the visible title isn't inside it. */}
-      {/* TEMP DIAGNOSTIC — remove once the live "tasks won't open on mobile" bug is confirmed fixed. Fires
-          an unmissable toast the instant this is tapped, BEFORE navigating, so a phone with no devtools
-          access can still tell us definitively: toast-but-no-popup means the tap IS reaching this handler
-          and the bug is in rendering the modal; no-toast-at-all means the tap never reaches this handler
-          at all (an interaction/CSS problem, not a routing one). */}
-      <button type="button" className="card-open" onClick={() => { onNotify?.("tap ok →" + task.title.slice(0, 24)); onOpen(); }} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)} />
-      <div className="card-main">
-        {/* Direct check-off, like a normal to-do list — no need to open the task first. Still one deliberate
-            click (not automatic): it fires the same confirm as "Looks good" inside the detail view. */}
-        {!isDone ? (
-          <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
-            title={L("Marquer comme fait", "Mark as done")} aria-label={L(`Marquer « ${task.title} » comme faite`, `Mark "${task.title}" as done`)} disabled={leaving}
-            onClick={() => void leave(() => api.confirm(task.id), "confirm")}>
-            <span aria-hidden="true">{leaving && leaveKind === "confirm" ? "✓" : ""}</span>
-          </button>
-        ) : null}
-        <div className="card-text">
-          <div className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau — pas encore ouvert", "New — not yet opened")} /> : null}{task.title}</div>
-          {(w || secondary) ? <div className="card-sub">{w && <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span>}{secondary}</div> : null}
-        </div>
+      {/* Opening the task was a `div onClick` — unreachable by keyboard, and on live mobile testing, taps
+          on an invisible full-cover overlay button (the previous fix here) silently failed to register at
+          all despite being correct by every CSS spec/stacking rule — never fully explained, but reliably
+          reproducible. Removed that pattern entirely rather than keep chasing it: .card-main is now the
+          real button itself (real visible content, not an invisible layer), which is the standard,
+          maximally-compatible pattern every list-based mobile app uses. .card-check/.card-x moved to true
+          siblings, since a <button> can't contain another <button>. */}
+      {!isDone ? (
+        <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
+          title={L("Marquer comme fait", "Mark as done")} aria-label={L(`Marquer « ${task.title} » comme faite`, `Mark "${task.title}" as done`)} disabled={leaving}
+          onClick={() => void leave(() => api.confirm(task.id), "confirm")}>
+          <span aria-hidden="true">{leaving && leaveKind === "confirm" ? "✓" : ""}</span>
+        </button>
+      ) : null}
+      {/* TEMP DIAGNOSTIC — remove once the live "tasks won't open on mobile" bug is confirmed fixed. */}
+      <button type="button" className="card-main" onClick={() => { onNotify?.("tap ok →" + task.title.slice(0, 24)); onOpen(); }} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
+        <span className="card-text">
+          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau — pas encore ouvert", "New — not yet opened")} /> : null}{task.title}</span>
+          {(w || secondary) ? <span className="card-sub">{w && <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span>}{secondary}</span> : null}
+        </span>
         {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
         {cStatus === "executing" ? <span className="card-spin" title={L("En cours…", "Working…")} /> : null}
-        {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
-            Hidden once the row is already leaving (dismissing or confirming) — a second click has nothing to do. */}
-        {!isDone && !leaving && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id))}>×</button>}
         <span className="caret" aria-hidden="true">›</span>
-      </div>
+      </button>
+      {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
+          Hidden once the row is already leaving (dismissing or confirming) — a second click has nothing to do. */}
+      {!isDone && !leaving && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id))}>×</button>}
       {leaving && leaveKind === "confirm" ? <span className="confirm-check" aria-hidden="true">✓</span> : null}
     </div>
   );

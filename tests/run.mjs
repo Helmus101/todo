@@ -723,17 +723,16 @@ for (const [mod, names] of [
   for (const n of names) check(`${mod.replace("../client/", "")} exports ${n} as a function`, typeof m[n] === "function");
 }
 // Source-order pin, not a real interaction test (no DOM test runner exists — see the module-graph check
-// above for why). `.card-open` is the stretched button that makes a task row keyboard/tap-openable at all;
-// it has to render BEFORE `.card-main` so it paints underneath `.card-check`/`.card-x` (which get an
-// explicit z-index to sit above it) while still covering the row. A future edit that reorders or drops it
-// would silently reintroduce "can't open a task" — catch that here even without a browser to click in.
+// above for why). .card-main is the task row's real "open this task" control. An earlier version used a
+// separate invisible `.card-open` overlay sibling instead — textbook-correct by every CSS stacking rule,
+// but taps on it silently failed to register on live mobile testing (multiple browsers, no JS error, no
+// plausible cause found after two independent targeted fixes shipped and confirmed live with zero effect).
+// Replaced with the simpler, standard pattern: the visible content itself IS the button. Pin that a future
+// edit doesn't quietly reintroduce the invisible-overlay pattern this bug came from.
 {
   const src = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
-  const openIdx = src.indexOf('className="card-open"');
-  const mainIdx = src.indexOf('className="card-main"');
-  check("TaskCardRow still renders .card-open", openIdx !== -1);
-  check("TaskCardRow still renders .card-main", mainIdx !== -1);
-  check(".card-open precedes .card-main in source (so it paints underneath, per CSS stacking order)", openIdx !== -1 && mainIdx !== -1 && openIdx < mainIdx);
+  check("TaskCardRow does not reintroduce the invisible .card-open overlay pattern", !src.includes('"card-open"'));
+  check("TaskCardRow's .card-main is a real <button>, not a styled <div>", /<button[^>]*className="card-main"/.test(src));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

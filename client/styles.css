@@ -94,7 +94,7 @@ body {
 /* Kills the ~300ms tap delay + accidental double-tap-zoom on every interactive control — the single
    biggest "this feels like a website, not an app" tell on a touch device. */
 button, a, input, textarea, .card-main, .week-day, [role="button"] { touch-action: manipulation; }
-/* Same reasoning as .btn's own -webkit-touch-callout above, for every button that isn't a .btn (.card-open,
+/* Same reasoning as .btn's own -webkit-touch-callout above, for every button that isn't a .btn (.card-main,
    .card-check, .step-mark, .card-x, …) — a long press on any of them shouldn't pop iOS's copy/lookup menu. */
 button { -webkit-touch-callout: none; }
 /* Ambient depth wash — two barely-there cobalt blooms, fixed to the viewport so they never scroll with
@@ -178,8 +178,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    step-act) — so this only grows vertically (nothing else stacks above/below a button row) and a little
    horizontally, which safely reaches 44px without touching the next button's own expanded hit area. */
 .btn.xs { position: relative; height: 34px; padding: 0 11px; font-size: 12.5px; border-radius: 9px; }
-/* background must NOT be fully transparent — see .card-open's comment (styles.css) for the iOS Safari
-   hit-testing quirk this works around. Applies to every ::after hit-expander in this file. */
+/* background must NOT be fully transparent — a documented WebKit quirk where a fully-transparent
+   absolutely-positioned element can fail to hit-test touch reliably. Kept as defensive hardening on every
+   ::after hit-expander in this file even though it wasn't the cause of the live "tasks won't open on
+   mobile" bug (that turned out to be the .card-open pattern itself — see .card-main's comment). */
 .btn.xs::after { content: ""; position: absolute; inset: -5px -3px; background: rgba(0, 0, 0, 0.01); }
 .btn.big { height: 48px; padding: 0 22px; font-size: 15px; border-radius: 10px; transition: background 140ms var(--ease), border-color 140ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease); }
 @media (hover: hover) {
@@ -757,27 +759,24 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* MOBILE-FIRST paddings: the tight phone insets are the base and desktop opens them up below. The old
    34px left inset (sized for the desktop checkbox) plus the container gutter left very little room for
    a title on a ~375px screen, forcing extra wrapped lines. */
-.card-main { display: flex; align-items: center; gap: 12px; padding: 18px 14px 18px 28px; cursor: pointer; min-height: 58px; border-radius: var(--radius); }
-/* The stretched "open this task" button — covers the whole card, sits UNDER the real controls (see the
-   z-index on .card-check/.card-x below) so they stay clickable. Replaces a div onClick that no keyboard
-   user could ever reach.
-   background MUST NOT be `none`/fully transparent: iOS Safari has a long-documented WebKit quirk where a
-   fully-transparent absolutely-positioned element can fail to hit-test touch events reliably — nothing to
-   "paint" there, so nothing to tap, even though it's visually and semantically identical. This is exactly
-   what was reported live: .card-check/.card-x (which DO paint something — a border, a glyph) worked fine
-   on the same row while this one didn't. rgba(0,0,0,0.01) is visually indistinguishable from `none` in
-   every theme but forces WebKit to treat the layer as real and hit-testable. */
-.card-open {
-  position: absolute; inset: 0; z-index: 0; padding: 0;
-  background: rgba(0, 0, 0, 0.01); border: 0; border-radius: var(--radius); cursor: pointer;
+/* .card-main is a real <button> containing the actual visible title/text — NOT an invisible overlay layer.
+   An earlier version used a separate `.card-open` element (position:absolute, fully covering the row,
+   painted underneath the real content) to make the whole row tappable without restructuring — that pattern
+   is textbook-correct by every CSS stacking rule, but on live mobile testing taps on it silently failed to
+   register at all, consistently, across multiple browsers, with no JS error and no plausible CSS cause
+   found after extensive testing (two independent targeted WebKit-specific fixes shipped and confirmed live
+   with zero effect). Rather than keep chasing an unexplained bug in that pattern, it was removed entirely:
+   .card-main IS the button now, so there's no invisible layer for anything to fail to hit-test. Needs a
+   full button reset (border/background/font/text-align/width) since it's real content, not a styled div. */
+.card-main {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 18px 14px 18px 28px; cursor: pointer; min-height: 58px; border-radius: var(--radius);
+  border: 0; background: none; font: inherit; color: inherit;
 }
-.card-check, .card-x { position: relative; z-index: 1; }
 /* Tactile feedback for touch — there's no hover state on a phone, so without this a tap gives zero visual
    response until the row opens/closes a beat later, which reads as laggy even when it isn't. A hover-capable
    device (mouse) keeps the existing hover-only feel; this only kicks in where hover doesn't exist. */
-/* The tap now lands on the .card-open overlay (a preceding sibling), not on .card-main itself — so the
-   press feedback has to be driven from there, or touching a row would give no response at all. */
-@media (hover: none) { .card-main:active, .card-open:active ~ .card-main { background: var(--hover-wash); transform: scale(0.994); } }
+@media (hover: none) { .card-main:active { background: var(--hover-wash); transform: scale(0.994); } }
 /* The direct check-off control — a normal to-do checkbox. Click fills it and marks the task done in one
    step, no need to open the card first (opening it still works too, via "Looks good"). */
 .card-check {
@@ -824,7 +823,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   font-size: 18px; line-height: 1; border-radius: 8px; opacity: 0; cursor: pointer;
   transition: opacity 140ms var(--ease), background 140ms var(--ease), color 140ms var(--ease);
 }
-.card-main:hover .card-x { opacity: 1; }
+/* .card-x is a sibling of .card-main now (buttons can't nest), so the hover-reveal is scoped to the whole
+   row instead of card-main specifically. */
+.card:hover .card-x { opacity: 1; }
 .card-x:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .card-x:active { transform: scale(0.82); }
 @media (hover: none) { .card-x { opacity: 0.6; } }
