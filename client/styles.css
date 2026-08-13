@@ -6,12 +6,7 @@
 
 /* Otto brand system — the "consent line": Otto's own (reversible) work reads quiet/graphite; anything that
    needs a person reads cobalt. Colour is semantic, not decorative — see the 90/8/2 budget in the brand book.
-   Self-hosted fonts (SIL OFL) — drop the woff2 files in client/public/fonts/; robust fallbacks until then. */
-/* Temporarily disabled until font files are added to public/fonts/ */
-/* @font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/IBMPlexSans-Medium.woff2") format("woff2"); font-weight: 500 600; font-display: swap; }
-@font-face { font-family: "IBM Plex Mono"; src: url("/fonts/IBMPlexMono-Regular.woff2") format("woff2"); font-weight: 400 500; font-display: swap; }
-@font-face { font-family: "Archivo Expanded"; src: url("/fonts/Archivo-Expanded.woff2") format("woff2"); font-weight: 600 700; font-stretch: 125%; font-display: swap; } */
+   Typography is the OS system font stack (SF Pro on Apple platforms) — no custom webfonts. */
 
 :root {
   --bg: #EDEEE9;            /* paper — cool oat, the default ground */
@@ -42,6 +37,7 @@
   --warn: var(--ink);
   --radius: 14px;
   --radius-sm: 9px;
+  --radius-xs: 6px;
   --shadow-pop: 0 8px 30px rgba(16, 19, 23, 0.12); /* overlays/modals only */
   --shadow-card: 0 1px 2px rgba(16, 19, 23, 0.04), 0 1px 1px rgba(16, 19, 23, 0.03);
   --shadow-card-hover: 0 14px 28px rgba(16, 19, 23, 0.10), 0 3px 8px rgba(16, 19, 23, 0.06);
@@ -49,9 +45,9 @@
      override, so in dark mode the topbar stayed near-WHITE against a near-black page. */
   --bar: rgba(250, 250, 250, 0.85);
   --hover-wash: rgba(0, 0, 0, 0.04);
-  --display: "Archivo Expanded", "Archivo", "Helvetica Neue", Arial, sans-serif; /* headings / wordmark — 600/700 */
-  --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; /* machine output: counts, spend, state */
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica Neue, Arial, sans-serif;
+  --display: var(--sans); /* headings / wordmark lean on weight (600/700), not a separate family */
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; /* machine output: counts, spend, state */
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
@@ -97,16 +93,6 @@ button, a, input, textarea, .card-main, .week-day, [role="button"] { touch-actio
 /* Same reasoning as .btn's own -webkit-touch-callout above, for every button that isn't a .btn (.card-main,
    .card-check, .step-mark, .card-x, …) — a long press on any of them shouldn't pop iOS's copy/lookup menu. */
 button { -webkit-touch-callout: none; }
-/* Ambient depth wash — two barely-there cobalt blooms, fixed to the viewport so they never scroll with
-   content. Pure atmosphere, not decoration: at this opacity they read as "this app has depth" without
-   ever competing with the one-accent rule (nothing here is legible as a shape, just a gradient of light). */
-body::before {
-  content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background:
-    radial-gradient(680px 420px at 12% -8%, var(--accent-soft), transparent 60%),
-    radial-gradient(600px 380px at 108% 12%, var(--accent-soft), transparent 55%);
-  opacity: 0.7;
-}
 #root, .app, .landing, .login-page { position: relative; z-index: 1; }
 a { color: var(--accent); text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
@@ -158,26 +144,25 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn:disabled:active { transform: none; }
 .btn.primary {
-  background: linear-gradient(155deg, var(--accent-hover), var(--accent) 55%); border-color: var(--accent); color: #fff;
-  box-shadow: 0 1px 2px rgba(16, 19, 23, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  background: var(--accent); border-color: var(--accent); color: #fff;
 } /* the irreversible act — cobalt */
 /* hover: hover — see .card:hover's comment: an unscoped :hover transform can shift a real button out from
    under a finger between touchdown and touchup on iOS Safari, silently dropping the tap. */
 @media (hover: hover) {
-  .btn.primary:hover { background: linear-gradient(155deg, var(--accent-hover), var(--accent-hover) 55%); border-color: var(--accent-hover); box-shadow: 0 4px 14px rgba(47, 77, 224, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.16); transform: translateY(-1px); }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 }
-.btn.primary:active { transform: translateY(0) scale(0.97); box-shadow: 0 1px 2px rgba(16, 19, 23, 0.1); }
+.btn.primary:active { transform: scale(0.97); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--accent); }
 .btn.ghost:hover { background: var(--accent-soft); }
 /* Destructive confirm ONLY (delete / payment) — vermilion, never a marketing accent. */
 .btn.danger { background: var(--vermilion); border-color: var(--vermilion); color: #fff; }
-.btn.danger:hover { background: #b03d29; border-color: #b03d29; }
+.btn.danger:hover { filter: brightness(0.88); }
 /* 34px drawn height is below the file's own declared 44px mobile floor — used for real actions ("Aide",
    "Ouvrir ↗", chat "Envoyer", artifact chips), not decoration. A full ::after hit expander on every side
    would overlap a neighboring .btn.xs where they sit only 6-8px apart in a row (sendable/confirm rows,
    step-act) — so this only grows vertically (nothing else stacks above/below a button row) and a little
    horizontally, which safely reaches 44px without touching the next button's own expanded hit area. */
-.btn.xs { position: relative; height: 34px; padding: 0 11px; font-size: 12.5px; border-radius: 9px; }
+.btn.xs { position: relative; height: 34px; padding: 0 11px; font-size: 12.5px; border-radius: var(--radius-sm); }
 /* background must NOT be fully transparent — a documented WebKit quirk where a fully-transparent
    absolutely-positioned element can fail to hit-test touch reliably. Kept as defensive hardening on every
    ::after hit-expander in this file even though it wasn't the cause of the live "tasks won't open on
@@ -243,13 +228,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .tabs { display: flex; gap: 4px; }
 .tab {
   position: relative; padding: 6px 10px; font-size: 13.5px; font-weight: 500;
-  color: var(--ink-2); border-radius: 9px; transition: color 140ms var(--ease), background 140ms var(--ease);
+  color: var(--ink-2); border-radius: var(--radius-sm); transition: color 140ms var(--ease), background 140ms var(--ease);
 }
 .tab:hover { color: var(--ink); background: var(--hover-wash); }
 .tab.active { color: var(--ink); font-weight: 600; }
 .tab.active::after {
   content: ""; position: absolute; left: 10px; right: 10px; bottom: -11px;
-  height: 2px; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  height: 2px; border-radius: 2px; background: var(--accent);
   animation: tabIn 0.24s var(--ease);
 }
 @keyframes tabIn { from { opacity: 0; transform: scaleX(0.4); } to { opacity: 1; transform: scaleX(1); } }
@@ -281,7 +266,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    placement below (min-width:1024px) isn't affected, since named grid-row/column wins over `order` there. */
 .dash-grid { display: flex; flex-direction: column; }
 .dash-addtask { margin-bottom: 28px; order: 0; }
-.dash-rail { display: flex; flex-direction: column; gap: 28px; margin: 4px 0 28px; order: 1; }
+.dash-rail { display: flex; flex-direction: column; gap: 36px; margin: 4px 0 28px; order: 1; }
 .dash-today { order: 2; }
 .dash-more { margin-top: 8px; order: 3; }
 @media (min-width: 1024px) {
@@ -311,7 +296,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   .dash-rail .week-day-bar-track { display: none; } /* the bar chart's visual comparison only works side-by-side; a vertical rail shows the count instead */
 }
 .exam-strip-wrap { margin: -16px 0 28px; }
-.exam-strip-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; }
+.exam-strip-label { font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; opacity: 0.85; }
 .exam-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
 .exam-chip {
   flex: none; display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; border: 1px solid var(--line);
@@ -326,6 +311,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .exam-chip.soon .exam-days { color: var(--accent); }
 .exam-subject { font-size: 13px; font-weight: 550; color: var(--ink); margin-top: 2px; }
 .exam-when { font-size: 11px; color: var(--ink-3); text-transform: capitalize; }
+.exam-more, .milestone-more { flex: none; align-self: center; white-space: nowrap; }
 
 /* ─── IB milestone widget — dashboard-level surface for the big-project breakdown (Extended Essay/
    TOK/CAS/IA), previously only visible as a small badge once a task was already open. Same chip
@@ -388,7 +374,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .list-head span { color: var(--ink); }
 /* The count/number in the greeting reads as the one "alive" element on the page — a soft cobalt gradient,
    the same restrained wow-without-a-second-color trick the hero title's <em> already uses. */
-.list-head .accent-num { background: linear-gradient(100deg, var(--accent), var(--accent-hover)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.list-head .accent-num { color: var(--accent); }
 /* Machine output — counts, queue state, spend — is mono per the brand (if a human wrote it, it isn't mono). */
 .list-status { margin-top: 10px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; color: var(--ink-3); }
 .list-status b { font-weight: 500; color: var(--ink-2); }
@@ -672,8 +658,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .audit-log { margin-top: 6px; }
 .audit-toggle { font-size: 12.5px; }
 .audit-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
-.audit-list li { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; padding: 4px 6px; border-radius: 6px; color: var(--ink-2, #666); }
-.audit-list li.audit-guardrail { background: var(--bg-2, #f3f3f3); font-weight: 600; color: var(--ink, #111); }
+.audit-list li { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; padding: 4px 6px; border-radius: var(--radius-xs, 6px); color: var(--ink-2); }
+.audit-list li.audit-guardrail { background: var(--bg-2); font-weight: 600; color: var(--ink); }
 .audit-label { flex: 1; }
 /* Was opacity: 0.65 on top of the already-secondary --ink-2 text color — stacking the two dropped contrast
    to ~2.65:1 against the page, well under AA. Small size alone is enough hierarchy; drop the opacity. */
@@ -703,7 +689,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-card-face {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
-  backface-visibility: hidden; box-shadow: var(--shadow-pop, 0 2px 12px rgba(0,0,0,0.06));
+  backface-visibility: hidden; box-shadow: var(--shadow-pop);
 }
 .deck-card-front { background: var(--surface); }
 .deck-card-back { transform: rotateY(180deg); background: var(--accent-soft); border-color: var(--accent); }
@@ -829,7 +815,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   font-size: 13px; color: var(--ink-2); margin-top: 6px; line-height: 1.55;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.card-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.card-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .card-badges .chip { font-size: 10.5px; padding: 2px 7px; }
 .when { color: var(--ink-2); font-weight: 550; margin-right: 8px; }
 .when-soon { color: var(--accent); font-weight: 700; }
@@ -869,18 +855,25 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    button, then everything else collapsed into counted disclosure rows. Uses the same .deck-progress-*
    and .deck-score-ring pieces the flashcard/quiz players use, so "one at a time" reads identically
    wherever the student meets it. */
-.task-focus { display: flex; flex-direction: column; gap: 16px; padding: 4px 2px 2px; }
-.tf-head { display: flex; flex-direction: column; gap: 8px; }
+/* A flat gap here would make every section — head, progress, hero, panels, chat — read as equal-weight
+   stacked blocks. Instead the base gap stays tight (for closely-related header/progress bits) and the
+   handful of genuinely distinct sections below (.step-hero, .tf-panels, .task-chat) each add their own
+   margin-top so the eye reads a few clear chunks, not one long uniform list. */
+.task-focus { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px 2px; }
+.tf-head { display: flex; flex-direction: column; gap: 6px; }
 .tf-title { font-size: 20px; font-weight: 640; letter-spacing: -0.02em; line-height: 1.3; margin: 0 34px 0 0; }
 .tf-why { font-size: 13.5px; color: var(--ink-2); line-height: 1.45; margin: -2px 34px 0 0; }
 .tf-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 
-/* The hero — the single thing to do right now. Deliberately the heaviest element on the screen. */
+/* The hero — the single thing to do right now. Deliberately the heaviest element on the screen. Its own
+   margin-top (not the flat .task-focus gap) is what actually separates it from the header/progress
+   cluster above — see .task-focus's comment. */
 .step-hero {
   display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
   background: var(--bg-2); border-radius: var(--radius); padding: 18px 16px;
+  margin-top: 12px;
 }
-.hero-kicker { font-size: 10.5px; font-weight: 650; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; }
+.hero-kicker { font-size: 10.5px; font-weight: 550; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
 .hero-step { font-size: 17px; font-weight: 560; line-height: 1.45; margin: 0; }
 .hero-line { font-size: 14.5px; line-height: 1.5; margin: 0; color: var(--ink-2); }
 .hero-acts { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
@@ -894,7 +887,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 /* Counted, collapsed sections. The COUNT is what makes "closed" safe — the student sees that five steps
    exist without having to open anything, so nothing feels hidden behind a click. */
-.tf-panels { display: flex; flex-direction: column; }
+.tf-panels { display: flex; flex-direction: column; margin-top: 10px; }
 .disclosure { border-top: 1px solid var(--line-soft); }
 .disclosure:last-child { border-bottom: 1px solid var(--line-soft); }
 .disclosure-head {
@@ -913,7 +906,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 /* "What Otto prepared" section labels — quiet uppercase tags separating "Fait" (plain-text actions) from
    "Créé pour toi" (real openable artifacts), so the two don't blur into one undifferentiated list. */
-.prepared-label { display: block; font-size: 10.5px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.07em; margin: 14px 0 6px; }
+.prepared-label { display: block; font-size: 10.5px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 8px; opacity: 0.85; }
 .prepared-label:first-child { margin-top: 0; }
 /* Artifact rows — a real card each (icon badge, title, meta), not an inline pill: these are things the
    student actually opens and reads/drills, so they get a full-width tap target and room to show what
@@ -939,7 +932,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .history-list { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 5px; }
 
 /* ─── Per-task coaching chat ─────────────────────────────────────────────── */
-.task-chat { border-top: 1px solid var(--line-soft); padding-top: 16px; }
+.task-chat { border-top: 1px solid var(--line-soft); margin-top: 14px; padding-top: 20px; }
 /* Was an <h4> inheriting `.detail h4`; TaskFocus has no .detail wrapper, so it carries its own style now
    (and is an <h3> so the modal's heading order runs h2 → h3 rather than skipping a level). */
 .task-chat h3 {
@@ -1168,12 +1161,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card.skel { pointer-events: none; }
 /* NOTE: the brand book prefers mono status text ("Reading 340 messages…") over a shimmer — swap this for
    that when the two-column layout lands. For now, keep the shimmer ON-PALETTE so it doesn't clash in dark mode. */
-.skel-box { display: block; border-radius: 4px; background: linear-gradient(90deg, var(--bg-2) 25%, var(--line) 50%, var(--bg-2) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+.skel-box { display: block; border-radius: var(--radius-xs, 4px); background: var(--bg-2); animation: shimmer 1.4s var(--ease) infinite; }
 .skel-pill { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .skel-line { height: 13px; margin-bottom: 7px; }
 .skel-line.sm { height: 10px; margin: 0; }
 .skel-note { text-align: center; color: var(--ink-3); font-size: 12.5px; padding-top: 16px; }
-@keyframes shimmer { to { background-position: -200% 0; } }
+@keyframes shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
 /* ─── Settings — flat, minimalist; sections divided by whitespace + a hairline ─ */
 .settings-page { width: 100%; max-width: 600px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 16px 120px; animation: pageIn 0.32s var(--ease) backwards; }
@@ -1184,7 +1177,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    cards use — instead of divider-separated blocks directly on the page background. Extends the
    already-shipped card system rather than inventing a second one. */
 .settings-sec {
-  padding: 24px 26px; margin-bottom: 16px;
+  padding: 24px 26px; margin-bottom: 26px;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-card);
 }
 .settings-sec h2 { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 12px; }
@@ -1224,11 +1217,11 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .switch input:focus-visible + .switch-track { box-shadow: 0 0 0 3px var(--accent-soft); }
 
 /* Segmented control (scans/day) — pill of choices, accent for the active one. */
-.seg { display: inline-flex; flex: none; background: var(--bg-2); border-radius: 9px; padding: 2px; gap: 2px; }
+.seg { display: inline-flex; flex: none; background: var(--bg-2); border-radius: var(--radius-sm); padding: 2px; gap: 2px; }
 /* 28px is the smallest tap target in the app. Segments sit only 2px apart inside .seg, so the hit expander
    is vertical-only (nothing else stacks above/below the row) — a horizontal one would overlap the next
    segment's own expanded area. */
-.seg-btn { position: relative; min-width: 34px; height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; border-radius: 9px; transition: background 140ms var(--ease), color 140ms var(--ease); }
+.seg-btn { position: relative; min-width: 34px; height: 28px; padding: 0 8px; border: none; background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 600; border-radius: var(--radius-sm); transition: background 140ms var(--ease), color 140ms var(--ease); }
 .seg-btn::after { content: ""; position: absolute; inset: -8px 0; background: rgba(0, 0, 0, 0.01); }
 .seg-btn:hover { color: var(--ink); }
 .seg-btn.on { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
@@ -1237,7 +1230,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .pronote-form { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 14px; padding: 12px; background: var(--bg-2); border-radius: var(--radius-sm); }
 .pronote-form-row { display: flex; gap: 8px; align-items: center; }
 .pronote-form-row .addinput { flex: 1; }
-.int-cat { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin: 14px 0 4px; }
+.int-cat { font-size: 11px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 18px 0 6px; opacity: 0.85; }
 .int-count { margin-bottom: 10px; }
 .int-grid { display: flex; flex-direction: column; }
 .int-tile { display: flex; align-items: center; gap: 12px; padding: 11px 0; }
@@ -1259,7 +1252,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .int-acct-actions { flex: none; display: flex; align-items: center; gap: 8px; }
 
 .prof-group { margin-top: 12px; }
-.prof-label { font-size: 11px; font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+.prof-label { font-size: 11px; font-weight: 500; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px; opacity: 0.85; }
 .memory-body { display: flex; flex-direction: column; gap: 8px; }
 .profile-list, .memory-list { list-style: none; }
 .profile-list li, .memory-list li {
@@ -1370,7 +1363,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   flex: none; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; padding: 3px 8px;
   border-radius: 999px; white-space: nowrap;
 }
-.chip-muted { background: var(--bg-2, #f1f3f5); color: var(--ink-3); }
+.chip-muted { background: var(--bg-2); color: var(--ink-3); }
 .chip-busy { background: var(--accent-soft); color: var(--accent); }
 .chip-attention { background: var(--accent-soft); color: var(--accent); }
 .chip-bad { background: var(--bg-2); color: var(--ink); }
@@ -1455,7 +1448,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .demo-caret { display: inline-block; width: 1.5px; height: 15px; background: var(--accent); margin-left: 2px; vertical-align: text-bottom; animation: blink 1.1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
-.landing-sec { width: 100%; max-width: 640px; margin: 0 auto; padding: 56px 20px; }
+.landing-sec { width: 100%; max-width: 640px; margin: 0 auto; padding: 76px 20px; }
 .landing-sec + .landing-sec { border-top: 1px solid var(--line-soft); }
 .landing-sec h2 { font-size: clamp(1.5rem, 3vw, 1.9rem); font-weight: 700; letter-spacing: -0.03em; margin-bottom: 8px; }
 .landing-sec .lead { font-size: 14.5px; color: var(--ink-2); line-height: 1.6; margin-bottom: 28px; max-width: 480px; }
@@ -1589,7 +1582,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   .add-task-input { font-size: 15.5px; height: 34px; }
   .hero-cta { flex-direction: row; width: auto; }
   .hero-cta .btn { width: auto; }
-  .landing-sec { padding: 40px 24px; }
+  .landing-sec { padding: 76px 24px; }
   .hero { padding-top: 72px; }
 }
 

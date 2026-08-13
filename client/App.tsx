@@ -759,14 +759,15 @@ export function App() {
  *  a silent no-op for a BFI/other-track student (their tasks simply never have `targetDate` steps). */
 function Milestones({ tasks }: { tasks: WebTask[] }) {
   const L = useLang();
-  const items = tasks
+  const [showAll, setShowAll] = useState(false);
+  const all = tasks
     .flatMap((t) => (t.steps || [])
       .filter((s) => !s.done && s.targetDate)
       .map((s) => ({ taskId: t.id, taskTitle: t.title, text: s.text, targetDate: s.targetDate! })))
-    .sort((a, b) => a.targetDate.localeCompare(b.targetDate))
-    .slice(0, 5);
+    .sort((a, b) => a.targetDate.localeCompare(b.targetDate));
+  const items = showAll ? all : all.slice(0, 3);
   useReveal([items.length]);
-  if (!items.length) return null;
+  if (!all.length) return null;
   return (
     <div className="milestone-wrap reveal">
       <div className="exam-strip-label">{L("Prochains jalons", "Upcoming milestones")}</div>
@@ -781,6 +782,11 @@ function Milestones({ tasks }: { tasks: WebTask[] }) {
             </div>
           );
         })}
+        {!showAll && all.length > 3 && (
+          <button type="button" className="btn xs ghost milestone-more" onClick={() => setShowAll(true)}>
+            {L(`+${all.length - 3} de plus`, `+${all.length - 3} more`)}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -792,10 +798,12 @@ function Milestones({ tasks }: { tasks: WebTask[] }) {
 function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
   const en = lang === "en";
   const [tests, setTests] = useState<{ subject: string; deadline: string }[] | null>(null);
+  const [showAll, setShowAll] = useState(false);
   useEffect(() => { void api.pronoteTests().then((r) => setTests(r.tests)).catch(() => setTests([])); }, []);
   useReveal([tests]); // this whole strip only exists once tests load, so re-scan then, not just on mount
   if (!tests?.length) return null;
-  const sorted = [...tests].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline)).slice(0, 8);
+  const all = [...tests].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline));
+  const sorted = showAll ? all : all.slice(0, 4);
   const daysLeft = (iso: string) => Math.ceil((Date.parse(iso) - Date.now()) / 86_400_000);
   return (
     <div className="exam-strip-wrap reveal">
@@ -813,6 +821,11 @@ function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
             </div>
           );
         })}
+        {!showAll && all.length > 4 && (
+          <button type="button" className="btn xs ghost exam-more" onClick={() => setShowAll(true)}>
+            {en ? `+${all.length - 4} more` : `+${all.length - 4} de plus`}
+          </button>
+        )}
       </div>
     </div>
   );
