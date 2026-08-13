@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal } from "./ui.tsx";
 import { TaskCardRow, TaskFocus } from "./TaskCard.tsx";
@@ -1008,20 +1008,34 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
   const L = useLang();
   const [subject, setSubject] = useState("");
   const [grade, setGrade] = useState("");
+  const [scale, setScale] = useState("20");
+  const [openSubject, setOpenSubject] = useState<string | null>(null);
+  const [addedTaskFor, setAddedTaskFor] = useState<string | null>(null);
   const grades = profile?.grades || [];
   const add = async () => {
     const s = subject.trim();
     const g = Number(grade);
+    const sc = Number(scale) > 0 ? Number(scale) : 20;
     if (!s || !Number.isFinite(g)) return;
-    onChanged?.(await api.setGrade(s, g));
+    onChanged?.(await api.setGrade(s, g, sc));
     setSubject(""); setGrade("");
   };
   // No manual "sync" button — Pronote grades pull in automatically (on connect, and again with every
   // daily sweep; see applyPronoteGrades in server/pronote.ts). A passive status line, not a button the
   // student has to remember to press, matches how the rest of Otto works (things just happen for you).
-  // Overall average — each subject normalized to /20 first (grades can be entered on any scale) so a
-  // subject graded /10 doesn't silently drag the average down relative to one graded /20.
-  const overallAvg20 = grades.length ? grades.reduce((sum, g) => sum + (g.grade / g.scale) * 20, 0) / grades.length : null;
+  const bySubject = gradesBySubject(grades); // weakest subject first — see shared/types.ts
+  // Overall average — average of PER-SUBJECT averages (each already normalized to /20), not a raw mean
+  // of every entry: a subject with 5 logged grades shouldn't outweigh one with a single Pronote average
+  // just because it has more rows.
+  const overallAvg20 = bySubject.length ? bySubject.reduce((sum, s) => sum + s.avg20, 0) / bySubject.length : null;
+  // Fires from Settings, which has no access to the dashboard's task-list state — the new task lands on
+  // the server immediately and shows up next time the Tasks page syncs (its 45s poll or a tab focus), not
+  // instantly here. A brief local confirmation stands in for a toast so the tap doesn't feel like a no-op.
+  const addTask = async (subj: string) => {
+    await api.add(L(`Réviser ${subj}`, `Review ${subj}`));
+    setAddedTaskFor(subj);
+    setTimeout(() => setAddedTaskFor((cur) => (cur === subj ? null : cur)), 2500);
+  };
   return (
     <div className="grades-editor">
       {pronoteConnected && grades.length > 0 && (
@@ -1033,19 +1047,37 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
           <span className="grade-average-value">{overallAvg20.toFixed(1)}/20</span>
         </div>
       )}
-      {grades.length > 0 && (
+      {bySubject.length > 0 && (
         <ul className="grade-list">
-          {[...grades].sort((a, b) => a.grade / a.scale - b.grade / b.scale).map((g) => {
-            const pct = Math.max(0, Math.min(100, (g.grade / g.scale) * 100));
-            const tone = isLowGrade(g.grade, g.scale) ? "low" : "";
+          {bySubject.map((s) => {
+            const pct = Math.max(0, Math.min(100, (s.avg20 / 20) * 100));
+            const low = isLowGrade(s.avg20, 20);
+            const open = openSubject === s.subject;
             return (
-              <li key={g.subject} className="grade-row">
-                <div className="grade-row-top">
-                  <span className="grade-subject">{g.subject}</span>
-                  <span className="grade-value">{g.grade}/{g.scale}</span>
-                  <button className="x" title={L("Supprimer", "Remove")} onClick={async () => onChanged?.(await api.deleteGrade(g.subject))}>×</button>
-                </div>
-                <div className="grade-bar"><div className={`grade-bar-fill ${tone}`} style={{ width: `${pct}%` }} /></div>
+              <li key={s.subject} className="grade-row">
+                <button type="button" className="grade-row-top grade-row-toggle" aria-expanded={open} onClick={() => setOpenSubject(open ? null : s.subject)}>
+                  <span className="grade-subject">{s.subject}</span>
+                  <span className="grade-value">{s.avg20.toFixed(1)}/20{s.entries.length > 1 ? <span className="grade-count"> · {L(`${s.entries.length} notes`, `${s.entries.length} grades`)}</span> : null}</span>
+                  <span className={`caret ${open ? "open" : ""}`} aria-hidden="true">›</span>
+                </button>
+                <div className="grade-bar"><div className={`grade-bar-fill ${low ? "low" : ""}`} style={{ width: `${pct}%` }} /></div>
+                {low ? (
+                  <div className="grade-nudge">
+                    <span>{L("En difficulté dans cette matière — un peu plus de révision pourrait aider.", "Struggling in this subject — a bit more review time could help.")}</span>
+                    <button type="button" className="btn xs ghost" disabled={addedTaskFor === s.subject} onClick={() => void addTask(s.subject)}>{addedTaskFor === s.subject ? L("Ajoutée ✓", "Added ✓") : L("Ajouter une révision", "Add a study task")}</button>
+                  </div>
+                ) : null}
+                {open ? (
+                  <ul className="grade-entries">
+                    {s.entries.map((g) => (
+                      <li key={g.id} className="grade-entry">
+                        <span className="grade-entry-value">{g.grade}/{g.scale}</span>
+                        <span className="grade-entry-meta">{g.source === "pronote" ? L("Pronote", "Pronote") : new Date(g.updatedAt).toLocaleDateString()}</span>
+                        {g.source !== "pronote" ? <button className="x" title={L("Supprimer", "Remove")} onClick={async () => onChanged?.(await api.deleteGrade(g.id))}>×</button> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </li>
             );
           })}
@@ -1053,7 +1085,9 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
       )}
       <div className="addrow grade-addrow">
         <input className="addinput sm" placeholder={L("Matière (ex : Maths)", "Subject (e.g. Math)")} value={subject} onChange={(e) => setSubject(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
-        <input className="addinput sm grade-num" type="number" min={0} max={20} placeholder={L("Note /20", "Grade /20")} value={grade} onChange={(e) => setGrade(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
+        <input className="addinput sm grade-num" type="number" min={0} placeholder={L("Note", "Grade")} value={grade} onChange={(e) => setGrade(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
+        <span className="grade-scale-sep">/</span>
+        <input className="addinput sm grade-scale" type="number" min={1} placeholder="20" value={scale} onChange={(e) => setScale(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
         <button className="btn" disabled={!subject.trim() || grade === ""} onClick={() => void add()}>{L("Ajouter", "Add")}</button>
       </div>
     </div>

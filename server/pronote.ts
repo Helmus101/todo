@@ -220,8 +220,11 @@ export function applyPronoteGrades(profile: Profile, fromPronote: PronoteGradeIt
   const now = new Date().toISOString();
   const list = (profile.grades ||= []);
   for (const g of fromPronote) {
-    const i = list.findIndex((x) => x.subject.toLowerCase() === g.subject.toLowerCase());
-    const entry = { subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now };
+    // Only overwrite a PRONOTE-sourced row in place (it's "the average as of now" — one live value per
+    // subject). A manually-logged grade for the same subject is a separate historical data point and is
+    // never touched here — see the type comment on Profile.grades for why the two sources don't merge.
+    const i = list.findIndex((x) => x.subject.toLowerCase() === g.subject.toLowerCase() && x.source === "pronote");
+    const entry = { id: i >= 0 ? list[i].id : randomUUID(), subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now, source: "pronote" as const };
     if (i >= 0) list[i] = entry; else list.push(entry);
   }
 }

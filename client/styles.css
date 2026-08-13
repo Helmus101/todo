@@ -1263,8 +1263,12 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .grade-row { padding: 9px 0; }
 .grade-row + .grade-row { border-top: 1px solid var(--line-soft); }
 .grade-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.grade-row-toggle { width: 100%; background: none; border: none; padding: 0; cursor: pointer; font: inherit; color: inherit; text-align: left; }
+.grade-row-toggle .caret { transition: transform 200ms var(--ease); }
+.grade-row-toggle .caret.open { transform: rotate(90deg); }
 .grade-subject { font-size: 13.5px; font-weight: 550; flex: 1; }
 .grade-value { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; color: var(--ink-2); }
+.grade-count { font-family: inherit; color: var(--ink-3); }
 .grade-bar { height: 4px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
 .grade-bar-fill { height: 100%; border-radius: 2px; transition: width 220ms var(--ease); }
 /* The weakest subjects get the accent (draws the eye, same "needs attention" language as chip-attention
@@ -1272,6 +1276,18 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
    of the app's monochrome-plus-one-accent palette. */
 .grade-bar-fill { background: var(--ink-3); }
 .grade-bar-fill.low { background: var(--accent); }
+/* Individual grades behind a subject's average — only shown once expanded, so the default view stays a
+   scannable one-line-per-subject list. */
+.grade-entries { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px dashed var(--line-soft); display: flex; flex-direction: column; gap: 5px; }
+.grade-entry { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.grade-entry-value { font-family: var(--mono, ui-monospace, monospace); color: var(--ink); }
+.grade-entry-meta { color: var(--ink-3); flex: 1; }
+/* The one place a low average turns into an action, not just a color — same accent-as-call-to-action
+   pattern as the hero's primary button, kept quiet (small text + xs ghost button) so it reads as a
+   gentle nudge, not an alarm. */
+.grade-nudge { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); font-size: 12px; color: var(--ink-2); }
+.grade-scale-sep { color: var(--ink-3); font-size: 13px; }
+.grade-scale { width: 46px; flex: none; }
 .forget-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 
 /* ─── Onboarding overlay ───────────────────────────────────────────────────── */

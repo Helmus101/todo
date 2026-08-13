@@ -5,6 +5,7 @@ import session from "express-session";
 import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
@@ -913,23 +914,28 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
 });
 // Per-subject grades — self-reported (Pronote's read API doesn't expose grades), so Otto can weigh which
 // subject actually needs attention, not just what's due soonest. Upsert by subject name (case-insensitive).
+// A manually-logged grade always APPENDS a new entry — never overwrites a same-subject one. Unlike the
+// Pronote sync (which writes "the current average as of now", one row per subject), a hand-entered grade
+// is a specific test/assignment score the student is choosing to keep a record of, so history matters.
 app.post("/api/profile/grade", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   const subject = String(req.body?.subject || "").trim().slice(0, 60);
   const grade = Number(req.body?.grade);
   const scale = Number(req.body?.scale) > 0 ? Number(req.body.scale) : 20;
   if (!subject || !Number.isFinite(grade)) { res.status(400).json({ error: "subject and grade are required" }); return; }
-  const entry = { subject, grade: Math.max(0, Math.min(scale, grade)), scale, updatedAt: new Date().toISOString() };
   const list = (p.grades ||= []);
-  const i = list.findIndex((g) => g.subject.toLowerCase() === subject.toLowerCase());
-  if (i >= 0) list[i] = entry; else list.push(entry);
+  list.push({ id: randomUUID(), subject, grade: Math.max(0, Math.min(scale, grade)), scale, updatedAt: new Date().toISOString(), source: "manual" });
   await commit(req);
   res.json(p);
 });
-app.delete("/api/profile/grade/:subject", requireAuth, async (req, res) => {
+// Delete ONE grade entry by id (the normal path from the UI's per-row × ). Falls back to matching by
+// subject for anything still lacking an id (a pre-history-model entry that never got normalized) or for
+// a bulk "remove this whole subject" — same param, whichever matches.
+app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
-  const subject = decodeURIComponent(String(req.params.subject || "")).toLowerCase();
-  p.grades = (p.grades || []).filter((g) => g.subject.toLowerCase() !== subject);
+  const key = decodeURIComponent(String(req.params.key || ""));
+  const list = p.grades || [];
+  p.grades = list.some((g) => g.id === key) ? list.filter((g) => g.id !== key) : list.filter((g) => g.subject.toLowerCase() !== key.toLowerCase());
   // commit()'s cross-device merge unions this list with whatever's still in the cloud copy — a plain
   // remove-then-commit would have the deleted grade resurface (the cloud copy doesn't know it was removed,
   // same tombstone-less limitation as the preference/people/project lists). Persist the deletion to cloud

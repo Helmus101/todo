@@ -387,13 +387,17 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
       : undefined,
     dailyBriefingEnabled: p2.dailyBriefingEnabled ?? p1.dailyBriefingEnabled,
     language: p2.language ?? p1.language,
-    // Grades are a small, deliberately-edited list — merge by subject, newest updatedAt per subject wins
-    // (same idea as autoArchivePatterns/preferences, but keyed instead of just concatenated/deduped by text).
+    // Grades are a HISTORY now (see the Profile.grades type comment), not one row per subject — a manual
+    // entry from device A must not be dropped just because device B's copy doesn't have it yet. Union by
+    // id (each manual entry gets a unique one at creation); a Pronote-sourced row keeps its subject-level
+    // id stable across syncs (see applyPronoteGrades), so its two copies collide on id and the newer
+    // updatedAt wins, same as before — only manual entries actually accumulate.
     grades: (p1.grades?.length || p2.grades?.length) ? (() => {
-      const map = new Map<string, { subject: string; grade: number; scale: number; updatedAt: string }>();
+      const map = new Map<string, NonNullable<Profile["grades"]>[number]>();
       for (const g of [...(p1.grades || []), ...(p2.grades || [])]) {
-        const prev = map.get(g.subject);
-        if (!prev || Date.parse(g.updatedAt) >= Date.parse(prev.updatedAt)) map.set(g.subject, g);
+        const key = g.id || `${g.subject}:${g.source || "manual"}`; // legacy entries without an id: best-effort key
+        const prev = map.get(key);
+        if (!prev || Date.parse(g.updatedAt) >= Date.parse(prev.updatedAt)) map.set(key, g);
       }
       return [...map.values()];
     })() : undefined,

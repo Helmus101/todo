@@ -5,7 +5,7 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, isBigIbPr
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject } from "../shared/types.ts";
 import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 
@@ -127,6 +127,18 @@ const pmAcct = mergeProfileStates(
   { ...emptyProfile(), primaryAccounts: { googlecalendar: "acct-b" } },
 );
 check("primaryAccounts merge across devices instead of one side clobbering the other", pmAcct.primaryAccounts?.gmail === "acct-a" && pmAcct.primaryAccounts?.googlecalendar === "acct-b");
+// A manual grade logged on device A must survive a merge against device B's copy, which doesn't have it
+// yet — grades are a history now (union by id), not a one-row-per-subject snapshot (last-write-wins).
+const pmGrades = mergeProfileStates(
+  { ...emptyProfile(), grades: [{ id: "a", subject: "Maths", grade: 15, scale: 20, updatedAt: older, source: "manual" }] },
+  { ...emptyProfile(), grades: [{ id: "b", subject: "Maths", grade: 12, scale: 20, updatedAt: newer, source: "manual" }] },
+);
+check("both devices' manual grade entries survive the merge (union by id)", pmGrades.grades?.length === 2);
+const pmGradeSync = mergeProfileStates(
+  { ...emptyProfile(), grades: [{ id: "p1", subject: "Physique", grade: 10, scale: 20, updatedAt: older, source: "pronote" }] },
+  { ...emptyProfile(), grades: [{ id: "p1", subject: "Physique", grade: 14, scale: 20, updatedAt: newer, source: "pronote" }] },
+);
+check("same-id Pronote row still collapses to the newer sync, not duplicated", pmGradeSync.grades?.length === 1 && pmGradeSync.grades?.[0].grade === 14);
 
 // ── Policy registry ───────────────────────────────────────────────────────────
 section("action policy registry");
@@ -513,6 +525,24 @@ check("deadlineEpoch: empty sorts last", deadlineEpoch("") === Infinity && deadl
 section("guardrail: shared-artifact check fails closed");
 check("no fileId → treated as shared (no bypass)", await isArtifactShared("user@example.com", "") === true);
 check("unreachable/unconfigured Composio → treated as shared (fail closed)", await isArtifactShared("user@example.com", "some-real-looking-file-id-12345") === true);
+
+// ── Grades: individual entries, per-subject average, any scale ────────────────
+section("gradesBySubject");
+{
+  const gs = gradesBySubject([
+    { id: "1", subject: "Maths", grade: 15, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "manual" },
+    { id: "2", subject: "Maths", grade: 12, scale: 20, updatedAt: "2026-02-01T00:00:00Z", source: "manual" },
+    { id: "3", subject: "Physique — IA", grade: 4, scale: 7, updatedAt: "2026-01-15T00:00:00Z", source: "manual" }, // IB /7 scale
+    { id: "4", subject: "physique — ia", grade: 5, scale: 7, updatedAt: "2026-02-15T00:00:00Z", source: "pronote" }, // same subject, case-insensitive group
+  ]);
+  check("groups by subject case-insensitively", gs.length === 2);
+  const maths = gs.find((s) => s.subject === "Maths");
+  check("keeps every individual entry for a subject", maths.entries.length === 2);
+  check("per-subject average is the mean, not just the latest", Math.abs(maths.avg20 - 13.5) < 0.01);
+  const physique = gs.find((s) => /physique/i.test(s.subject));
+  check("a /7 scale is normalized to /20 for the average", Math.abs(physique.avg20 - ((4 / 7 + 5 / 7) / 2) * 20) < 0.01);
+  check("weakest subject sorts first", gs[0].subject === "Maths" ? maths.avg20 <= physique.avg20 : physique.avg20 <= maths.avg20);
+}
 
 // ── Weekly workload balancing (deterministic, no AI) ──────────────────────────
 section("workload heuristic");

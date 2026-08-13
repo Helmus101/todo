@@ -81,13 +81,22 @@ export interface Profile {
   // Otto Lycée defaults to French; a student can switch the whole app (UI + AI-generated content) to
   // English in Settings. Undefined/anything else is treated as "fr".
   language?: "fr" | "en";
-  // Manually-entered per-subject grades (Pronote's read API doesn't expose grades) — lets Otto know which
-  // subject is actually slipping, not just what's due soonest, so a low grade gets more lead time/attention
-  // than the deadline alone would suggest. Self-reported, so treated as a signal, not ground truth.
-  grades?: { subject: string; grade: number; scale: number; updatedAt: string }[];
+  // Grades — lets Otto know which subject is actually slipping, not just what's due soonest, so a low
+  // grade gets more lead time/attention than the deadline alone would suggest. Two sources coexist:
+  // "pronote" entries are the school's own current subject average (Pronote's read API doesn't expose
+  // individual grades, only the running average) — one per subject, overwritten on every sync, since it's
+  // always "the average as of now", not a historical data point. "manual" entries are individual grades
+  // the student logs by hand (any scale, e.g. /7 for IB) — these ACCUMULATE, never overwritten, so a
+  // subject's grade history and its own average are both visible, not just the latest number.
+  grades?: { id: string; subject: string; grade: number; scale: number; updatedAt: string; source?: "pronote" | "manual" }[];
   // Which track this student is on — drives AI vocabulary (isBigIbProject/trackLine in claude.ts) and
   // unlocks the milestone/big-project breakdown for IB (EE/IA/TOK/CAS). Set from Settings.
   track?: "ib" | "bac" | "other";
+}
+// Shared client+server id generator (used for grade entries) — Web Crypto's randomUUID is available in
+// both a modern browser and Node, so this needs no server-only import to stay isomorphic.
+function newId(): string {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [] }; }
 export function normalizeProfile(p: any): Profile {
@@ -134,11 +143,13 @@ export function normalizeProfile(p: any): Profile {
     language: p?.language === "en" ? "en" : "fr",
     grades: Array.isArray(p?.grades)
       ? p.grades.map((g: any) => ({
+          id: typeof g?.id === "string" && g.id ? g.id : newId(),
           subject: String(g?.subject || "").trim().slice(0, 60),
           grade: Number(g?.grade) || 0,
           scale: Number(g?.scale) > 0 ? Number(g.scale) : 20,
           updatedAt: typeof g?.updatedAt === "string" ? g.updatedAt : new Date().toISOString(),
-        })).filter((g: { subject: string }) => g.subject).slice(0, 30)
+          source: g?.source === "pronote" ? "pronote" as const : "manual" as const,
+        })).filter((g: { subject: string }) => g.subject).slice(0, 200)
       : undefined,
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
   };
@@ -149,6 +160,25 @@ export function normalizeProfile(p: any): Profile {
  *  subject reads as needing attention consistently everywhere instead of two silently-drifting numbers. */
 export function isLowGrade(grade: number, scale: number): boolean {
   return scale > 0 && (grade / scale) * 100 < 45;
+}
+
+/** Group a flat grade list into per-subject averages, each normalized to /20 (so a subject graded /7,
+ *  like an IB IA, sits on the same footing as one graded /20 when compared or rolled into an overall
+ *  average) — plus the individual entries, newest first, so the UI can show both "your Maths average"
+ *  and every grade that went into it. Shared by the client (Settings) and anywhere server-side wants to
+ *  reason about "which subject is struggling" without duplicating the grouping logic. */
+export interface SubjectGrades { subject: string; avg20: number; entries: NonNullable<Profile["grades"]>; }
+export function gradesBySubject(grades: NonNullable<Profile["grades"]> | undefined): SubjectGrades[] {
+  const map = new Map<string, NonNullable<Profile["grades"]>>();
+  for (const g of grades || []) {
+    const key = g.subject.toLowerCase();
+    (map.get(key) || map.set(key, []).get(key)!).push(g);
+  }
+  return [...map.values()].map((entries) => {
+    const sorted = [...entries].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    const avg20 = entries.reduce((sum, g) => sum + (g.grade / g.scale) * 20, 0) / entries.length;
+    return { subject: sorted[0].subject, avg20, entries: sorted };
+  }).sort((a, b) => a.avg20 - b.avg20); // weakest subject first — same "needs attention" ordering as the grades list
 }
 
 /** Is this a resolvable IANA timezone? (Intl throws on an unknown zone.) */
