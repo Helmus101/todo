@@ -170,6 +170,37 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
   );
 }
 
+/* ─────────────────────────────── the dashboard spotlight ───────────────────────────────
+ * The single most important task, given the manifesto's own room: a kicker, a large title, one line of
+ * supporting context, and ONE primary action. No card border/shadow — its size and position on the page
+ * are what say "look here first," not a box. Everything else today's list has (chips, spinner, dismiss)
+ * stays on the quiet `TaskCardRow`s underneath; duplicating that chrome here would just be more noise
+ * around the one thing meant to stand out. */
+export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }) {
+  const L = useLang();
+  const cardEn = useContext(LangContext) === "en";
+  const chip = statusChip(task, false, cardEn);
+  const showChip = chip && chip.tone === "attention" ? chip : null;
+  const w = task.when ? fmtWhen(task.when) : "";
+
+  return (
+    <div className="dash-hero">
+      <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
+      <h2 className="dash-hero-title">{task.title}</h2>
+      {task.why ? <p className="dash-hero-why">{task.why}</p> : null}
+      {(w || showChip) ? (
+        <div className="dash-hero-meta">
+          {w ? <span className="when">{w}</span> : null}
+          {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
+        </div>
+      ) : null}
+      <button type="button" className="btn primary big dash-hero-cta" onClick={onOpen}>
+        {L("Continuer", "Continue")}
+      </button>
+    </div>
+  );
+}
+
 /* ─────────────────────────────── the focused task view ─────────────────────────────── */
 
 export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft, onNotify }: {

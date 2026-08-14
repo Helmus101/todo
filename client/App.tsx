@@ -3,7 +3,7 @@ import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal } from "./ui.tsx";
-import { TaskCardRow, TaskFocus } from "./TaskCard.tsx";
+import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
  *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
@@ -584,10 +584,11 @@ export function App() {
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
           )}
-          {/* Two-zone dashboard: Today (dash-today) is the main event — on mobile it comes right after
-              Add task, ahead of the rail widgets, DOM order alone gives the right mobile stacking. On
-              desktop (≥1024px) dash-grid places dash-rail beside dash-today+dash-more instead, sticky,
-              so the workload/exam/milestone widgets stay ambient context, never blocking the task list. */}
+          {/* Two-zone dashboard: Today (dash-today, now led by the TaskHero spotlight) is the main event —
+              it comes FIRST on both mobile and desktop (via CSS `order`/`grid-row`, not DOM position, so
+              the JSX below doesn't need to move), ahead of add-task and the rail widgets. On desktop
+              (≥1024px) dash-grid places dash-rail beside dash-today+dash-more instead, sticky, so the
+              workload/exam widgets stay ambient context, never blocking the hero. */}
           <div className="dash-grid">
             <div className="dash-addtask"><AddTask onAdded={setTasks} /></div>
 
@@ -613,27 +614,32 @@ export function App() {
                 );
               })() : (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  <div className="focus-group">
-                    <div className="focus-group-head">
-                      <span className="focus-title">{en ? "Today" : "Aujourd'hui"}</span>
-                      <span className="focus-badge">Top {focusToday.length}</span>
+                  {/* The dashboard's one headline moment — no "Today"/"Top N" label needed above it, the
+                      greeting already says "this is today" and the hero itself says what matters most.
+                      Everything else today still shows, just quieter, underneath. */}
+                  <TaskHero key={focusToday[0].id} task={focusToday[0]} onOpen={() => navigate(`task/${focusToday[0].id}`)} />
+                  {focusToday.length > 1 && (
+                    <div className="focus-group dash-also-today">
+                      <div className="focus-group-head">
+                        <span className="focus-title">{en ? "Also today" : "Aussi aujourd'hui"}</span>
+                      </div>
+                      <div className="list">
+                        {focusToday.slice(1).map((t, i) => (
+                          <TaskCardRow
+                            key={t.id}
+                            task={t}
+                            index={i}
+                            retrying={retryingIds.includes(t.id)}
+                            isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
+                            onOpen={() => navigate(`task/${t.id}`)}
+                            onChange={setTasks}
+                            onConfirmed={flagJustDone}
+                            onNotify={notify}
+                          />
+                        ))}
+                      </div>
                     </div>
-                    <div className="list">
-                      {focusToday.map((t, i) => (
-                        <TaskCardRow
-                          key={t.id}
-                          task={t}
-                          index={i}
-                          retrying={retryingIds.includes(t.id)}
-                          isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
-                          onOpen={() => navigate(`task/${t.id}`)}
-                          onChange={setTasks}
-                          onConfirmed={flagJustDone}
-                          onNotify={notify}
-                        />
-                      ))}
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
