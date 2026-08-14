@@ -119,12 +119,14 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
   // Only a chip that means "needs you" earns a place on the row — muted (queued) and good ("done for
   // you", not actionable) both used to render a chip too, which meant a row could carry a colored pill
   // even when there was nothing to act on. Reserving the chip for attention/bad/busy keeps it a genuine
-  // signal instead of one more piece of always-on decoration, and keeps the accent scarce (see the
-  // one-accent "needs you" rule — "good" was rendering in accent color for a non-actionable state).
-  // Priority itself is dropped entirely: the list is already ordered by it, and `.when-soon` + the card's
-  // own left border carry urgency without a word.
+  // signal instead of one more piece of always-on decoration. Priority itself is dropped entirely: the
+  // list is already ordered by it, and `.when-soon` + the card's own left border carry urgency without
+  // a word.
   const chip = !isDone ? statusChip(task, retrying, cardEn) : null;
-  const showChip = chip && chip.tone !== "muted" && chip.tone !== "good" ? chip : null;
+  // "executing" is the one busy-tone case that ALSO shows the spinner (`.card-spin` below) — a "Working"
+  // chip next to a spinner would restate the same fact twice (rule 14, remove redundant UI). A
+  // failed-and-retrying task is "busy" too but has no spinner, so it still needs its chip to say so.
+  const showChip = chip && chip.tone !== "muted" && chip.tone !== "good" && cStatus !== "executing" ? chip : null;
 
   const w = task.when ? fmtWhen(task.when) : "";
   // Days-to-deadline, not urgency score, drives the visual — same anti-procrastination curve as
@@ -271,12 +273,11 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         </div>
       </div>
 
-      {/* (B) progress — the deck's own bar, so "one at a time" reads the same as it does in a quiz. */}
+      {/* (B) progress — the deck's own bar, so "one at a time" reads the same as it does in a quiz. Just
+          the bar, no "Step X of Y" caption — the exact count reappears a few lines down on the "All
+          steps" disclosure header, so spelling it out here too was the same number stated twice. */}
       {steps.length > 0 && !isDone ? (
-        <>
-          <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(doneCount / steps.length) * 100}%` }} /></div>
-          <div className="deck-progress">{L(`Étape ${Math.min(doneCount + 1, steps.length)} sur ${steps.length}`, `Step ${Math.min(doneCount + 1, steps.length)} of ${steps.length}`)}</div>
-        </>
+        <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(doneCount / steps.length) * 100}%` }} /></div>
       ) : null}
 
       {/* (C) the hero — the single thing to do right now. */}

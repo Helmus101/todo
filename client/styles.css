@@ -1384,11 +1384,15 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   flex: none; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; padding: 3px 8px;
   border-radius: 999px; white-space: nowrap;
 }
+/* Accent is reserved for chip-attention alone — the one tone that genuinely means "needs you" (see the
+   one-accent "consent line" rule at the top of this file). busy/good/muted/bad are all informational,
+   not urgent, so they stay neutral — a "Working" or "Done for you" chip claiming the same visual weight
+   as an actual needs-you chip would make color decorative instead of meaningful. */
 .chip-muted { background: var(--bg-2); color: var(--ink-3); }
-.chip-busy { background: var(--accent-soft); color: var(--accent); }
+.chip-busy { background: var(--bg-2); color: var(--ink-3); }
 .chip-attention { background: var(--accent-soft); color: var(--accent); }
 .chip-bad { background: var(--bg-2); color: var(--ink); }
-.chip-good { background: var(--accent-soft); color: var(--accent); }
+.chip-good { background: var(--bg-2); color: var(--ink-3); }
 
 /* ─── Login ────────────────────────────────────────────────────────────────── */
 .login-page { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }

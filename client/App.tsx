@@ -727,7 +727,12 @@ export function App() {
           {/* Task detail opens as a modal over the list — click a row (live or completed) to open it. */}
           {(() => {
             const openTask = openId ? tasks.find((t) => t.id === openId) : null;
-            if (!openTask) return null;
+            // Dismissing (or confirming) a task server-side marks it "dismissed"/handled but keeps it IN
+            // the list (dismiss doesn't delete — see server/index.ts), so `openTask` stays truthy after
+            // onChange updates the list. Closing used to rely entirely on useTaskLeave's onLeft callback
+            // firing navigate("") — if that timing ever slipped, the modal would keep showing a task
+            // that's already gone. Belt and suspenders: once the task is handled, close regardless.
+            if (!openTask || isHandled(openTask.status)) return null;
             return (
               <TaskModal onClose={() => navigate("")} title={openTask.title}>
                 <TaskFocus
