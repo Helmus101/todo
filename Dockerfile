@@ -1,5 +1,5 @@
 # Single-service deploy: build the client, then run the Express server (which serves dist/ + the API).
-FROM node:22-slim
+FROM node:24-slim
 WORKDIR /app
 
 COPY package.json package-lock.json ./
