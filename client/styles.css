@@ -253,14 +253,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .dash-head { margin-bottom: 28px; }
 
 /* ─── Two-zone dashboard ──────────────────────────────────────────────────────
-   The TaskHero spotlight (inside dash-today) is the dashboard's headline moment — it leads on both
-   mobile and desktop, ahead of add-task and the rail widgets, so the first thing under the greeting is
-   always "here's what matters most," not a text input or ambient context. Below 1024px this is a single
-   flex column and `order` alone gives the right stacking; at 1024px+ it becomes a real two-column grid,
-   Today still first in the main column, with the widgets in a sticky right rail as ambient context. */
+   Add-task leads — it's the one always-available capture action, so it sits right under the greeting on
+   both mobile and desktop. The TaskHero spotlight (inside dash-today) follows immediately after. Below
+   1024px this is a single flex column and `order` alone gives the right stacking; at 1024px+ it becomes
+   a real two-column grid, add-task+Today staying first in the main column, widgets in a sticky right
+   rail as ambient context. */
 .dash-grid { display: flex; flex-direction: column; }
-.dash-today { order: 0; }
-.dash-addtask { margin: 28px 0; order: 1; }
+.dash-addtask { margin-bottom: 28px; order: 0; }
+.dash-today { order: 1; }
 /* One shared "at a glance" panel instead of two separately-bordered/independently-animating widgets —
    the exam strip and week-load strip now read as two rows of the same card (divided by a hairline),
    not two competing panels. */
@@ -283,8 +283,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
     row-gap: 0;
     align-items: start;
   }
-  .dash-today { grid-column: 1; grid-row: 1; }
-  .dash-addtask { grid-column: 1; grid-row: 2; }
+  .dash-addtask { grid-column: 1; grid-row: 1; }
+  .dash-today { grid-column: 1; grid-row: 2; }
   .dash-more { grid-column: 1; grid-row: 3; }
   .dash-rail {
     grid-column: 2; grid-row: 1 / 4;

@@ -496,6 +496,16 @@ export function App() {
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
   // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
   const focusToday = live.slice(0, 3);
+  // The spotlight should be something the student can actually act on right now — a "queued"/"executing"
+  // task has nothing to click yet (Otto's still working), so a [Continue] button on it would be a dead
+  // end. Prefer the highest-ranked ACTIONABLE task (needs_review or a failure to retry) as the hero;
+  // only fall back to the plain #1-ranked task if nothing today is actionable yet.
+  const heroIdx = focusToday.findIndex((t) => {
+    const c = canonStatus(t.status);
+    return c === "needs_review" || c === "failed_retryable" || c === "failed_terminal";
+  });
+  const heroTask = focusToday[heroIdx >= 0 ? heroIdx : 0];
+  const restToday = focusToday.filter((_, i) => i !== (heroIdx >= 0 ? heroIdx : 0));
   const laterToday = live.slice(3, 6);
   const canWait = live.slice(6);
   // Today's real momentum — the ALL-TIME done count only ever grows, so a bar based on it would sit near
@@ -617,14 +627,14 @@ export function App() {
                   {/* The dashboard's one headline moment — no "Today"/"Top N" label needed above it, the
                       greeting already says "this is today" and the hero itself says what matters most.
                       Everything else today still shows, just quieter, underneath. */}
-                  <TaskHero key={focusToday[0].id} task={focusToday[0]} onOpen={() => navigate(`task/${focusToday[0].id}`)} />
-                  {focusToday.length > 1 && (
+                  <TaskHero key={heroTask.id} task={heroTask} onOpen={() => navigate(`task/${heroTask.id}`)} />
+                  {restToday.length > 0 && (
                     <div className="focus-group dash-also-today">
                       <div className="focus-group-head">
                         <span className="focus-title">{en ? "Also today" : "Aussi aujourd'hui"}</span>
                       </div>
                       <div className="list">
-                        {focusToday.slice(1).map((t, i) => (
+                        {restToday.map((t, i) => (
                           <TaskCardRow
                             key={t.id}
                             task={t}
