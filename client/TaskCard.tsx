@@ -315,7 +315,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
       <StepHero
         task={task} steps={steps} currentIdx={currentIdx} isDone={isDone} cStatus={cStatus}
         retrying={retrying} running={running} decided={decided} setDecided={setDecided}
-        onStepDone={markStepDone} onAsk={askAboutStep} onRun={run}
+        onStepDone={markStepDone} onRun={run}
         onConfirm={() => void leave(() => api.confirm(task.id), "confirm")}
         onTask={onTask} onNotify={onNotify}
       />
@@ -371,15 +371,19 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
 
 /** Exactly one shape, by precedence. Ticking the current step advances it in place — that's what makes
  *  "one thing at a time" self-evident without a word of instruction. */
-function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onAsk, onRun, onConfirm, onTask, onNotify }: {
+function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onRun, onConfirm, onTask, onNotify }: {
   task: WebTask; steps: TaskStep[]; currentIdx: number; isDone: boolean; cStatus: string;
   retrying?: boolean; running: boolean;
   decided: Record<number, string>; setDecided: Dispatch<SetStateAction<Record<number, string>>>;
-  onStepDone: (i: number) => void; onAsk: (i: number, text: string) => void; onRun: (reset?: boolean) => void;
+  onStepDone: (i: number) => void; onRun: (reset?: boolean) => void;
   onConfirm: () => void; onTask: (t: WebTask) => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
 }) {
   const L = useLang();
   const pendingSendable = (task.sendables || []).findIndex((s) => !s.sent);
+  // For a step with a link that needs a real follow-up (not auto-marked done on open): the button reads
+  // "Open ↗" until clicked, then flips in place to "Done" — one button, two phases, instead of showing
+  // both actions side by side.
+  const [openedIdx, setOpenedIdx] = useState<number | null>(null);
 
   if (isDone) {
     return (
@@ -471,11 +475,27 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
         />
         </>
       ) : null}
+      {/* One button, not three: a step with a link opens it (and — if nothing further is needed from the
+          user — marks itself done in the same click); otherwise it flips to "Done" once opened. A step
+          with no link is just "Done". "I'm stuck" is dropped here — the tutor chat right below is always
+          one glance away, so a dedicated help button on every step was one more thing competing for
+          attention for a path that already exists. */}
       <div className="hero-acts">
-        {s.url ? <button className="btn primary" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}</button> : null}
-        <button className={`btn ${s.url ? "" : "primary"}`} onClick={() => onStepDone(currentIdx)}>{L("C'est fait", "Done")}</button>
-        {/* The whole discoverability mechanism for the tutor, attached to the moment it's needed. */}
-        <button className="btn ghost hero-stuck" onClick={() => onAsk(currentIdx, s.text)}>{L("Je bloque", "I'm stuck")}</button>
+        {s.url && !(openedIdx === currentIdx) ? (
+          <button
+            className="btn primary"
+            title={s.url}
+            onClick={() => {
+              openTab(s.url!, TAB_GROUP);
+              if (s.automatable) onStepDone(currentIdx);
+              else setOpenedIdx(currentIdx);
+            }}
+          >
+            {L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}
+          </button>
+        ) : (
+          <button className="btn primary" onClick={() => onStepDone(currentIdx)}>{L("C'est fait", "Done")}</button>
+        )}
       </div>
     </div>
   );
