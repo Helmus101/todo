@@ -635,7 +635,9 @@ export function App() {
             </div>
 
             <div className="dash-rail">
-              <Milestones tasks={live} />
+              {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
+                  (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
+              {false && <Milestones tasks={live} />}
               {status.pronoteConnected && <ExamCountdown lang={status.language} />}
               <WeekLoad lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
             </div>
@@ -1443,6 +1445,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
             <p className="onboard-lead">{pronoteConnected ? L("Otto se met au travail. Ton plan du jour arrive.", "Otto is getting to work. Your plan for today is on its way.") : L("Connecte ton Pronote quand tu veux depuis les Réglages, et Otto se met au travail.", "Connect your Pronote any time from Settings, and Otto gets to work.")}</p>
+            <p className="muted small">{L("Otto regarde automatiquement, tous les jours — pas besoin de lui demander. Pour connecter d'autres comptes ou ajuster quoi que ce soit, retrouve tout dans les Réglages.", "Otto always looks automatically, every day — no need to ask. To connect more accounts or adjust anything, it's all in Settings.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{L("Voir mes tâches", "See my tasks")}</button></div>
           </div>
         )}

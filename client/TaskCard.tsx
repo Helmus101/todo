@@ -463,13 +463,6 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
   const toggleSubstep = async (i: number, subIndex: number, done: boolean) => {
     onChange(await api.substepDone(task.id, i, subIndex, done));
   };
-  // "Détailler cette étape" only makes sense on a milestone within a detected big project (Extended
-  // Essay/TOK/CAS/IA, a full essay, a dissertation — see isBigIbProject in server/claude.ts) — an
-  // ordinary task's steps are already small/one-sitting by design (writeStepsFromContext caps them at
-  // ≤8 words each), so offering to break THOSE down further would just be noise. A milestone step is
-  // the only shape carrying a `targetDate`, so that's the same signal the milestone-bar above already
-  // uses to detect a big project client-side, without needing a separate flag threaded through.
-  const isBigProjectTask = steps.some((s) => s.targetDate);
   const openableCount = steps.filter((s) => s.url && !s.done && !stepBlocked(steps, s)).length;
   // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
   const openAllPages = async () => {
@@ -561,7 +554,10 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                       </li>
                     ))}
                   </ul>
-                ) : isBigProjectTask && !s.done && !blk ? (
+                ) : !s.done && !blk ? (
+                  // Available on any step, not just big-project milestones — a step that reads simple to
+                  // Otto can still feel like too much in the moment, so the option to split it further is
+                  // always one tap away instead of being reserved for a detected big project.
                   <button type="button" className="btn xs ghost substep-expand" disabled={expanding === i} onClick={() => void expandStep(i)}>
                     {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler cette étape", "Break this step down")}
                   </button>

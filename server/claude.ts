@@ -11,6 +11,19 @@ import { hasAssignmentText } from "./discover.ts";
 // restore full auto-execution of every reversible action too. Nothing execution-related is deleted, just
 // gated: only sends/calendar-writes/updates-to-existing-docs are withheld from the agent (see runTask).
 export const EXECUTION_ENABLED = false;
+
+/** Backstop for step text: the prompt asks the model for a short one-liner, but it doesn't always comply
+ *  (a long compound sentence slips through). A plain `.slice(0, N)` used to cut it off mid-word ("...fo")
+ *  which read as broken, not just long — this cuts at the last word boundary instead so an over-long step
+ *  is still a clean, if long, sentence rather than garbled. `max` is intentionally generous (well above
+ *  the ~8-word target) since this is a safety net, not the primary length control — that's the prompt. */
+function truncateStepText(text: string, max = 110): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim();
+}
 /** The app's UI + AI-content language, toggled in Settings (defaults French). Every prompt that phrases
  *  user-facing text pulls this in rather than hardcoding a language. */
 export function languageLine(p?: Profile): string {
@@ -1400,7 +1413,12 @@ const RUN_SYSTEM =
   `OTTO vs YOU — classify EVERY step by ONE test: can you do it with your tools or by finding information?\n` +
   `• YES → it's OTTO's (automatable=true): reading/searching anything, drafting, creating/updating a doc/sheet/ ` +
   `event/task, ENTERING or filling in data, commenting, research, opening a page. Do it NOW if unblocked; only ` +
-  `LIST it (with "dependsOn") when it waits on a user step. Lack a value? FIND it (inbox/Drive/the source), then do it.\n` +
+  `LIST it (with "dependsOn") when it waits on a user step. Lack a value? FIND it (inbox/Drive/the source), then do it. ` +
+  `A research/search step you haven't genuinely attempted yet is NEVER left as a leftover step — run the searches ` +
+  `THIS turn (try more than one query/source before giving up) and fold whatever you found into "context"/"did"/ ` +
+  `"links". Only list it as a step if, after real attempts, something is still genuinely missing — and then say the ` +
+  `SPECIFIC thing still needed ("couldn't find a past-winner report older than 2023 — check the KWHS archive ` +
+  `directly"), never a vague "retry search" that just defers the same failed attempt to later.\n` +
   `• NO → it's the USER's (automatable=false), and ONLY for one of: (1) a judgment/decision/approval only they ` +
   `can make; (2) a credential/login/access you don't have; (3) a payment or moving money; (4) a real-world / ` +
   `physical action. Reviewing-then-SENDING a message is NOT a step — offer it as a one-click send (sendables).\n` +
@@ -1469,7 +1487,7 @@ const RUN_TOOLS = [
       type: "array",
       description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). Often empty.",
       items: { type: "object", properties: {
-        text: { type: "string", description: "ONE concrete action — imperative verb + the specific thing, ≤ 8 words, no hedging, cut every word that isn't load-bearing. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'. Exception: a step that GATES a later one (see dependsOn) may run a little longer since it must also name exactly what to capture for that later step — even then, stay as tight as the content allows." },
+        text: { type: "string", description: "ONE concrete action, ONE clause — imperative verb + the specific thing, ≤ 8 words, no hedging, cut every word that isn't load-bearing. NEVER stack multiple asks with a colon/semicolon/'and' into one step ('thank her, ask X, and mention Y' is THREE steps, not one) — split each into its own step instead. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'. Exception: a step that GATES a later one (see dependsOn) may name a couple more words of what to capture for that later step, but still stays ONE short clause — never a run-on sentence." },
         automatable: { type: "boolean", description: "true = OTTO can do it with its tools or by finding info (read/search, draft, create/update a doc/sheet/event/task, ENTER/FILL data, comment, research, open a page) — do it NOW unless it waits on a user step (then set dependsOn). false = needs the USER, ONLY for: a judgment/decision/approval, a credential you lack, a payment, or a physical act. NOT for being specific/numeric/tedious; sending a message is a one-click send, not a step." },
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
@@ -2150,9 +2168,10 @@ async function writeStepsFromContext(
           `out over the weeks/months a project like this genuinely takes — don't cram them all into the next few ` +
           `days. 4 to 8 milestones, each text ≤10 words.\n\n` +
           `IF ORDINARY: break the remaining work into a clear, ORDERED list of concrete, actionable steps — each ` +
-          `a SHORT one-liner (≤8 words: imperative verb + the specific thing, no hedging, no filler) naming a ` +
-          `specific action (not a vague category like "look into options"), small enough that the list feels ` +
-          `doable, not overwhelming. If a resource above was already CREATED (not just found), do NOT list ` +
+          `a SHORT one-liner, ONE clause (≤8 words: imperative verb + the specific thing, no hedging, no filler, ` +
+          `never multiple asks stacked with a colon/semicolon/"and") naming a specific action (not a vague ` +
+          `category like "look into options"), small enough that the list feels doable, not overwhelming. If a ` +
+          `resource above was already CREATED (not just found), do NOT list ` +
           `"create X" as a step — that's done; instead say what to DO with it now (review it, send it, use it, ` +
           `decide something). Only list creating a document/draft as a step if none of the resources above cover ` +
           `it yet. Order them; set "dependsOn" to an earlier step's index (0-based, in THIS list) when one must ` +
@@ -2176,7 +2195,7 @@ async function writeStepsFromContext(
     const rawSteps = out?.steps || [];
     const steps = rawSteps
       .map((s, idx) => ({
-        text: String(s?.text || "").trim().slice(0, 180),
+        text: truncateStepText(String(s?.text || "")),
         automatable: bigProject ? false : !!s?.automatable,
         ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
         // Same validation as finalize()'s dependsOn handling — must point at a REAL other step in
@@ -2264,7 +2283,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
   const steps: TaskStep[] = rawSteps
     .map((s: any, idx: number) => ({
-      text: String(s?.text || "").trim().slice(0, 180), // keep steps to a scannable one-liner, not a paragraph
+      text: truncateStepText(String(s?.text || "")), // keep steps to a scannable one-liner, not a paragraph
       automatable: !!s?.automatable,
       needsPermission: !!s?.needsPermission,
       // Valid only if it points at a REAL other step — a bad index (9 in a 3-step list, or itself)
