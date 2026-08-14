@@ -539,13 +539,17 @@ export function App() {
                 : (en
                     ? `${live.length} thing${live.length > 1 ? "s" : ""} left today${doneToday > 0 ? ` — ${doneToday} already done` : ""}.`
                     : `${live.length} chose${live.length > 1 ? "s" : ""} à faire aujourd'hui${doneToday > 0 ? ` — ${doneToday} déjà faite${doneToday > 1 ? "s" : ""}` : ""}.`)}
-              {overdueCount > 0 && (
+              {/* One status signal at a time, in priority order — overdue outranks in-progress work,
+                  which outranks a routine scan — instead of stacking every pill that happens to apply. */}
+              {overdueCount > 0 ? (
                 <span className="dash-late">
                   {en ? `${overdueCount} milestone${overdueCount > 1 ? "s" : ""} overdue` : `${overdueCount} jalon${overdueCount > 1 ? "s" : ""} en retard`}
                 </span>
-              )}
-              {working > 0 && <span className="dash-working">{en ? `Otto is working on ${working}` : `Otto en prépare ${working}`}</span>}
-              {scanning && <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification…"}</span>}
+              ) : working > 0 ? (
+                <span className="dash-working">{en ? `Otto is working on ${working}` : `Otto en prépare ${working}`}</span>
+              ) : scanning ? (
+                <span className="scan-note"><span className="scan-dot" /> {en ? "checking…" : "vérification…"}</span>
+              ) : null}
             </p>
             {/* Today's progress, not all-time — see doneToday. Hidden when there's nothing to measure. */}
             {todayTotal > 0 && (
@@ -802,13 +806,14 @@ function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
   const [tests, setTests] = useState<{ subject: string; deadline: string }[] | null>(null);
   const [showAll, setShowAll] = useState(false);
   useEffect(() => { void api.pronoteTests().then((r) => setTests(r.tests)).catch(() => setTests([])); }, []);
-  useReveal([tests]); // this whole strip only exists once tests load, so re-scan then, not just on mount
   if (!tests?.length) return null;
   const all = [...tests].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline));
   const sorted = showAll ? all : all.slice(0, 4);
   const daysLeft = (iso: string) => Math.ceil((Date.parse(iso) - Date.now()) / 86_400_000);
   return (
-    <div className="exam-strip-wrap reveal">
+    // No .reveal fade here — this used to pop in as its own late "second wave" after the rest of the
+    // dashboard had already settled; it now just appears with its panel, no separate animation.
+    <div className="exam-strip-wrap">
       <div className="exam-strip-label">{en ? "Upcoming tests" : "Contrôles à venir"}</div>
       <div className="exam-strip">
         {sorted.map((t, i) => {
@@ -847,7 +852,6 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   const [moving, setMoving] = useState<string | null>(null);
   const load = useCallback(() => { void api.workload().then((r) => setDays(r.days)).catch(() => setDays([])); }, []);
   useEffect(() => { load(); }, [load]);
-  useReveal([days]); // the widget only mounts once workload data arrives, so re-scan then, not just on mount
   if (!days || days.every((d) => d.items.length === 0)) return null;
 
   const max = Math.max(1, ...days.map((d) => d.totalEffort));
@@ -879,7 +883,7 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   };
 
   return (
-    <div className="week-load-wrap reveal">
+    <div className="week-load-wrap">
       <div className="exam-strip-label">{en ? "This week" : "Cette semaine"}</div>
       <div className="week-load-strip">
         {days.map((d) => {

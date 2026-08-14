@@ -116,12 +116,15 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
 
   const needsYou = !isDone && cStatus === "needs_review" &&
     (task.steps || []).some((s) => !s.done && (!s.automatable || s.needsPermission || !!s.question));
-  // Only an ACTIONABLE chip earns a place on the row. "En attente"/"Queued" (tone muted) is ambient state
-  // the student can't act on, and it used to sit alongside a priority chip and a cleanup chip — three chips
-  // on one line. Priority is dropped entirely: the list is already ordered by it, and `.when-soon` + the
-  // card's own left border carry urgency without a word.
+  // Only a chip that means "needs you" earns a place on the row — muted (queued) and good ("done for
+  // you", not actionable) both used to render a chip too, which meant a row could carry a colored pill
+  // even when there was nothing to act on. Reserving the chip for attention/bad/busy keeps it a genuine
+  // signal instead of one more piece of always-on decoration, and keeps the accent scarce (see the
+  // one-accent "needs you" rule — "good" was rendering in accent color for a non-actionable state).
+  // Priority itself is dropped entirely: the list is already ordered by it, and `.when-soon` + the card's
+  // own left border carry urgency without a word.
   const chip = !isDone ? statusChip(task, retrying, cardEn) : null;
-  const showChip = chip && chip.tone !== "muted" ? chip : null;
+  const showChip = chip && chip.tone !== "muted" && chip.tone !== "good" ? chip : null;
 
   const w = task.when ? fmtWhen(task.when) : "";
   // Days-to-deadline, not urgency score, drives the visual — same anti-procrastination curve as
@@ -132,7 +135,7 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
   const secondary = next ? L(`Suivant : ${next.text}`, `Next: ${next.text}`) : subtitle(task);
 
   return (
-    <div style={index !== undefined ? { ["--i" as any]: index } : undefined} className={`card ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
+    <div className={`card ${isInFlight(task.status) ? "running" : ""} ${needsYou ? "needs-you" : ""} ${isDone ? "is-done" : ""} ${leaving && leaveKind === "confirm" ? "confirming" : task.status === "dismissed" || leaving ? "dismissed" : ""}`}>
       {/* Opening the task was a `div onClick` — unreachable by keyboard, and on live mobile testing, taps
           on an invisible full-cover overlay button (the previous fix here) silently failed to register at
           all despite being correct by every CSS spec/stacking rule — never fully explained, but reliably
