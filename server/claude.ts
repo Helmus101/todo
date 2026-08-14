@@ -1412,7 +1412,12 @@ const RUN_SYSTEM =
   `or narrated. Order them; set "dependsOn" to an earlier step's index when one must happen first.\n` +
   `OTTO vs YOU — classify EVERY step by ONE test: can you do it with your tools or by finding information?\n` +
   `• YES → it's OTTO's (automatable=true): reading/searching anything, drafting, creating/updating a doc/sheet/ ` +
-  `event/task, ENTERING or filling in data, commenting, research, opening a page. Do it NOW if unblocked; only ` +
+  `event/task, ENTERING or filling in data, commenting, research, opening a page. ANYTHING web_search can plausibly ` +
+  `answer is OTTO's to look up and PREP before it ever becomes a step — a live/current fact (weather, opening ` +
+  `hours, a price, stock, current news), background on a person/place/event, a how-to, an address, a phone number, ` +
+  `a policy or rule. "check tomorrow's weather for the walk" is OTTO's job: search it and put the actual forecast ` +
+  `in "context"/the step text — never a bare "check X" step that just hands the lookup back to the user. Do it ` +
+  `NOW if unblocked; only ` +
   `LIST it (with "dependsOn") when it waits on a user step. Lack a value? FIND it (inbox/Drive/the source), then do it. ` +
   `A research/search step you haven't genuinely attempted yet is NEVER left as a leftover step — run the searches ` +
   `THIS turn (try more than one query/source before giving up) and fold whatever you found into "context"/"did"/ ` +
