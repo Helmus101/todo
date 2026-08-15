@@ -296,9 +296,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   .dash-rail .exam-strip-wrap, .dash-rail .week-load-wrap, .dash-rail .milestone-wrap { margin: 0; }
   .dash-rail .exam-strip, .dash-rail .milestone-list { flex-direction: column; overflow-x: visible; padding-bottom: 0; }
   .dash-rail .exam-chip { min-width: 0; border-left-width: 3px; }
-  .dash-rail .week-load-strip { flex-direction: column; gap: 6px; }
-  .dash-rail .week-day { flex-direction: row; justify-content: space-between; padding: 8px 12px; }
-  .dash-rail .week-day-bar-track { display: none; } /* the bar chart's visual comparison only works side-by-side; a vertical rail shows the count instead */
 }
 .exam-strip-wrap { margin: 0; }
 .exam-strip-label { font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 8px; opacity: 0.85; }
@@ -341,14 +338,20 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .milestone-text { font-size: 13px; font-weight: 550; color: var(--ink); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .milestone-task { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ─── This-week workload strip — deterministic, no AI; 7 day-bars sized by relative effort ─────────── */
+/* ─── This-week workload strip — deterministic, no AI; one row per day ──────────────────────────────
+   A horizontal 7-across strip needed either cramming (7 squares in ~340px) or a swipe to see every day —
+   on a phone that meant half the week was scrolled off-screen by default, easy to miss. A vertical list
+   (day name, count, tap to expand) shows all 7 days at once at any width — the bar chart's own visual
+   comparison only worked side-by-side anyway, so the count alone carries the "how much" signal here. */
 .week-load-wrap { margin: 0; }
-.week-load-strip { display: flex; gap: 8px; }
+.week-load-strip { display: flex; flex-direction: column; }
 .week-day {
-  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 6px 8px;
-  border: none; border-radius: var(--radius-xs, 6px); background: transparent; min-width: 0;
+  flex: none; display: flex; flex-direction: row; align-items: center; justify-content: space-between;
+  gap: 10px; width: 100%; padding: 10px 8px;
+  border: none; border-radius: var(--radius-xs, 6px); background: transparent;
   transition: background 120ms var(--ease);
 }
+.week-day + .week-day { margin-top: 1px; }
 @media (hover: hover) {
   .week-day:hover { background: var(--hover-wash); }
 }
@@ -357,12 +360,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .week-day.is-today { background: var(--bg-2); }
 .week-day.heavy { background: var(--accent-soft); }
 .week-day.open { background: var(--accent-soft); }
-.week-day-dow { font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-3); }
+.week-day-dow { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; color: var(--ink); }
 .week-day.heavy .week-day-dow { color: var(--accent); }
-.week-day-bar-track { width: 100%; height: 34px; display: flex; align-items: flex-end; justify-content: center; }
-.week-day-bar { width: 60%; min-height: 4px; border-radius: 3px 3px 1px 1px; background: var(--ink-3); transition: height 220ms var(--ease); }
-.week-day.heavy .week-day-bar { background: var(--accent); }
-.week-day-count { font-family: var(--mono, ui-monospace, monospace); font-size: 11px; color: var(--ink-3); min-height: 14px; }
+.week-day-bar-track { display: none; }
+.week-day-count { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--ink-3); min-height: 14px; }
 .week-day-detail { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--bg); animation: fadeIn 0.18s var(--ease); }
 .week-day-detail-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 8px; text-transform: capitalize; }
 .week-day-items { list-style: none; display: flex; flex-direction: column; gap: 8px; }
@@ -1569,8 +1570,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .card-x { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
 .sendable-row .btn { flex: 1; }
 .sendable-row .btn:first-child { margin-right: 0; }
-.week-load-strip { overflow-x: auto; padding-bottom: 4px; }
-.week-day { min-width: 52px; }
 .card-badges .chip { font-size: 10px; padding: 2px 6px; }
 .addinput.sm, .step-input { height: 38px; }
 /* iOS auto-zooms the whole page on focusing ANY field under 16px. The `input, textarea { font-size: 16px }`
