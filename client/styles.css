@@ -831,6 +831,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .card-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .card-badges .chip { font-size: 10.5px; padding: 2px 7px; }
+/* Which class/subject a homework task came from (Pronote's own subject name, e.g. "Physique-Chimie") —
+   Otto already used this internally to shape the artifact per subject; showing it here just makes that
+   visible, so a student scanning the list can tell what a task is for before opening it. Quiet text, not
+   a colored chip — one more piece of always-on decoration is exactly what this app has been cutting. */
+.card-subject { color: var(--ink-3); font-weight: 600; margin-right: 8px; }
 .when { color: var(--ink-2); font-weight: 550; margin-right: 8px; }
 .when-soon { color: var(--accent); font-weight: 700; }
 .card-spin {

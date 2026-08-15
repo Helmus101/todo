@@ -156,7 +156,13 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
       <button type="button" className="card-main" onClick={() => { onNotify?.("tap ok →" + task.title.slice(0, 24)); onOpen(); }} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
           <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau — pas encore ouvert", "New — not yet opened")} /> : null}{task.title}</span>
-          {(w || secondary) ? <span className="card-sub">{w && <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span>}{secondary}</span> : null}
+          {(task.sourceSubject || w || secondary) ? (
+            <span className="card-sub">
+              {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
+              {w && <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span>}
+              {secondary}
+            </span>
+          ) : null}
         </span>
         {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
         {cStatus === "executing" ? <span className="card-spin" title={L("En cours…", "Working…")} /> : null}
@@ -188,8 +194,9 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
       <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
       <h2 className="dash-hero-title">{task.title}</h2>
       {task.why ? <p className="dash-hero-why">{task.why}</p> : null}
-      {(w || showChip) ? (
+      {(task.sourceSubject || w || showChip) ? (
         <div className="dash-hero-meta">
+          {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {w ? <span className="when">{w}</span> : null}
           {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
         </div>
@@ -299,6 +306,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
             to go hunting for what a vague-sounding task is actually about. */}
         {task.why ? <p className="tf-why">{task.why}</p> : null}
         <div className="tf-meta">
+          {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {task.when ? <span className={`when ${(Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{fmtWhen(task.when)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
         </div>
