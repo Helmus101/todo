@@ -152,7 +152,29 @@ async function processSweep(job: store.Job): Promise<string> {
   for (const t of found) void store.recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
   for (const t of toRun) { await store.enqueueJob(email, "execute_task", t.id); void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" }); }
 
+  // Every fresh task from this sweep gets an email — best-effort, non-blocking: a failed/skipped send
+  // (no Gmail connected, Composio hiccup) never fails the sweep itself, same posture the old daily
+  // briefing had. Sent via the same system-email path (sendSystemEmail), not the agent's gated toolset.
+  if (found.length) void notifyNewTasks(email, found, profile).catch(() => {});
+
   return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued${learned.length ? `, learned ${learned.length} fact${learned.length === 1 ? "" : "s"}` : ""}`;
+}
+
+// Task titles/why come from the model or the student's own typed input and land straight in an HTML
+// email body (notifyNewTasks below) — unescaped, a title like `<img src=x onerror=...>` would execute in
+// the recipient's mail client. Exported so tests/run.mjs can pin this without a network-calling send.
+export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] || c));
+
+/** New-task email alert — one email per sweep that found something, listing every fresh task with its
+ *  "why" so the subject line alone tells the student something real happened, not just "check the app". */
+async function notifyNewTasks(email: string, found: WebTask[], profile: Profile): Promise<void> {
+  if (!(await integrations.connectionStatusesCached(email, ["gmail"]))["gmail"]) return; // no Gmail, nothing to send through
+  const appUrl = process.env.PUBLIC_URL || "https://hiotto.vercel.app";
+  const subject = found.length === 1 ? `Otto — nouvelle tâche : ${found[0].title}` : `Otto — ${found.length} nouvelles tâches`;
+  const items = found.slice(0, 10).map((t) => `<li><b>${escapeHtml(t.title)}</b>${t.why ? ` — ${escapeHtml(t.why)}` : ""}</li>`).join("");
+  const body = `<p>Otto a trouvé ${found.length === 1 ? "une nouvelle tâche" : `${found.length} nouvelles tâches`} :</p><ul>${items}</ul><p><a href="${appUrl}/tasks">Ouvrir Otto →</a></p>`;
+  const result = await integrations.sendSystemEmail(email, { to: email, subject, body, primaryAccounts: profile.primaryAccounts });
+  void store.recordEvent(email, "task_alert_sent", { message: result.ok ? `Emailed ${found.length} new task${found.length === 1 ? "" : "s"}` : `Skipped: ${result.error || "send failed"}` });
 }
 
 /** Set ONE task's status in the durable copy (used for the queued transition so the UI can show it). */

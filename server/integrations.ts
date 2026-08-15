@@ -418,6 +418,35 @@ export async function sendSendable(userId: string, s: { app: string; draftId?: s
   } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
 }
 
+/** Send a system-initiated email (a "new task" alert, or any future server-triggered notification).
+ *  Bypasses the agent-tool gate since this is server-side work, not agent-decided. */
+export async function sendSystemEmail(userId: string, opts: { to: string; subject: string; body: string; primaryAccounts?: Record<string, string> }): Promise<{ ok: boolean; error?: string }> {
+  if (!integrationsReady() || !userId) return { ok: false, error: "Integrations not configured." };
+  try {
+    // Same multi-account routing as getAgentTools' implicit-account resolution (server/integrations.ts:825-838):
+    // with more than one Gmail connected, an unrouted send left Composio to guess WHICH inbox to send from.
+    // Prefer the user's designated primary (Settings), else whichever account was connected first — mirrors
+    // the exact fallback used everywhere else.
+    let connectedAccountId: string | undefined;
+    try {
+      const accts = await getConnectedAccounts(userId, "gmail", false);
+      if (accts.length > 1) {
+        const primary = opts.primaryAccounts?.gmail;
+        connectedAccountId = (primary && accts.find((a) => a.id === primary)?.id) || accts[0]?.id;
+      }
+    } catch { /* best-effort — falls through to Composio's own default */ }
+    // Composio's Gmail actions use snake_case param names (recipient_email, is_html).
+    const r: any = await sdk().tools.execute("GMAIL_SEND_EMAIL", {
+      userId,
+      arguments: { recipient_email: opts.to, subject: opts.subject, body: opts.body, is_html: true },
+      dangerouslySkipVersionCheck: true,
+      ...(connectedAccountId ? { connectedAccountId } : {}),
+    } as any);
+    if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Send failed.") };
+    return { ok: true };
+  } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
+}
+
 export interface AgentTools {
   tools: AgentTool[];
   call: (name: string, args: Record<string, unknown>) => Promise<string | null>;

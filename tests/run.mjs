@@ -6,7 +6,7 @@ import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject } from "../shared/types.ts";
-import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue } from "../server/jobs.ts";
+import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 
 let pass = 0, fail = 0;
@@ -465,6 +465,11 @@ check("tzOf uses profile.timezone", tzOf({ ...emptyProfile(), timezone: "Europe/
 check("tzOf falls back to UTC", tzOf(emptyProfile()) === "UTC");
 check("isValidTz accepts a real zone", isValidTz("Europe/Paris"));
 check("isValidTz rejects junk", !isValidTz("Mars/Olympus"));
+
+// ── New-task email alert HTML safety ───────────────────────────────────────────
+section("escapeHtml (new-task alert email)");
+check("escapes the five HTML-meaningful characters", escapeHtml(`<img src=x onerror="alert(1)">&'`) === "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;");
+check("plain text passes through unchanged", escapeHtml("Réviser Maths — chapitre 3") === "Réviser Maths — chapitre 3");
 
 // ── Monthly spend cap ─────────────────────────────────────────────────────────
 section("spend cap");
