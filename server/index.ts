@@ -374,6 +374,7 @@ app.get("/api/status", async (req, res) => {
     genPerDay: req.session.profile?.genPerDay,
     timezone: req.session.profile?.timezone,
     overBudget: overMonthlyBudget(req.session.profile),
+    unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
   };
   res.json(s);

@@ -435,11 +435,6 @@ export function App() {
   // Signed in, the dashboard lives at /tasks. Redirect the bare "/" there (landing only shows signed-OUT).
   useEffect(() => { if (status?.loggedIn && route === "") navigate("tasks"); }, [status?.loggedIn, route]);
 
-  // Visiting /unlimited lifts this account's monthly AI spend cap, then drops back onto /tasks.
-  useEffect(() => {
-    if (status?.loggedIn && route === "unlimited") { void api.goUnlimited().then(loadStatus).then(() => navigate("tasks")); }
-  }, [status?.loggedIn, route]);
-
   // Auto-capture the browser's timezone once it differs from what's stored — so all "local day" math on the
   // server (sweep cadence, daily-minimum) is correct without ever asking the user. Fires only on a real change.
   const tzSynced = useRef(false);
@@ -485,8 +480,11 @@ export function App() {
   if (!status.loggedIn) {
     return route === "login" || route === "signup"
       ? <LoginPage status={status} onDone={async (isNew) => { if (isNew) startOnboard(); await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : "login"} />
+      : route === "unlimited"
+      ? <LoginPage status={status} onDone={async () => { await loadStatus(); navigate("unlimited"); }} initialMode="login" />
       : <Landing />;
   }
+  if (route === "unlimited") return <UnlimitedPage status={status} onDone={loadStatus} />;
 
   // Eisenhower ranking with deadline/VIP/freshness tie-breaks — same bands/cards, just a better order.
   const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed"), status?.highPriorityPeople || []);
@@ -1709,6 +1707,40 @@ const LEGAL_ENTITY = "Willem Tjong";
 const LEGAL_EMAIL = "tjong.willem@gmail.com";
 const LEGAL_JURISDICTION = "France";
 const LEGAL_UPDATED = "July 30, 2026";
+
+function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: () => Promise<void> }) {
+  const en = status.language === "en";
+  const [busy, setBusy] = useState(false);
+  const already = !!status.unlimited;
+  const claim = async () => {
+    setBusy(true);
+    try { await api.goUnlimited(); await onDone(); } finally { setBusy(false); }
+  };
+  return (
+    <div className="landing legal-page">
+      <header className="landing-nav">
+        <a className="brand" href="/"><Logo size={22} /> Otto</a>
+      </header>
+      <main className="legal unlimited-page">
+        <h1>{en ? "Unlimited credits" : "Crédits illimités"}</h1>
+        {already ? (
+          <>
+            <p>{en ? "Your account already has no monthly AI budget cap." : "Ton compte n'a déjà plus de plafond d'utilisation IA mensuel."}</p>
+            <a className="btn primary big" href="/tasks">{en ? "Back to tasks" : "Retour aux tâches"}</a>
+          </>
+        ) : (
+          <>
+            <p>{en ? "Remove the monthly AI spend cap on this account." : "Retire le plafond mensuel de dépense IA de ce compte."}</p>
+            <button className="btn primary big" disabled={busy} onClick={() => void claim()}>
+              {busy ? (en ? "Applying…" : "Application…") : (en ? "Get unlimited credits" : "Obtenir des crédits illimités")}
+            </button>
+          </>
+        )}
+        <a className="legal-back" href="/">← {en ? "Back to Otto" : "Retour à Otto"}</a>
+      </main>
+    </div>
+  );
+}
 
 function LegalPage({ kind }: { kind: "privacy" | "terms" }) {
   return (

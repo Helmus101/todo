@@ -555,6 +555,7 @@ export interface ConnectionStatus {
   genPerDay?: number;         // how many times/day Otto scans for new tasks (1–4) — drives the client sweep cadence
   timezone?: string;          // the account's captured IANA timezone (client compares to detect a change)
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
+  unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
 }
 
