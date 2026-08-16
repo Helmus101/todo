@@ -14,7 +14,7 @@ import type { WebTask, TaskStep } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
 import { api } from "./api.ts";
 import {
-  LangContext, useLang, todayIso, fmtDate, relTime, statusChip, sourceBadge, subtitle,
+  LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
   withInlineLinks, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal,
 } from "./ui.tsx";
@@ -218,8 +218,8 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   const cardEn = useContext(LangContext) === "en";
   const [running, setRunning] = useState(false);
   // One panel open at a time, so the page never grows past about a screen and a half.
-  const [openPanel, setOpenPanel] = useState<"steps" | "prepared" | "context" | null>(null);
-  const togglePanel = (p: "steps" | "prepared" | "context") => setOpenPanel((v) => (v === p ? null : p));
+  const [openPanel, setOpenPanel] = useState<"steps" | "prepared" | null>(null);
+  const togglePanel = (p: "steps" | "prepared") => setOpenPanel((v) => (v === p ? null : p));
   // Lifted: both the chat's artifact chips and the "Ce qu'Otto a préparé" panel open these popups.
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [openDeck, setOpenDeck] = useState<string | null>(null);
@@ -356,10 +356,6 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
             <PreparedPanel task={task} onOpenNote={setOpenNote} onOpenDeck={setOpenDeck} onOpenQuiz={setOpenQuiz} />
           </Disclosure>
         ) : null}
-        <Disclosure label={L("Contexte", "Context")} count={task.source ? sourceBadge(task.source, cardEn) : undefined}
-          open={openPanel === "context"} onToggle={() => togglePanel("context")}>
-          <ContextPanel task={task} />
-        </Disclosure>
       </div>
 
       {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away. */}
@@ -566,8 +562,15 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     setExpanding(i);
     try { onChange(await api.expandStep(task.id, i)); } finally { setExpanding((cur) => (cur === i ? null : cur)); }
   };
+  // Optimistic: flip the checkbox instantly (this is the highest-frequency, lowest-latency-tolerance
+  // interaction on the card) instead of waiting on the round trip, then reconcile with the server's
+  // response — or revert if the call fails, so the UI never lies about what's actually persisted.
   const toggleSubstep = async (i: number, subIndex: number, done: boolean) => {
-    onChange(await api.substepDone(task.id, i, subIndex, done));
+    const optimistic = steps.map((s, si) => si !== i || !s.substeps ? s
+      : { ...s, substeps: s.substeps.map((sub, ssi) => ssi === subIndex ? { ...sub, done } : sub) });
+    onChange([{ ...task, steps: optimistic }]);
+    try { onChange(await api.substepDone(task.id, i, subIndex, done)); }
+    catch { onChange([task]); }
   };
   const openableCount = steps.filter((s) => s.url && !s.done && !stepBlocked(steps, s)).length;
   // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
@@ -771,37 +774,6 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
   );
 }
 
-/** WHERE this came from and WHAT Otto actually found, plus the decision trail. History is fetched on first
- *  expand rather than always-on — it's for the moment someone asks, not every render. */
-function ContextPanel({ task }: { task: WebTask }) {
-  const L = useLang();
-  const [history, setHistory] = useState<{ kind: string; message?: string; at: string }[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    api.taskEvents(task.id)
-      .then((h) => { if (alive) setHistory(h); })
-      .catch(() => { if (alive) setHistory([]); })
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [task.id]);
-  return (
-    <div className="context-body">
-      {task.context?.trim() ? <p className="context-text">{withInlineLinks(task.context)}</p> : null}
-      {loading ? (
-        <p className="muted small">{L("Chargement de l'historique…", "Loading history…")}</p>
-      ) : history?.length ? (
-        <ul className="history-list">
-          {history.map((e, i) => (
-            <li key={i}><span className="history-when">{relTime(e.at)}</span> {e.message || e.kind}</li>
-          ))}
-        </ul>
-      ) : !task.context?.trim() ? <p className="muted small">{L("Rien d'enregistré pour l'instant.", "Nothing recorded yet.")}</p> : null}
-    </div>
-  );
-}
-
 /* ─────────────────────────────── the tutor ─────────────────────────────── */
 
 function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, verySlow, onSend, inputRef, endRef, onOpenNote, onOpenDeck, onOpenQuiz }: {
@@ -872,7 +844,9 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
           disabled={sending}
         />
-        <button className="btn" disabled={sending || !input.trim()} onClick={onSend}>{L("Envoyer", "Send")}</button>
+        <button className="chat-send" aria-label={L("Envoyer", "Send")} disabled={sending || !input.trim()} onClick={onSend}>
+          <span aria-hidden="true">↑</span>
+        </button>
       </div>
     </section>
   );

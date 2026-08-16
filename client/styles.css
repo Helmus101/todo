@@ -635,7 +635,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    just ignore this line and keep the flex-start above, so this is purely additive. */
 @media (min-width: 641px) { .task-modal-overlay { align-items: safe center; } }
 .task-modal {
-  position: relative; width: 100%; max-width: 640px; background: var(--surface);
+  position: relative; width: 100%; max-width: 760px; background: var(--surface);
   border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-pop);
   padding: 8px 20px 20px; animation: modalPop 0.18s var(--ease);
 }
@@ -994,7 +994,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .history-list { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 5px; }
 
 /* ─── Per-task coaching chat ─────────────────────────────────────────────── */
-.task-chat { border-top: 1px solid var(--line-soft); margin-top: 14px; padding-top: 20px; }
+/* Deliberately reads as its OWN surface — a bordered, tinted panel, not just "more rows on the card" —
+   so the tutor visually separates from the steps/prepared-work chrome above it (same accent family, but a
+   contained widget rather than an extension of the disclosures). */
+.task-chat {
+  margin-top: 14px; padding: 14px 14px 12px; background: var(--bg-2);
+  border: 1px solid var(--line-soft); border-radius: var(--radius);
+}
 /* Was an <h4> inheriting `.detail h4`; TaskFocus has no .detail wrapper, so it carries its own style now
    (and is an <h3> so the modal's heading order runs h2 → h3 rather than skipping a level). */
 .task-chat h3 {
@@ -1009,19 +1015,19 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-focus .chat-thread { max-height: none; overflow-y: visible; }
 .task-focus .chat-row {
   position: sticky; bottom: 0; z-index: 2;
-  background: var(--surface); margin-top: 2px;
+  background: var(--bg-2); margin-top: 2px;
   /* Bottom-pinned on a device that may have a home-indicator bar — without the safe-area pad, the
      composer sits flush under it on a notched phone in the full-bleed mobile modal. */
   padding: var(--space-2) 0 calc(2px + env(safe-area-inset-bottom));
 }
-.chat-msg { font-size: var(--text-base); line-height: 1.5; padding: 9px 12px; border-radius: 12px; max-width: 88%; white-space: pre-line; }
+.chat-msg { font-size: var(--text-base); line-height: 1.4; padding: 9px 13px; border-radius: 16px; max-width: 88%; white-space: pre-line; box-shadow: 0 1px 1px rgba(16,19,23,0.04); }
 /* renderChatText emits <p>/<ul> blocks for assistant replies — tighten their default block margins to fit
    a chat bubble (they're sized for the note popup, which has room to breathe). */
 .chat-msg p { margin: 0; }
 .chat-msg p + p { margin-top: 6px; }
 .chat-msg .note-list { margin: 4px 0; padding-left: 18px; }
 .chat-user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
-.chat-assistant { align-self: flex-start; background: var(--bg-2); color: var(--ink); border-bottom-left-radius: 4px; }
+.chat-assistant { align-self: flex-start; background: var(--surface); color: var(--ink); border: 1px solid var(--line-soft); border-bottom-left-radius: 4px; }
 .chat-assistant .inline-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 /* Which step a user message was about (see the "Aide" button, client-side state chatStep) — a small tag
    above the bubble, quieter than the message itself. */
@@ -1052,8 +1058,23 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @media (prefers-reduced-motion: reduce) {
   .typing-dots i { animation: none !important; opacity: 0.5; }
 }
-.chat-row { display: flex; gap: var(--space-2); }
-.chat-input { flex: 1; font-size: var(--text-base); }
+.chat-row { display: flex; gap: var(--space-2); align-items: center; }
+.chat-input {
+  flex: 1; font-size: var(--text-base); border-radius: var(--radius-pill);
+  background: var(--surface); border: 1px solid var(--line);
+  padding: 10px 16px;
+}
+.chat-input:focus-visible { border-color: var(--accent); }
+/* Round icon send button — reads as a chat app's own send affordance, not a generic form .btn. */
+.chat-send {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: var(--accent); color: #fff; font-size: 17px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
+}
+.chat-send:hover:not(:disabled) { background: var(--accent-hover); }
+.chat-send:active:not(:disabled) { transform: scale(0.92); }
+.chat-send:disabled { background: var(--ink-3); opacity: 0.4; cursor: default; }
 .history-list li { font-size: var(--text-sm); color: var(--ink-2); line-height: 1.5; }
 .history-when { color: var(--ink-3); margin-right: 6px; }
 

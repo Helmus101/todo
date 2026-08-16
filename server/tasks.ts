@@ -366,6 +366,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     courses: dedupeFacts([...(p1.courses || []), ...(p2.courses || [])]),
     paused: pausedSide.paused,
     pausedAt: pausedSide.pausedAt,
+    // Sticky once granted on EITHER side — a stale copy that predates the claim must never un-grant it.
+    unlimited: !!p1.unlimited || !!p2.unlimited,
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
