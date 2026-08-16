@@ -388,6 +388,14 @@ const overBudget = (req: express.Request): boolean => overMonthlyBudget(req.sess
 // human's own last step isn't the thing the budget kills — background work still stops hard at the cap.
 const overInteractive = (req: express.Request): boolean => overInteractiveBudget(req.session.profile);
 const BUDGET_MSG = "Otto's reached its monthly AI budget (including the interactive reserve) — it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
+// Visiting /unlimited (client-side route, see App.tsx) removes this account's monthly AI spend cap.
+app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  p.unlimited = true;
+  await commit(req);
+  res.json(p);
+});
+
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   p.paused = req.body?.paused === true;

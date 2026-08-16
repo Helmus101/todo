@@ -435,6 +435,11 @@ export function App() {
   // Signed in, the dashboard lives at /tasks. Redirect the bare "/" there (landing only shows signed-OUT).
   useEffect(() => { if (status?.loggedIn && route === "") navigate("tasks"); }, [status?.loggedIn, route]);
 
+  // Visiting /unlimited lifts this account's monthly AI spend cap, then drops back onto /tasks.
+  useEffect(() => {
+    if (status?.loggedIn && route === "unlimited") { void api.goUnlimited().then(loadStatus).then(() => navigate("tasks")); }
+  }, [status?.loggedIn, route]);
+
   // Auto-capture the browser's timezone once it differs from what's stored — so all "local day" math on the
   // server (sweep cadence, daily-minimum) is correct without ever asking the user. Fires only on a real change.
   const tzSynced = useRef(false);

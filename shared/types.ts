@@ -41,6 +41,8 @@ export interface Profile {
   // course's facts don't scroll off the list behind unrelated ongoing projects, and so the UI/prompts can
   // treat "this is about a specific class" as a distinct, groupable kind of fact.
   courses: string[];
+  unlimited?: boolean;    // account has no monthly AI spend cap (set by visiting /unlimited) — overMonthlyBudget/
+                          // overInteractiveBudget always read false for it, regardless of monthCostUsd
   paused?: boolean;       // "pause all AI usage" — blocks generation and task runs server-side
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
   lastSweepAt?: string;   // ISO stamp of the last SUCCESSFUL generation sweep — durable "did we check today"
@@ -105,6 +107,7 @@ export function normalizeProfile(p: any): Profile {
     people: dedupeFacts(arr(p?.people)),
     projects: dedupeFacts(arr(p?.projects)),
     courses: dedupeFacts(arr(p?.courses)),
+    unlimited: !!p?.unlimited,
     paused: !!p?.paused,
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
@@ -232,6 +235,7 @@ export function monthlyBudgetUsd(): number {
 }
 /** Has this account crossed its monthly AI budget? Gates BACKGROUND generation + execution when true. */
 export function overMonthlyBudget(profile?: Profile | null, now: Date = new Date()): boolean {
+  if (profile?.unlimited) return false;
   return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd();
 }
 /** A small reserve above the cap kept for INTERACTIVE, user-present actions — the Approve & Run click, a
@@ -240,6 +244,7 @@ export function overMonthlyBudget(profile?: Profile | null, now: Date = new Date
  *  work (sweeps, offline auto-run) still stops hard at the cap via overMonthlyBudget. */
 export const INTERACTIVE_RESERVE = 1.1;
 export function overInteractiveBudget(profile?: Profile | null, now: Date = new Date()): boolean {
+  if (profile?.unlimited) return false;
   return monthCostUsd(profile, tzOf(profile), now) >= monthlyBudgetUsd() * INTERACTIVE_RESERVE;
 }
 /** When the budget resets — the 1st of next month in the user's timezone, as an ISO date ("YYYY-MM-DD"). */
