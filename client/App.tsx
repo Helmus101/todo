@@ -496,16 +496,15 @@ export function App() {
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
   // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
   const focusToday = live.slice(0, 3);
-  // The spotlight should be something the student can actually act on right now — a "queued"/"executing"
-  // task has nothing to click yet (Otto's still working), so a [Continue] button on it would be a dead
-  // end. Prefer the highest-ranked ACTIONABLE task (needs_review or a failure to retry) as the hero;
-  // only fall back to the plain #1-ranked task if nothing today is actionable yet.
-  const heroIdx = focusToday.findIndex((t) => {
-    const c = canonStatus(t.status);
-    return c === "needs_review" || c === "failed_retryable" || c === "failed_terminal";
-  });
-  const heroTask = focusToday[heroIdx >= 0 ? heroIdx : 0];
-  const restToday = focusToday.filter((_, i) => i !== (heroIdx >= 0 ? heroIdx : 0));
+  // The spotlight is the actual #1-ranked task (sortWithinQuadrant's own ordering — Eisenhower quadrant,
+  // then soonest deadline, then VIP, then freshest), full stop. This USED to skip over the true top task
+  // in favor of the highest-ranked task that was already clickable (needs_review/failed), reasoning that
+  // a queued/executing task's [Continue] button would be a dead end — but it isn't: opening it shows
+  // TaskFocus's own legitimate "Otto prépare ça…" waiting state, not a blank screen. That override meant
+  // "your next priority" could silently jump to a LESS urgent task just because it happened to be ready
+  // sooner — the opposite of what the top spot is supposed to mean.
+  const heroTask = focusToday[0];
+  const restToday = focusToday.slice(1);
   const laterToday = live.slice(3, 6);
   const canWait = live.slice(6);
   // Today's real momentum — the ALL-TIME done count only ever grows, so a bar based on it would sit near
@@ -871,6 +870,10 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   const [days, setDays] = useState<WorkloadDay[] | null>(null);
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
+  // Which item's day-picker is open — was a single "move to the lightest day" auto-pick; now the student
+  // chooses WHICH later day, since "lighter" and "when I actually want to do it" aren't always the same
+  // day (a lighter Thursday doesn't help if there's a match Thursday evening).
+  const [pickingFor, setPickingFor] = useState<string | null>(null);
   const load = useCallback(() => { void api.workload().then((r) => setDays(r.days)).catch(() => setDays([])); }, []);
   useEffect(() => { load(); }, [load]);
   if (!days || days.every((d) => d.items.length === 0)) return null;
@@ -881,7 +884,7 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   const busy = [...days.map((d) => d.totalEffort)].filter((e) => e > 0).sort((a, b) => a - b);
   const busyMedian = busy[Math.floor(busy.length / 2)];
   const pileUp = (d: WorkloadDay) => d.totalEffort > 0 && (busy.length < 2 ? d.totalEffort >= 3 : d.totalEffort >= busyMedian * 1.6);
-  const lightestOther = (excludeDate: string) => {
+  const lightestOtherDate = (excludeDate: string) => {
     const others = days.filter((d) => d.date !== excludeDate);
     if (!others.length) return undefined;
     return others.reduce((a, b) => (b.totalEffort < a.totalEffort ? b : a)).date;
@@ -890,10 +893,9 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   const dm = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { day: "numeric", month: "short" });
   const todayKey = days[0]?.date;
 
-  const moveTask = async (taskId: string, fromDate: string) => {
-    const to = lightestOther(fromDate);
-    if (!to) return;
+  const moveTask = async (taskId: string, to: string) => {
     setMoving(taskId);
+    setPickingFor(null);
     try {
       const list = await api.rescheduleTask(taskId, to);
       const updated = list.find((t) => t.id === taskId);
@@ -940,9 +942,20 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
                     <span className={`week-item-dot week-item-${it.kind}`} />
                     <span className="week-item-title">{it.subject ? <b>{it.subject}: </b> : null}{it.title}</span>
                     {it.movable && it.taskId && (
-                      <button type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => void moveTask(it.taskId!, d.date)}>
-                        {moving === it.taskId ? "…" : (en ? "Move to lighter day" : "Déplacer sur un jour plus léger")}
-                      </button>
+                      pickingFor === it.taskId ? (
+                        <div className="week-day-picker">
+                          {days.filter((x) => x.date !== d.date).map((x) => (
+                            <button key={x.date} type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => void moveTask(it.taskId!, x.date)}>
+                              {dow(x.date)}{x.date === lightestOtherDate(d.date) ? " ✦" : ""}
+                            </button>
+                          ))}
+                          <button type="button" className="x" title={en ? "Cancel" : "Annuler"} onClick={() => setPickingFor(null)}>×</button>
+                        </div>
+                      ) : (
+                        <button type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => setPickingFor(it.taskId!)}>
+                          {moving === it.taskId ? "…" : (en ? "Move to another day" : "Déplacer à un autre jour")}
+                        </button>
+                      )
                     )}
                   </li>
                 ))}

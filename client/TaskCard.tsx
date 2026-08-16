@@ -230,6 +230,18 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   const { leaving, leaveKind, leave } = useTaskLeave(task.id, { onChange, onConfirmed, onLeft });
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
   const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
+  // A step with `question`/`options` is automatable but blocked on ONE piece of info Otto couldn't find or
+  // infer (see the "submit" tool schema's `question` field in server/claude.ts) — answering it should
+  // actually RUN the step with that answer (api.runStep), not just mark it done like the plain "what did
+  // you decide" input does for a non-automatable gating step. This was previously wired server-side with
+  // no client UI at all: the question/options were computed and stored but never rendered or answerable.
+  const [answering, setAnswering] = useState<number | null>(null);
+  const answerStep = async (i: number, answer: string) => {
+    if (!answer.trim()) return;
+    setAnswering(i);
+    try { onTask(await api.runStep(task.id, i, answer.trim())); } // runStep returns the ONE updated task, not the list
+    finally { setAnswering((cur) => (cur === i ? null : cur)); }
+  };
 
   // ── chat state lives here so "Je bloque" (hero) and "Aide" (step list) can both seed the thread ──
   const [chatInput, setChatInput] = useState("");
@@ -323,7 +335,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
       <StepHero
         task={task} steps={steps} currentIdx={currentIdx} isDone={isDone} cStatus={cStatus}
         retrying={retrying} running={running} decided={decided} setDecided={setDecided}
-        onStepDone={markStepDone} onRun={run}
+        onStepDone={markStepDone} onRun={run} onAnswer={answerStep} answering={answering}
         onConfirm={() => void leave(() => api.confirm(task.id), "confirm")}
         onTask={onTask} onNotify={onNotify}
       />
@@ -335,7 +347,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
             <StepList task={task} steps={steps} decided={decided} setDecided={setDecided}
               onStepDone={markStepDone} onUndo={(i) => void act(() => api.stepDone(task.id, i, false))}
-              onAsk={askAboutStep} onChange={onChange} />
+              onAsk={askAboutStep} onChange={onChange} onAnswer={answerStep} answering={answering} />
           </Disclosure>
         ) : null}
         {preparedCount > 0 ? (
@@ -379,11 +391,12 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
 
 /** Exactly one shape, by precedence. Ticking the current step advances it in place — that's what makes
  *  "one thing at a time" self-evident without a word of instruction. */
-function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onRun, onConfirm, onTask, onNotify }: {
+function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onRun, onAnswer, answering, onConfirm, onTask, onNotify }: {
   task: WebTask; steps: TaskStep[]; currentIdx: number; isDone: boolean; cStatus: string;
   retrying?: boolean; running: boolean;
   decided: Record<number, string>; setDecided: Dispatch<SetStateAction<Record<number, string>>>;
   onStepDone: (i: number) => void; onRun: (reset?: boolean) => void;
+  onAnswer: (i: number, answer: string) => void; answering: number | null;
   onConfirm: () => void; onTask: (t: WebTask) => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
 }) {
   const L = useLang();
@@ -467,11 +480,36 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <p className="hero-step">{withInlineLinks(s.text)}</p>
       {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
       {s.result ? <span className="step-result note">{s.result}</span> : null}
-      {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. A
-          persistent label (not just a placeholder, which vanishes once typing starts) so it stays clear
-          this is required to move on, not optional extra info. */}
-      {gatesAnother && !s.automatable ? (
+      {/* A step Otto can DO but is missing ONE piece of info for (server sets `question`, optionally
+          `options` — see the "submit" tool schema in server/claude.ts) — this used to be computed and
+          stored with no UI at all, so the step just sat there with a generic input and no indication of
+          what was actually needed. The question IS the label now, tap-to-answer when there are likely
+          answers, free text always available as a fallback. Answering RUNS the step (api.runStep), since
+          it's automatable — different from the plain "what did you decide" box below. */}
+      {s.question ? (
+        <div className="step-question">
+          <p className="step-question-text">{withInlineLinks(s.question)}</p>
+          {s.options?.length ? (
+            <div className="step-question-opts">
+              {s.options.map((opt, oi) => (
+                <button key={oi} type="button" className="btn xs" disabled={answering === currentIdx} onClick={() => onAnswer(currentIdx, opt)}>{opt}</button>
+              ))}
+            </div>
+          ) : null}
+          <input
+            className="step-input"
+            placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
+            value={decided[currentIdx] || ""}
+            disabled={answering === currentIdx}
+            onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
+            onKeyDown={(e) => { if (e.key === "Enter") onAnswer(currentIdx, decided[currentIdx] || ""); }}
+          />
+        </div>
+      ) : gatesAnother && !s.automatable ? (
         <>
+        {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. A
+            persistent label (not just a placeholder, which vanishes once typing starts) so it stays clear
+            this is required to move on, not optional extra info. */}
         <label className="step-input-label" htmlFor="step-input-hero">{L("Réponds ici pour continuer :", "Answer here to continue:")}</label>
         <input
           id="step-input-hero"
@@ -488,34 +526,39 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
           with no link is just "Done". "I'm stuck" is dropped here — the tutor chat right below is always
           one glance away, so a dedicated help button on every step was one more thing competing for
           attention for a path that already exists. */}
-      <div className="hero-acts">
-        {s.url && !(openedIdx === currentIdx) ? (
-          <button
-            className="btn primary"
-            title={s.url}
-            onClick={() => {
-              openTab(s.url!, TAB_GROUP);
-              if (s.automatable) onStepDone(currentIdx);
-              else setOpenedIdx(currentIdx);
-            }}
-          >
-            {L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}
-          </button>
-        ) : (
-          <button className="btn primary" onClick={() => onStepDone(currentIdx)}>{L("C'est fait", "Done")}</button>
-        )}
-      </div>
+      {/* A step with a question answers THROUGH that box above (which runs the step) — a separate "C'est
+          fait" here would let it be marked done without ever actually answering, so it's dropped. */}
+      {!s.question ? (
+        <div className="hero-acts">
+          {s.url && !(openedIdx === currentIdx) ? (
+            <button
+              className="btn primary"
+              title={s.url}
+              onClick={() => {
+                openTab(s.url!, TAB_GROUP);
+                if (s.automatable) onStepDone(currentIdx);
+                else setOpenedIdx(currentIdx);
+              }}
+            >
+              {L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}
+            </button>
+          ) : (
+            <button className="btn primary" onClick={() => onStepDone(currentIdx)}>{L("C'est fait", "Done")}</button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 /* ─────────────────────────────── panels ─────────────────────────────── */
 
-function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk, onChange }: {
+function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk, onChange, onAnswer, answering }: {
   task: WebTask; steps: TaskStep[];
   decided: Record<number, string>; setDecided: Dispatch<SetStateAction<Record<number, string>>>;
   onStepDone: (i: number) => void; onUndo: (i: number) => void; onAsk: (i: number, text: string) => void;
   onChange: (t: WebTask[]) => void;
+  onAnswer: (i: number, answer: string) => void; answering: number | null;
 }) {
   const L = useLang();
   const [expanding, setExpanding] = useState<number | null>(null);
@@ -588,7 +631,26 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
                 {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                 {!s.done && blk ? <span className="step-dep">{L(`Rien à faire ici pour l'instant — se débloque une fois l'étape ${(s.dependsOn ?? 0) + 1} faite`, `Nothing to do here yet — unlocks once step ${(s.dependsOn ?? 0) + 1} is done`)}</span> : null}
-                {gatesAnother && !s.done && !blk && !s.automatable ? (
+                {s.question && !s.done && !blk ? (
+                  <div className="step-question">
+                    <p className="step-question-text">{withInlineLinks(s.question)}</p>
+                    {s.options?.length ? (
+                      <div className="step-question-opts">
+                        {s.options.map((opt, oi) => (
+                          <button key={oi} type="button" className="btn xs" disabled={answering === i} onClick={() => onAnswer(i, opt)}>{opt}</button>
+                        ))}
+                      </div>
+                    ) : null}
+                    <input
+                      className="step-input"
+                      placeholder={s.options?.length ? L("Ou écris ta propre réponse…", "Or type your own answer…") : L("Écris ta réponse…", "Type your answer…")}
+                      value={decided[i] || ""}
+                      disabled={answering === i}
+                      onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === "Enter") onAnswer(i, decided[i] || ""); }}
+                    />
+                  </div>
+                ) : gatesAnother && !s.done && !blk && !s.automatable ? (
                   <>
                   <label className="step-input-label" htmlFor={`step-input-${i}`}>{L("Réponds ici pour continuer :", "Answer here to continue:")}</label>
                   <input

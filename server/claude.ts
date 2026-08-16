@@ -2028,6 +2028,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
               /"id"\s*:\s*"(r-?[\w-]{6,})"/i.exec(rs) ||
               /"id"\s*:\s*"([\w-]{6,})"/i.exec(rs);
             if (idMatch) lastGmailDraft = { to: String(input?.recipient_email || input?.to || "").trim() || undefined, subject: input?.subject ? String(input.subject) : undefined, body: input?.body ? String(input.body) : undefined, draftId: idMatch[1] };
+            // Silent-failure guard: a draft call that reports success but whose response shape none of the
+            // id patterns above match means lastGmailDraft never gets set — the ENTIRE "draft reply isn't
+            // showing" backstop this block exists for depends on this regex succeeding. That used to fail
+            // with zero trace: the draft genuinely existed in Gmail, but no Send button ever appeared and
+            // nothing recorded why. Log it so a future report of "it drafted something but there's no send
+            // button" is diagnosable instead of a mystery.
+            else logAudit("tool", `Draft Gmail créé mais son id n'a pas pu être extrait de la réponse — pas de bouton d'envoi cette fois (réponse : ${rs.slice(0, 160)})`);
           }
           // GUARDRAIL — "Otto may only edit what Otto created": extractArtifacts() later grants the
           // no-approval-needed edit carve-out to whatever doc ids land in this set. The model's own
@@ -2522,10 +2529,12 @@ export async function chatAboutTask(
     `every reply in the task context below; never make them re-explain what's already here.\n\n` +
 
     `HOW A GOOD TUTOR ACTUALLY WORKS — follow this, it's the whole point of this feature:\n` +
-    `1. DIAGNOSE BEFORE EXPLAINING. When they say "I don't get it" or "I'm stuck", your FIRST move is to find ` +
-    `out where exactly it breaks down — ask them to show you their attempt, or what they think the question ` +
-    `is asking, or which specific line/step loses them. A tutor who lectures before diagnosing is just a ` +
-    `textbook. One focused diagnostic question beats three paragraphs of explanation they didn't need.\n` +
+    `1. DIAGNOSE BEFORE EXPLAINING — ALWAYS, not just when they say "I'm stuck". Even a direct factual question ` +
+    `("what's the difference between X and Y?") gets a quick check first, not an instant lecture: what do they ` +
+    `already think, or what's their best guess, or where in their own work does this come up. A tutor who ` +
+    `answers before finding out what the student actually knows is just a textbook with extra steps. One ` +
+    `focused diagnostic question beats three paragraphs of explanation they didn't need — skip it only when ` +
+    `they've clearly already tried and told you where it breaks (then you already have your diagnosis).\n` +
     `2. TEACH THE IDEA, NOT THE INSTANCE. Once you know where they're stuck, explain the underlying concept or ` +
     `method in plain language, then let THEM apply it to their actual question. If a worked example genuinely ` +
     `helps, work a PARALLEL one — same method, different numbers/text/topic — never their assigned problem.\n` +
@@ -2550,15 +2559,24 @@ export async function chatAboutTask(
     `action that unblocks them (open the cours to p.X, write one bad first sentence, set a 10-minute timer, ` +
     `do just part a). Never lecture them about integrity; just redirect and help.\n\n` +
 
-    `THINGS YOU CAN MAKE, RIGHT HERE IN THE CHAT: a fiche (CREATE_NOTE), a flashcard deck, or a quick MCQ ` +
-    `quiz — and you can web_search first if you need real subject content to make it specific. Make one when ` +
-    `it genuinely helps THEM practise: they ask for cards/a quiz/a summary, or you can see they need to drill ` +
-    `something before Friday. Same line as everywhere else: a fiche is method, structure, prompts and real ` +
-    `course content — NEVER their essay, their solved exercise, or their translated passage. A quiz is NEW ` +
-    `questions on the notion, never their own exercise reformatted into multiple choice. Don't announce it ` +
-    `before you make it and don't describe it at length after — make it, then say ONE short line ("je t'ai ` +
-    `fait 10 cartes sur les dérivées"). Default is still: no artifact, most turns are just talking. You get ` +
-    `at most ${CHAT_MAX_ARTIFACTS} per message — pick the ONE thing that actually helps right now.\n\n` +
+    `PRACTICE PROBLEMS — TWO SHAPES, use whichever fits the moment:\n` +
+    `(a) ONE-OFF, right in the chat: once you've taught the idea (rule 2), the natural next move is often ` +
+    `"try one" — pose a single parallel problem as plain text ("okay, try this one: ..."), let them answer, ` +
+    `check it Socratically (rule 3/4). This is the default for "give me a practice problem", "quiz me on this ` +
+    `one thing", or right after you've walked through a method — no tool needed, it's just the next line of ` +
+    `the conversation.\n` +
+    `(b) A FULL QUIZ (CREATE_QUIZ), when they want to check readiness across a whole topic/chapter, not just ` +
+    `the one thing you were just discussing — "quiz me on the chapter", "am I ready for the contrôle", or you ` +
+    `can see they need to drill a topic before Friday.\n\n` +
+    `OTHER THINGS YOU CAN MAKE, RIGHT HERE IN THE CHAT: a fiche (CREATE_NOTE) or a flashcard deck ` +
+    `(CREATE_FLASHCARDS) — and you can web_search first if you need real subject content to make either ` +
+    `specific. Same line as everywhere else: a fiche is method, structure, prompts and real course content — ` +
+    `NEVER their essay, their solved exercise, or their translated passage. A quiz/practice problem is NEW ` +
+    `content on the notion, never their own exercise reformatted or reworded. Don't announce a tool-made ` +
+    `artifact before you make it and don't describe it at length after — make it, then say ONE short line ` +
+    `("je t'ai fait 10 cartes sur les dérivées"). Default is still: no artifact, most turns are just talking. ` +
+    `You get at most ${CHAT_MAX_ARTIFACTS} tool-made artifacts per message — pick the ONE thing that actually ` +
+    `helps right now (a one-off practice problem in plain text doesn't count against this).\n\n` +
 
     `HOW YOU SOUND — this matters as much as what you say:\n` +
     `Write like a real person talking to them, not like an app — and test every reply against this: could you ` +
@@ -2577,7 +2595,16 @@ export async function chatAboutTask(
     `more help. No fake enthusiasm and no therapy-speak — they're stressed, not fragile, and they can tell ` +
     `when they're being managed. Dry warmth beats cheerleading.\n` +
     `Ask ONE question at a time, never a list of them. Go longer only to walk through a method or a parallel ` +
-    `worked example — and even then keep it plain prose, in small steps, pausing to check they're with you.` +
+    `worked example — and even then keep it plain prose, in small steps, pausing to check they're with you.\n` +
+    `PLAIN WORDS, NOT TEXTBOOK WORDS: explain like you're talking to a friend, not quoting the course. If a ` +
+    `technical term is genuinely the right word, use it but land it in one plain clause right there ("the ` +
+    `derivative — basically how fast it's changing at that instant") instead of assuming they already have it. ` +
+    `Never reach for jargon to sound rigorous; a simpler true sentence beats a precise-sounding one they have ` +
+    `to re-read.\n` +
+    `THOROUGH MEANS STAYING WITH THEM, NOT SAYING MORE AT ONCE: guiding them to understanding is a whole ` +
+    `back-and-forth, not one clever question followed by the full explanation next turn. Keep checking in, ` +
+    `keep adjusting to what they just said, keep it going turn by turn until it's actually landed — don't treat ` +
+    `the second reply as the moment to unload everything you held back from the first.` +
     `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}` +
     assignmentBlock(task) + profileBlock(profile) + academicBlock(academic);
   const messages: any[] = [
@@ -2610,58 +2637,72 @@ export async function chatAboutTask(
     return result;
   };
 
-  for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
-    if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) break; // circuit breaker — see CHAT_TOKEN_CEILING
-    const lastRound = round === CHAT_MAX_ROUNDS - 1;
-    const apiMessages = lastRound
-      ? [...messages, { role: "user" as const, content: "Out of tool calls for this turn — reply in plain words now, no more tool use." }]
-      : messages;
-    let res: any;
-    try {
-      res = await retryRequest(() => client.chat.completions.create({
-        model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
-        messages: apiMessages,
-        // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
-        // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
-        ...(lastRound ? {} : { tools: tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
-      }));
-    } catch { return finish(""); } // network/API failure → the honest fallback line, never a throw to the route
-    { const u = usageOf(res); result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn; }
-    const toolCalls = res.choices?.[0]?.message?.tool_calls || [];
-    const textContent = res.choices?.[0]?.message?.content || "";
-    if (!toolCalls.length) return finish(textContent);
-    messages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
-    for (const tc of toolCalls) {
-      const name = tc.function?.name;
-      const input = parseToolArgs(tc.function?.arguments);
-      let content: string;
-      const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length >= CHAT_MAX_ARTIFACTS;
-      if (name === "web_search") {
-        content = await runWebSearch(input);
-        logAudit("tool", `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"`);
-      }
-      else if (name === "CREATE_NOTE") {
-        if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-        else {
-          const r = makeNote(input);
-          if ("error" in r) content = r.error;
-          // A note is the obvious vector for "here's your essay, wrapped as a study aid" — check the BODY
-          // itself, not just the eventual spoken reply (finish() only ever sees the reply text).
-          else if (CHAT_DOES_WORK.test(r.note.body)) {
-            content = "REJECTED: that reads like their graded work, not a study aid — a fiche is method/structure/prompts, never the finished essay or solved exercise. Make a structure with prompts instead.";
-            logAudit("guardrail", "Bloqué : une fiche créée en chat ressemblait à un travail fait à la place de l'élève.");
-          }
-          else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", `Fiche créée : « ${r.note.title} »`); }
+  const runRounds = async (): Promise<ChatResult> => {
+    for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
+      if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) break; // circuit breaker — see CHAT_TOKEN_CEILING
+      const lastRound = round === CHAT_MAX_ROUNDS - 1;
+      const apiMessages = lastRound
+        ? [...messages, { role: "user" as const, content: "Out of tool calls for this turn — reply in plain words now, no more tool use." }]
+        : messages;
+      let res: any;
+      try {
+        // Fewer/faster retries than the default (3 attempts, 1s+ backoff) — this is a live chat turn, not
+        // a background sweep, and CHAT_DEADLINE_MS below is the real backstop anyway. One retry, short
+        // delay: worth it for a genuine blip, not worth burning seconds of the user's wait on a repeat.
+        res = await retryRequest(() => client.chat.completions.create({
+          model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+          messages: apiMessages,
+          // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
+          // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
+          ...(lastRound ? {} : { tools: tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
+        }), 1, 400);
+      } catch { return finish(""); } // network/API failure → the honest fallback line, never a throw to the route
+      { const u = usageOf(res); result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn; }
+      const toolCalls = res.choices?.[0]?.message?.tool_calls || [];
+      const textContent = res.choices?.[0]?.message?.content || "";
+      if (!toolCalls.length) return finish(textContent);
+      messages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
+      for (const tc of toolCalls) {
+        const name = tc.function?.name;
+        const input = parseToolArgs(tc.function?.arguments);
+        let content: string;
+        const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length >= CHAT_MAX_ARTIFACTS;
+        if (name === "web_search") {
+          content = await runWebSearch(input);
+          logAudit("tool", `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"`);
         }
-      } else if (name === "CREATE_FLASHCARDS") {
-        if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-        else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})`); } }
-      } else if (name === "CREATE_QUIZ") {
-        if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-        else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)`); } }
-      } else content = "ERROR: unknown tool.";
-      messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
+        else if (name === "CREATE_NOTE") {
+          if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+          else {
+            const r = makeNote(input);
+            if ("error" in r) content = r.error;
+            // A note is the obvious vector for "here's your essay, wrapped as a study aid" — check the BODY
+            // itself, not just the eventual spoken reply (finish() only ever sees the reply text).
+            else if (CHAT_DOES_WORK.test(r.note.body)) {
+              content = "REJECTED: that reads like their graded work, not a study aid — a fiche is method/structure/prompts, never the finished essay or solved exercise. Make a structure with prompts instead.";
+              logAudit("guardrail", "Bloqué : une fiche créée en chat ressemblait à un travail fait à la place de l'élève.");
+            }
+            else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", `Fiche créée : « ${r.note.title} »`); }
+          }
+        } else if (name === "CREATE_FLASHCARDS") {
+          if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+          else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})`); } }
+        } else if (name === "CREATE_QUIZ") {
+          if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+          else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)`); } }
+        } else content = "ERROR: unknown tool.";
+        messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
+      }
     }
-  }
-  return finish(""); // exhausted CHAT_MAX_ROUNDS still calling tools — the honest fallback line, not silence
+    return finish(""); // exhausted CHAT_MAX_ROUNDS still calling tools — the honest fallback line, not silence
+  };
+  // Hard SLA: the student is staring at a "thinking…" indicator, not reading a report — whatever's still
+  // in flight past this point (a slow model round, a hung tool call) gets abandoned in favor of the honest
+  // fallback line rather than leave them waiting indefinitely. A Promise.race can't cancel the underlying
+  // HTTP call, but it guarantees THIS function returns within the deadline regardless of what DeepSeek does.
+  const CHAT_DEADLINE_MS = 28_000;
+  return Promise.race([
+    runRounds(),
+    new Promise<ChatResult>((resolve) => setTimeout(() => resolve(finish("")), CHAT_DEADLINE_MS)),
+  ]);
 }
