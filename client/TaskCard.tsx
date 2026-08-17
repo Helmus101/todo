@@ -229,7 +229,18 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
 
   const { leaving, leaveKind, leave } = useTaskLeave(task.id, { onChange, onConfirmed, onLeft });
   const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
-  const markStepDone = (i: number) => act(() => api.stepDone(task.id, i, true, (decided[i] || "").trim() || undefined));
+  // Optimistic: this endpoint is a pure data flip server-side (no automation, no AI call — see
+  // server/index.ts's /step/:index/done route), so there's no reason the checkmark should wait on the
+  // round trip. Flip it locally first, reconcile with the server's response, revert on failure.
+  const setStepDoneLocal = (i: number, done: boolean, result?: string) => {
+    const steps = (task.steps || []).map((s, si) => si !== i ? s : { ...s, done, doneAt: done ? new Date().toISOString() : undefined, result: result ?? s.result });
+    onChange([{ ...task, steps }]);
+  };
+  const markStepDone = async (i: number) => {
+    const result = (decided[i] || "").trim() || undefined;
+    setStepDoneLocal(i, true, result);
+    try { onChange(await api.stepDone(task.id, i, true, result)); } catch { onChange([task]); }
+  };
   // A step with `question`/`options` is automatable but blocked on ONE piece of info Otto couldn't find or
   // infer (see the "submit" tool schema's `question` field in server/claude.ts) — answering it should
   // actually RUN the step with that answer (api.runStep), not just mark it done like the plain "what did
@@ -346,7 +357,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           <Disclosure label={L("Toutes les étapes", "All steps")} count={`${doneCount}/${steps.length}`}
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
             <StepList task={task} steps={steps} decided={decided} setDecided={setDecided}
-              onStepDone={markStepDone} onUndo={(i) => void act(() => api.stepDone(task.id, i, false))}
+              onStepDone={markStepDone} onUndo={(i) => { setStepDoneLocal(i, false); void act(() => api.stepDone(task.id, i, false)).catch(() => onChange([task])); }}
               onAsk={askAboutStep} onChange={onChange} onAnswer={answerStep} answering={answering} />
           </Disclosure>
         ) : null}
@@ -401,6 +412,26 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
   // "Open ↗" until clicked, then flips in place to "Done" — one button, two phases, instead of showing
   // both actions side by side.
   const [openedIdx, setOpenedIdx] = useState<number | null>(null);
+  // An unrefined task otherwise waits on the next background sweep to pick it up (bounded to 3/sweep, once
+  // or a few times a day) — with NO client-driven retry, a failed/slow refine looked permanently stuck with
+  // no way out but waiting. Surface a manual retry after a few seconds instead of leaving it an inert spinner.
+  const [showRetry, setShowRetry] = useState(false);
+  const [retryingRefine, setRetryingRefine] = useState(false);
+  useEffect(() => {
+    if (!task.unrefined) { setShowRetry(false); return; }
+    setShowRetry(false);
+    const id = setTimeout(() => setShowRetry(true), 8000);
+    return () => clearTimeout(id);
+  }, [task.unrefined, task.id]);
+  const retryRefine = async () => {
+    setRetryingRefine(true);
+    try {
+      const list = await api.refine(task.id);
+      const fresh = list.find((t) => t.id === task.id);
+      if (fresh) { onTask(fresh); if (!fresh.unrefined) onRun(); }
+    } catch (e: any) { onNotify?.(e?.message || L("Échec de la relance.", "Retry failed."), "error"); }
+    finally { setRetryingRefine(false); }
+  };
 
   if (isDone) {
     return (
@@ -417,6 +448,13 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
         <p className="hero-line">{task.unrefined
           ? L("Otto met cette tâche au propre — rien à faire, ça arrive tout seul.", "Otto is tidying this task up — nothing to do, it happens on its own.")
           : L("Otto prépare ça…", "Otto is getting this ready…")}</p>
+        {task.unrefined && showRetry ? (
+          <div className="hero-acts">
+            <button className="btn ghost" disabled={retryingRefine} onClick={() => void retryRefine()}>
+              {retryingRefine ? L("Relance…", "Retrying…") : L("Ça prend du temps — réessayer maintenant", "Taking a while — retry now")}
+            </button>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -506,11 +544,11 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
         {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. A
             persistent label (not just a placeholder, which vanishes once typing starts) so it stays clear
             this is required to move on, not optional extra info. */}
-        <label className="step-input-label" htmlFor="step-input-hero">{L("Réponds ici pour continuer :", "Answer here to continue:")}</label>
+        <label className="step-input-label" htmlFor="step-input-hero">{L("Optionnel — précise ce que tu as décidé pour l'étape suivante, ou clique juste « C'est fait » :", "Optional — note what you decided so the next step can use it, or just click \"Done\":")}</label>
         <input
           id="step-input-hero"
           className="step-input"
-          placeholder={L("Écris ta réponse ici pour débloquer la suite…", "Type your answer here to unlock the next step…")}
+          placeholder={L("ex : j'ai choisi le sujet X…", "e.g. I picked topic X…")}
           value={decided[currentIdx] || ""}
           onChange={(e) => setDecided((d) => ({ ...d, [currentIdx]: e.target.value }))}
           onKeyDown={(e) => { if (e.key === "Enter") onStepDone(currentIdx); }}

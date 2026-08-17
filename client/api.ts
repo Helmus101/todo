@@ -75,6 +75,7 @@ export const api = {
     return Array.isArray(out) ? { tasks: out, note: "" } : { tasks: out?.tasks || [], note: String(out?.note || "") };
   },
   add: (title: string, when?: string): Promise<WebTask[]> => post("/api/tasks", when ? { title, when } : { title }),
+  refine: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/refine`),
   run: (id: string, reset?: boolean): Promise<WebTask> => post(`/api/tasks/${id}/run`, reset ? { reset: true } : undefined),
   revise: (id: string, note: string): Promise<WebTask> => post(`/api/tasks/${id}/revise`, { note }),
   confirm: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/confirm`),
