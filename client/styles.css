@@ -332,6 +332,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   .dash-rail .exam-strip, .dash-rail .milestone-list { flex-direction: column; overflow-x: visible; padding-bottom: 0; }
   .dash-rail .exam-chip { min-width: 0; border-left-width: 3px; }
 }
+/* The week workload strip is a "glance at your week ahead" desktop-sidebar feature — on a phone it's just
+   more scrolling before the actual task list, and the per-day chip strip doesn't have room to be useful at
+   that width anyway. Exam countdown stays (it's the one thing worth surfacing above the fold on mobile). */
+@media (max-width: 640px) {
+  .week-load-wrap { display: none; }
+  .dash-rail:has(> .week-load-wrap:only-child) { display: none; }
+}
 .exam-strip-wrap { margin: 0; }
 .exam-strip-label { font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--space-2); opacity: 0.85; }
 .exam-strip { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
