@@ -690,7 +690,7 @@ const CREATE_QUIZ_TOOL = {
     title: { type: "string", description: "short label shown on the button, e.g. 'Quiz — Mécanique du point'" },
     questions: {
       type: "array",
-      description: "5-12 questions on the task's real subject matter — never placeholders, never the student's own assigned exercise reworded.",
+      description: "5-12 questions on the task's real subject matter — never placeholders, never the student's own assigned exercise reworded. WRITE THESE LIKE THE REAL THING, not generic trivia: match the phrasing, question types, and rigor of an actual contrôle/bac/IB paper for this subject and level (see VOCABULARY/track above for which) — a maths question should require the same steps a real exam question would, a history question should ask for analysis/argument the way a real dissertation prompt does, not just a fact lookup, unless the notion genuinely IS a fact lookup. Calibrate difficulty to THIS student: if their profile shows a grade for this subject, weak (well below the class/scale norm) means start with more foundational/scaffolded questions before harder ones; strong means skip the easy ones and go straight to exam-level rigor. No signal either way → assume mid-level exam difficulty, not a beginner quiz.",
       items: { type: "object", properties: {
         q: { type: "string", description: "the question — one clear sentence" },
         options: { type: "array", description: "3-4 answer options. EXACTLY ONE is correct; the wrong ones must be genuinely plausible (a common misconception, an off-by-one, the right idea applied to the wrong case). An obviously-silly option teaches nothing.", items: { type: "string" } },
@@ -1445,8 +1445,10 @@ const RUN_SYSTEM =
   `files") so they can correct it. A question you could have answered yourself is a FAILURE. ONLY when a ` +
   `detail genuinely cannot be found OR reasonably inferred, AND it materially changes the output (guessing ` +
   `wrong would waste the work), set that step's "question" to ONE short, specific question plus "options" ` +
-  `(2-4 likely answers, your best guess FIRST — they tap one and you run). Keep automatable=true; do ALL the ` +
-  `prep around it first so their part is a single tap, never "tell me more". Never more than 2 questions.\n` +
+  `(2-4 likely answers, your best guess FIRST — they tap one and you run, so each option must be a real ` +
+  `answer, never "I'll type my own"/"something else" — a free-text field is already shown alongside the ` +
+  `options for that). Keep automatable=true; do ALL the prep around it first so their part is a single tap, ` +
+  `never "tell me more". Never more than 2 questions.\n` +
   `BRIEF, DON'T JUST DEFER: even when the final action is the USER's (a decision, or a booking/login/payment you ` +
   `can't do), do ALL the research around it FIRST — find the real options + facts, put each as a "links" entry ` +
   `they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or ` +
@@ -1498,7 +1500,7 @@ const RUN_TOOLS = [
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
         url: { type: "string", description: "a link that puts the user ONE click from doing this step — directions (Google Maps dir link), a tel: number, the exact booking/payment/return page, a form. Include one whenever it exists or can be constructed; not just for 'open a page' steps." },
         question: { type: "string", description: "LAST RESORT ONLY — one short, specific question, set ONLY when a detail is genuinely missing that you could NOT find in the apps OR infer from context, AND it materially changes the output. You must have searched (inbox/Drive/calendar/their profile/the web) AND been unable to make a reasonable assumption first. A question you could have answered yourself is a failure. Keep automatable=true (you'll run it once they answer)." },
-        options: { type: "array", items: { type: "string" }, description: "2-4 likely answers to 'question', your BEST inference FIRST (they tap one and you run). A few words each. Omit for a free-form answer." },
+        options: { type: "array", items: { type: "string" }, description: "2-4 likely ANSWERS to 'question', your BEST inference FIRST — each one gets tapped AS-IS and run literally, so every option must be a real, complete answer you could act on if picked (e.g. '12 stores', 'This Friday', 'Skip it'). NEVER a meta-option like 'I'll type my own answer' / 'I have it, let me paste it' / 'Something else' — a free-text field is ALWAYS shown below the options already, so one of those does nothing but submit that literal sentence as if it were the answer. If free text is the realistic response, just omit 'options' entirely." },
       }, required: ["text", "automatable"] },
     },
     links: {
@@ -2506,7 +2508,7 @@ const CHAT_TOKEN_CEILING = 40_000;
  * must not be able to touch the student's connected accounts.
  */
 export async function chatAboutTask(
-  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string },
+  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean; substeps?: { text: string; done: boolean }[] }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string },
   history: { role: "user" | "assistant"; text: string }[],
   message: string,
   profile?: Profile,
@@ -2514,9 +2516,15 @@ export async function chatAboutTask(
   opts?: { stepIndex?: number },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
+  // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
+  // on TaskStep.substeps) used to be invisible here: the tutor could see a step as "not done" while the
+  // student had already ticked off 3 of its 4 sub-items, and would re-explain or re-ask about progress it
+  // couldn't see. Nest them under their parent step, same [x]/[ ] convention, so "which of these did you
+  // already do" is answered by the context instead of asked.
   const stepsBlock = steps.length
     ? `\nSteps (${steps.filter((s) => s.done).length}/${steps.length} done):\n` +
-      steps.map((s, i) => `- [${s.done ? "x" : " "}] ${s.text}${opts?.stepIndex === i ? "  ← THEY TAPPED \"HELP\" ON THIS ONE" : ""}`).join("\n")
+      steps.map((s, i) => `- [${s.done ? "x" : " "}] ${s.text}${opts?.stepIndex === i ? "  ← THEY TAPPED \"HELP\" ON THIS ONE" : ""}` +
+        (s.substeps?.length ? "\n" + s.substeps.map((sub) => `  - [${sub.done ? "x" : " "}] ${sub.text}`).join("\n") : "")).join("\n")
     : "";
   const stepHint = (opts?.stepIndex != null && steps[opts.stepIndex])
     ? `\nThey just asked for help specifically on "${steps[opts.stepIndex].text}" (marked above) — start FROM THERE, don't re-open the whole task or restate the step back at them. Still diagnose before explaining (rule 1).\n`
@@ -2565,7 +2573,11 @@ export async function chatAboutTask(
     `action that unblocks them (open the cours to p.X, write one bad first sentence, set a 10-minute timer, ` +
     `do just part a). Never lecture them about integrity; just redirect and help.\n\n` +
 
-    `PRACTICE PROBLEMS — TWO SHAPES, use whichever fits the moment:\n` +
+    `PRACTICE PROBLEMS — TWO SHAPES, use whichever fits the moment. EITHER WAY, make it real: match the ` +
+    `phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see ` +
+    `VOCABULARY/track above), not a generic trivia-style question — and calibrate difficulty to what you ` +
+    `know about them (a subject grade in their profile, how they've been doing in THIS conversation) rather ` +
+    `than defaulting to easy.\n` +
     `(a) ONE-OFF, right in the chat: once you've taught the idea (rule 2), the natural next move is often ` +
     `"try one" — pose a single parallel problem as plain text ("okay, try this one: ..."), let them answer, ` +
     `check it Socratically (rule 3/4). This is the default for "give me a practice problem", "quiz me on this ` +

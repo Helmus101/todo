@@ -372,6 +372,14 @@ export function QuizPlayer({ quiz }: { quiz: TaskQuiz }) {
     setOrder(reviewOnly && wrongIdx.length ? [...wrongIdx] : null);
     setI(0); setPicked(null); setRight([]); setWrongIdx([]);
   };
+  // Picking an answer saves it and moves on by itself — no extra click needed. Still pauses long enough to
+  // actually see the right/wrong highlight and read the one-line "why" before advancing; the "Next" button
+  // and 1-4/Enter shortcuts stay as a manual override for anyone who wants to move faster or slower.
+  useEffect(() => {
+    if (picked === null) return;
+    const id = setTimeout(next, 1600);
+    return () => clearTimeout(id);
+  }, [picked]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done || !q) return;
