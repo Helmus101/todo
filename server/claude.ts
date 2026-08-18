@@ -591,7 +591,11 @@ const GEN_SYSTEM =
   `NEVER resurface a to-do the user already finished or DISMISSED — if an ` +
   `"ALREADY HANDLED" list is given below, skip every item on it, even if its source email/event still exists. ` +
   `ONE TASK PER UNDERLYING ITEM: never submit two wordings of the same to-do — one thread/event/commitment = ` +
-  `ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task.\n` +
+  `ONE task, with its stable anchorKey. If two findings point at the same obligation, merge them into one task. ` +
+  `This also covers MULTI-PART PREP: several different-looking action items (a ticket-check email, a device-` +
+  `setup email, a travel booking) that are all prep for ONE upcoming event/deadline on ONE date are ONE task, ` +
+  `not several — anchor on whichever item best names the event and fold the rest into its steps/why, never as ` +
+  `separate tasks.\n` +
   `QUALITY OVER QUANTITY — surface the handful (≤ ~12) of items that genuinely matter; skip marginal ` +
   `"maybes". A short list the user trusts beats a complete list they ignore.\n` +
   `THE USER IS NOT A CONTACT: their own name (given as "Their name" below) never belongs in a task's title or ` +
@@ -966,10 +970,17 @@ export async function classifyCandidates(
     `quantity — the handful that matter. ALWAYS include: a direct question or request from a real person awaiting ` +
     `their reply; a SENT-BY-USER commitment ("I'll send/do/call…") with no later fulfilment visible; an event in ` +
     `the next 48h that plainly needs prep. When such an item exists, an empty tasks list is WRONG.\n` +
-    `CONSOLIDATE — one real-world obligation = ONE task. If several candidates concern the SAME thing (a ` +
-    `calendar event AND the email thread that set it up; several copies of one outreach the user sent), emit a ` +
+    `CONSOLIDATE — one real-world obligation = ONE task, EVEN WHEN the candidates look like different action ` +
+    `items on the surface. Two cases: (1) DUPLICATE — several candidates concern the literal same thing (a ` +
+    `calendar event AND the email thread that set it up; several copies of one outreach the user sent) — emit a ` +
     `SINGLE task and pick the candidate the user must ACT on to anchor it (prefer the email/thread they need to ` +
-    `handle; else the event). NEVER emit two tasks for one meeting, thread, or commitment. SCORING & PRIORITIZATION: Score importance (0..1) and urgency (0..1) based on deadlines, effort required, and high-priority contacts/projects. Items with imminent deadlines, unfulfilled promises, or high-priority senders score urgency ≥ 0.7 and importance ≥ 0.7. For large complex requests, focus the task on the immediate, concrete next actionable step.\n` +
+    `handle; else the event). (2) MULTI-PART PREP for the SAME upcoming event/deadline — e.g. a ticket-check email, ` +
+    `a device-setup email, and a travel-booking need that are all prep for ONE exam/trip/appointment on ONE date ` +
+    `— these are NOT three tasks; they're one task ("Prépare-toi pour le SAT du 22 août") whose steps cover each ` +
+    `sub-action. Anchor it on whichever single candidate best names the event, and don't lose the others' concrete ` +
+    `detail — carry it into "why" or let the step-writing pass turn each one into its own step under that ONE ` +
+    `task. NEVER emit two tasks for one meeting, thread, commitment, or event — no matter how differently-shaped ` +
+    `the source items look. SCORING & PRIORITIZATION: Score importance (0..1) and urgency (0..1) based on deadlines, effort required, and high-priority contacts/projects. Items with imminent deadlines, unfulfilled promises, or high-priority senders score urgency ≥ 0.7 and importance ≥ 0.7. For large complex requests, focus the task on the immediate, concrete next actionable step.\n` +
     `TITLES MUST BE SPECIFIC — name the actual person/company AND the actual subject, so the task is clear ` +
     `without opening anything. GOOD: "Reply to Chloe at BOND about the demo", "Send media-coverage docs to ` +
     `Paris Model Congress", "Confirm attendance to Guillaume's Aug call". BAD (too vague — never do this): ` +
