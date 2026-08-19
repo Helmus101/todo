@@ -15,7 +15,6 @@ import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
-import { updateConfidence } from "./tasks.ts";
 
 declare module "express-session" {
   interface SessionData {
@@ -604,6 +603,14 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     if (!t) { res.status(404).json({ error: "not found" }); return; }
     // Only a TERMINAL job failure is an error response — the user needs the message + Retry.
     if (job.status === "failed_terminal") { res.status(500).json({ error: job.last_error || t.lastError || "run failed" }); return; }
+    // A job the processor SKIPPED (paused / over budget — see processExecuteStep/processExecuteTask) still
+    // reports "succeeded" with a "skipped: ..." note, since it's not a failure the retry logic should act
+    // on. But silently returning the unchanged task here looked EXACTLY like "I clicked and nothing
+    // happened" — the route-level isPaused/overInteractive checks above only catch a stale SESSION profile;
+    // the job re-checks against a freshly loaded CLOUD profile and can disagree (another device just paused
+    // it, or budget ticked over between the click and the drain). Surface it as the same honest error.
+    const skipNote = typeof job.output?.note === "string" && job.output.note.startsWith("skipped:") ? job.output.note : null;
+    if (skipNote) { res.status(403).json({ error: skipNote.includes("budget") ? BUDGET_MSG : "AI is paused — resume it in Settings to run this." }); return; }
     res.json(t);
   } catch (e: any) {
     console.error(`[tasks] ${type} error for task`, id, ":", e);
@@ -641,10 +648,6 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
   if (task) {
     task.status = "done";
     task.updatedAt = new Date().toISOString();
-    // Track confidence: user approved the task's work
-    const profile = req.session.profile || emptyProfile();
-    updateConfidence(profile, task.source, true);
-    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
   }
@@ -655,10 +658,6 @@ app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => {
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (task) {
     tasks.reject(req.session.tasks || [], id);
-    // Track confidence: user rejected the task's work
-    const profile = req.session.profile || emptyProfile();
-    updateConfidence(profile, task.source, false);
-    req.session.profile = profile;
     await commit(req);
   }
   res.json(req.session.tasks || []);
@@ -669,10 +668,6 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
   if (task) {
     task.status = "dismissed";
     task.updatedAt = new Date().toISOString();
-    // Track confidence: user dismissed (rejected) this type of task
-    const profile = req.session.profile || emptyProfile();
-    updateConfidence(profile, task.source, false);
-    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
   }
@@ -714,7 +709,7 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
   const task = (req.session.tasks || []).find((t) => t.id === id);
   const step = task?.steps?.[index];
   if (!task || !step) { res.status(404).json({ error: "not found" }); return; }
-  const substeps = await expandStep({ title: task.title, why: task.why }, { text: step.text }, req.session.profile);
+  const substeps = await expandStep({ title: task.title, why: task.why }, { text: step.text }, req.session.profile, task.links);
   if (substeps.length) {
     step.substeps = substeps;
     task.updatedAt = new Date().toISOString();
@@ -777,10 +772,6 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async
     if (!r.ok) { res.status(500).json({ error: r.error || "send failed" }); return; }
     s.sent = true;
     t!.updatedAt = new Date().toISOString();
-    // Track confidence: user approved and sent the draft
-    const profile = req.session.profile || emptyProfile();
-    updateConfidence(profile, s.app, true);
-    req.session.profile = profile;
     await commit(req);
     void recordEvent(req.session.user!, "sent", { taskId: t!.id, message: `${s.label}${s.to ? ` → ${s.to}` : ""}` });
   }

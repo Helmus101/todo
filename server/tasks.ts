@@ -23,68 +23,6 @@ export function applyProfileUpdate(profile: Profile, u: ProfileUpdate): void {
   profile[key] = dedupeFacts([...rest, fact]);
 }
 
-// ── Trust/confidence system for gradual automation ─────────────────────────────
-const CONFIDENCE_THRESHOLD = 0.75; // Auto-approve when confidence reaches this level
-const MIN_HISTORY = 5; // Need at least this many decisions before trusting
-const DECAY_DAYS = 30; // History older than this gets less weight
-
-/** Update confidence score based on user approval/rejection of an action category. */
-export function updateConfidence(profile: Profile, actionCategory: string, approved: boolean): void {
-  if (!profile.confidence) profile.confidence = {};
-  if (!profile.confidenceHistory) profile.confidenceHistory = [];
-  
-  const now = new Date().toISOString();
-  profile.confidenceHistory.push({ action: actionCategory, approved, at: now });
-  
-  // Keep only recent history (last 100 entries)
-  if (profile.confidenceHistory.length > 100) {
-    profile.confidenceHistory = profile.confidenceHistory.slice(-100);
-  }
-  
-  // Calculate confidence from recent history
-  const recent = profile.confidenceHistory.filter(h => h.action === actionCategory);
-  if (recent.length < MIN_HISTORY) {
-    // Not enough data yet, start at 0.5 and move slowly
-    const current = profile.confidence[actionCategory] || 0.5;
-    profile.confidence[actionCategory] = approved 
-      ? Math.min(1, current + 0.05) 
-      : Math.max(0, current - 0.1);
-    return;
-  }
-  
-  // Weight recent decisions more heavily
-  let weightedSum = 0;
-  let totalWeight = 0;
-  const nowMs = Date.now();
-  
-  for (const h of recent) {
-    const ageMs = nowMs - new Date(h.at).getTime();
-    const ageDays = ageMs / (24 * 60 * 60 * 1000);
-    const weight = Math.max(0.1, 1 - (ageDays / DECAY_DAYS)); // Decay over time
-    weightedSum += (h.approved ? 1 : 0) * weight;
-    totalWeight += weight;
-  }
-  
-  const confidence = totalWeight > 0 ? weightedSum / totalWeight : 0.5;
-  profile.confidence[actionCategory] = confidence;
-}
-
-/** Check if an action should be auto-approved based on confidence score. */
-export function shouldAutoApprove(profile: Profile, actionCategory: string): boolean {
-  const confidence = profile.confidence?.[actionCategory];
-  if (confidence === undefined) return false;
-  
-  const history = profile.confidenceHistory?.filter(h => h.action === actionCategory) || [];
-  if (history.length < MIN_HISTORY) return false;
-  
-  return confidence >= CONFIDENCE_THRESHOLD;
-}
-
-/** Get confidence score for an action category (0-1). */
-export function getConfidence(profile: Profile, actionCategory: string): number {
-  return profile.confidence?.[actionCategory] || 0.5;
-}
-
 const URGENT_AT = 0.5, IMPORTANT_AT = 0.5;
 
 /** Eisenhower: two axes → quadrant + a ranking score (Do > Schedule > Delegate > Later). */
@@ -360,6 +298,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     name: p2.name || p1.name,
     about: p2.about || p1.about,
     track: p2.track || p1.track,
+    learningStyle: p2.learningStyle ?? p1.learningStyle,
     preferences: dedupeFacts([...(p1.preferences || []), ...(p2.preferences || [])]),
     people: dedupeFacts([...(p1.people || []), ...(p2.people || [])]),
     projects: dedupeFacts([...(p1.projects || []), ...(p2.projects || [])]),
@@ -380,12 +319,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
-    confidence: (p1.confidence || p2.confidence) ? { ...p1.confidence, ...p2.confidence } : undefined,
-    confidenceHistory: (p1.confidenceHistory?.length || p2.confidenceHistory?.length)
-      ? [...(p1.confidenceHistory || []), ...(p2.confidenceHistory || [])]
-          .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0))
-          .slice(-100)
-      : undefined,
     language: p2.language ?? p1.language,
     // Grades are a HISTORY now (see the Profile.grades type comment), not one row per subject — a manual
     // entry from device A must not be dropped just because device B's copy doesn't have it yet. Union by
@@ -417,6 +350,16 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         monthOut: Math.max(monthOf(p1.usage, "monthOut"), monthOf(p2.usage, "monthOut")),
         // Monotonic like the token counters — MAX within the same month so a stale copy can't reset spend.
         monthCost: Math.max(monthOf(p1.usage, "monthCost"), monthOf(p2.usage, "monthCost")),
+      };
+    })() : undefined,
+    // Same monotonic reasoning as usage above: `current` follows whichever side has the LATER local day
+    // (a stale copy's smaller streak must never overwrite a newer one's larger count), `longest` is a MAX.
+    streak: (p1.streak || p2.streak) ? (() => {
+      const side = (p2.streak?.lastDayIso || "") >= (p1.streak?.lastDayIso || "") ? p2.streak : p1.streak;
+      return {
+        current: side?.current || 0,
+        longest: Math.max(p1.streak?.longest || 0, p2.streak?.longest || 0),
+        lastDayIso: side?.lastDayIso,
       };
     })() : undefined,
   };
@@ -831,6 +774,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
       return old ? { ...s, done: true, doneAt: old.doneAt, result: s.result || old.result } : s;
     });
     task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
+    task.firstAction = out.firstAction; // the anti-procrastination hook — undefined when finalize() withheld it
     task.notes = out.notes?.length ? [...(task.notes || []), ...out.notes].slice(-ARTIFACT_CAP) : task.notes; // in-app fiches, accumulated (a rerun can add another)
     task.flashcards = out.flashcards?.length ? [...(task.flashcards || []), ...out.flashcards].slice(-ARTIFACT_CAP) : task.flashcards;
     task.quizzes = out.quizzes?.length ? [...(task.quizzes || []), ...out.quizzes].slice(-ARTIFACT_CAP) : task.quizzes;

@@ -24,6 +24,92 @@ function truncateStepText(text: string, max = 110): string {
   const lastSpace = cut.lastIndexOf(" ");
   return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim();
 }
+
+/** Validate a raw step's url/question/options exactly the same way regardless of which pass produced
+ *  it — `finalize`'s normal submit path and `writeStepsFromContext`'s refinement pass both call this, so
+ *  the two can't drift (they used to: the refinement pass didn't validate — or even ASK for — these
+ *  fields at all, silently discarding every link/question the research loop had attached). */
+export function sanitizeStepExtras(s: any): Pick<TaskStep, "url" | "question" | "options" | "needsPermission" | "minutes"> {
+  const minutes = Number(s?.minutes);
+  return {
+    url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : undefined,
+    question: s?.question ? String(s.question).trim().slice(0, 200) : undefined,
+    options: Array.isArray(s?.options) ? s.options.map((o: any) => String(o).trim()).filter(Boolean).slice(0, 4) : undefined,
+    needsPermission: !!s?.needsPermission,
+    minutes: Number.isInteger(minutes) && minutes >= 1 && minutes <= 240 ? minutes : undefined,
+  };
+}
+
+/** Rough token-overlap similarity between two step texts (Jaccard over words >3 chars) — used ONLY to
+ *  reattach a draft step's url/question/options to its corresponding step after the refinement pass, since
+ *  that pass reorders, merges, splits, and rewords steps (and in the big-project branch replaces them with
+ *  milestones entirely) — so the step at the same INDEX has no reliable relationship to the original. */
+function stepTextTokens(text: string): Set<string> {
+  return new Set(text.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => w.length > 3));
+}
+export function bestMatchingStep(text: string, candidates: TaskStep[]): TaskStep | undefined {
+  const target = stepTextTokens(text);
+  if (!target.size) return undefined;
+  let best: TaskStep | undefined, bestScore = 0;
+  for (const c of candidates) {
+    const cTokens = stepTextTokens(c.text);
+    if (!cTokens.size) continue;
+    const inter = [...target].filter((t) => cTokens.has(t)).length;
+    const union = new Set([...target, ...cTokens]).size;
+    const score = union ? inter / union : 0;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return bestScore >= 0.5 ? best : undefined; // below this, two step texts don't genuinely describe the same action
+}
+
+// A step that just hands the student a lookup instead of doing it — "Look up train times", "Cherche les
+// horaires" — is a FAILURE of PREP EVERY USER STEP TO THE MAX (the search is one tool call, do it now, see
+// the run prompt), not a legitimate step. MUST be bilingual: languageLine() makes steps FRENCH by default,
+// so an English-only pattern (matching the existing DEAD_END/INVESTIGATIVE style elsewhere in this file)
+// would fire on almost no real French student. Anchored with ^ so it only matches the LEADING verb, never
+// a mid-sentence "check" ("Check with your teacher..." must survive — see TRIVIAL_EXEMPT below).
+const SEARCH_INSTRUCTION = /^(look\s?up|search(?:\s+for)?|google|find out|research|check\s+(?:the\s+)?(?:opening hours|prices?|times?|schedules?|weather)|see if|figure out)\b|^(cherch(?:e|er|ons)?|recherch(?:e|er|ons)?|renseigne[- ]?(?:toi|nous)|regarde\s+(?:si|les?\s+(?:horaires|prix|tarifs))|v[ée]rifie[rz]?\s+(?:les?\s+)?(?:horaires|prix|tarifs)|trouve[rz]?)\b/i;
+// Bare navigation ("Open X", "Go to the site") is sanctioned ONLY with a url attached — see the run
+// prompt's OPENING A PAGE rule, which explicitly wants "open X" steps as long as the real URL is on them.
+// Without one it's the same "go find out" failure as SEARCH_INSTRUCTION, just phrased as a destination
+// instead of a query.
+const BARE_NAVIGATION = /^(open|go to|visit|consult|browse|access|navigate to)\b|^(ouvr(?:e|ir|ons)|va(?:s)?[- ]y|va sur|consulte[rz]?|acc[èe]de[rz]?\s+[àa])\b/i;
+// Legitimate steps that would otherwise false-positive on the patterns above: checking with a real human
+// ("Check with your teacher which title is allowed") is genuine student work, not a deferred search; and
+// opening/consulting something OTTO ITSELF PREPARED (a fiche, a deck, a quiz) is navigation to a resource
+// that already exists in-app, not a lookup Otto dodged.
+const TRIVIAL_EXEMPT = /\b(with|to|from|ask)\b.{0,20}\b(teacher|prof(?:esseur)?e?s?|supervisor|tutor|coordinator|parent|classmate)\b|\b(avec|à|aupr[èe]s de)\b.{0,20}\b(prof(?:esseur)?e?s?|enseignant|superviseur|camarade|parent)\b|\b(fiche|note|flashcards?|cartes?|quiz|checklist|r[ée]vision|revisions)\b/i;
+// BARE_NAVIGATION is only trivial WITHOUT a url — "Open sncf-connect.com" with a url set is exactly what
+// the run prompt's OPENING A PAGE rule wants; without one it's the same "go find out" as SEARCH_INSTRUCTION.
+export const isTrivialStep = (text: string, url?: string): boolean =>
+  !TRIVIAL_EXEMPT.test(text) && (SEARCH_INSTRUCTION.test(text) || (BARE_NAVIGATION.test(text) && !url));
+
+/** Rules every step-list producer must pass, regardless of which pass generated it (the normal submit
+ *  path, the rescue/fallback paths, or the refinement pass) — one hook so a filter added here can't be
+ *  forgotten on one of the three. Deliberately does NOT apply the triviality gate (see dropTrivialSteps
+ *  below) — `finalize` still needs to run its DOABLE/JUDGMENT automatable-flip on the raw `false` steps
+ *  this returns before that gate can tell a genuinely-handed-to-the-user step from Otto's own work that
+ *  just hasn't been flipped to automatable yet. */
+export function sanitizeSteps(steps: TaskStep[], maxCount: number): TaskStep[] {
+  return steps
+    .filter((s) => s.text)
+    // Filter out illegitimate self-email steps ("Draft an email summary to the user", "Email yourself")
+    .filter((s) => !/\b(draft|send|write|email)\b[^.]{0,30}\b(email|summary|update|findings)\b[^.]{0,30}\b(to (the )?user|to yourself|to me)\b/i.test(s.text))
+    .slice(0, maxCount);
+}
+
+/** The triviality gate itself — called AFTER a step's final `automatable` value is settled (finalize's
+ *  DOABLE/JUDGMENT flip, or writeStepsFromContext's direct model value), because "Research X and compile
+ *  a list" is a legitimate step Otto will do itself once flipped automatable — only a step that's actually
+ *  being LEFT to the student, and is nothing but a deferred lookup or bare navigation, gets dropped. */
+export function dropTrivialSteps(steps: TaskStep[]): TaskStep[] {
+  return steps.filter((s) => {
+    if (s.automatable) return true;
+    const trivial = isTrivialStep(s.text, s.url);
+    if (trivial) console.log(`${new Date().toISOString()} [ai] dropped trivial step: "${s.text}"`);
+    return !trivial;
+  });
+}
 /** The app's UI + AI-content language, toggled in Settings (defaults French). Every prompt that phrases
  *  user-facing text pulls this in rather than hardcoding a language. */
 export function languageLine(p?: Profile): string {
@@ -54,6 +140,32 @@ export function trackLine(_p?: Profile): string {
     `spécialités, contrôle continu, a Grand Oral in Terminale, plus the international component's dedicated ` +
     `written + oral épreuves. Use whichever vocabulary the evidence actually points to — never force IB terms ` +
     `onto plain bac homework or vice versa, and default to plain language when neither clearly applies.\n`;
+}
+
+/** VARK, presentation only — NEVER difficulty, depth, or what gets taught (see Profile.learningStyle doc
+ *  comment). Deliberately soft ("when it fits naturally") rather than a rigid format mandate: VARK's evidence
+ *  as a *learning-outcome* predictor is weak, but honoring a stated presentation preference costs nothing. */
+export function learningStyleLine(p?: Profile): string {
+  const style = p?.learningStyle;
+  if (!style || style === "mixed") return "";
+  const by: Record<string, string> = {
+    visual: `PRESENTATION: this student said they think visually — when it fits naturally, lean toward ` +
+      `spatial/structural descriptions ("picture a timeline", "imagine a grid"), short labeled steps, and ` +
+      `contrasts laid side by side over long unbroken prose. Never skip a needed diagnostic question or ` +
+      `dumb down content to fit.\n`,
+    auditory: `PRESENTATION: this student said they think best by talking things through — when it fits ` +
+      `naturally, favor a conversational, spoken-explanation feel (analogies, "say it out loud" framing) ` +
+      `and lean on the "explain it back to me" loop even more than usual. Never skip a needed diagnostic ` +
+      `question or dumb down content to fit.\n`,
+    reading: `PRESENTATION: this student said they prefer reading/writing — when it fits naturally, give ` +
+      `precise written explanations with clear terminology, and prefer they write their own summary/notes ` +
+      `over talking through it. Never skip a needed diagnostic question or dumb down content to fit.\n`,
+    kinesthetic: `PRESENTATION: this student said they learn by doing — when it fits naturally, get them ` +
+      `applying an idea to a concrete example or small hands-on step FAST rather than explaining at length ` +
+      `first; prefer "try this and see what happens" over up-front theory. Never skip a needed diagnostic ` +
+      `question or dumb down content to fit.\n`,
+  };
+  return "\n\n" + (by[style] || "");
 }
 // A big multi-week project (Extended Essay, TOK, CAS, an Internal Assessment, a group project, a full
 // essay/dissertation, a thesis/mémoire) isn't like an ordinary task — it runs for weeks/months, has real
@@ -1236,11 +1348,19 @@ export interface RunOutput {
    *  acronym and has nothing to research — so the keyword pre-filter AND the empty-context bail would
    *  otherwise both miss it) still gets the milestone treatment. */
   isBigProject?: boolean;
+  /** The smallest possible first move on this task (the anti-procrastination hook) — see FIRST ACTION in
+   *  RUN_SYSTEM. Validated in finalize() the same way a step's text/minutes are. */
+  firstAction?: { text: string; minutes?: number };
 }
 
 const RUN_SYSTEM =
   `MANDATORY EXECUTION SEQUENCE — FOLLOW THIS EXACT ORDER FOR EVERY TASK, NO EXCEPTIONS:\n` +
-  `  (1) GATHER & RESEARCH: Perform targeted, credit-efficient searches (1-3 web/app reads) to get exact facts (names, dates, links, requirements). Never waste calls on random browsing.\n` +
+  `  (1) GATHER & RESEARCH: Perform targeted searches to get EXACT, REAL facts (names, dates, prices, times, ` +
+  `links, requirements) — never a vague description of what to look up. App reads (Gmail/Calendar/Drive) are ` +
+  `usually 1-3 targeted calls; web_search has NO fixed cap — use as MANY separate, specific queries as the task ` +
+  `actually needs (a departure time, THEN the operator's booking page, THEN the return leg, are three separate ` +
+  `searches, not one). Thorough beats fast here: an unresolved "go check X" is a bigger failure than one extra ` +
+  `search call. Still no random browsing — every query targets one specific missing fact.\n` +
   `  (2) PLAN: Formulate an explicit plan to achieve the objective — define what needs to be done, what success looks like, which tools to use, and which artifact(s) to produce. Define the concrete steps to execute that plan before starting.\n` +
   `  (3) EXECUTE & CREATE: Call the real tool immediately — create the Google Doc/Sheet/Draft and write all research findings into it. Research without a created artifact is INCOMPLETE.\n` +
   `  (4) REPORT: Return the created artifact in "links"/"sendables". DO NOT claim work you didn't do.\n` +
@@ -1256,8 +1376,10 @@ const RUN_SYSTEM =
   `on the task (the Gmail thread / Calendar event / Drive doc behind it, plus any Sheet/Slack/etc. it ` +
   `touches) AND use what you already know about this person from the "WHO THIS PERSON IS" block above (their ` +
   `name, preferences, key people, projects) — that memory often holds the exact detail that makes the output ` +
-  `right. web_search for any external fact. TARGETED, not exhaustive (usually 1-3 reads): enough to act well, ` +
-  `never a survey of their whole world. State the key facts you found in submit's "context" — this is proof you gathered before acting. DO NOT skip this phase.\n` +
+  `right. web_search for any external fact — TARGETED, not a survey of their whole world, but not stingy ` +
+  `either: if the step needs a real time/price/booking link, keep searching (one query per fact) until you ` +
+  `actually have it, rather than settling for "search for X" as the deliverable. State the key facts you found ` +
+  `in submit's "context" — this is proof you gathered before acting. DO NOT skip this phase.\n` +
   `(2) PLAN — from that context, fix the OBJECTIVE (what "done" actually looks like for THIS task) ` +
   `and map out the exact plan to achieve it: define what needs to be done, the sequence of research/writing steps, which tools to use, and which artifact(s) to produce. ` +
   `Define EXACTLY what you will create or update before you start.\n` +
@@ -1441,12 +1563,19 @@ const RUN_SYSTEM =
   `When UNSURE, it's OTTO's — attempt it. "Tedious", "specific", "numeric", or "I'd have to look it up" are NEVER ` +
   `reasons to hand a step to the user. When a user step unblocks one of yours, say so — "Pick the date — I'll ` +
   `then book it".\n` +
-  `PREP EVERY USER STEP TO THE MAX (universal rule): a user step must arrive READY-TO-DO, never bare. Attach a ` +
-  `"url" that lands them ONE click from done whenever such a link exists or can be constructed — driving/transit → ` +
-  `a Google Maps directions link (https://www.google.com/maps/dir/?api=1&origin=<from>&destination=<to>), a call → ` +
-  `tel:<number>, a payment/booking/return/check-in → the exact page for it, a form → the form itself. Fold the key ` +
-  `facts they'd otherwise look up (address, confirmation #, time, phone, amount) into the step text or "context". ` +
-  `If no link applies, the step text itself must carry everything needed.\n` +
+  `PREP EVERY USER STEP TO THE MAX (universal rule): a user step must arrive READY-TO-DO, never bare — and ` +
+  `"ready" means YOU already did the legwork with web_search THIS run, not that you told them what to go search. ` +
+  `A step whose text is itself a search instruction ("Look up train times for X", "Find flights to Y", "Check ` +
+  `opening hours") is a FAILURE of this rule, no different from an unanswered question — the search is ONE tool ` +
+  `call, do it now, then hand over what you found. Attach a "url" that lands them ONE click from done whenever ` +
+  `such a link exists or can be constructed — driving/transit directions → a Google Maps directions link ` +
+  `(https://www.google.com/maps/dir/?api=1&origin=<from>&destination=<to>&travelmode=transit for train/bus, ` +
+  `omit travelmode for driving), a specific train/bus/flight → web_search for the actual operator's booking page ` +
+  `(SNCF Connect, Trainline, NS International, the airline) and link THAT, a call → tel:<number>, a payment/` +
+  `booking/return/check-in → the exact page for it, a form → the form itself. Fold the key facts they'd ` +
+  `otherwise look up (actual departure times you found, address, confirmation #, phone, amount, price) into the ` +
+  `step text or "context" — "Book the 14:12 Thalys Paris→Den Haag (~€45)" not "Book a train". If truly no link ` +
+  `applies, the step text itself must carry everything needed — never leave "go find out" as the deliverable.\n` +
   `ASK — INFER FIRST, ASK ONLY AS A LAST RESORT: default is to INFER and DO, not to ask. If a detail is ` +
   `missing (a preference, a field, an age group, a style), search EVERYWHERE first (their profile, Drive, ` +
   `inbox, calendar, the web); if still not found, make your SINGLE most reasonable assumption from context ` +
@@ -1489,6 +1618,18 @@ const RUN_SYSTEM =
   `actual voice per the VOICE rules — reread one sent email if unsure; (3) each sendable's subject/body is ` +
   `EXACTLY what you wrote into the created draft (same draftId); (4) every link came from a tool result — ` +
   `never constructed from guesswork. A polished half is worth more than a sloppy whole.\n` +
+  `TIME ESTIMATES — set a step's "minutes" whenever you can reasonably judge it (a genuine estimate from what ` +
+  `the step actually involves — "book the train" is 5, "write the outline" is 20, "review 12 flashcards" is ` +
+  `10) so the student can see what fits in the time they actually have right now. Omit it when you truly can't ` +
+  `judge (an open-ended "decide X") — never guess a fake-precise number just to fill the field.\n` +
+  `FIRST ACTION — a student who's stuck rarely needs a plan, they need permission to start: set "firstAction" ` +
+  `to the SMALLEST possible first move on this task, small enough it's hard to say no to (2-5 minutes) — ` +
+  `"Open the doc and write one bad first sentence", "Read just the first page of the énoncé", "Set a 10-minute ` +
+  `timer and start" — NEVER a restatement of step one or the task title, and never something that requires a ` +
+  `decision first (that's what makes it small). Set it for ANY ordinary task with at least one real user step ` +
+  `(automatable=false) left — that's exactly the case where "where do I even start" bites. Omit only when the ` +
+  `task is fully done, is a big project (isBigProject — the milestone itself already sets the direction), or ` +
+  `every remaining step is Otto's own job.\n` +
   `Call "submit" ONLY after you've actually done the reversible work — ` +
   `not before. Be BRIEF: "synthesis" is ONE sentence; "context" is 1-2 short bullets. Don't narrate problems or ` +
   `steps you skipped — just the result.`;
@@ -1512,6 +1653,7 @@ const RUN_TOOLS = [
         url: { type: "string", description: "a link that puts the user ONE click from doing this step — directions (Google Maps dir link), a tel: number, the exact booking/payment/return page, a form. Include one whenever it exists or can be constructed; not just for 'open a page' steps." },
         question: { type: "string", description: "LAST RESORT ONLY — one short, specific question, set ONLY when a detail is genuinely missing that you could NOT find in the apps OR infer from context, AND it materially changes the output. You must have searched (inbox/Drive/calendar/their profile/the web) AND been unable to make a reasonable assumption first. A question you could have answered yourself is a failure. Keep automatable=true (you'll run it once they answer)." },
         options: { type: "array", items: { type: "string" }, description: "2-4 likely ANSWERS to 'question', your BEST inference FIRST — each one gets tapped AS-IS and run literally, so every option must be a real, complete answer you could act on if picked (e.g. '12 stores', 'This Friday', 'Skip it'). NEVER a meta-option like 'I'll type my own answer' / 'I have it, let me paste it' / 'Something else' — a free-text field is ALWAYS shown below the options already, so one of those does nothing but submit that literal sentence as if it were the answer. If free text is the realistic response, just omit 'options' entirely." },
+        minutes: { type: "number", description: "realistic minutes this step takes (1-240) — a genuine estimate from what the step involves, omit if you can't judge one. See TIME ESTIMATES." },
       }, required: ["text", "automatable"] },
     },
     links: {
@@ -1547,6 +1689,15 @@ const RUN_TOOLS = [
         title: { type: "string", description: "the new task as a specific imperative naming who+what, ≤ 11 words, e.g. 'Reach out to Fleur de Bitume association at HEC'" },
         why: { type: "string", description: "one short clause: why it matters / what triggered it" },
       }, required: ["title", "why"] },
+    },
+    firstAction: {
+      type: "object",
+      description: "The smallest possible first move on this task, so a stuck student has something impossible to refuse instead of a blank plan. See FIRST ACTION.",
+      properties: {
+        text: { type: "string", description: "ONE tiny, concrete action, ≤ 12 words, 2-5 minutes — e.g. 'Open the doc and write one bad first sentence'." },
+        minutes: { type: "number", description: "realistic minutes this specific first move takes (1-10)." },
+      },
+      required: ["text"],
     },
   }, required: ["context", "synthesis", "steps"] } },
 ];
@@ -2139,7 +2290,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
  * are the concrete next actions?" instead of "given everything I just read AND what I know, what's next?"
  * Falls back to the research loop's own steps on any failure (never worse than before, only sometimes better).
  */
-async function writeStepsFromContext(
+export async function writeStepsFromContext(
   task: { title: string; why: string },
   context: string,
   links: TaskLink[],
@@ -2208,30 +2359,57 @@ async function writeStepsFromContext(
           `be directly about "${task.title}" — no unrelated tangents; the context above may mention OTHER people/` +
           `threads/obligations that came up during research but aren't actually part of this task — don't turn ` +
           `those into steps just because they're in the context.\n\n` +
+          `IF ORDINARY, a step can ALSO carry: "url" — ONLY if one of RESOURCES ALREADY FOUND above is the exact ` +
+          `page this step needs; copy it VERBATIM, never invent or guess one. "question" + "options" — ONLY if ` +
+          `this step genuinely can't proceed without ONE piece of info you don't have (see the same rule ` +
+          `elsewhere: last resort, your best-guess answer FIRST in options, each option a real answer never ` +
+          `"I'll type my own"). Omit all three when they don't apply — most steps won't have them.\n\n` +
           `Return ONLY this JSON: {"isBigProject": true|false, "steps": [{"text": "...", "targetDate": "YYYY-MM-DD" ` +
-          `(big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only)}, ...]}.`,
+          `(big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only), "url": "..." ` +
+          `(ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary ` +
+          `only, optional)}, ...]}.`,
       }],
     }));
-    const out = firstJson<{ isBigProject?: boolean; steps?: { text?: string; automatable?: boolean; targetDate?: string; dependsOn?: number }[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const out = firstJson<{ isBigProject?: boolean; steps?: { text?: string; automatable?: boolean; targetDate?: string; dependsOn?: number; url?: string; question?: string; options?: string[] }[] }>(String(res.choices?.[0]?.message?.content || ""));
     // The model's own judgment wins when it answers at all — it saw the actual content, the regex only
     // saw the title. Fall back to the keyword hit only if the response is malformed/missing the field.
     const bigProject = typeof out?.isBigProject === "boolean" ? out.isBigProject : keywordHit;
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     const rawSteps = out?.steps || [];
-    const steps = rawSteps
-      .map((s, idx) => ({
-        text: truncateStepText(String(s?.text || "")),
-        automatable: bigProject ? false : !!s?.automatable,
-        ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
-        // Same validation as finalize()'s dependsOn handling — must point at a REAL other step in
-        // THIS (possibly reordered/re-worded) list, never dropped silently as it was before this fix.
-        ...(!bigProject && Number.isInteger(s?.dependsOn) && s!.dependsOn! >= 0 && s!.dependsOn! < rawSteps.length && s!.dependsOn !== idx
-          ? { dependsOn: s!.dependsOn }
-          : {}),
-      }))
-      .filter((s) => s.text)
-      .slice(0, bigProject ? 8 : 6);
-    return steps.length ? steps : fallbackSteps;
+    // Only a url that ALSO appears among the resources Otto genuinely found this run is trusted — bounds
+    // both a fabricated model url AND a bad text-match below to something real, never an invented link.
+    const linkUrls = new Set(links.map((l) => l.url));
+    const steps = sanitizeSteps(rawSteps
+      .map((s, idx) => {
+        // The refinement pass reorders/merges/rewords steps, so a step at this index has no reliable
+        // relationship to the draft's step at the same index — match by text similarity instead, and
+        // ONLY for the ordinary (non-milestone) shape: a milestone list is a different decomposition of
+        // the work entirely, so any positional or textual "match" against the flat draft would be spurious.
+        const matched = !bigProject ? bestMatchingStep(String(s?.text || ""), fallbackSteps) : undefined;
+        const own = sanitizeStepExtras(s);
+        const url = (own.url && linkUrls.has(own.url)) ? own.url
+          : (matched?.url && linkUrls.has(matched.url)) ? matched.url : undefined;
+        return {
+          text: truncateStepText(String(s?.text || "")),
+          automatable: bigProject ? false : !!s?.automatable,
+          ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
+          // Same validation as finalize()'s dependsOn handling — must point at a REAL other step in
+          // THIS (possibly reordered/re-worded) list, never dropped silently as it was before this fix.
+          ...(!bigProject && Number.isInteger(s?.dependsOn) && s!.dependsOn! >= 0 && s!.dependsOn! < rawSteps.length && s!.dependsOn !== idx
+            ? { dependsOn: s!.dependsOn }
+            : {}),
+          ...(!bigProject ? {
+            url,
+            question: own.question ?? matched?.question,
+            options: own.options ?? matched?.options,
+            needsPermission: own.needsPermission || matched?.needsPermission || undefined,
+          } : {}),
+        };
+      }), bigProject ? 8 : 6);
+    // Skip for bigProject: every milestone is automatable=false by construction (a dated project phase,
+    // not a deferred-lookup step handed to the student), so the gate would have nothing valid to keep.
+    const gated = bigProject ? steps : dropTrivialSteps(steps);
+    return gated.length ? gated : fallbackSteps;
   } catch { return fallbackSteps; } // a failed refinement pass falls back to the loop's own steps, never blocks submission
 }
 
@@ -2240,9 +2418,21 @@ async function writeStepsFromContext(
  *  only (a "Détailler cette étape" button), never generated automatically — most steps are fine as-is,
  *  and forcing every step through this would bury the plan in sub-lists nobody asked for. Persisted on
  *  the step itself by the caller (server/index.ts), not returned as throwaway chat text. */
-export async function expandStep(task: { title: string; why: string }, step: { text: string }, profile?: Profile): Promise<{ text: string; done: boolean }[]> {
+export async function expandStep(
+  task: { title: string; why: string },
+  step: { text: string },
+  profile?: Profile,
+  // Resources the TASK already found this run/prior runs (task.links) — not a fresh web_search: giving
+  // this call its own tool-calling loop just to break one step into sub-actions was judged not worth the
+  // extra round-trip cost/latency for what's an on-demand, single-step-scoped refinement. Instead a
+  // substep may point at a link ALREADY on the task, the same "never fabricate, only ever a real url the
+  // run found" discipline as writeStepsFromContext, just bounded to what's already sitting on the card
+  // instead of a fresh search.
+  links: TaskLink[] = [],
+): Promise<{ text: string; done: boolean; url?: string }[]> {
   try {
     const client = deepseekClient();
+    const linksBlock = links.length ? `\n\nRESOURCES ALREADY ON THIS TASK:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
@@ -2250,22 +2440,33 @@ export async function expandStep(task: { title: string; why: string }, step: { t
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}" (${task.why})\nSTEP TO BREAK DOWN: "${step.text}"\n\n` +
+        content: `TASK: "${task.title}" (${task.why})\nSTEP TO BREAK DOWN: "${step.text}"${linksBlock}\n\n` +
           languageLine(profile) +
           `Break this ONE step into 3 to 6 small, concrete sub-actions the student can tick off one at a time — ` +
           `each a SHORT imperative (≤10 words), specific enough to just start doing, no vague categories like ` +
           `"plan it out". This is for a STUDENT: every sub-step is something THEY do — never phrase the graded/` +
           `learning work itself (writing, arguing, solving) as if it were already done or as Otto's job. Stay ` +
           `strictly inside the scope of "${step.text}" — do not re-plan the whole task, only this one step.\n\n` +
-          `Return ONLY this JSON: {"substeps": ["...", "...", ...]}.`,
+          `If one of RESOURCES ALREADY ON THIS TASK above is exactly the page a sub-action needs, give that ` +
+          `sub-action a "url" copied VERBATIM from the list — never invent or guess one, and never a url that ` +
+          `isn't in that list. Most sub-actions won't have one.\n\n` +
+          `Return ONLY this JSON: {"substeps": [{"text": "...", "url": "..." (optional)}, ...]}.`,
       }],
     }));
-    const out = firstJson<{ substeps?: string[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const out = firstJson<{ substeps?: ({ text?: string; url?: string } | string)[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const linkUrls = new Set(links.map((l) => l.url));
     return (out?.substeps || [])
-      .map((t) => String(t || "").trim().slice(0, 140))
-      .filter(Boolean)
+      .map((s) => {
+        // Tolerate the old plain-string shape too — a live client on a stale deploy, or the model
+        // reverting to the pre-url format under load, should still produce a usable substep, not nothing.
+        const raw = typeof s === "string" ? { text: s } : (s || {});
+        const text = String(raw.text || "").trim().slice(0, 140);
+        const url = raw.url && linkUrls.has(String(raw.url)) ? String(raw.url) : undefined;
+        return { text, url };
+      })
+      .filter((s) => s.text)
       .slice(0, 6)
-      .map((text) => ({ text, done: false }));
+      .map(({ text, url }) => ({ text, done: false, ...(url ? { url } : {}) }));
   } catch { return []; }
 }
 
@@ -2306,22 +2507,15 @@ export function reconcileArtifactClaims<T extends { synthesis?: string; did?: st
 
 export function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[]): RunOutput {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
-  const steps: TaskStep[] = rawSteps
+  const steps: TaskStep[] = sanitizeSteps(rawSteps
     .map((s: any, idx: number) => ({
       text: truncateStepText(String(s?.text || "")), // keep steps to a scannable one-liner, not a paragraph
       automatable: !!s?.automatable,
-      needsPermission: !!s?.needsPermission,
       // Valid only if it points at a REAL other step — a bad index (9 in a 3-step list, or itself)
       // would permanently block the step client-side.
       dependsOn: Number.isInteger(s?.dependsOn) && s.dependsOn >= 0 && s.dependsOn < rawSteps.length && s.dependsOn !== idx ? s.dependsOn : undefined,
-      url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : undefined,
-      question: s?.question ? String(s.question).trim().slice(0, 200) : undefined,
-      options: Array.isArray(s?.options) ? s.options.map((o: any) => String(o).trim()).filter(Boolean).slice(0, 4) : undefined,
-    }))
-    .filter((s: TaskStep) => s.text)
-    // Filter out illegitimate self-email steps ("Draft an email summary to the user", "Email yourself")
-    .filter((s: TaskStep) => !/\b(draft|send|write|email)\b[^.]{0,30}\b(email|summary|update|findings)\b[^.]{0,30}\b(to (the )?user|to yourself|to me)\b/i.test(s.text))
-    .slice(0, 6); // fewer, tighter steps — a short list reads better than an exhaustive one
+      ...sanitizeStepExtras(s),
+    })), 6); // fewer, tighter steps — a short list reads better than an exhaustive one
   // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.
   const kindLabel = (url: string): string =>
     /docs\.google\.com\/document/i.test(url) ? "the Google Doc Otto created"
@@ -2438,6 +2632,13 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   for (const s of steps) {
     if (!s.automatable && DOABLE.test(s.text) && !JUDGMENT.test(s.text) && !s.question) s.automatable = true;
   }
+  // Triviality gate runs HERE, after automatable is settled — a step already flipped to Otto's own job by
+  // the DOABLE check above is fine even if it started with "Research"/"Find"; only a step still left to
+  // the STUDENT that's nothing but a deferred lookup or bare "open the site" gets dropped (see the "Chercher
+  // les horaires de train" live report this closes: a step the model should have searched for itself, not
+  // handed back as a to-do). `const steps` can't be reassigned, so mutate in place like the stale-filter below.
+  const detrivialized = dropTrivialSteps(steps);
+  steps.length = 0; steps.push(...detrivialized);
   // Never list DONE work as remaining: a step that near-duplicates a did-bullet is stale planning residue.
   const stale = (txt: string) => did.some((d) => {
     const a = new Set(txt.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
@@ -2460,6 +2661,15 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     .filter((f: { title: string; why: string }) => f.title.length >= 4)
     .slice(0, 2);
   const title = out?.title ? String(out.title).trim().slice(0, 90) : undefined;
+  // Backstop the model's own "omit when..." instructions rather than trust them blindly: only keep
+  // firstAction when there's actually a real user step left to unblock, and never for a big project (a
+  // milestone list already sets the direction — see FIRST ACTION in RUN_SYSTEM).
+  const firstActionText = out?.firstAction?.text ? truncateStepText(String(out.firstAction.text), 90) : "";
+  const firstActionMinutes = Number(out?.firstAction?.minutes);
+  const firstAction = (firstActionText && !out?.isBigProject && steps.some((s) => !s.automatable)) ? {
+    text: firstActionText,
+    ...(Number.isInteger(firstActionMinutes) && firstActionMinutes >= 1 && firstActionMinutes <= 10 ? { minutes: firstActionMinutes } : {}),
+  } : undefined;
   return {
     context: brief(String(out?.context || ""), 2, 380),
     // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
@@ -2473,6 +2683,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     ...(followUps.length ? { followUps } : {}),
     ...(title ? { title } : {}),
     ...(typeof out?.isBigProject === "boolean" ? { isBigProject: out.isBigProject } : {}),
+    ...(firstAction ? { firstAction } : {}),
   };
 }
 
@@ -2541,7 +2752,7 @@ export async function chatAboutTask(
     ? `\nThey just asked for help specifically on "${steps[opts.stepIndex].text}" (marked above) — start FROM THERE, don't re-open the whole task or restate the step back at them. Still diagnose before explaining (rule 1).\n`
     : "";
   const fr = profile?.language !== "en";
-  const sys = languageLine(profile) + trackLine(profile) + MISSION +
+  const sys = languageLine(profile) + trackLine(profile) + learningStyleLine(profile) + MISSION +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +

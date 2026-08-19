@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateA
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal } from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
@@ -520,6 +520,7 @@ export function App() {
 
   return (
     <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
+    <NotifyContext.Provider value={notify}>
     <div className="app">
       <header className="topbar">
         <div className="brand"><Logo size={20} /> Otto</div>
@@ -530,6 +531,18 @@ export function App() {
         <div className="spacer" />
         {(route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
       </header>
+
+      {/* Hoisted out of the dashboard-only branch below (where it used to live, inside the `route ===
+          "settings" ? ... : (...)` ternary's else-arm) so it renders on EVERY route, not just /tasks —
+          without this, every failed action in Settings (language toggle, grade edit, profile save, pause
+          switch, disconnect...) had literally nowhere to show its error: the toast DOM node didn't exist
+          on that route at all, regardless of whether `notify` was even called. */}
+      {note && (
+        <div className={`toast ${noteKind}`} role="status" aria-live="polite">
+          <span className="toast-msg">{note}</span>
+          <button className="toast-x" aria-label={status?.language === "en" ? "Close" : "Fermer"} onClick={dismissNote}>✕</button>
+        </div>
+      )}
 
       {onboard && <Onboarding onStatus={loadStatus} onDone={finishOnboard} />}
 
@@ -570,12 +583,6 @@ export function App() {
               </div>
             )}
           </div>
-          {note && (
-            <div className={`toast ${noteKind}`} role="status" aria-live="polite">
-              <span className="toast-msg">{note}</span>
-              <button className="toast-x" aria-label={en ? "Close" : "Fermer"} onClick={dismissNote}>✕</button>
-            </div>
-          )}
           {status.paused && (
             <div className="intro paused-banner">
               <div className="intro-body">
@@ -646,7 +653,6 @@ export function App() {
                             onOpen={() => navigate(`task/${t.id}`)}
                             onChange={setTasks}
                             onConfirmed={flagJustDone}
-                            onNotify={notify}
                           />
                         ))}
                       </div>
@@ -683,7 +689,6 @@ export function App() {
                             onOpen={() => navigate(`task/${t.id}`)}
                             onChange={setTasks}
                             onConfirmed={flagJustDone}
-                            onNotify={notify}
                           />
                         ))}
                       </div>
@@ -712,7 +717,6 @@ export function App() {
                                 onOpen={() => navigate(`task/${t.id}`)}
                                 onChange={setTasks}
                                 onConfirmed={flagJustDone}
-                                onNotify={notify}
                               />
                             ))}
                           </div>
@@ -760,7 +764,6 @@ export function App() {
                   onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
                   onConfirmed={flagJustDone}
                   onLeft={() => navigate("")}
-                  onNotify={notify}
                 />
               </TaskModal>
             );
@@ -768,6 +771,7 @@ export function App() {
         </main>
       )}
     </div>
+    </NotifyContext.Provider>
     </LangContext.Provider>
   );
 }
@@ -870,6 +874,7 @@ type WorkloadDay = { date: string; items: { kind: "homework" | "test" | "task"; 
  *  overloaded day onto the lightest one, without any AI round-trip. */
 function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void }) {
   const en = lang === "en";
+  const notify = useNotify();
   const [days, setDays] = useState<WorkloadDay[] | null>(null);
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
@@ -904,7 +909,9 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
       const updated = list.find((t) => t.id === taskId);
       if (updated) onTask(updated);
       load();
-    } catch { /* non-blocking — the widget just won't reflect the move */ }
+    } catch (e: any) {
+      notify(e?.message || (en ? "Couldn't move that task — try again." : "Impossible de déplacer cette tâche — réessaie."), "error");
+    }
     setMoving(null);
   };
 
@@ -1022,11 +1029,18 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
  *  Renders bare rows (no wrapping section) so it drops into either container's own `.set-list`/step
  *  markup. `onChanged` receives the fresh profile after each save. */
 function PreferencesFields({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
+  const L = useLang();
+  const notify = useNotify();
   const [lang, setLang] = useState<"fr" | "en">(profile?.language === "en" ? "en" : "fr");
   useEffect(() => { setLang(profile?.language === "en" ? "en" : "fr"); }, [profile?.language]);
   const saveLang = async (v: "fr" | "en") => {
-    setLang(v);
-    onChanged?.(await api.setProfilePreference("language", v));
+    const prev = lang;
+    setLang(v); // optimistic — revert below on failure
+    try { onChanged?.(await api.setProfilePreference("language", v)); }
+    catch (e: any) {
+      setLang(prev);
+      notify(e?.message || L("Impossible d'enregistrer la langue.", "Couldn't save the language."), "error");
+    }
   };
   return (
     <>
@@ -1046,6 +1060,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
  *  list, same pattern as ProfileEditor's fact lists. */
 function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profile | null; onChanged?: (p: Profile) => void; pronoteConnected?: boolean }) {
   const L = useLang();
+  const notify = useNotify();
   const [subject, setSubject] = useState("");
   const [grade, setGrade] = useState("");
   const [scale, setScale] = useState("20");
@@ -1057,8 +1072,10 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
     const g = Number(grade);
     const sc = Number(scale) > 0 ? Number(scale) : 20;
     if (!s || !Number.isFinite(g)) return;
-    onChanged?.(await api.setGrade(s, g, sc));
-    setSubject(""); setGrade("");
+    try {
+      onChanged?.(await api.setGrade(s, g, sc));
+      setSubject(""); setGrade("");
+    } catch (e: any) { notify(e?.message || L("Impossible d'ajouter la note.", "Couldn't add the grade."), "error"); }
   };
   // No manual "sync" button — Pronote grades pull in automatically (on connect, and again with every
   // daily sweep; see applyPronoteGrades in server/pronote.ts). A passive status line, not a button the
@@ -1123,7 +1140,10 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
                       <li key={g.id} className="grade-entry">
                         <span className="grade-entry-value">{g.grade}/{g.scale}</span>
                         <span className="grade-entry-meta">{g.source === "pronote" ? L("Pronote", "Pronote") : new Date(g.updatedAt).toLocaleDateString()}</span>
-                        {g.source !== "pronote" ? <button className="x" title={L("Supprimer", "Remove")} onClick={async () => onChanged?.(await api.deleteGrade(g.id))}>×</button> : null}
+                        {g.source !== "pronote" ? <button className="x" title={L("Supprimer", "Remove")} onClick={async () => {
+                          try { onChanged?.(await api.deleteGrade(g.id)); }
+                          catch (e: any) { notify(e?.message || L("Impossible de supprimer la note.", "Couldn't remove the grade."), "error"); }
+                        }}>×</button> : null}
                       </li>
                     ))}
                   </ul>
@@ -1149,6 +1169,7 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
  *  person-profile editor, and exactly what Otto will/won't do. */
 function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void }) {
   const L = useLang();
+  const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
@@ -1189,7 +1210,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
               if (!window.confirm(L("Supprimer définitivement ton compte Otto et tout ce qui y est associé — tâches, profil, connexions ? C'est irréversible.", "Permanently delete your Otto account and everything tied to it — tasks, profile, connections? This can't be undone."))) return;
               setDeletingAccount(true);
               try { await api.deleteAccount(); window.location.href = "/"; }
-              catch { setDeletingAccount(false); }
+              catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
             }}
           >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
         </div>
@@ -1212,7 +1233,14 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
         <div className="set-list">
           <label className="set-row">
             <span className="set-text"><b>{L("Mettre Otto en pause", "Pause Otto")}</b><span className="settings-hint">{L("Arrête toute l'IA. Tes tâches restent en place.", "Stops all AI activity. Your tasks stay as they are.")}</span></span>
-            <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => { const v = e.target.checked; setPausedLocal(v); void api.setPaused(v).then(() => onChanged()); }} /><span className="switch-track" /></span>
+            <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
+              const v = e.target.checked;
+              setPausedLocal(v); // optimistic — revert below on failure
+              void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
+                setPausedLocal(!v);
+                notify(err?.message || L("Impossible d'enregistrer ce réglage.", "Couldn't save this setting."), "error");
+              });
+            }} /><span className="switch-track" /></span>
           </label>
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
@@ -1241,6 +1269,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
  *  rotating token comes back. Reads homework due dates into the to-do list — nothing is ever written back. */
 function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
   const L = useLang();
+  const notify = useNotify();
   const [status, setStatus] = useState<{ connected: boolean; username?: string } | null>(null);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
@@ -1262,7 +1291,12 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
       await load(); onChanged?.();
     } finally { setBusy(false); }
   };
-  const disconnect = async () => { setBusy(true); try { await api.disconnectPronote(); await load(); onChanged?.(); } finally { setBusy(false); } };
+  const disconnect = async () => {
+    setBusy(true);
+    try { await api.disconnectPronote(); await load(); onChanged?.(); }
+    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
+    finally { setBusy(false); }
+  };
 
   if (!status) return null;
   return (
@@ -1313,12 +1347,18 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
  *  Disconnect. Google apps support multiple accounts (perso + a parent's, e.g.). */
 function GoogleAppAccounts({ appKey, onChanged }: { appKey: string; onChanged?: () => void }) {
   const L = useLang();
+  const notify = useNotify();
   const [accts, setAccts] = useState<ConnectedAccount[] | null>(null);
   const [busy, setBusy] = useState("");
   const load = useCallback(async () => { try { setAccts((await api.integrationAccounts(appKey)).accounts); } catch { setAccts([]); } }, [appKey]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { const on = () => { if (!document.hidden) void load(); }; window.addEventListener("focus", on); return () => window.removeEventListener("focus", on); }, [load]);
-  const disc = async (id: string) => { setBusy(id); try { await api.disconnectAccount(appKey, id); await load(); onChanged?.(); } finally { setBusy(""); } };
+  const disc = async (id: string) => {
+    setBusy(id);
+    try { await api.disconnectAccount(appKey, id); await load(); onChanged?.(); }
+    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
+    finally { setBusy(""); }
+  };
   if (!accts?.length) return null;
   return (
     <div className="int-accounts">
@@ -1864,9 +1904,11 @@ function TermsBody() {
  *  Otto fills it in as it works; it's injected into how tasks are chosen + done. Always expanded here. */
 function ProfileEditor() {
   const L = useLang();
+  const notify = useNotify();
   const [p, setP] = useState<Profile | null>(null);
   useEffect(() => { void api.profile().then(setP).catch(() => setP(null)); }, []);
   if (!p) return <p className="muted small">{L("Chargement…", "Loading…")}</p>;
+  const saveErr = () => L("Enregistrement impossible — réessaie.", "Couldn't save — try again.");
   const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length + p.courses.length;
   const lists = [
     { key: "preference" as const, label: L("Préférences", "Preferences"), items: p.preferences },
@@ -1876,17 +1918,17 @@ function ProfileEditor() {
   ];
   return (
     <div className="memory-body">
-      <NameRow name={p.name || ""} onSave={async (v) => setP(await api.setProfile("name", v))} />
-      <AboutRow about={p.about} onSave={async (v) => setP(await api.setProfile("about", v))} />
+      <NameRow name={p.name || ""} onSave={async (v) => { try { setP(await api.setProfile("name", v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
+      <AboutRow about={p.about} onSave={async (v) => { try { setP(await api.setProfile("about", v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
       {lists.map((l) => (
         <div className="prof-group" key={l.key}>
           <div className="prof-label">{l.label}</div>
           <ul className="memory-list">
             {l.items.map((it, i) => (
-              <li key={i}><span>{it}</span><button className="x" title={L("Supprimer", "Remove")} onClick={async () => setP(await api.delProfile(l.key, i))}>×</button></li>
+              <li key={i}><span>{it}</span><button className="x" title={L("Supprimer", "Remove")} onClick={async () => { try { setP(await api.delProfile(l.key, i)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }}>×</button></li>
             ))}
           </ul>
-          <AddRow placeholder={L(`Ajouter : ${l.label.toLowerCase().replace(/s$/, "")}…`, `Add a ${l.label.toLowerCase().replace(/s$/, "")}…`)} onAdd={async (v) => setP(await api.setProfile(l.key, v))} />
+          <AddRow placeholder={L(`Ajouter : ${l.label.toLowerCase().replace(/s$/, "")}…`, `Add a ${l.label.toLowerCase().replace(/s$/, "")}…`)} onAdd={async (v) => { try { setP(await api.setProfile(l.key, v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />
         </div>
       ))}
       {count === 0
@@ -1894,7 +1936,10 @@ function ProfileEditor() {
         : <div className="forget-row">
             <button
               className="btn xs forget"
-              onClick={async () => { if (window.confirm(L("Oublier tout ce qu'Otto a appris sur toi ? Ça efface ta description, préférences, personnes et projets, sans retour en arrière possible.", "Forget everything Otto has learned about you? This clears your About, preferences, people and projects, and can't be undone."))) setP(await api.clearProfile()); }}
+              onClick={async () => {
+                if (!window.confirm(L("Oublier tout ce qu'Otto a appris sur toi ? Ça efface ta description, préférences, personnes et projets, sans retour en arrière possible.", "Forget everything Otto has learned about you? This clears your About, preferences, people and projects, and can't be undone."))) return;
+                try { setP(await api.clearProfile()); } catch (e: any) { notify(e?.message || saveErr(), "error"); }
+              }}
             >{L("Tout oublier", "Forget everything")}</button>
             <span className="muted small">{L("Efface la mémoire d'Otto — il repart de zéro et te réapprend au fil du travail.", "Wipes Otto's memory — it starts from zero and learns you again as it works.")}</span>
           </div>}
@@ -1935,7 +1980,9 @@ function AboutRow({ about, onSave }: { about: string; onSave: (v: string) => Pro
 function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string) => Promise<void> }) {
   const L = useLang();
   const [text, setText] = useState("");
-  const go = async () => { const v = text.trim(); if (!v) return; await onAdd(v); setText(""); };
+  // onAdd already notifies on failure (see ProfileEditor) and never rejects — but guard anyway so a future
+  // caller that DOES reject can't clear the user's typed text or leave an unhandled rejection here.
+  const go = async () => { const v = text.trim(); if (!v) return; try { await onAdd(v); setText(""); } catch { /* text stays — onAdd already surfaced the error */ } };
   return (
     <div className="addrow">
       <input className="addinput sm" placeholder={placeholder} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void go(); }} />
@@ -1946,6 +1993,7 @@ function AddRow({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string
 
 function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) {
   const L = useLang();
+  const notify = useNotify();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   // Optional explicit date — the "personal commitment" capture path (a job shift, a club meeting, an
@@ -1977,9 +2025,13 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
       // Defensive: a 401 (session expired) resolves instead of throwing (see api.ts's j()), returning the
       // error BODY where an array was expected. Setting `tasks` state to that non-array object crashed the
       // whole app on the next render — which, from the outside, looked exactly like the new task vanishing.
-      if (!Array.isArray(fresh)) throw new Error("not logged in");
+      if (!Array.isArray(fresh)) throw new Error(L("Session expirée — recharge la page.", "Session expired — reload the page."));
       onAdded(fresh);
-    } catch { onAdded((prev) => prev.filter((t) => t.id !== stubId)); setText(v); setWhen(whenToSend); }
+    } catch (e: any) {
+      onAdded((prev) => prev.filter((t) => t.id !== stubId));
+      setText(v); setWhen(whenToSend);
+      notify(e?.message || L("Impossible d'ajouter cette tâche — réessaie.", "Couldn't add this task — try again."), "error");
+    }
     finally { setBusy(false); }
   };
   return (

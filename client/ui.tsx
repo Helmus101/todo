@@ -20,6 +20,16 @@ export function useLang(): (fr: string, en: string) => string {
   return (fr: string, en: string) => (lang === "en" ? en : fr);
 }
 
+// App-wide error/info toast. Was previously threaded as an `onNotify` prop through ~6 components on the
+// dashboard path only — Settings and its children had NO way to reach it at all, so a failed save there
+// (language toggle, grade edit, profile edit, pause switch, disconnect...) failed with zero visible feedback.
+// One context reachable from anywhere beats prop-drilling through ~15 components across three unrelated
+// subtrees. Default is a no-op so anything rendered OUTSIDE the provider (the pre-login Landing/LoginPage,
+// UnlimitedPage which early-returns above it) still works without throwing.
+export type Notify = (msg: string, kind?: "info" | "error") => void;
+export const NotifyContext = createContext<Notify>(() => {});
+export function useNotify(): Notify { return useContext(NotifyContext); }
+
 /** Today as a bare "YYYY-MM-DD" — for comparing against a milestone's targetDate (same bare-string
  *  convention as server/workload.ts's BARE_DATE check, so this never drifts across a timezone). */
 export const todayIso = (): string => new Date().toISOString().slice(0, 10);

@@ -55,9 +55,6 @@ export interface Profile {
   autoApprove?: string[]; // categories of actions AI can do without approval (e.g., ["schedule_meetings_under_30min", "archive_newsletters"])
   highPriorityPeople?: string[]; // people whose messages get higher priority
   autoArchivePatterns?: string[]; // email patterns to auto-archive (e.g., ["newsletter", "promotions"])
-  // Trust/confidence system for gradual automation
-  confidence?: Record<string, number>; // action category → confidence score (0-1), e.g., { "draft_email": 0.85, "create_calendar": 0.6 }
-  confidenceHistory?: Array<{ action: string; approved: boolean; at: string }>; // track approval/rejection history
   timezone?: string;      // the user's IANA timezone (auto-captured from the browser) — source of truth for
                           // all "local day" boundaries (sweep cadence, daily-minimum). Falls back to UTC.
   // Cumulative AI token usage across sweeps + task runs (for the Settings "usage" view). Cumulative counters
@@ -90,6 +87,17 @@ export interface Profile {
   // Which track this student is on — drives AI vocabulary (isBigIbProject/trackLine in claude.ts) and
   // unlocks the milestone/big-project breakdown for IB (EE/IA/TOK/CAS). Set from Settings.
   track?: "ib" | "bac" | "other";
+  /** VARK learning style, student-selectable in Settings. PRESENTATION ONLY — this must NEVER influence
+   *  difficulty, depth, or what gets taught (the evidence for matching TEACHING to a "learning style" is
+   *  weak; the evidence for retrieval practice + spacing, which Otto already does regardless of this field,
+   *  is strong). It may only select the FORM an explanation takes — e.g. diagram-first vs. a worked example
+   *  vs. reading-first — never the substance or the level. No consumer reads this yet (groundwork). */
+  learningStyle?: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed";
+  /** Consecutive-days-with-at-least-one-completed-task counter, for a streak/progress view. `lastDayIso`
+   *  is the last LOCAL day (student's own timezone) a task was completed — the day boundary a future
+   *  updater must compare against to decide "still going" vs. "reset to 1". No writer populates this yet
+   *  (groundwork); merge is monotonic (tasks.ts's mergeProfileStates) the same way `usage` is. */
+  streak?: { current: number; longest: number; lastDayIso?: string };
 }
 // Shared client+server id generator (used for grade entries) — Web Crypto's randomUUID is available in
 // both a modern browser and Node, so this needs no server-only import to stay isomorphic.
@@ -119,9 +127,6 @@ export function normalizeProfile(p: any): Profile {
     autoApprove: Array.isArray(p?.autoApprove) ? p.autoApprove.map(String) : undefined,
     highPriorityPeople: Array.isArray(p?.highPriorityPeople) ? p.highPriorityPeople.map(String) : undefined,
     autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : undefined,
-    // Trust/confidence system
-    confidence: p?.confidence && typeof p.confidence === "object" ? p.confidence : undefined,
-    confidenceHistory: Array.isArray(p?.confidenceHistory) ? p.confidenceHistory.slice(-100) : undefined,
     usage: p?.usage && typeof p.usage === "object" ? {
       in: Number(p.usage.in) || 0, out: Number(p.usage.out) || 0, runs: Number(p.usage.runs) || 0,
       since: typeof p.usage.since === "string" ? p.usage.since : new Date().toISOString(),
@@ -144,6 +149,12 @@ export function normalizeProfile(p: any): Profile {
         })).filter((g: { subject: string }) => g.subject).slice(0, 200)
       : undefined,
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
+    learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
+    streak: p?.streak && typeof p.streak === "object" ? {
+      current: Math.max(0, Number(p.streak.current) || 0),
+      longest: Math.max(0, Number(p.streak.longest) || 0),
+      lastDayIso: typeof p.streak.lastDayIso === "string" ? p.streak.lastDayIso : undefined,
+    } : undefined,
   };
 }
 
@@ -392,7 +403,11 @@ export interface TaskStep {
    *  ephemeral chat output), so it survives reloads and reads as part of the task's real plan, not
    *  advice that scrolled away. Generated once per step; the student ticks them off independently of the
    *  parent step (the parent still needs its own "C'est fait" — sub-steps are a working aid, not a gate). */
-  substeps?: { text: string; done: boolean }[];
+  substeps?: { text: string; done: boolean; url?: string }[];
+  /** Realistic minutes this step should take (1-240), when Otto estimated one. Advisory only — never a
+   *  timer or a deadline, just lets the UI answer "what can I fit in 15 minutes right now". Clamped in
+   *  server/claude.ts's sanitizeStepExtras. */
+  minutes?: number;
 }
 
 /** A reviewed message/invite the agent prepared (a Gmail draft / a composed Slack message / a calendar event
@@ -503,6 +518,11 @@ export interface WebTask {
    *  the work" is enforced in practice, not just claimed — see the audit panel on the task card. Capped
    *  (AUDIT_CAP in tasks.ts) so it can't grow unbounded on a long-lived task. */
   audit?: { at: string; kind: "tool" | "artifact" | "guardrail"; label: string }[];
+  /** The smallest possible first move on this task — the anti-procrastination hook ("open the doc and
+   *  write one bad sentence", 2 minutes). Deliberately a TOP-LEVEL field, not steps[0]: inserting a
+   *  synthetic zeroth step would shift every other step's index and silently corrupt any TaskStep.dependsOn
+   *  already pointing at them on an existing task. */
+  firstAction?: { text: string; minutes?: number };
 }
 
 export interface TaskNote {
@@ -516,8 +536,15 @@ export interface TaskNote {
 export interface TaskFlashcards {
   id: string;
   title: string;
-  cards: { front: string; back: string }[];
+  cards: {
+    front: string; back: string;
+    /** Per-card drill history — the minimum SM-2 needs (`dueAt` + `ease`) to eventually schedule spaced
+     *  review, plus raw seen/correct for a "how am I doing on this deck" read. Not yet scheduled anywhere
+     *  (no reviewer surfaces `dueAt`) — this is groundwork so a later pass doesn't need a data migration. */
+    review?: { seen: number; correct: number; lastAt?: string; dueAt?: string; ease?: number };
+  }[];
   createdAt: string;
+  lastReviewedAt?: string;
 }
 
 /** A drillable multiple-choice quiz attached to a task. Deliberately NOT the same thing as a flashcard
@@ -539,6 +566,9 @@ export interface TaskQuiz {
     why?: string;
   }[];
   createdAt: string;
+  /** Attempt history — cap 20, newest last. Groundwork for retention features (spaced re-quizzing, a
+   *  "you missed this before" callout); nothing reads this yet. */
+  attempts?: { at: string; score: number; total: number; wrong?: number[] }[];
 }
 
 export interface ConnectionStatus {

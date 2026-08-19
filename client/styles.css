@@ -326,37 +326,32 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
     position: sticky; top: 88px;
     margin: 0;
   }
-  /* Chip strips make sense on a narrow phone (swipe sideways); in a 340px sticky column they read
-     better stacked vertically, one full-width row per item — same components/data, layout only. */
-  .dash-rail .exam-strip-wrap, .dash-rail .week-load-wrap, .dash-rail .milestone-wrap { margin: 0; }
-  .dash-rail .exam-strip, .dash-rail .milestone-list { flex-direction: column; overflow-x: visible; padding-bottom: 0; }
-  .dash-rail .exam-chip { min-width: 0; border-left-width: 3px; }
-}
-/* The week workload strip is a "glance at your week ahead" desktop-sidebar feature — on a phone it's just
-   more scrolling before the actual task list, and the per-day chip strip doesn't have room to be useful at
-   that width anyway. Exam countdown stays (it's the one thing worth surfacing above the fold on mobile). */
-@media (max-width: 640px) {
-  .week-load-wrap { display: none; }
-  .dash-rail:has(> .week-load-wrap:only-child) { display: none; }
+  .dash-rail .milestone-list { flex-direction: column; overflow-x: visible; padding-bottom: 0; }
 }
 .exam-strip-wrap { margin: 0; }
 .exam-strip-label { font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--space-2); opacity: 0.85; }
-.exam-strip { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: 6px; scrollbar-width: thin; }
+/* One row per exam, same treatment as .week-load-strip/.week-day right below it in the same panel —
+   this used to be a horizontal swipe-strip while WeekLoad was a vertical list, an inconsistent mobile
+   pattern within a single panel (and WeekLoad's own strip was, for a while, hidden below 640px entirely —
+   both fixed here so the whole panel reads as one consistent "at a glance" list at every width). */
+.exam-strip { display: flex; flex-direction: column; }
 /* A colored left flag (not a box — no surrounding border) marks the accent state; a chip sitting inside
    the already-bordered rail panel doesn't need its own outline too (a border-in-a-border). */
 .exam-chip {
-  flex: none; display: flex; flex-direction: column; gap: 2px; padding: 10px 16px;
-  border-left: 3px solid var(--line); border-radius: var(--radius-xs, 6px); min-width: 100px;
+  flex: none; display: flex; flex-direction: row; align-items: center; justify-content: space-between;
+  gap: 10px; width: 100%; padding: 10px 8px;
+  border-left: 3px solid var(--line); border-radius: var(--radius-xs, 6px);
   transition: border-color 120ms var(--ease), background 120ms var(--ease);
 }
+.exam-chip + .exam-chip { margin-top: 1px; }
 @media (hover: hover) {
   .exam-chip:hover { background: var(--hover-wash); }
 }
 .exam-chip.soon { border-left-color: var(--accent); background: var(--accent-soft); }
-.exam-days { font-family: var(--mono, ui-monospace, monospace); font-size: var(--text-md); font-weight: 700; }
+.exam-days { font-family: var(--mono, ui-monospace, monospace); font-size: var(--text-md); font-weight: 700; flex: none; }
 .exam-chip.soon .exam-days { color: var(--accent); }
-.exam-subject { font-size: 13px; font-weight: var(--weight-medium); color: var(--ink); margin-top: 2px; }
-.exam-when { font-size: var(--text-xs); color: var(--ink-3); text-transform: capitalize; }
+.exam-subject { font-size: 13px; font-weight: var(--weight-medium); color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exam-when { font-size: var(--text-xs); color: var(--ink-3); text-transform: capitalize; flex: none; }
 .exam-more, .milestone-more { flex: none; align-self: center; white-space: nowrap; }
 
 /* ─── IB milestone widget — dashboard-level surface for the big-project breakdown (Extended Essay/
@@ -541,7 +536,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .add-task-input:focus { border: none; box-shadow: none; }
 .add-task-input::placeholder { color: var(--ink-3); }
 .add-when-toggle { color: var(--ink-3); flex: none; }
-.add-task-when { flex: none; width: 140px; }
+.add-task-when { flex: 0 1 140px; min-width: 0; }
 .addinput.sm { height: 34px; font-size: 13px; }
 .addrow { display: flex; gap: var(--space-2); }
 .addrow .addinput { flex: 1; }
@@ -950,6 +945,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .hero-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); width: 100%; }
 .step-hero .step-input { width: 100%; }
 .hero-waiting, .hero-done { flex-direction: row; align-items: center; gap: var(--space-3); }
+/* The anti-procrastination hook — deliberately quieter than the hero (this is a nudge to start, not the
+   actual current step) but still its own visible line, not buried in the panels below. */
+.first-action {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px;
+  font-size: var(--text-sm); color: var(--ink-2); line-height: 1.4;
+  margin: -4px 0 0; padding: 8px 10px; background: var(--accent-soft); border-radius: var(--radius-sm);
+}
+.first-action-label { flex: none; font-weight: var(--weight-medium); color: var(--accent); }
+.first-action-minutes { flex: none; color: var(--ink-3); margin-left: auto; }
 .hero-complete { align-items: center; text-align: center; }
 .hero-complete .deck-score-ring { margin: 0 auto; }
 .hero-sendable { background: transparent; padding: 0; }
@@ -1103,7 +1107,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .walk-scan { display: flex; flex-direction: column; gap: 10px; }
 .walk-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: var(--text-base); }
-.walk-row-text { color: var(--ink-2); flex: 1; min-width: 200px; }
+/* min-width was 200px — inside a 320px viewport that, plus the fixed-width chip/check sibling, didn't
+   leave room to fit and forced horizontal overflow instead of wrapping. flex:1 with min-width:0 still
+   grows to fill the row on wider screens; the text itself wraps internally when it must. */
+.walk-row-text { color: var(--ink-2); flex: 1; min-width: 0; }
 .walk-check { font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
 .walk-caption { margin-top: 14px; font-size: var(--text-sm); color: var(--ink-3); }
 .walk-card .card-title { font-size: var(--text-md); font-weight: var(--weight-semibold); margin-bottom: var(--space-2); }
@@ -1163,6 +1170,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .step-result.note { color: var(--amber); }
 .step-dep { font-size: 11.5px; color: var(--ink-3); }
 .step-target { font-size: 11.5px; color: var(--accent); }
+/* A realistic time estimate — quieter than the deadline (step-target), since it's advisory, not a
+   commitment: "what fits right now", not "when this is due". */
+.step-minutes { font-size: 11.5px; color: var(--ink-3); }
+.step-target + .step-minutes, .step-minutes + .step-target { margin-left: var(--space-2); }
 .step-act { flex: none; }
 .step .btn { margin-left: auto; flex: none; }
 .step-input-label { display: block; font-size: 12px; font-weight: var(--weight-semibold); color: var(--ink-2); margin-top: var(--space-2); }
@@ -1179,8 +1190,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* A step's own on-demand checklist — indented under the step text so it visually reads as "part of this
    step", one level down from the main .steps list rather than a sibling of it. */
 .substeps { list-style: none; margin: 8px 0 0; padding-left: 4px; display: flex; flex-direction: column; gap: var(--space-1); }
-.substep { display: flex; align-items: flex-start; gap: var(--space-2); font-size: 13px; }
+.substep { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-2); font-size: 13px; }
 .substep.done .substep-text { color: var(--ink-3); text-decoration: line-through; }
+.substep-text { flex: 1 1 auto; min-width: 0; }
+.substep-link { flex: none; margin-left: auto; }
 .substep-mark {
   flex: none; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%;
   border: 1.5px solid var(--line); background: transparent; color: transparent;
@@ -1329,8 +1342,8 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 
 .int-group { margin-bottom: 6px; }
 .pronote-form { display: flex; flex-direction: column; gap: var(--space-2); margin: 4px 0 14px; padding: 12px; background: var(--bg-2); border-radius: var(--radius-sm); }
-.pronote-form-row { display: flex; gap: var(--space-2); align-items: center; }
-.pronote-form-row .addinput { flex: 1; }
+.pronote-form-row { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.pronote-form-row .addinput { flex: 1; min-width: 140px; }
 .int-cat { font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em; margin: 18px 0 6px; opacity: 0.85; }
 .int-count { margin-bottom: 10px; }
 .int-grid { display: flex; flex-direction: column; }
@@ -1345,7 +1358,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .int-info { flex: 1; min-width: 0; }
 .int-name { display: flex; align-items: center; gap: 6px; font-size: var(--text-base); font-weight: var(--weight-medium); }
 .int-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
-.int-blurb { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.int-blurb { font-size: 12px; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* Multi-Gmail: the connected accounts under the Gmail tile */
 .int-accounts { display: flex; flex-direction: column; margin: 2px 0 8px 36px; }
 .int-acct { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 7px 0; border-top: 1px solid var(--line-soft); }
@@ -1447,7 +1460,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .onboard-app + .onboard-app { border-top: 1px solid var(--line-soft); }
 .onboard-app-name { flex: 1; font-size: 14px; font-weight: var(--weight-medium); }
 .onboard-app-ok { color: var(--ok); font-size: var(--text-sm); font-weight: 600; }
-.onboard-actions { display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: 22px; }
+.onboard-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; margin-top: 22px; }
 .onboard-actions-split { justify-content: space-between; }
 .onboard-done { text-align: center; }
 .onboard-done .onboard-lead { margin-left: auto; margin-right: auto; max-width: 340px; }

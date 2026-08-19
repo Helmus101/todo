@@ -16,7 +16,7 @@ import { api } from "./api.ts";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
-  withInlineLinks, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal,
+  withInlineLinks, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal, useNotify,
 } from "./ui.tsx";
 
 /**
@@ -29,8 +29,11 @@ import {
  */
 function useTaskLeave(
   taskId: string,
-  { onChange, onConfirmed, onLeft }: { onChange: (t: WebTask[]) => void; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void },
+  { onChange, onConfirmed, onLeft }: {
+    onChange: (t: WebTask[]) => void; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void;
+  },
 ) {
+  const notify = useNotify();
   const [leaving, setLeaving] = useState(false);
   const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
   // Confirm ("Looks good") gets a distinct green check-pulse (a small reward for finishing something);
@@ -45,7 +48,21 @@ function useTaskLeave(
     // than the animation, React would unmount mid-collapse and cut it off abruptly (the exact jank this is
     // meant to avoid). Confirm holds a beat longer so the check-pulse reads before it slides away.
     const holdMs = kind === "confirm" ? 550 : 320;
-    const [list] = await Promise.all([fn(), new Promise((r) => setTimeout(r, holdMs))]);
+    let list: WebTask[];
+    try {
+      [list] = await Promise.all([fn(), new Promise((r) => setTimeout(r, holdMs))]);
+      // api.ts's j() RESOLVES (doesn't throw) on a 401 — an expired session lands here as `{error: "..."}`,
+      // not a WebTask[]. Without this guard that object would flow straight into onChange and corrupt the
+      // task list state. Treat it the same as a thrown failure.
+      if (!Array.isArray(list)) throw new Error((list as any)?.error || "Session expirée — recharge la page.");
+    } catch (e: any) {
+      // A failed confirm/dismiss used to leave the button/animation stuck forever with no feedback and no
+      // way to retry — this is the actual live-reported "Looks good doesn't close the task" bug. Reset the
+      // leave state so the button works again, and say what happened instead of failing silently.
+      setLeaving(false);
+      notify(e?.message || "Une erreur est survenue — réessaie.", "error");
+      return;
+    }
     if (kind === "confirm") onConfirmed?.(taskId); // flags the row it lands on in "Completed" for a beat, so
     // finishing something has a visible destination instead of just vanishing from the list.
     onChange(list);
@@ -96,9 +113,9 @@ function Disclosure({ label, count, open, onToggle, children }: { label: string;
 
 /* ─────────────────────────────── collapsed row ─────────────────────────────── */
 
-export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, index, onOpen, onNotify }: {
+export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, index, onOpen }: {
   task: WebTask; onChange: (t: WebTask[]) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
-  isNew?: boolean; index?: number; onOpen: () => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
+  isNew?: boolean; index?: number; onOpen: () => void;
 }) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
@@ -152,8 +169,7 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
           <span aria-hidden="true">{leaving && leaveKind === "confirm" ? "✓" : ""}</span>
         </button>
       ) : null}
-      {/* TEMP DIAGNOSTIC — remove once the live "tasks won't open on mobile" bug is confirmed fixed. */}
-      <button type="button" className="card-main" onClick={() => { onNotify?.("tap ok →" + task.title.slice(0, 24)); onOpen(); }} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
+      <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
           <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau — pas encore ouvert", "New — not yet opened")} /> : null}{task.title}</span>
           {(task.sourceSubject || w || secondary) ? (
@@ -210,11 +226,12 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
 
 /* ─────────────────────────────── the focused task view ─────────────────────────────── */
 
-export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft, onNotify }: {
+export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean;
-  onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
+  onConfirmed?: (id: string) => void; onLeft?: (id: string) => void;
 }) {
   const L = useLang();
+  const notify = useNotify();
   const cardEn = useContext(LangContext) === "en";
   const [running, setRunning] = useState(false);
   // One panel open at a time, so the page never grows past about a screen and a half.
@@ -236,10 +253,34 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
     const steps = (task.steps || []).map((s, si) => si !== i ? s : { ...s, done, doneAt: done ? new Date().toISOString() : undefined, result: result ?? s.result });
     onChange([{ ...task, steps }]);
   };
-  const markStepDone = async (i: number) => {
-    const result = (decided[i] || "").trim() || undefined;
-    setStepDoneLocal(i, true, result);
-    try { onChange(await api.stepDone(task.id, i, true, result)); } catch { onChange([task]); }
+  // Always read the CURRENT task/decided at the moment a queued step-completion actually runs, never the
+  // stale closure from whenever the tap happened — see the comment on `stepQueueRef` below for why.
+  const taskRef = useRef(task); taskRef.current = task;
+  const decidedRef = useRef(decided); decidedRef.current = decided;
+  // Tapping through several steps quickly (the normal way to finish a task, and the live-reported "Looks
+  // good takes you back to a previous step" bug on mobile, worse there from higher/less consistent
+  // latency) fired one `api.stepDone` request per tap with NO ordering guarantee. Each response REPLACES
+  // the whole task list (server/index.ts's /step/:index/done returns the full session snapshot) — if two
+  // requests are in flight and the one for an EARLIER step resolves AFTER the one for a LATER step, its
+  // stale snapshot (computed before the later step's write had committed server-side) overwrites the
+  // newer progress, and the task appears to jump back to an earlier unfinished step. Queuing so only one
+  // request is ever in flight at a time — reading fresh state via the refs above when each queued call
+  // actually runs — fixes this at the root instead of racing.
+  const stepQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const markStepDone = (i: number) => {
+    stepQueueRef.current = stepQueueRef.current.then(async () => {
+      const currentTask = taskRef.current;
+      const result = (decidedRef.current[i] || "").trim() || undefined;
+      setStepDoneLocal(i, true, result);
+      try {
+        const list = await api.stepDone(currentTask.id, i, true, result);
+        if (!Array.isArray(list)) throw new Error((list as any)?.error || L("Session expirée — recharge la page.", "Session expired — reload the page."));
+        onChange(list);
+      } catch (e: any) {
+        onChange([currentTask]); // revert the optimistic tick
+        notify(e?.message || L("Impossible de marquer cette étape comme faite.", "Couldn't mark this step as done."), "error");
+      }
+    });
   };
   // A step with `question`/`options` is automatable but blocked on ONE piece of info Otto couldn't find or
   // infer (see the "submit" tool schema's `question` field in server/claude.ts) — answering it should
@@ -251,6 +292,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
     if (!answer.trim()) return;
     setAnswering(i);
     try { onTask(await api.runStep(task.id, i, answer.trim())); } // runStep returns the ONE updated task, not the list
+    catch (e: any) { notify(e?.message || L("Échec de la réponse — réessaie.", "Couldn't send that answer — try again."), "error"); }
     finally { setAnswering((cur) => (cur === i ? null : cur)); }
   };
 
@@ -304,7 +346,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
     try { onTask(await api.run(task.id, reset)); }
     // A run rejection (paused / over-budget / rate-limited / still-running-elsewhere / a server error) never
     // touched the task before, so it failed silently. Surface it — the card also reflects any failed state.
-    catch (e: any) { onNotify?.(e?.message || L("Impossible de lancer cette tâche — réessaie.", "Couldn't run this task — try again."), "error"); }
+    catch (e: any) { notify(e?.message || L("Impossible de lancer cette tâche — réessaie.", "Couldn't run this task — try again."), "error"); }
     finally { setRunning(false); }
   };
 
@@ -348,8 +390,20 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         retrying={retrying} running={running} decided={decided} setDecided={setDecided}
         onStepDone={markStepDone} onRun={run} onAnswer={answerStep} answering={answering}
         onConfirm={() => void leave(() => api.confirm(task.id), "confirm")}
-        onTask={onTask} onNotify={onNotify}
+        onTask={onTask}
       />
+
+      {/* The anti-procrastination hook: the smallest possible first move, small enough it's hard to say
+          no to (see FIRST ACTION in server/claude.ts) — a stuck student needs permission to start, not
+          another item on the plan, so this sits BELOW the hero (which is the real current step) rather
+          than competing with it for the "one thing to do" spot. */}
+      {task.firstAction && !isDone ? (
+        <p className="first-action">
+          <span className="first-action-label">{L("Pour démarrer", "To get started")}</span>
+          {task.firstAction.text}
+          {task.firstAction.minutes ? <span className="first-action-minutes">~{task.firstAction.minutes} {L("min", "min")}</span> : null}
+        </p>
+      ) : null}
 
       {/* (D) everything else — closed, counted, one open at a time. */}
       <div className="tf-panels">
@@ -357,7 +411,13 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           <Disclosure label={L("Toutes les étapes", "All steps")} count={`${doneCount}/${steps.length}`}
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
             <StepList task={task} steps={steps} decided={decided} setDecided={setDecided}
-              onStepDone={markStepDone} onUndo={(i) => { setStepDoneLocal(i, false); void act(() => api.stepDone(task.id, i, false)).catch(() => onChange([task])); }}
+              onStepDone={markStepDone} onUndo={(i) => {
+                setStepDoneLocal(i, false);
+                void act(() => api.stepDone(task.id, i, false)).catch((e: any) => {
+                  onChange([task]); // revert the optimistic un-tick
+                  notify(e?.message || L("Impossible d'annuler cette étape.", "Couldn't undo this step."), "error");
+                });
+              }}
               onAsk={askAboutStep} onChange={onChange} onAnswer={answerStep} answering={answering} />
           </Disclosure>
         ) : null}
@@ -398,15 +458,16 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
 
 /** Exactly one shape, by precedence. Ticking the current step advances it in place — that's what makes
  *  "one thing at a time" self-evident without a word of instruction. */
-function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onRun, onAnswer, answering, onConfirm, onTask, onNotify }: {
+function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onRun, onAnswer, answering, onConfirm, onTask }: {
   task: WebTask; steps: TaskStep[]; currentIdx: number; isDone: boolean; cStatus: string;
   retrying?: boolean; running: boolean;
   decided: Record<number, string>; setDecided: Dispatch<SetStateAction<Record<number, string>>>;
   onStepDone: (i: number) => void; onRun: (reset?: boolean) => void;
   onAnswer: (i: number, answer: string) => void; answering: number | null;
-  onConfirm: () => void; onTask: (t: WebTask) => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
+  onConfirm: () => void; onTask: (t: WebTask) => void;
 }) {
   const L = useLang();
+  const notify = useNotify();
   const pendingSendable = (task.sendables || []).findIndex((s) => !s.sent);
   // For a step with a link that needs a real follow-up (not auto-marked done on open): the button reads
   // "Open ↗" until clicked, then flips in place to "Done" — one button, two phases, instead of showing
@@ -429,7 +490,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       const list = await api.refine(task.id);
       const fresh = list.find((t) => t.id === task.id);
       if (fresh) { onTask(fresh); if (!fresh.unrefined) onRun(); }
-    } catch (e: any) { onNotify?.(e?.message || L("Échec de la relance.", "Retry failed."), "error"); }
+    } catch (e: any) { notify(e?.message || L("Échec de la relance.", "Retry failed."), "error"); }
     finally { setRetryingRefine(false); }
   };
 
@@ -475,7 +536,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
   if (pendingSendable >= 0) {
     return (
       <div className="step-hero hero-sendable">
-        <SendableReview task={task} onTask={onTask} onNotify={onNotify} />
+        <SendableReview task={task} onTask={onTask} />
       </div>
     );
   }
@@ -513,6 +574,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <span className="hero-kicker">{L("À faire maintenant", "Do this now")}</span>
       <p className="hero-step">{withInlineLinks(s.text)}</p>
       {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
+      {s.minutes ? <span className="step-minutes">~{s.minutes} {L("min", "min")}</span> : null}
       {s.result ? <span className="step-result note">{s.result}</span> : null}
       {/* A step Otto can DO but is missing ONE piece of info for (server sets `question`, optionally
           `options` — see the "submit" tool schema in server/claude.ts) — this used to be computed and
@@ -595,10 +657,13 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
   onAnswer: (i: number, answer: string) => void; answering: number | null;
 }) {
   const L = useLang();
+  const notify = useNotify();
   const [expanding, setExpanding] = useState<number | null>(null);
   const expandStep = async (i: number) => {
     setExpanding(i);
-    try { onChange(await api.expandStep(task.id, i)); } finally { setExpanding((cur) => (cur === i ? null : cur)); }
+    try { onChange(await api.expandStep(task.id, i)); }
+    catch (e: any) { notify(e?.message || L("Impossible de détailler cette étape.", "Couldn't break this step down."), "error"); }
+    finally { setExpanding((cur) => (cur === i ? null : cur)); }
   };
   // Optimistic: flip the checkbox instantly (this is the highest-frequency, lowest-latency-tolerance
   // interaction on the card) instead of waiting on the round trip, then reconcile with the server's
@@ -608,7 +673,10 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
       : { ...s, substeps: s.substeps.map((sub, ssi) => ssi === subIndex ? { ...sub, done } : sub) });
     onChange([{ ...task, steps: optimistic }]);
     try { onChange(await api.substepDone(task.id, i, subIndex, done)); }
-    catch { onChange([task]); }
+    catch (e: any) {
+      onChange([task]); // revert the optimistic flip
+      notify(e?.message || L("Impossible d'enregistrer cette sous-étape.", "Couldn't save this sub-step."), "error");
+    }
   };
   const openableCount = steps.filter((s) => s.url && !s.done && !stepBlocked(steps, s)).length;
   // Open ALL of a task's remaining page-steps at once, into one tab group named after the task.
@@ -617,8 +685,14 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     if (!idxs.length) return;
     openTabs(idxs.map((i) => steps[i].url!), TAB_GROUP);
     let res: WebTask[] | null = null;
-    for (const i of idxs) if (steps[i].automatable) res = await api.stepDone(task.id, i, true, L("Ouvert ↗", "Opened ↗"));
-    if (res) onChange(res);
+    try {
+      for (const i of idxs) if (steps[i].automatable) res = await api.stepDone(task.id, i, true, L("Ouvert ↗", "Opened ↗"));
+      if (res) onChange(res);
+    } catch (e: any) {
+      // The tabs already opened (that part can't fail) — only the "mark done" half failed, so say so
+      // without implying the tabs themselves didn't open.
+      notify(e?.message || L("Les onglets se sont ouverts, mais l'état n'a pas pu être enregistré.", "The tabs opened, but the state couldn't be saved."), "error");
+    }
   };
   return (
     <>
@@ -670,6 +744,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 <span className="step-text">{withInlineLinks(s.text)}</span>
                 {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
                 {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
+                {!s.done && s.minutes ? <span className="step-minutes">~{s.minutes} {L("min", "min")}</span> : null}
                 {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                 {!s.done && blk ? <span className="step-dep">{L(`Rien à faire ici pour l'instant — se débloque une fois l'étape ${(s.dependsOn ?? 0) + 1} faite`, `Nothing to do here yet — unlocks once step ${(s.dependsOn ?? 0) + 1} is done`)}</span> : null}
                 {s.question && !s.done && !blk ? (
@@ -717,6 +792,9 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                           <span aria-hidden="true">{sub.done ? "✓" : ""}</span>
                         </button>
                         <span className="substep-text">{sub.text}</span>
+                        {/* Same "land one click from done" affordance as a parent step's own url — a
+                            sub-action can point at a real resource Otto already found (see expandStep). */}
+                        {sub.url ? <button type="button" className="btn xs ghost substep-link" title={sub.url} onClick={() => openTab(sub.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(sub.url) || "le lien"} ↗`, `Open ${linkKind(sub.url) || "link"} ↗`)}</button> : null}
                       </li>
                     ))}
                   </ul>
@@ -894,10 +972,11 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
 
 /** The draft-review flow — view, edit in place, ask Otto to rewrite, then a spelled-out confirm before
  *  anything actually sends. Moved wholesale from the old detail view; the interaction is unchanged. */
-function SendableReview({ task, onTask, onNotify }: {
-  task: WebTask; onTask: (t: WebTask) => void; onNotify?: (msg: string, kind?: "info" | "error") => void;
+function SendableReview({ task, onTask }: {
+  task: WebTask; onTask: (t: WebTask) => void;
 }) {
   const L = useLang();
+  const notify = useNotify();
   const [sending, setSending] = useState<number | null>(null);
   const [viewDraft, setViewDraft] = useState<number | null>(null);
   const [confirmIdx, setConfirmIdx] = useState<number | null>(null);
@@ -917,7 +996,11 @@ function SendableReview({ task, onTask, onNotify }: {
     const patch = task.sendables?.[i]?.app === "slack" ? { text: edit.body } : { subject: edit.subject, body: edit.body };
     setSavingDraft(i);
     try { onTask(await api.editDraft(task.id, i, patch)); setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; }); }
-    catch { /* edit stays pending — the box keeps the user's text so nothing is lost */ }
+    catch (e: any) {
+      // Edit stays pending — the box keeps the user's text so nothing is lost — but say so instead of
+      // letting the spinner just stop with no explanation.
+      notify(e?.message || L("Enregistrement impossible — tes modifications restent dans la case.", "Couldn't save — your edit stays in the box."), "error");
+    }
     finally { setSavingDraft(null); }
   };
   // Confirmed send (user clicked through the inline confirm) — the ONLY thing that actually sends.
@@ -927,7 +1010,7 @@ function SendableReview({ task, onTask, onNotify }: {
     // A failed send used to be swallowed entirely — for an irreversible action that's the worst possible
     // silence, so surface it.
     try { onTask(await api.sendDraft(task.id, i)); }
-    catch (e: any) { onNotify?.(e?.message || L("Envoi impossible — rien n'a été envoyé. Réessaie.", "Couldn't send — nothing was sent. Try again."), "error"); }
+    catch (e: any) { notify(e?.message || L("Envoi impossible — rien n'a été envoyé. Réessaie.", "Couldn't send — nothing was sent. Try again."), "error"); }
     finally { setSending(null); }
   };
   // The user declined and said what to change → re-run the task with that note so Otto revises the draft.

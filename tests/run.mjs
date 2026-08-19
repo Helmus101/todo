@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
@@ -139,6 +139,30 @@ const pmGradeSync = mergeProfileStates(
   { ...emptyProfile(), grades: [{ id: "p1", subject: "Physique", grade: 14, scale: 20, updatedAt: newer, source: "pronote" }] },
 );
 check("same-id Pronote row still collapses to the newer sync, not duplicated", pmGradeSync.grades?.length === 1 && pmGradeSync.grades?.[0].grade === 14);
+
+// mergeProfileStates is a hand-maintained field-by-field allowlist, not a spread — a field added to the
+// Profile interface but forgotten here silently vanishes on the next cross-device sync (exactly how the
+// `unlimited` flag broke earlier). Build a profile with EVERY key set to a distinctive value and confirm
+// nothing is dropped in either merge direction, so the next forgotten field fails loudly here instead of
+// silently in production.
+{
+  const full = {
+    ...emptyProfile(),
+    name: "Test Student", about: "about-value", preferences: ["pref-value"], people: ["person-value"],
+    projects: ["project-value"], courses: ["course-value"], unlimited: true, paused: true, pausedAt: newer,
+    lastSweepAt: newer, lastForcedAt: newer, genPerDay: 2, responseStyle: "concise",
+    autoApprove: ["schedule_meetings_under_30min"], highPriorityPeople: ["vip@x.com"],
+    autoArchivePatterns: ["newsletter"], timezone: "Europe/Paris",
+    usage: { in: 10, out: 20, runs: 1, since: older, monthKey: "2026-08", monthIn: 1, monthOut: 2, monthCost: 0.01 },
+    primaryAccounts: { gmail: "acct-x" }, language: "en",
+    grades: [{ id: "g1", subject: "Maths", grade: 15, scale: 20, updatedAt: newer, source: "manual" }],
+    track: "ib", learningStyle: "visual", streak: { current: 3, longest: 5, lastDayIso: "2026-08-18" },
+  };
+  const keys = Object.keys(full).filter((k) => full[k] !== undefined && !(Array.isArray(full[k]) && full[k].length === 0));
+  const dropped = (merged) => keys.filter((k) => merged[k] === undefined || (Array.isArray(merged[k]) && merged[k].length === 0));
+  check("mergeProfileStates(full, {}) drops no field", dropped(mergeProfileStates(full, emptyProfile())).length === 0);
+  check("mergeProfileStates({}, full) drops no field", dropped(mergeProfileStates(emptyProfile(), full)).length === 0);
+}
 
 // ── Policy registry ───────────────────────────────────────────────────────────
 section("action policy registry");
@@ -617,6 +641,13 @@ check("mentions CAS/IA vocabulary regardless of profile", /CAS/.test(trackLine({
 check("mentions Grand Oral / BFI vocabulary regardless of profile", /Grand Oral/.test(trackLine({})) && /BFI/.test(trackLine(undefined)));
 check("same output no matter what's in the (now-unused) track field", trackLine({ track: "ib" }) === trackLine(undefined) && trackLine({ track: "bac" }) === trackLine({}));
 
+// ── VARK presentation-only line ─────────────────────────────────────────────
+section("learningStyleLine");
+check("no profile / mixed → empty (no-op)", learningStyleLine(undefined) === "" && learningStyleLine({ learningStyle: "mixed" }) === "");
+check("visual → spatial/structural framing", /spatial|structural/.test(learningStyleLine({ learningStyle: "visual" })));
+check("kinesthetic → hands-on framing", /doing|hands-on|try this/.test(learningStyleLine({ learningStyle: "kinesthetic" })));
+check("every style still forbids skipping diagnosis or dumbing down content", ["visual", "auditory", "reading", "kinesthetic"].every((s) => /Never skip a needed diagnostic question or dumb down content to fit/.test(learningStyleLine({ learningStyle: s }))));
+
 // ── Big project detection + milestone re-plan (no track gate — polyvalent) ────
 section("isBigIbProject");
 check("EE is a big project regardless of profile", isBigIbProject({ track: "ib" }, "Extended Essay research question", "") && isBigIbProject(undefined, "Extended Essay research question", ""));
@@ -832,6 +863,95 @@ section("renderNoteBody — GFM pipe table support");
     const re = new RegExp(`(^|[,\\s}])${sel.replace(".", "\\.")}\\s*\\{[^}]*position:\\s*relative`, "m");
     check(`${sel} (has an ::after hit-expander) also declares position: relative`, re.test(css));
   }
+}
+
+// ── Step prep: sanitizeStepExtras / bestMatchingStep / dropTrivialSteps ────────
+section("sanitizeStepExtras validation");
+check("valid https url kept", sanitizeStepExtras({ url: "https://sncf-connect.com/x" }).url === "https://sncf-connect.com/x");
+check("non-http url rejected", sanitizeStepExtras({ url: "javascript:alert(1)" }).url === undefined);
+check("bare string (no protocol) rejected", sanitizeStepExtras({ url: "sncf-connect.com" }).url === undefined);
+check("question truncated to 200 chars", sanitizeStepExtras({ question: "x".repeat(300) }).question.length === 200);
+check("options capped at 4", sanitizeStepExtras({ options: ["a", "b", "c", "d", "e"] }).options.length === 4);
+check("options blanks filtered", sanitizeStepExtras({ options: ["a", "", "  ", "b"] }).options.length === 2);
+check("minutes in range kept", sanitizeStepExtras({ minutes: 15 }).minutes === 15);
+check("minutes out of range dropped", sanitizeStepExtras({ minutes: 500 }).minutes === undefined);
+check("non-integer minutes dropped", sanitizeStepExtras({ minutes: 12.5 }).minutes === undefined);
+
+section("bestMatchingStep — text-similarity, never index");
+const draftSteps = [
+  { text: "Share the confirmed store list", automatable: false, url: "https://a.example/list" },
+  { text: "Book the SNCF train to The Hague", automatable: false, url: "https://sncf-connect.com/book" },
+];
+check("reordered/reworded step still matches by text overlap", bestMatchingStep("Book train tickets to The Hague on SNCF", draftSteps)?.url === "https://sncf-connect.com/book");
+check("unrelated text has no match", bestMatchingStep("Buy a birthday present for mum", draftSteps) === undefined);
+check("empty text has no match", bestMatchingStep("", draftSteps) === undefined);
+
+section("dropTrivialSteps — bilingual, url-aware, exemptions");
+const mkStep = (text, extra = {}) => ({ text, automatable: false, ...extra });
+check("EN search instruction dropped", dropTrivialSteps([mkStep("Look up train times for the SAT trip")]).length === 0);
+check("FR search instruction dropped", dropTrivialSteps([mkStep("Cherche les horaires de train")]).length === 0);
+check("FR 'vérifie les prix' dropped", dropTrivialSteps([mkStep("Vérifie les prix des billets")]).length === 0);
+check("bare navigation without url dropped", dropTrivialSteps([mkStep("Open sncf-connect.com")]).length === 0);
+check("bare navigation WITH url kept (OPENING A PAGE is sanctioned)", dropTrivialSteps([mkStep("Open sncf-connect.com", { url: "https://sncf-connect.com" })]).length === 1);
+check("FR 'ouvre' without url dropped, with url kept",
+  dropTrivialSteps([mkStep("Ouvre le site de la SNCF")]).length === 0 &&
+  dropTrivialSteps([mkStep("Ouvre le site de la SNCF", { url: "https://sncf-connect.com" })]).length === 1);
+check("checking with a real person survives (EN)", dropTrivialSteps([mkStep("Check with your teacher which title is allowed")]).length === 1);
+check("checking with a real person survives (FR)", dropTrivialSteps([mkStep("Vérifie auprès de ton prof le titre autorisé")]).length === 1);
+check("opening an in-app artifact survives", dropTrivialSteps([mkStep("Consulte la fiche de révision")]).length === 1);
+check("already-automatable step is never gated, even if it reads like a search", dropTrivialSteps([mkStep("Research summer programs and compile a list", { automatable: true })]).length === 1);
+check("mid-sentence 'check' doesn't false-positive (anchored to leading verb only)", dropTrivialSteps([mkStep("Bring your ID and check it's not expired")]).length === 1);
+check("isTrivialStep matches dropTrivialSteps for the same inputs", isTrivialStep("Cherche les horaires de train") === true && isTrivialStep("Consulte la fiche de révision") === false);
+
+section("sanitizeSteps — self-email filter + cap, no triviality gate here");
+check("self-email step filtered", sanitizeSteps([mkStep("Draft an email summary to the user")], 6).length === 0);
+check("sliced to maxCount", sanitizeSteps([mkStep("a"), mkStep("b"), mkStep("c")], 2).length === 2);
+// This is the exact regression a triviality gate INSIDE sanitizeSteps caused: at this point in finalize()
+// automatable is still the model's raw (often false) value — the DOABLE/JUDGMENT flip hasn't run yet — so
+// a step sanitizeSteps must NOT drop "Research X" just because it starts with a search-flavored verb; only
+// dropTrivialSteps (called AFTER that flip) is allowed to make that call.
+check("sanitizeSteps does NOT apply the triviality gate (that's dropTrivialSteps, called after the DOABLE flip)", sanitizeSteps([mkStep("Research summer programs and compile a list")], 6).length === 1);
+
+section("finalize — url/question/options survive the real submit path, trivial steps still gated");
+// "Look up X" is deliberately NOT used here — it's in finalize's own DOABLE list (see below) and gets
+// flipped to Otto's job before the gate even runs, which is correct but doesn't exercise THIS gate. "Check
+// opening hours" isn't in DOABLE/JUDGMENT, so it stays a genuine user-facing step and reaches the gate.
+const finTrivial = finalize({ context: "c", synthesis: "s", did: [], steps: [
+  { text: "Check opening hours for the store", automatable: false },
+  { text: "Book the 14:12 Thalys to The Hague", automatable: false, url: "https://sncf-connect.com/book" },
+], links: [], sendables: [] }, "", []);
+check("trivial lookup step dropped by finalize", !finTrivial.steps.some((s) => /opening hours/.test(s.text)));
+check("step with a real url survives finalize with its url intact", finTrivial.steps.find((s) => /Thalys/.test(s.text))?.url === "https://sncf-connect.com/book");
+const finResearch = finalize({ context: "c", synthesis: "s", did: [], steps: [
+  { text: "Research summer programs and compile a list of options", automatable: false },
+], links: [], sendables: [] }, "", []);
+check("'Research...' still flips to automatable and survives (DOABLE runs before the gate)", finResearch.steps.length === 1 && finResearch.steps[0].automatable === true);
+
+section("finalize — firstAction (the anti-procrastination hook)");
+const finFA = finalize({ context: "c", synthesis: "s", did: [], steps: [
+  { text: "Pick which store list to use", automatable: false },
+], links: [], sendables: [], firstAction: { text: "Open the doc and write one bad first sentence", minutes: 3 } }, "", []);
+check("firstAction kept when a real user step remains", finFA.firstAction?.text === "Open the doc and write one bad first sentence" && finFA.firstAction?.minutes === 3);
+const finFANoUserStep = finalize({ context: "c", synthesis: "s", did: [], steps: [], links: [], sendables: [], firstAction: { text: "Do the tiny thing" } }, "", []);
+check("firstAction dropped when no real user step remains (server backstop, not trusted from the model)", finFANoUserStep.firstAction === undefined);
+const finFABigProject = finalize({ context: "c", synthesis: "s", did: [], steps: [
+  { text: "Pick a research question", automatable: false },
+], links: [], sendables: [], isBigProject: true, firstAction: { text: "Do the tiny thing" } }, "", []);
+check("firstAction dropped for a big project (milestone already sets direction)", finFABigProject.firstAction === undefined);
+const finFAOutOfRangeMinutes = finalize({ context: "c", synthesis: "s", did: [], steps: [
+  { text: "Pick which store list to use", automatable: false },
+], links: [], sendables: [], firstAction: { text: "Do the tiny thing", minutes: 90 } }, "", []);
+check("out-of-range firstAction minutes dropped, text kept", finFAOutOfRangeMinutes.firstAction?.text === "Do the tiny thing" && finFAOutOfRangeMinutes.firstAction?.minutes === undefined);
+
+section("expandStep substep url — bounded to the task's own links");
+{
+  const links = [{ label: "Registration form", url: "https://example.edu/register" }];
+  // Simulates the mapper inside expandStep without a live API call (no network in this suite): a
+  // model-proposed substep url that ISN'T in the task's links must never survive.
+  const linkUrls = new Set(links.map((l) => l.url));
+  const propose = (raw) => { const url = raw.url && linkUrls.has(raw.url) ? raw.url : undefined; return { text: raw.text, url }; };
+  check("substep url matching a real task link kept", propose({ text: "Fill in the form", url: "https://example.edu/register" }).url === "https://example.edu/register");
+  check("substep url NOT on the task is dropped, never fabricated", propose({ text: "Fill in the form", url: "https://totally-invented.example/register" }).url === undefined);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
