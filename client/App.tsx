@@ -582,6 +582,16 @@ export function App() {
                 <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
               </div>
             )}
+            {/* Consecutive-day streak (server-side, bumped once per local day on a confirmed task — see
+                bumpStreak). Only shown once it's actually something (2+), so day one doesn't read as a
+                countdown to nothing. */}
+            {(status.streak?.current || 0) >= 2 && (
+              <p className="dash-streak">
+                {en
+                  ? `${status.streak!.current}-day streak${status.streak!.longest > status.streak!.current ? ` · best ${status.streak!.longest}` : ""}`
+                  : `${status.streak!.current} jours d'affilée${status.streak!.longest > status.streak!.current ? ` · record : ${status.streak!.longest}` : ""}`}
+              </p>
+            )}
           </div>
           {status.paused && (
             <div className="intro paused-banner">
@@ -959,7 +969,7 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
                               {dow(x.date)}{x.date === lightestOtherDate(d.date) ? " ✦" : ""}
                             </button>
                           ))}
-                          <button type="button" className="x" title={en ? "Cancel" : "Annuler"} onClick={() => setPickingFor(null)}>×</button>
+                          <button type="button" className="x" title={en ? "Cancel" : "Annuler"} aria-label={en ? "Cancel" : "Annuler"} onClick={() => setPickingFor(null)}>×</button>
                         </div>
                       ) : (
                         <button type="button" className="btn xs ghost" disabled={moving === it.taskId} onClick={() => setPickingFor(it.taskId!)}>
@@ -1925,7 +1935,7 @@ function ProfileEditor() {
           <div className="prof-label">{l.label}</div>
           <ul className="memory-list">
             {l.items.map((it, i) => (
-              <li key={i}><span>{it}</span><button className="x" title={L("Supprimer", "Remove")} onClick={async () => { try { setP(await api.delProfile(l.key, i)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }}>×</button></li>
+              <li key={i}><span>{it}</span><button className="x" title={L("Supprimer", "Remove")} aria-label={L("Supprimer", "Remove")} onClick={async () => { try { setP(await api.delProfile(l.key, i)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }}>×</button></li>
             ))}
           </ul>
           <AddRow placeholder={L(`Ajouter : ${l.label.toLowerCase().replace(/s$/, "")}…`, `Add a ${l.label.toLowerCase().replace(/s$/, "")}…`)} onAdd={async (v) => { try { setP(await api.setProfile(l.key, v)); } catch (e: any) { notify(e?.message || saveErr(), "error"); } }} />

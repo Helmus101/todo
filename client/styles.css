@@ -381,6 +381,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    (day name, count, tap to expand) shows all 7 days at once at any width — the bar chart's own visual
    comparison only worked side-by-side anyway, so the count alone carries the "how much" signal here. */
 .week-load-wrap { margin: 0; }
+/* The day-by-day "This week" strip duplicates what the task list itself already shows (each card carries
+   its own due date) and eats vertical space that's scarcer on a phone than on desktop — drop it on mobile
+   rather than cram a 7-day breakdown above the list. */
+@media (max-width: 640px) { .week-load-wrap { display: none; } }
 .week-load-strip { display: flex; flex-direction: column; }
 .week-day {
   flex: none; display: flex; flex-direction: row; align-items: center; justify-content: space-between;
@@ -457,6 +461,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   height: 100%; border-radius: 2px; background: var(--ink);
   transition: width 600ms var(--ease);
 }
+/* Quiet, not a badge — one earned fact stated plainly, same tone as dash-line itself (ink-2, no accent:
+   consistency is the reward here, not a gamified flourish that'd clash with the one-accent rule). */
+.dash-streak { margin-top: 6px; font-size: var(--text-sm); color: var(--ink-2); }
 
 /* ─── TaskHero — the dashboard's one headline moment ─────────────────────────
    Deliberately the biggest, roomiest thing on the page (rule 11: give important content room) — its

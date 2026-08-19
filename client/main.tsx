@@ -26,20 +26,21 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-// TEMP DIAGNOSTIC — remove once the live "tasks won't open on mobile" bug is confirmed fixed. React's
-// error boundary below only catches RENDER errors, never errors thrown inside an event handler (like a
-// button's onClick) — so if tapping a task were silently throwing there, it would be completely invisible
-// without devtools. This puts any uncaught error or unhandled promise rejection directly on the page as
-// plain visible text, so a phone with no console access can still tell us if something is actually failing.
+// React's error boundary below only catches RENDER errors, never errors thrown inside an event handler
+// (like a button's onClick) — those go straight to the console here instead of crashing silently. DEV-only
+// on-screen box (a real phone with no devtools needs SOME way to see it while debugging); production users
+// never see a raw stack trace dumped over the UI — that's a debug tool, not something to ship.
 if (typeof window !== "undefined") {
-  const showCrash = (label: string, err: unknown) => {
+  const logCrash = (label: string, err: unknown) => {
+    console.error(`[otto] ${label}:`, err);
+    if (!import.meta.env.DEV) return;
     const box = document.createElement("div");
     box.style.cssText = "position:fixed;inset:auto 8px 8px 8px;z-index:99999;background:#c6462f;color:#fff;padding:10px 12px;border-radius:8px;font:12px monospace;max-height:40vh;overflow:auto;white-space:pre-wrap;";
     box.textContent = `${label}: ${err instanceof Error ? (err.message + "\n" + (err.stack || "")) : String(err)}`;
     document.body.appendChild(box);
   };
-  window.addEventListener("error", (e) => showCrash("JS error", e.error || e.message));
-  window.addEventListener("unhandledrejection", (e) => showCrash("Unhandled promise rejection", e.reason));
+  window.addEventListener("error", (e) => logCrash("JS error", e.error || e.message));
+  window.addEventListener("unhandledrejection", (e) => logCrash("Unhandled promise rejection", e.reason));
 }
 
 // Register service worker for PWA support

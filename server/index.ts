@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
@@ -375,6 +375,7 @@ app.get("/api/status", async (req, res) => {
     overBudget: overMonthlyBudget(req.session.profile),
     unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
+    streak: req.session.profile?.streak,
   };
   res.json(s);
 });
@@ -648,6 +649,8 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
   if (task) {
     task.status = "done";
     task.updatedAt = new Date().toISOString();
+    const profile = req.session.profile ||= emptyProfile();
+    bumpStreak(profile, tzOf(profile));
     await commit(req);
     void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
   }

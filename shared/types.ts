@@ -208,6 +208,24 @@ export function monthKeyOf(tz?: string, now: Date = new Date()): string {
   catch { return now.toISOString().slice(0, 7); }
 }
 
+/** The current LOCAL calendar day ("YYYY-MM-DD") in a given timezone — the streak's own day boundary,
+ *  same en-CA trick as monthKeyOf (that locale's date format is already YYYY-MM-DD). */
+export function dayKeyOf(tz?: string, now: Date = new Date()): string {
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(now); }
+  catch { return now.toISOString().slice(0, 10); }
+}
+
+/** Advance the streak on a completed task, at most once per local day (calling it twice the same day must
+ *  not double-count). Consecutive local days → +1; a gap of 2+ days → reset to 1; same day → no-op. */
+export function bumpStreak(profile: Profile, tz?: string, now: Date = new Date()): void {
+  const today = dayKeyOf(tz, now);
+  const s = profile.streak || { current: 0, longest: 0 };
+  if (s.lastDayIso === today) { profile.streak = s; return; }
+  const yesterday = dayKeyOf(tz, new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  const current = s.lastDayIso === yesterday ? s.current + 1 : 1;
+  profile.streak = { current, longest: Math.max(s.longest, current), lastDayIso: today };
+}
+
 // DeepSeek pricing in USD per 1M tokens. Cache-HIT input is dramatically cheaper than a miss, and we resend
 // a large system prompt every round, so hit rates are high — pricing all input at the miss rate (the old
 // behaviour) over-charged the meter. Output ≈4× a miss. Single source of truth so the Settings display and
@@ -587,6 +605,7 @@ export interface ConnectionStatus {
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
+  streak?: { current: number; longest: number; lastDayIso?: string }; // see Profile.streak — bumped on task confirm
 }
 
 export interface RunResult {

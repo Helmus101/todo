@@ -5,7 +5,7 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningS
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, dayKeyOf, bumpStreak } from "../shared/types.ts";
 import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 
@@ -539,6 +539,21 @@ check("interactive still allowed within the reserve", overInteractiveBudget(atCa
 const wayOver = { ...emptyProfile(), usage: { in: 0, out: 0, runs: 1, since: "x", monthKey: monthKeyOf("UTC"), monthCost: 3.5 } };
 check("interactive blocked past the reserve", overInteractiveBudget(wayOver) === true);
 if (prevBudget === undefined) delete process.env.MONTHLY_AI_BUDGET_USD; else process.env.MONTHLY_AI_BUDGET_USD = prevBudget;
+
+// ── Streak (bumpStreak) ────────────────────────────────────────────────────────
+section("bumpStreak");
+const day1 = new Date("2026-08-17T12:00:00Z"), day2 = new Date("2026-08-18T12:00:00Z"), day4 = new Date("2026-08-20T12:00:00Z");
+{
+  const p = emptyProfile();
+  bumpStreak(p, "UTC", day1);
+  check("first completion → streak of 1", p.streak.current === 1 && p.streak.longest === 1 && p.streak.lastDayIso === dayKeyOf("UTC", day1));
+  bumpStreak(p, "UTC", day1);
+  check("same local day again → no double count", p.streak.current === 1);
+  bumpStreak(p, "UTC", day2);
+  check("very next local day → increments", p.streak.current === 2 && p.streak.longest === 2);
+  bumpStreak(p, "UTC", day4);
+  check("a gap day → resets to 1, longest survives", p.streak.current === 1 && p.streak.longest === 2);
+}
 
 // ── Eisenhower ranking (WS2) ──────────────────────────────────────────────────
 section("sortWithinQuadrant");
