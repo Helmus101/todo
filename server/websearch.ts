@@ -13,6 +13,10 @@ async function duckDuckGo(query: string): Promise<{ title: string; url: string; 
   if (!query.trim()) return [];
   const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
     headers: { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36" },
+    // Without a timeout, a stalled DDG response hangs whatever called webSearch indefinitely — a whole
+    // sweep/generate call included, since it awaits this directly. The resulting AbortError is just
+    // another failure to the caller above (webSearch's own .catch(() => [])), so no special-casing needed.
+    signal: AbortSignal.timeout(9000),
   });
   if (!res.ok) throw new Error(`ddg ${res.status}`);
   const html = await res.text();

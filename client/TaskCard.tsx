@@ -29,8 +29,8 @@ import {
  */
 function useTaskLeave(
   taskId: string,
-  { onChange, onConfirmed, onLeft }: {
-    onChange: (t: WebTask[]) => void; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void;
+  { onChange, onTask, onConfirmed, onLeft }: {
+    onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void;
   },
 ) {
   const notify = useNotify();
@@ -39,10 +39,19 @@ function useTaskLeave(
   // Confirm ("Looks good") gets a distinct green check-pulse (a small reward for finishing something);
   // Dismiss keeps the plain slide-away — different actions, so they shouldn't look identical. Both play
   // WHILE the API call runs, then remove the card, so it never blinks out or lingers waiting on the network.
-  const leave = async (fn: () => Promise<WebTask[]>, kind: "confirm" | "dismiss" = "dismiss") => {
+  //
+  // `task`, if passed, is optimistically flipped to its post-action status via `onTask` BEFORE the network
+  // call even starts — the "N left today" line, the Completed section, etc. used to only update once the
+  // round-trip resolved, which (compounded by api.ts's up-to-6-retry backoff on a flaky connection) is
+  // what made a single tap feel like it "took a while" even though the row's own animation had already
+  // started. On failure, this rolls back to the exact original `task` — the sole visibility switch for
+  // the row itself stays `leaving` (local state, below), never list membership, so an optimistic status
+  // flip can never cut the exit animation off mid-collapse.
+  const leave = async (fn: () => Promise<WebTask[]>, kind: "confirm" | "dismiss" = "dismiss", task?: WebTask) => {
     if (leaving) return;
     setLeaveKind(kind);
     setLeaving(true);
+    if (task) onTask?.({ ...task, status: kind === "confirm" ? "done" : "dismissed", updatedAt: new Date().toISOString() });
     // Must match (or slightly exceed) the CSS animation durations (cardConfirm 0.55s / cardOut 0.32s in
     // styles.css) — the row is removed from state the instant this resolves, so if the timers were shorter
     // than the animation, React would unmount mid-collapse and cut it off abruptly (the exact jank this is
@@ -60,6 +69,7 @@ function useTaskLeave(
       // way to retry — this is the actual live-reported "Looks good doesn't close the task" bug. Reset the
       // leave state so the button works again, and say what happened instead of failing silently.
       setLeaving(false);
+      if (task) onTask?.(task); // roll back the optimistic flip to the real prior state
       notify(e?.message || "Une erreur est survenue — réessaie.", "error");
       return;
     }
@@ -71,6 +81,13 @@ function useTaskLeave(
   };
   return { leaving, leaveKind, leave };
 }
+
+/** Every task shows SOME date, never a blank — a task without an explicit deadline (no firm `when`, e.g.
+ *  a "someday" item or one the AI classifier couldn't pin to a date) used to render with no date context
+ *  at all, which read as incomplete/broken next to every other card that has one. Falls back to a relative
+ *  "Added <when>" from `createdAt`, which every task has unconditionally. */
+const taskDateLabel = (t: WebTask, L: (fr: string, en: string) => string): string =>
+  t.when ? fmtWhen(t.when) : t.createdAt ? L(`Ajoutée ${relTime(t.createdAt)}`, `Added ${relTime(t.createdAt)}`) : "";
 
 // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
 const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
@@ -113,13 +130,13 @@ function Disclosure({ label, count, open, onToggle, children }: { label: string;
 
 /* ─────────────────────────────── collapsed row ─────────────────────────────── */
 
-export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, index, onOpen }: {
-  task: WebTask; onChange: (t: WebTask[]) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
+export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen }: {
+  task: WebTask; onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
   isNew?: boolean; index?: number; onOpen: () => void;
 }) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
-  const { leaving, leaveKind, leave } = useTaskLeave(task.id, { onChange, onConfirmed });
+  const { leaving, leaveKind, leave } = useTaskLeave(task.id, { onChange, onTask, onConfirmed });
   const cStatus = canonStatus(task.status);
   const isDone = isHandled(task.status);
 
@@ -145,7 +162,7 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
   // failed-and-retrying task is "busy" too but has no spinner, so it still needs its chip to say so.
   const showChip = chip && chip.tone !== "muted" && chip.tone !== "good" && cStatus !== "executing" ? chip : null;
 
-  const w = task.when ? fmtWhen(task.when) : "";
+  const w = taskDateLabel(task, L);
   // Days-to-deadline, not urgency score, drives the visual — same anti-procrastination curve as
   // the server's applyDeadlineUrgency, so a card LOOKS as urgent as it's actually ranked.
   const daysLeft = task.when ? (Date.parse(task.when) - Date.now()) / 86_400_000 : NaN;
@@ -165,7 +182,7 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
       {!isDone ? (
         <button type="button" className={`card-check ${leaving && leaveKind === "confirm" ? "checked" : ""}`}
           title={L("Marquer comme fait", "Mark as done")} aria-label={L(`Marquer « ${task.title} » comme faite`, `Mark "${task.title}" as done`)} disabled={leaving}
-          onClick={() => void leave(() => api.confirm(task.id), "confirm")}>
+          onClick={() => void leave(() => api.confirm(task.id), "confirm", task)}>
           <span aria-hidden="true">{leaving && leaveKind === "confirm" ? "✓" : ""}</span>
         </button>
       ) : null}
@@ -186,7 +203,7 @@ export function TaskCardRow({ task, onChange, retrying, onConfirmed, isNew, inde
       </button>
       {/* Quick dismiss — remove a task in one click without opening it. Hover-revealed so the row stays clean.
           Hidden once the row is already leaving (dismissing or confirming) — a second click has nothing to do. */}
-      {!isDone && !leaving && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id))}>×</button>}
+      {!isDone && !leaving && <button className="card-x" title={L("Ignorer", "Dismiss")} aria-label={L(`Ignorer « ${task.title} »`, `Dismiss "${task.title}"`)} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>×</button>}
       {leaving && leaveKind === "confirm" ? <span className="confirm-check" aria-hidden="true">✓</span> : null}
     </div>
   );
@@ -203,7 +220,7 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
   const cardEn = useContext(LangContext) === "en";
   const chip = statusChip(task, false, cardEn);
   const showChip = chip && chip.tone === "attention" ? chip : null;
-  const w = task.when ? fmtWhen(task.when) : "";
+  const w = taskDateLabel(task, L);
 
   return (
     <div className="dash-hero">
@@ -251,7 +268,12 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   // round trip. Flip it locally first, reconcile with the server's response, revert on failure.
   const setStepDoneLocal = (i: number, done: boolean, result?: string) => {
     const steps = (task.steps || []).map((s, si) => si !== i ? s : { ...s, done, doneAt: done ? new Date().toISOString() : undefined, result: result ?? s.result });
-    onChange([{ ...task, steps }]);
+    // MUST be onTask (merge-by-id), never onChange([...]) — onChange is wired straight to setTasks in
+    // App.tsx, so passing a one-element array there doesn't "update this task," it REPLACES THE ENTIRE
+    // DASHBOARD LIST with just this one task until the next background sync happens to overwrite it.
+    // This was a real, live bug (five call sites in this file had it) — the likely cause of "completing
+    // a task sometimes doesn't work / the list looks broken for a bit."
+    onTask({ ...task, steps });
   };
   // Always read the CURRENT task/decided at the moment a queued step-completion actually runs, never the
   // stale closure from whenever the tap happened — see the comment on `stepQueueRef` below for why.
@@ -277,7 +299,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         if (!Array.isArray(list)) throw new Error((list as any)?.error || L("Session expirée — recharge la page.", "Session expired — reload the page."));
         onChange(list);
       } catch (e: any) {
-        onChange([currentTask]); // revert the optimistic tick
+        onTask(currentTask); // revert the optimistic tick — onTask merges by id, onChange([...]) would nuke the whole list
         notify(e?.message || L("Impossible de marquer cette étape comme faite.", "Couldn't mark this step as done."), "error");
       }
     });
@@ -372,7 +394,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         {task.why ? <p className="tf-why">{task.why}</p> : null}
         <div className="tf-meta">
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
-          {task.when ? <span className={`when ${(Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{fmtWhen(task.when)}</span> : null}
+          {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
         </div>
       </div>
@@ -389,7 +411,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         task={task} steps={steps} currentIdx={currentIdx} isDone={isDone} cStatus={cStatus}
         retrying={retrying} running={running} decided={decided} setDecided={setDecided}
         onStepDone={markStepDone} onRun={run} onAnswer={answerStep} answering={answering}
-        onConfirm={() => void leave(() => api.confirm(task.id), "confirm")}
+        onConfirm={() => void leave(() => api.confirm(task.id), "confirm", task)}
         onTask={onTask}
       />
 
@@ -414,11 +436,11 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
               onStepDone={markStepDone} onUndo={(i) => {
                 setStepDoneLocal(i, false);
                 void act(() => api.stepDone(task.id, i, false)).catch((e: any) => {
-                  onChange([task]); // revert the optimistic un-tick
+                  onTask(task); // revert the optimistic un-tick — onTask merges by id, onChange([...]) would nuke the whole list
                   notify(e?.message || L("Impossible d'annuler cette étape.", "Couldn't undo this step."), "error");
                 });
               }}
-              onAsk={askAboutStep} onChange={onChange} onAnswer={answerStep} answering={answering} />
+              onAsk={askAboutStep} onChange={onChange} onTask={onTask} onAnswer={answerStep} answering={answering} />
           </Disclosure>
         ) : null}
         {preparedCount > 0 ? (
@@ -444,7 +466,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         {isDone ? (
           <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt)}` : ""}</span>
         ) : (
-          <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id))}>{L("Ignorer", "Dismiss")}</button>
+          <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>{L("Ignorer", "Dismiss")}</button>
         )}
       </div>
 
@@ -649,11 +671,11 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
 
 /* ─────────────────────────────── panels ─────────────────────────────── */
 
-function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk, onChange, onAnswer, answering }: {
+function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk, onChange, onTask, onAnswer, answering }: {
   task: WebTask; steps: TaskStep[];
   decided: Record<number, string>; setDecided: Dispatch<SetStateAction<Record<number, string>>>;
   onStepDone: (i: number) => void; onUndo: (i: number) => void; onAsk: (i: number, text: string) => void;
-  onChange: (t: WebTask[]) => void;
+  onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void;
   onAnswer: (i: number, answer: string) => void; answering: number | null;
 }) {
   const L = useLang();
@@ -671,10 +693,12 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
   const toggleSubstep = async (i: number, subIndex: number, done: boolean) => {
     const optimistic = steps.map((s, si) => si !== i || !s.substeps ? s
       : { ...s, substeps: s.substeps.map((sub, ssi) => ssi === subIndex ? { ...sub, done } : sub) });
-    onChange([{ ...task, steps: optimistic }]);
+    // onTask merges by id — onChange([...]) here would replace the ENTIRE task list with this one task
+    // (onChange is wired straight to App.tsx's setTasks, which takes it as a literal new array, not a patch).
+    onTask({ ...task, steps: optimistic });
     try { onChange(await api.substepDone(task.id, i, subIndex, done)); }
     catch (e: any) {
-      onChange([task]); // revert the optimistic flip
+      onTask(task); // revert the optimistic flip
       notify(e?.message || L("Impossible d'enregistrer cette sous-étape.", "Couldn't save this sub-step."), "error");
     }
   };

@@ -830,6 +830,33 @@ for (const [mod, names] of [
   for (const n of names) check(`${mod.replace("../client/", "")} exports ${n} as a function`, typeof m[n] === "function");
 }
 
+// shouldKeepLocal is the pure comparison behind keepLocalHandled's new grace-window guard (App.tsx) — a
+// background fetch that was in flight before a local confirm/dismiss/step-done must not silently clobber
+// it once it resolves. See MUTATION_GRACE_MS.
+section("shouldKeepLocal");
+{
+  const { shouldKeepLocal } = await import("../client/App.tsx");
+  // Both sides use a non-"handled" status (isHandled is false for both) so the PRE-EXISTING
+  // handled-vs-unhandled guard never fires — these cases isolate the NEW grace-window logic only.
+  const base = { id: "t1", status: "ready" };
+  const local = { ...base, status: "ready" }; // locally mutated (e.g. a step ticked) but not confirmed/dismissed
+  check("no local copy → nothing to keep, take incoming", shouldKeepLocal(undefined, base, undefined, 1000) === false);
+  check("never-mutated task → no grace window, take incoming", shouldKeepLocal(local, base, undefined, 1000) === false);
+  check("locally handled + incoming un-handles it → keep local (pre-existing guard)", shouldKeepLocal({ ...base, status: "done" }, { ...base, status: "ready" }, undefined, 1000) === true);
+
+  const mutatedAt = 1000;
+  const staleIncoming = { ...base }; // no updatedAt — can't prove it's newer
+  check("within grace window, incoming has no updatedAt → presumed stale, keep local", shouldKeepLocal(local, staleIncoming, mutatedAt, mutatedAt + 3000, 8000) === true);
+
+  const olderIncoming = { ...base, updatedAt: new Date(mutatedAt - 500).toISOString() };
+  check("within grace window, incoming older than the mutation → keep local", shouldKeepLocal(local, olderIncoming, mutatedAt, mutatedAt + 3000, 8000) === true);
+
+  const newerIncoming = { ...base, updatedAt: new Date(mutatedAt + 500).toISOString() };
+  check("incoming genuinely NEWER than the mutation → take incoming even inside the grace window", shouldKeepLocal(local, newerIncoming, mutatedAt, mutatedAt + 3000, 8000) === false);
+
+  check("grace window expired → take incoming regardless of age", shouldKeepLocal(local, staleIncoming, mutatedAt, mutatedAt + 9000, 8000) === false);
+}
+
 // A note's markdown body can contain a GFM pipe table (a schedule, a comparison) — the hand-rolled
 // renderNoteBody parser (no full markdown library) must actually turn "| a | b |\n|---|---|\n| 1 | 2 |"
 // into a <table>, not dump raw pipe characters as plain paragraphs. Render it for real via

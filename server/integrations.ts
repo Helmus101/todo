@@ -608,6 +608,7 @@ export function scopeTools(t: AgentTools, task: { title: string; why?: string; s
 
 /** Execute ONE explicitly-named READ action directly (the deterministic discovery pipeline) — refuses
  *  anything that isn't a pure read, so this path can never write, send, or delete regardless of caller. */
+
 export async function readAction(userId: string, action: string, args: Record<string, unknown>, connectedAccountId?: string): Promise<any> {
   if (!integrationsReady() || !userId) throw new Error("integrations not configured");
   const policy = ACTION_POLICIES[action.toUpperCase()];

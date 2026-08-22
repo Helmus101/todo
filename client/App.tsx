@@ -26,6 +26,32 @@ function useReveal(deps: readonly unknown[] = []) {
 
 
 
+// How long a local optimistic mutation (confirm/dismiss/step-done/substep) outranks an incoming background
+// fetch for the same task — see `keepLocalHandled`/`patchTask` in App(). Long enough to cover a slow
+// confirm's own round-trip (including api.ts's retry backoff), short enough that a truly stale local copy
+// still gets corrected quickly if something goes wrong.
+const MUTATION_GRACE_MS = 8000;
+/** Pure comparison used by `keepLocalHandled`: should an incoming task be replaced by what we already have
+ *  locally? Exported/pulled out of the closure specifically so it's unit-testable without a live component —
+ *  see tests/run.mjs. `mutatedAt` is this task's last local-optimistic-mutation timestamp (undefined if
+ *  never locally mutated this session); `now`/`graceMs` are explicit params rather than reading Date.now()
+ *  internally, for the same testability reason. */
+export function shouldKeepLocal(cur: WebTask | undefined, incoming: WebTask, mutatedAt: number | undefined, now: number, graceMs = MUTATION_GRACE_MS): boolean {
+  if (!cur) return false;
+  // Already-established guard: never let a background fetch un-handle a task the user already finished/
+  // dismissed locally.
+  if (isHandled(cur.status) && !isHandled(incoming.status)) return true;
+  // New: within the grace window, an incoming copy that isn't itself newer than our local mutation is
+  // presumed to be a stale fetch that raced it — keep the local copy. An incoming copy WITH a newer
+  // `updatedAt` (e.g. the mutation's own successful response, or a genuinely later change from another
+  // device) always wins, so this can't hold onto stale state past what's actually true.
+  if (mutatedAt != null && now - mutatedAt < graceMs) {
+    const incomingUpdated = incoming.updatedAt ? Date.parse(incoming.updatedAt) : 0;
+    if (!incomingUpdated || incomingUpdated < mutatedAt) return true;
+  }
+  return false;
+}
+
 // Translate a sweep job's skip/failure line into user terms — an honest reason, never a fake all-clear.
 function sweepSkipMessage(note: string, en?: boolean): string {
   if (/nothing connected/i.test(note)) return en
@@ -243,6 +269,17 @@ export function App() {
   // Server truth passes through as-is — the job layer owns execution state now; the client just displays it.
   const retryFlags = (list: WebTask[]) => list;
 
+  // Every optimistic single-task patch (confirm/dismiss/step-done/substep — see TaskCard.tsx's `onTask`
+  // usage) stamps itself here, so `keepLocalHandled` below can tell "a background fetch that was already
+  // in flight before this mutation" from "a fetch that reflects it" — without this, a `syncTasks`/
+  // `sweepIfDue`/`kick` response that started before a confirm and resolves after it can silently
+  // overwrite the just-confirmed task back to its old status, purely on network timing.
+  const localMutations = useRef(new Map<string, number>());
+  const patchTask = useCallback((u: WebTask) => {
+    localMutations.current.set(u.id, Date.now());
+    setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)));
+  }, []);
+
   // Never let a background refresh (sync/sweep/manual-scan) resurrect a card the user already finished or
   // dismissed LOCALLY — a request dispatched before that click can resolve AFTER it (slow network, a sweep
   // that takes longer than the click round-trip) and would otherwise stomp the local decision back to
@@ -256,10 +293,14 @@ export function App() {
     // function) — which, from the outside, looked exactly like "my task got deleted" when the error
     // boundary reset the tree. Treat anything non-array as "no update," never crash the app over it.
     if (!Array.isArray(incoming)) return prev;
+    const now = Date.now();
+    // Prune opportunistically so this Map can't grow unbounded over a long session — every entry is either
+    // reconciled well within the grace window or genuinely stale and safe to forget.
+    for (const [id, t] of localMutations.current) if (now - t > MUTATION_GRACE_MS) localMutations.current.delete(id);
     const incomingIds = new Set(incoming.map((t) => t.id));
     const merged = incoming.map((u) => {
       const cur = prev.find((p) => p.id === u.id);
-      return cur && isHandled(cur.status) && !isHandled(u.status) ? cur : u;
+      return shouldKeepLocal(cur, u, localMutations.current.get(u.id), now) ? cur! : u;
     });
     // A LOCAL task missing from `incoming` used to just vanish — but incoming isn't necessarily "the whole
     // truth as of now," it can be a slightly-stale fetch that raced a task added moments ago (dispatched
@@ -270,8 +311,7 @@ export function App() {
     // that are missing from the response should NOT be resurrected, as this causes the bug where tasks
     // generated in the backend don't appear in the frontend.
     const RECENT_MS = 2 * 60_000;
-    const now = Date.now();
-    const recentlyMissing = prev.filter((p) => 
+    const recentlyMissing = prev.filter((p) =>
       !incomingIds.has(p.id) && 
       p.source === "manual" && 
       now - (Date.parse(p.createdAt || "") || 0) < RECENT_MS
@@ -662,6 +702,7 @@ export function App() {
                             isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                             onOpen={() => navigate(`task/${t.id}`)}
                             onChange={setTasks}
+                            onTask={patchTask}
                             onConfirmed={flagJustDone}
                           />
                         ))}
@@ -698,6 +739,7 @@ export function App() {
                             isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                             onOpen={() => navigate(`task/${t.id}`)}
                             onChange={setTasks}
+                            onTask={patchTask}
                             onConfirmed={flagJustDone}
                           />
                         ))}
@@ -726,6 +768,7 @@ export function App() {
                                 isNew={!seenTasks.has(t.id) && !isHandled(t.status)}
                                 onOpen={() => navigate(`task/${t.id}`)}
                                 onChange={setTasks}
+                                onTask={patchTask}
                                 onConfirmed={flagJustDone}
                               />
                             ))}
@@ -771,7 +814,7 @@ export function App() {
                   task={openTask}
                   retrying={retryingIds.includes(openTask.id)}
                   onChange={setTasks}
-                  onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+                  onTask={patchTask}
                   onConfirmed={flagJustDone}
                   onLeft={() => navigate("")}
                 />

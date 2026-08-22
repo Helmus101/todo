@@ -132,6 +132,22 @@ const commit = async (req: express.Request) => {
   }
 };
 
+// Simple synchronous task-mutating routes (confirm/reject/dismiss/step-done) used to just `find()` in
+// `req.session.tasks` and silently no-op — `res.json(unchanged list)` — if the session was momentarily
+// stale, indistinguishable from success to the client. Same reload-and-retry shape `runViaJob` already
+// uses for the job-queue routes: only reload from the cloud on a genuine miss (the common case never pays
+// the extra round-trip), and only 404 if the task still isn't found after that.
+async function findTaskOrReload(req: express.Request, id: string): Promise<WebTask | undefined> {
+  let task = (req.session.tasks || []).find((t) => t.id === id);
+  if (task || !req.session.user) return task;
+  try {
+    const cloud = await loadState(req.session.user);
+    req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    await saveSession(req);
+  } catch { /* fall through to the final lookup — a failed reload just means we still 404 below */ }
+  return (req.session.tasks || []).find((t) => t.id === id);
+}
+
 const requireAuth: RequestHandler = (req, res, next) => {
   if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
   next();
@@ -207,16 +223,29 @@ app.post("/api/auth/logout", (req, res) => { req.session.destroy(() => res.json(
 // store.deleteAccount) and destroys the session. Irreversible — the client confirms before calling this.
 app.post("/api/account/delete", requireAuth, async (req, res) => {
   const email = req.session.user!;
-  const result = await deleteAccount(email);
-  req.session.destroy(() => res.json(result));
+  try {
+    const result = await deleteAccount(email);
+    // Only destroy the session on a confirmed result — destroying it on a thrown error (below) would make
+    // an account that's still fully intact server-side look deleted client-side, with no way back in to
+    // retry. deleteAccount isn't necessarily transactional, so a caught error here doesn't guarantee
+    // nothing was removed — it just means the request no longer hangs silently, which is the actual bug
+    // being fixed (Express 4 never responds to an unhandled rejection in a route handler).
+    req.session.destroy(() => res.json(result));
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Couldn't delete the account — try again." });
+  }
 });
 
 // GDPR right to data portability, self-serve: everything Otto has stored for this account, as one JSON file.
 app.get("/api/account/export", requireAuth, async (req, res) => {
   const email = req.session.user!;
-  const state = cloudEnabled() ? await loadState(email) : { profile: req.session.profile, tasks: req.session.tasks };
-  res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
-  res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks });
+  try {
+    const state = cloudEnabled() ? await loadState(email) : { profile: req.session.profile, tasks: req.session.tasks };
+    res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
+    res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Couldn't export your data — try again." });
+  }
 });
 
 // Google now connects through Composio (Gmail / Calendar / Docs / Slides / Drive / Sheets) like every other
@@ -485,22 +514,26 @@ app.post("/api/tasks", requireAuth, async (req, res) => {
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
   const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
-  req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen);
-  const added = req.session.tasks[0];
-  if (ready) added.status = "queued";
-  // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from
-  // the cloud (jobs.ts loadUser); enqueuing first opened a race where a concurrent drainer (another tab's
-  // kick, or a cron tick) could claim the job before the commit landed and get "task not found" — which
-  // marks the job succeeded and strands the task at "queued". Commit-then-enqueue closes that window.
-  await commit(req);
-  if (ready) {
-    // enqueueJob("execute_task") is the SINGLE planning pass: runTask() reads every connected integration
-    // (Gmail/Calendar/Drive/Slack/GitHub/Notion) + web_search and fills in task.context/task.steps. Plan-only
-    // mode (EXECUTION_ENABLED=false in claude.ts) already withholds every write tool, so this only gathers
-    // knowledge and produces a plan — it never sends/creates/deletes anything.
-    try { await enqueueJob(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
+  try {
+    req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen);
+    const added = req.session.tasks[0];
+    if (ready) added.status = "queued";
+    // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from
+    // the cloud (jobs.ts loadUser); enqueuing first opened a race where a concurrent drainer (another tab's
+    // kick, or a cron tick) could claim the job before the commit landed and get "task not found" — which
+    // marks the job succeeded and strands the task at "queued". Commit-then-enqueue closes that window.
+    await commit(req);
+    if (ready) {
+      // enqueueJob("execute_task") is the SINGLE planning pass: runTask() reads every connected integration
+      // (Gmail/Calendar/Drive/Slack/GitHub/Notion) + web_search and fills in task.context/task.steps. Plan-only
+      // mode (EXECUTION_ENABLED=false in claude.ts) already withholds every write tool, so this only gathers
+      // knowledge and produces a plan — it never sends/creates/deletes anything.
+      try { await enqueueJob(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
+    }
+    res.json(req.session.tasks);
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Couldn't add that task — try again." });
   }
-  res.json(req.session.tasks);
 });
 
 // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
@@ -645,35 +678,32 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
 // "handled" count + the deep-link "already handled" fallback keep working after a confirm/dismiss.
 app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
-  const task = (req.session.tasks || []).find((t) => t.id === id);
-  if (task) {
-    task.status = "done";
-    task.updatedAt = new Date().toISOString();
-    const profile = req.session.profile ||= emptyProfile();
-    bumpStreak(profile, tzOf(profile));
-    await commit(req);
-    void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
-  }
+  const task = await findTaskOrReload(req, id);
+  if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+  task.status = "done";
+  task.updatedAt = new Date().toISOString();
+  const profile = req.session.profile ||= emptyProfile();
+  bumpStreak(profile, tzOf(profile));
+  await commit(req);
+  void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
   res.json(req.session.tasks || []);
 });
 app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => {
   const id = String(req.params.id);
-  const task = (req.session.tasks || []).find((t) => t.id === id);
-  if (task) {
-    tasks.reject(req.session.tasks || [], id);
-    await commit(req);
-  }
+  const task = await findTaskOrReload(req, id);
+  if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+  tasks.reject(req.session.tasks || [], id);
+  await commit(req);
   res.json(req.session.tasks || []);
 });
 app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
-  const task = (req.session.tasks || []).find((t) => t.id === id);
-  if (task) {
-    task.status = "dismissed";
-    task.updatedAt = new Date().toISOString();
-    await commit(req);
-    void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
-  }
+  const task = await findTaskOrReload(req, id);
+  if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+  task.status = "dismissed";
+  task.updatedAt = new Date().toISOString();
+  await commit(req);
+  void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
   res.json(req.session.tasks || []);
 });
 // Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue,
@@ -690,15 +720,14 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
   const index = Number(req.params.index);
   const done = req.body?.done !== false;
   const result = typeof req.body?.result === "string" ? req.body.result : undefined;
-  const task = (req.session.tasks || []).find((t) => t.id === id);
+  const task = await findTaskOrReload(req, id);
   const step = task?.steps?.[index];
-  if (step) {
-    step.done = done;
-    step.doneAt = done ? new Date().toISOString() : undefined;
-    if (result !== undefined) step.result = result;
-    task!.updatedAt = new Date().toISOString();
-    await commit(req);
-  }
+  if (!task || !step) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
+  step.done = done;
+  step.doneAt = done ? new Date().toISOString() : undefined;
+  if (result !== undefined) step.result = result;
+  task.updatedAt = new Date().toISOString();
+  await commit(req);
   res.json(req.session.tasks || []);
 });
 // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.
