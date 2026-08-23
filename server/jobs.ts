@@ -257,6 +257,21 @@ async function processExecuteTask(job: store.Job): Promise<string> {
       await store.enqueueJob(email, "execute_task", s.id);
       void store.recordEvent(email, "found", { taskId: s.id, jobId: job.id, message: `Follow-up from "${t.title.slice(0, 60)}"` });
     }
+    // finalize's own "finish, don't hand back" guard (server/claude.ts) rejects an unblocked automatable
+    // step up to twice, but gives up after that and lets it survive into steps[] anyway rather than loop
+    // forever — a "draft an email" that Otto could clearly just do, sitting there needing a manual "Auto-do"
+    // click. Close that gap here instead of leaving it on the user: queue it up the same way a follow-up
+    // task gets queued, bounded to 2 so a badly-behaved run can't spin up an unbounded chain of jobs.
+    if (updated?.steps?.length) {
+      const autoSteps = updated.steps
+        .map((s, i) => ({ s, i }))
+        .filter(({ s }) => s.automatable && !s.done && !s.synthetic && s.dependsOn === undefined && !s.needsPermission && !s.question)
+        .slice(0, 2);
+      for (const { i } of autoSteps) {
+        await store.enqueueJob(email, "execute_step", taskId, { index: i });
+        void store.recordEvent(email, "queued", { taskId, jobId: job.id, message: `Auto-running step ${i + 1} — Otto can do this itself` });
+      }
+    }
     const done = updated?.steps?.length ? `${updated.steps.filter((s) => !s.done).length} step(s) need you` : "fully handled";
     const cost = updated?.lastRunTokens ? ` (${Math.round(updated.lastRunTokens.in / 1000)}k tokens)` : "";
     await store.recordEvent(email, "run_succeeded", { taskId, jobId: job.id, message: (updated?.synthesis?.slice(0, 200) || done) + cost });
@@ -280,10 +295,19 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   const taskId = String(job.task_id || "");
   const index = Number(job.input?.index);
   const { profile, list } = await loadUser(email);
-  if (profile.paused) return "skipped: AI paused";
+  // The interactive route (POST .../step/:index/run) stamps the TASK "queued" so the client's kick loop
+  // knows to keep polling while this step runs in the background — unlike execute_task, nothing else ever
+  // moves it off "queued" once the step itself is done, so it'd read as permanently "in progress" for a
+  // one-step run. Settle it back to a resting state on every exit path below, mirroring the
+  // paused/budget-block revert processExecuteTask already does for the whole-task case.
+  const restStatus = () => {
+    const t = list.find((x) => x.id === taskId);
+    if (t && isInFlight(t.status)) { t.status = "ready"; t.updatedAt = new Date().toISOString(); }
+  };
+  if (profile.paused) { restStatus(); await commitUser(email, profile, list); return "skipped: AI paused"; }
   // Approve & Run is always user-present → interactive reserve, matching the route that enqueued it.
-  if (overInteractiveBudget(profile)) return "skipped: monthly AI budget reached";
-  if (!Number.isInteger(index)) return "skipped: bad step index";
+  if (overInteractiveBudget(profile)) { restStatus(); await commitUser(email, profile, list); return "skipped: monthly AI budget reached"; }
+  if (!Number.isInteger(index)) { restStatus(); await commitUser(email, profile, list); return "skipped: bad step index"; }
   await store.recordEvent(email, "step_started", { taskId, jobId: job.id, message: `Running step ${index + 1}` });
   // The user explicitly clicked Approve & Run — the permissioned toolset is correct here. Same multi-account
   // routing as a full task run: the task's own source account when it has one, else the resolved primary.
@@ -309,6 +333,7 @@ async function processExecuteStep(job: store.Job): Promise<string> {
     const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);
     for (const d of droppedArtifacts) void store.recordEvent(email, "artifact_dropped", { taskId, jobId: job.id, message: d.slice(0, 200) });
   }
+  restStatus();
   await commitUser(email, profile, list);
   await store.recordEvent(email, "step_done", { taskId, jobId: job.id, message: updated?.steps?.[index]?.text?.slice(0, 200) });
   return "step executed";

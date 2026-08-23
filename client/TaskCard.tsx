@@ -310,12 +310,25 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   // you decide" input does for a non-automatable gating step. This was previously wired server-side with
   // no client UI at all: the question/options were computed and stored but never rendered or answerable.
   const [answering, setAnswering] = useState<number | null>(null);
+  // The route enqueues and returns right away rather than waiting for the actual run (see server/index.ts's
+  // /step/:index/run) — the answer is already captured as the queued job's input the moment this resolves,
+  // so there's nothing left to wait on here. Clear the question/options optimistically so the student isn't
+  // staring at a stale prompt while it works in the background; the open tab's kick loop (client/App.tsx)
+  // picks the actual run up within seconds and folds the real result in once it's done.
   const answerStep = async (i: number, answer: string) => {
     if (!answer.trim()) return;
     setAnswering(i);
-    try { onTask(await api.runStep(task.id, i, answer.trim())); } // runStep returns the ONE updated task, not the list
-    catch (e: any) { notify(e?.message || L("Échec de la réponse — réessaie.", "Couldn't send that answer — try again."), "error"); }
-    finally { setAnswering((cur) => (cur === i ? null : cur)); }
+    const currentTask = task;
+    const optimisticSteps = (task.steps || []).map((s, si) => si !== i ? s
+      : { ...s, question: undefined, options: undefined, result: L(`Tu as répondu : ${answer.trim()} — Otto s'en occupe…`, `You answered: ${answer.trim()} — Otto's on it…`) });
+    onTask({ ...task, steps: optimisticSteps });
+    try {
+      const updated = await api.runStep(task.id, i, answer.trim());
+      onTask(updated);
+    } catch (e: any) {
+      onTask(currentTask); // revert — restores the real question so the student can retry
+      notify(e?.message || L("Échec de la réponse — réessaie.", "Couldn't send that answer — try again."), "error");
+    } finally { setAnswering((cur) => (cur === i ? null : cur)); }
   };
 
   // ── chat state lives here so "Je bloque" (hero) and "Aide" (step list) can both seed the thread ──

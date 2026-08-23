@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
@@ -706,13 +706,28 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
   void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
   res.json(req.session.tasks || []);
 });
-// Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue,
-// same as full runs, so it's durably locked and audited.
+// Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue, same
+// as full runs, so it's durably locked and audited. Enqueue-and-return, NOT enqueue-and-drain: a step run
+// can involve a real tool call (draft an email, search, create a doc) that routinely takes well past what
+// a click should block on — especially answering an inline question, where the answer itself is already
+// captured as the job's input (see tasks.runStep's `answer` handling) the moment it's queued. The open
+// tab's kick loop (client/App.tsx) drains queued/executing work within seconds; cron covers it offline.
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run steps." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  const id = String(req.params.id);
+  const index = Number(req.params.index);
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
-  await runViaJob(req, res, "execute_step", { index: Number(req.params.index), ...(answer ? { answer } : {}) });
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  if (!task || !task.steps?.[index]) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
+  try {
+    const job = await enqueueJob(req.session.user!, "execute_step", id, { index, ...(answer ? { answer } : {}) });
+    if (job.type !== "execute_step") { res.status(409).json({ error: "Otto is still working on this task — try again in a moment." }); return; }
+    if (!isInFlight(task.status)) task.status = "queued";
+    task.updatedAt = new Date().toISOString();
+    await commit(req);
+    res.json(task);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "run failed" }); }
 });
 // Mark a step done/undone (a manual step the user did, or after the client opened a URL step).
 app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), async (req, res) => {
