@@ -62,10 +62,16 @@ export function applyDeadlineUrgency<T extends { when?: string; urgency: number;
 function normTitle(s: string): string { return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
 /** Generic action verbs / fillers that DON'T distinguish one to-do from another — ignored when comparing
  *  titles, so two tasks are judged "the same" by their DISTINCTIVE words (amounts, brands, names, dates). */
+/* NOTE: action verbs that name WHAT KIND of to-do this is (call/email/send/reply/ask/pay/book/buy/read/mail)
+   are deliberately NOT in this list, even though they look like filler — they're exactly what distinguishes
+   "email professor Smith about the extension" from "call professor Smith about the schedule". Stripping
+   them as generic collapsed both to the same {professor, smith} token set and silently merged two
+   unrelated tasks about the same person into one (the second one just vanished). Only true fillers that
+   never change what the task actually is belong here. */
 const GENERIC_WORDS = new Set([
-  "use", "get", "got", "make", "made", "add", "set", "ask", "the", "for", "your", "you", "and", "with", "from",
-  "before", "after", "this", "that", "need", "needs", "send", "reply", "pay", "book", "buy", "read", "sort",
-  "plan", "prep", "review", "check", "email", "mail", "call", "off", "out", "new", "via", "per", "due", "day",
+  "use", "get", "got", "make", "made", "add", "set", "the", "for", "your", "you", "and", "with", "from",
+  "before", "after", "this", "that", "need", "needs", "sort",
+  "plan", "prep", "review", "check", "off", "out", "new", "via", "per", "due", "day",
   "days", "week", "soon", "now", "all", "any", "into", "onto", "about", "then", "complete", "finish", "update",
 ]);
 function distinctiveTokens(s: string): Set<string> {

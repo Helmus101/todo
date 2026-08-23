@@ -41,6 +41,13 @@ check("new email not suppressed by similar done task", dedupeTasks([doneOld, new
 // …but two ACTIVE same-title cards (distinct anchors) still merge — no visual duplicates for the user.
 const activeOld = { ...doneOld, id: "ac1", status: "needs_review" };
 check("active same-title cards still merge", dedupeTasks([activeOld, newEmail]).length === 1);
+// Two ACTIVE tasks naming the same person but a DIFFERENT action must NOT merge — "call"/"email" etc. used
+// to be treated as generic filler words, so "Email professor Smith about the extension" and "Call professor
+// Smith about the schedule" both reduced to {professor, smith} and silently collapsed into one, quietly
+// losing whichever task was added second. (Regression: action verbs are distinguishing, not noise.)
+const callSmith = { ...base, id: "cs1", title: "Call professor Smith about the schedule", why: "office hours conflict", source: "gmail", status: "ready", anchorKey: "gmail:cs1" };
+const emailSmith = { ...base, id: "cs2", title: "Email professor Smith about the extension", why: "needs more time on the essay", source: "gmail", status: "ready", anchorKey: "gmail:cs2" };
+check("same-person different-action tasks do NOT merge", dedupeTasks([callSmith, emailSmith]).length === 2);
 // …same anchor (formatting drift) always merges, regardless of status.
 check("same anchor still merges", dedupeTasks([doneOld, { ...newEmail, anchorKey: "GMAIL_OLD1" }]).length === 1);
 // …and anchorless title dups still merge (agent-sweep fallback, non-manual source).
@@ -391,6 +398,16 @@ const evs = calendarToItems({ items: [
   { id: "soon1", summary: "Client call", start: { dateTime: "2026-07-19T15:00:00Z" } },
 ] }, NOW);
 check("started events dropped, upcoming kept", evs.length === 1 && evs[0].externalId === "soon1");
+// All-day events carry a bare date ("2026-07-19", no time) — Date.parse resolves that to 00:00:00 UTC, which
+// is BEFORE `now` (noon UTC the same day) once the 1h grace window is subtracted, so before the fix this was
+// wrongly treated as "already started" and dropped for most of its own actual day. It must survive until the
+// end of its calendar day, not its literal UTC-midnight instant.
+const allDayEvs = calendarToItems({ items: [
+  { id: "allday1", summary: "Exam day", start: { date: "2026-07-19" } },
+  { id: "alldayOld", summary: "Last week's holiday", start: { date: "2026-07-10" } },
+] }, NOW);
+check("today's all-day event survives past UTC midnight", allDayEvs.some((e) => e.externalId === "allday1"));
+check("a genuinely past all-day event is still dropped", !allDayEvs.some((e) => e.externalId === "alldayOld"));
 const thread = (labels, ts) => ({ sourceApp: "gmail", externalId: "t1", anchorKey: "gmail:t1", title: "Budget question", snippet: "…", sender: "a@b.com", timestamp: ts, labels });
 const replied = dedupeByThread([thread(["inbox"], "2026-07-18T10:00:00Z"), thread(["sent"], "2026-07-18T14:00:00Z")]);
 check("user's newer reply wins (thread handled)", replied.length === 1 && replied[0].labels.includes("sent"));

@@ -87,7 +87,14 @@ export function calendarToItems(data: any, now: number = Date.now(), account?: {
     const start = e?.start?.dateTime || e?.start?.date || e?.start || "";
     // An event that already started can't be prepped for — it must never become a "prep" task.
     const startMs = Date.parse(String(start)) || 0;
-    if (startMs && startMs < now - 60 * 60_000) return null;
+    // All-day events carry a bare date ("2026-08-23", no time), which Date.parse resolves to 00:00:00 UTC —
+    // for any UTC+ user (this app's own French/EU target market) that reads as "already started" for
+    // nearly the entire actual day, silently dropping exam days/holidays/all-day deadline markers from
+    // discovery most of the time they're genuinely relevant. Give an all-day event (has `.date`, no
+    // `.dateTime`) until the end of its calendar day, not its literal UTC-midnight instant.
+    const isAllDay = !!e?.start?.date && !e?.start?.dateTime;
+    const cutoffMs = isAllDay ? startMs + 24 * 60 * 60_000 : startMs;
+    if (cutoffMs && cutoffMs < now - 60 * 60_000) return null;
     return {
       sourceApp: "calendar",
       externalId: id,

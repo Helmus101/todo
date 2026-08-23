@@ -2239,6 +2239,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
               const kind = /^GOOGLESHEETS_/i.test(toolName) ? "spreadsheets" : /^GOOGLESLIDES_/i.test(toolName) ? "presentation" : "document";
               const label = input?.title ? String(input.title).slice(0, 80) : undefined;
               lastCreatedDoc = { kind, id: idMatch[1], label };
+            } else {
+              // Same silent-failure class as the Gmail draft id guard above, and just as costly: a create
+              // call that reports success but whose response shape none of the id patterns match means
+              // BOTH the artifact link AND the "Otto may only edit what it created" carve-out silently never
+              // apply to a doc that genuinely exists — previously with zero trace to diagnose it by.
+              logAudit("tool", `${toolName} a réussi mais son id n'a pas pu être extrait de la réponse — pas de lien ni de droit d'édition cette fois (réponse : ${String(r).slice(0, 160)})`);
             }
           }
         }

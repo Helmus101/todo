@@ -513,6 +513,17 @@ function relevance(n: string): number {
   return s;
 }
 
+// Actions that must NEVER lose their per-toolkit slot to a ranking tie/near-tie, however tight the write
+// quota gets with many apps connected. GMAIL_UPDATE_EMAIL_DRAFT scores HIGHER than GMAIL_CREATE_EMAIL_DRAFT
+// on relevance() (the UPDATE bonus), and several ordinary Gmail write actions (MODIFY_THREAD_LABELS, etc.)
+// tie it — with only ~2-3 write slots left once several toolkits are connected, CREATE_EMAIL_DRAFT could
+// silently fail to make the cut. That's not a tool error the model can retry around — the tool schema
+// simply isn't offered that round, so "draft a reply" quietly does nothing with no error anywhere. This is
+// the confirmed live-reported "Otto doesn't draft emails" failure class.
+const MUST_INCLUDE_ACTIONS: Record<string, string[]> = {
+  gmail: ["GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_UPDATE_EMAIL_DRAFT"],
+};
+
 // Some toolkits ship several near-duplicate actions for the SAME verb+noun (Composio's GOOGLEDOCS has
 // CREATE_DOCUMENT / CREATE_DOCUMENT2 / CREATE_DOCUMENT_MARKDOWN, and four different UPDATE_DOCUMENT_*
 // variants) — left alone, relevance ties let ONE verb family (e.g. all the UPDATE_DOCUMENT_* forms) eat
@@ -624,6 +635,15 @@ export async function readAction(userId: string, action: string, args: Record<st
   if (policy !== "auto" || !isRead(action.toUpperCase())) throw new Error(`not an allowed read action: ${action}`);
   const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
   if (r && r.successful === false) throw new Error(String(r.error || `read failed: ${action}`));
+  // `successful` being anything other than an explicit `true`/`false` (missing, or a degraded/partial
+  // response from a Composio hiccup) used to be silently treated as a normal success — the caller (and
+  // the model reasoning over it) had no way to tell "genuinely nothing here" from "this read actually
+  // failed but didn't say so." Logging it doesn't change behavior (still best-effort returns whatever data
+  // is there — some legitimate successful responses may just omit the field), but a false-success is now
+  // at least diagnosable instead of an invisible cause of "Otto seems to be missing things."
+  if (r && r.successful !== true) {
+    console.warn(`[integrations] readAction ${action}: ambiguous response (successful=${r.successful}), returning best-effort data`);
+  }
   return r?.data ?? r;
 }
 
@@ -899,6 +919,25 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
     const readQuota = Math.ceil(perToolkit * 0.6);
     const chosen = [...reads.slice(0, readQuota), ...writes.slice(0, perToolkit - Math.min(readQuota, reads.length))];
     for (const x of ranked) { if (chosen.length >= perToolkit) break; if (!chosen.includes(x)) chosen.push(x); }
+    // Force in any must-include action this toolkit actually has but the ranking cut — evicting the
+    // LOWEST-relevance write slot to make room (never a read slot: the agent still needs context to draft
+    // anything well). See MUST_INCLUDE_ACTIONS' comment for why this exists.
+    for (const mustName of MUST_INCLUDE_ACTIONS[app] || []) {
+      const entry = ranked.find((x) => x.rawName.toUpperCase() === mustName);
+      if (!entry || chosen.includes(entry)) continue;
+      if (chosen.length >= perToolkit) {
+        let evictIdx = -1, evictScore = Infinity;
+        for (let i = 0; i < chosen.length; i++) {
+          const c = chosen[i];
+          if (isRead(c.rawName)) continue;
+          if ((MUST_INCLUDE_ACTIONS[app] || []).includes(c.rawName.toUpperCase())) continue;
+          const sc = relevance(c.rawName);
+          if (sc < evictScore) { evictScore = sc; evictIdx = i; }
+        }
+        if (evictIdx >= 0) chosen.splice(evictIdx, 1);
+      }
+      if (chosen.length < perToolkit) chosen.push(entry);
+    }
     let added = 0;
     for (const { t, rawName } of chosen) {
       if (tools.length >= MAX || added >= perToolkit) break; // cap PER toolkit so every connected app is represented
