@@ -66,6 +66,11 @@ function sweepSkipMessage(note: string, en?: boolean): string {
   return en ? `Sweep didn't finish: ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}` : `Vérification incomplète : ${note.replace(/^(skipped:|sweep \w+:?)\s*/i, "")}`;
 }
 
+// Today, full form for the dashboard's top-of-page date line — "dimanche 23 août" / "Sunday, August 23".
+function todayLong(lang?: string): string {
+  return new Date().toLocaleDateString(lang === "en" ? "en-US" : "fr-FR", { weekday: "long", month: "long", day: "numeric" });
+}
+
 // A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date.
 function fmtDay(iso: string): string {
   const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
@@ -593,9 +598,12 @@ export function App() {
       ) : (
         <main className="list-wrap" key="dash">
           <div className="dash-head">
+            <p className="dash-date">{todayLong(status?.language)}</p>
             <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span className="accent-num">{status.name || firstName(status.user)}</span></> : null}.</h1>
             {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
-                that read like debug output, not like something written for a stressed 17-year-old. */}
+                that read like debug output, not like something written for a stressed 17-year-old. A second
+                sentence names what's actually next (the hero task) rather than just a count, so the line
+                reads as a real summary of where things stand, not just a tally. */}
             <p className="dash-line">
               {live.length === 0
                 ? (doneToday > 0
@@ -604,6 +612,11 @@ export function App() {
                 : (en
                     ? `${live.length} thing${live.length > 1 ? "s" : ""} left today${doneToday > 0 ? ` — ${doneToday} already done` : ""}.`
                     : `${live.length} chose${live.length > 1 ? "s" : ""} à faire aujourd'hui${doneToday > 0 ? ` — ${doneToday} déjà faite${doneToday > 1 ? "s" : ""}` : ""}.`)}
+              {live.length > 0 && heroTask ? (
+                <span className="dash-next">
+                  {en ? ` Next up: ${heroTask.title}.` : ` Ensuite : ${heroTask.title}.`}
+                </span>
+              ) : null}
               {/* One status signal at a time, in priority order — overdue outranks in-progress work,
                   which outranks a routine scan — instead of stacking every pill that happens to apply. */}
               {overdueCount > 0 ? (

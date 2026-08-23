@@ -30,8 +30,14 @@ export interface SourceItem {
 }
 
 // Deterministic noise filters — mass mail never even reaches the model.
-const NOISE_SENDER = /no-?reply|donotreply|newsletter|marketing|notifications?@|updates?@|news@|mailer@|bounce|billing@|receipts?@|noreply/i;
-const NOISE_SUBJECT = /unsubscribe|newsletter|weekly digest|daily digest|% off|sale ends|flash sale|your receipt|order confirmation|payment received|has shipped|delivery update|verify your email|security alert/i;
+const NOISE_SENDER = /no-?reply|donotreply|newsletter|marketing|updates?@|news@|mailer@|bounce/i;
+const NOISE_SUBJECT = /unsubscribe|newsletter|weekly digest|daily digest|verify your email|security alert/i;
+// Life-admin mail that USED to be hard-dropped as noise (it comes from an automated/billing-style sender
+// and often LOOKS like a receipt) but is exactly what a "mind the renewals/returns/duplicate subscriptions"
+// pass needs to see: a subscription about to renew or jump in price, a return/exchange window closing, a
+// check-in window opening. Automated ≠ irrelevant — let the classifier (server/claude.ts) judge these on
+// their merits instead of a deterministic filter discarding them before it ever gets the chance.
+const ACTIONABLE_AUTOMATED = /renew(s|al|ing|ed)?\b|price (increase|change|goes up|rises|will (jump|rise))|trial (ends|ending|expires)|about to (charge|renew)|return (by|window|deadline|policy)|exchange (by|window)|final (day|days|chance) to return|check-?in (opens|available|window)|boarding pass|subscription/i;
 // Otto's own "new task" alert (server/jobs.ts's notifyNewTasks) is sent from the user's Gmail to that
 // same address — it shows up in both "inbox" and "sent" reads with a normal sender, so neither noise
 // filter above would catch it. Left unfiltered, the NEXT sweep reads its own alert email back as a
@@ -41,6 +47,7 @@ const OTTO_SELF_EMAIL_SUBJECT = /^otto\s*[—-]\s*(nouvelle t[âa]che|\d+\s*nouv
 export function isNoise(it: SourceItem): boolean {
   if (it.sourceApp === "gmail" && OTTO_SELF_EMAIL_SUBJECT.test(it.title || "")) return true;
   if (it.labels.includes("sent")) return false; // the user's own commitments are never noise
+  if (ACTIONABLE_AUTOMATED.test(it.title || "") || ACTIONABLE_AUTOMATED.test(it.snippet || "")) return false;
   return NOISE_SENDER.test(it.sender || "") || NOISE_SUBJECT.test(it.title || "");
 }
 
@@ -205,6 +212,17 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:sent newer_than:10d", max_results: 15,
     }, acc.id), "sent", acc)),
+    // Life-admin sweep: renewal/price-hike notices and order confirmations that gate a return window are
+    // exactly the mail Gmail auto-sorts into Promotions/Updates (dropped by the -category filter above),
+    // and a return window (often 30 days) regularly outlives the 7-day inbox lookback — so without this,
+    // isNoise's ACTIONABLE_AUTOMATED carve-out never gets anything to actually see. Bounded by keyword
+    // match (not a blanket promotions read) so this doesn't reopen the door to plain marketing blasts.
+    grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
+      query: `in:inbox newer_than:30d (subscription OR renews OR renewal OR "price increase" OR "trial ends" ` +
+        `OR "trial expires" OR "return by" OR "return window" OR "exchange by" OR "final day to return" OR ` +
+        `"final days to return" OR "check-in" OR "boarding pass")`,
+      max_results: 15,
+    }, acc.id), "inbox", acc)),
   ]);
   const calGrabs = calAccounts.map((acc) => grab(async () => {
     const now = new Date();

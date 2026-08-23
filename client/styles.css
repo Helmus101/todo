@@ -284,15 +284,24 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* MOBILE-FIRST: 16px gutters are the base (a 375px phone has little room to give away, but 14px read as
    cramped against the edge — 16px is the standard mobile-app minimum margin); desktop widens them
    further in the min-width:641px block below. */
-.list-wrap { width: 100%; max-width: 1040px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 16px 120px; animation: pageIn 0.32s var(--ease) backwards; }
+/* Matches Settings' own max-width (680px) — one consistent "single centered column" width across the
+   app at every screen size, instead of the dashboard uniquely stretching wide on a big screen. */
+.list-wrap { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 16px 120px; animation: pageIn 0.32s var(--ease) backwards; }
 .dash-head { margin-bottom: var(--space-6); }
+/* A small eyebrow above the greeting — today's date, so the dashboard reads as "here's where things stand
+   today" at a glance, not just a generic hello. Muted, not competing with the greeting for attention. */
+.dash-date { margin: 0 0 4px; font-size: var(--text-xs); letter-spacing: 0.02em; color: var(--ink-3); text-transform: capitalize; }
+/* Continues the same sentence-line as .dash-line's count, naming what's actually next — plain text, not a
+   pill (only real status signals like overdue/working get pill treatment). */
+.dash-next { color: var(--ink-2); }
 
-/* ─── Two-zone dashboard ──────────────────────────────────────────────────────
-   Add-task leads — it's the one always-available capture action, so it sits right under the greeting on
-   both mobile and desktop. The TaskHero spotlight (inside dash-today) follows immediately after. Below
-   1024px this is a single flex column and `order` alone gives the right stacking; at 1024px+ it becomes
-   a real two-column grid, add-task+Today staying first in the main column, widgets in a sticky right
-   rail as ambient context. */
+/* ─── One-column dashboard, at every width ────────────────────────────────────
+   No desktop-only sidebar split — a real mobile app doesn't grow a second column
+   just because the viewport got wider, it stays one column and the "screen" just
+   gets a little more breathing room. Add-task leads (the one always-available
+   capture action), the TaskHero spotlight follows, then the rail (ambient
+   exam/week context), then Later/Completed — same order at any screen size,
+   `order` alone gives the stacking. */
 .dash-grid { display: flex; flex-direction: column; }
 .dash-addtask { margin-bottom: var(--space-6); order: 0; }
 .dash-today { order: 1; }
@@ -309,25 +318,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    entirely rather than showing an empty bordered box. */
 .dash-rail:empty { display: none; border: none; box-shadow: none; padding: 0; margin: 0; }
 .dash-more { margin-top: 24px; order: 3; }
-@media (min-width: 1024px) {
-  .list-wrap { max-width: 1320px; }
-  .dash-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 340px;
-    column-gap: 44px;
-    row-gap: 0;
-    align-items: start;
-  }
-  .dash-addtask { grid-column: 1; grid-row: 1; }
-  .dash-today { grid-column: 1; grid-row: 2; }
-  .dash-more { grid-column: 1; grid-row: 3; }
-  .dash-rail {
-    grid-column: 2; grid-row: 1 / 4;
-    position: sticky; top: 88px;
-    margin: 0;
-  }
-  .dash-rail .milestone-list { flex-direction: column; overflow-x: visible; padding-bottom: 0; }
-}
 .exam-strip-wrap { margin: 0; }
 .exam-strip-label { font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--space-2); opacity: 0.85; }
 /* One row per exam, same treatment as .week-load-strip/.week-day right below it in the same panel —
@@ -626,11 +616,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   100% { opacity: 0; transform: translateY(-50%) scale(1); }
 }
 
-/* ─── Task detail modal ─────────────────────────────────────────────────────── */
+/* ─── Task detail "screen" ──────────────────────────────────────────────────────
+   Full-bleed at EVERY width, not just mobile — opening a task reads as navigating
+   to a new screen, the way a real app does, never as a dialog box floating over
+   the page. (`100dvh` tracks the real visible viewport as mobile browser chrome
+   collapses/expands on scroll — see the notch/safe-area handling below; harmless,
+   just unused space on a desktop browser chrome that doesn't do that.) */
 .task-modal-overlay {
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center;
-  padding: 6vh 16px 16px; background: rgba(16, 19, 23, 0.42); backdrop-filter: blur(2px);
-  animation: fadeIn 0.16s var(--ease); overflow-y: auto;
+  padding: 0; background: rgba(16, 19, 23, 0.42);
+  animation: fadeIn 0.16s var(--ease); overflow-x: hidden; overflow-y: auto; height: 100dvh;
   /* Mobile scroll feel: momentum scrolling (iOS Safari still needs the -webkit prefix for it) and
      overscroll-behavior so scrolling past the top/bottom of the modal doesn't chain into the page behind
      it — a full-bleed modal rubber-banding the body underneath is the single most common "janky" mobile
@@ -638,18 +633,28 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
-/* True vertical centering on desktop — was top-anchored at a fixed 6vh, which read as "stuck to the top"
-   rather than a centered dialog. `safe center` centers a short task normally but falls back to top-aligned
-   (scrollable) instead of clipping the top of a LONG one — plain `center` can't do that; unsupported browsers
-   just ignore this line and keep the flex-start above, so this is purely additive. */
-@media (min-width: 641px) { .task-modal-overlay { align-items: safe center; } }
 .task-modal {
-  position: relative; width: 100%; max-width: 760px; background: var(--surface);
-  border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-pop);
-  padding: 8px 20px 20px; animation: modalPop 0.18s var(--ease);
+  position: relative; width: 100%; max-width: none; background: var(--surface);
+  border: none; border-radius: 0; box-shadow: none;
+  min-height: 100%; min-height: 100dvh;
+  /* Padded for a notch/Dynamic Island and the home-indicator bar on a phone; env() resolves to 0 on a
+     device without either, so this is a no-op safety margin on desktop, not a visible gap. */
+  padding-top: calc(8px + env(safe-area-inset-top));
+  padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  padding-left: calc(20px + env(safe-area-inset-left));
+  padding-right: calc(20px + env(safe-area-inset-right));
+  animation: modalPop 0.18s var(--ease);
 }
+/* A note/deck's own capped-height inner scrollbox made sense in a small floating desktop card — full-bleed
+   at every width it just produces a second, confusingly independent scroll region. Let the single outer
+   modal scroll instead. */
+.note-popup, .deck-popup { max-height: none; overflow-y: visible; }
 .task-modal-x {
-  position: absolute; top: 12px; right: 12px; z-index: 2; width: 30px; height: 30px; border: none;
+  /* `position: absolute` is against the modal's BORDER box, which ignores its own padding-top — on a
+     notched phone the ✕ would land under the status bar/Dynamic Island, effectively untappable, without
+     the same safe-area offset applied directly here too. */
+  position: absolute; top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right));
+  z-index: 2; width: 30px; height: 30px; border: none;
   background: transparent; color: var(--ink-3); font-size: 14px; border-radius: var(--radius-sm); cursor: pointer;
   display: flex; align-items: center; justify-content: center; transition: background 120ms var(--ease), color 120ms var(--ease);
 }
@@ -678,38 +683,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .task-modal-x.nested { top: 12px; right: 12px; }
 
-@media (max-width: 640px) {
-  /* `100%`/the fixed overlay's own box only matches the LAYOUT viewport, not the VISIBLE one — on iOS
-     Safari the address bar collapses/expands as you scroll, so the real visible screen height changes
-     while the overlay's height (and thus the modal's `min-height: 100%` below) stays pinned to whatever
-     it was on open. That's exactly what produced the reported bug: background peeking around the modal
-     mid-scroll, gone once the toolbar settles. `100dvh` tracks the actual visible viewport continuously;
-     unsupported browsers just ignore it and keep the `inset: 0` sizing above. */
-  /* THE actual cause of the page bleeding through on mobile: `.task-modal-overlay` is `display: flex` with
-     the default row direction, so `align-items` controls the CROSS axis, i.e. height. `stretch` forces
-     `.task-modal`'s height to exactly one screen no matter how tall its content is — anything past that
-     first screen overflows outside the modal's own painted background, out into the overlay's translucent
-     tint, which is the dashboard page showing through. `flex-start` lets the modal size to its own content
-     (still at least one full screen via `min-height: 100dvh` below) instead of being clamped to it. */
-  .task-modal-overlay { padding: 0; align-items: flex-start; overflow-x: hidden; height: 100dvh; backdrop-filter: none; -webkit-backdrop-filter: none; }
-  /* Full-bleed on a phone — pad for the notch/Dynamic Island and the home-indicator bar so the ✕ button
-     and the last row of content never sit under either (standalone PWA has no browser chrome to absorb it). */
-  .task-modal {
-    max-width: none; border-radius: 0; min-height: 100%; min-height: 100dvh;
-    padding-top: calc(8px + env(safe-area-inset-top));
-    padding-bottom: calc(20px + env(safe-area-inset-bottom));
-    padding-left: calc(20px + env(safe-area-inset-left));
-    padding-right: calc(20px + env(safe-area-inset-right));
-  }
-  /* .task-modal-x is `position: absolute` against the modal's BORDER box, which ignores the padding-top
-     above — on a notched phone the ✕ was landing under the status bar/Dynamic Island, effectively
-     untappable. It needs the same safe-area offset applied directly, not inherited from the parent's padding. */
-  .task-modal-x { top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); }
-  /* A note/deck's own capped-height inner scrollbox made sense in a small floating desktop card — full-bleed
-     on a phone it just produced a second, confusingly independent scroll region (plus dead space below it
-     when the note was short) instead of the whole screen scrolling as one. Let the single outer modal scroll. */
-  .note-popup, .deck-popup { max-height: none; overflow-y: visible; }
-}
 .note-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 /* Audit log — what Otto actually did, so it's verifiable rather than just claimed. Kept to ink/bg-2 tones
    per the one-accent-color rule; guardrail entries get a subtle bg emphasis (still not a new color), same
@@ -1687,8 +1660,9 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .landing-sec { padding: 40px 20px; }
 
 /* ─── Desktop / tablet upgrades ────────────────────────────────────────────────
-   Everything above is the phone layout. This block is the only place a bigger screen earns more: wider
-   gutters, roomier card insets, slightly smaller controls (a mouse doesn't need a 44px target). */
+   Everything above is the phone layout. Controls stay touch-sized at every width now — this is meant to
+   read as a mobile app, not a layout that quietly re-optimizes its hit targets for a mouse — so this
+   block is ONLY wider gutters/insets/layout direction, never smaller buttons or inputs. */
 @media (min-width: 641px) {
   .topbar { gap: var(--space-5); padding: 0 var(--space-5); padding-left: calc(20px + env(safe-area-inset-left)); padding-right: calc(20px + env(safe-area-inset-right)); }
   .list-wrap, .settings-page { padding-left: 24px; padding-right: 24px; padding-bottom: 140px; }
@@ -1696,13 +1670,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   .card { gap: 14px; padding: 16px 18px 16px 26px; }
   .card::before { left: 11px; top: 25px; }
   .card-badges .chip { font-size: var(--text-xs); padding: 2px 8px; }
-  .btn { height: 40px; }
-  .btn.xs { height: 30px; }
-  .btn.big { height: 46px; }
-  input, textarea, .addinput { height: 40px; font-size: 14px; }
-  .addinput.sm, .step-input { height: 34px; font-size: 13px; }
-  .chat-input { font-size: var(--text-base); }
-  .add-task-input { font-size: 15.5px; height: 34px; }
   .hero-cta { flex-direction: row; width: auto; }
   .hero-cta .btn { width: auto; }
   .landing-sec { padding: 76px 24px; }

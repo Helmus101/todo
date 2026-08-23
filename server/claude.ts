@@ -1051,7 +1051,9 @@ export async function classifyCandidates(
   const sys =
     languageLine(profile) + trackLine(profile) +
     `This is for a STUDENT'S to-do list — Otto is their companion, not a do-it-all; a task should name a real ` +
-    `next action THEY take, never phrase graded/learning work as already done for them.\n` +
+    `next action THEY take, never phrase graded/learning work as already done for them. Beyond schoolwork, Otto ` +
+    `also minds their personal life admin (subscriptions, returns, renewals) surfaced in the same inbox — see ` +
+    `the LIFE ADMIN exception below.\n` +
     `You classify a person's inbox/calendar/drive items into their to-do list. For each candidate decide if it ` +
     `GENUINELY needs them to act. TENTATIVE ≠ A COMMITMENT — "maybe I'll send it over", "I might look into X", ` +
     `"we should grab coffee sometime" are casual musings, not promises; only a clear, specific commitment ` +
@@ -1077,6 +1079,15 @@ export async function classifyCandidates(
     `Gmail promotions/social label are all signals of this. This holds even if it asks a question, has a ` +
     `"reply"/"take our survey" call-to-action, or looks personalized (a school's mass newsletter addressed ` +
     `"Dear Willem" is still mass mail) — it is still not a real to-do. Skip it entirely, no matter how it's worded.\n` +
+    `EXCEPTION — LIFE ADMIN FROM AN AUTOMATED SENDER: an automated/billing-style email can still be a genuine ` +
+    `task when it's telling them money or a window is about to move, not selling them something: (1) a ` +
+    `subscription/free trial that's about to renew or jump in price — task to CANCEL before the date, "why" ` +
+    `states the price and date; (2) an order/purchase email where a return or exchange window is closing soon — ` +
+    `task to RETURN before the deadline, "why" states the item and date; (3) two or more items clearly paying ` +
+    `for the same kind of service (two cloud-storage plans, two streaming subs) — task to pick one and cancel ` +
+    `the other. Only when a real date/price is stated or directly implied — never invent one. A plain "here's ` +
+    `your receipt" with nothing time-sensitive is still noise; a plain sale/promo blast with no account of ` +
+    `theirs behind it is still noise.\n` +
     `USE THEIR PROFILE: items from their HIGH-PRIORITY people or touching their stated projects rank ` +
     `HIGHER (importance ≥ 0.7); things their preferences deprioritize rank lower or get skipped. Quality over ` +
     `quantity — the handful that matter. ALWAYS include: a direct question or request from a real person awaiting ` +
