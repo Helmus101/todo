@@ -541,9 +541,18 @@ const isRead = (n: string) => /(GET|LIST|FIND|SEARCH|FETCH|READ|DOWNLOAD|EXPORT|
 
 /** A READ-ONLY view of an AgentTools set, for the generation sweep: it only ever reads, so shipping write
  *  schemas to it every round is pure token waste — and this makes "READ ONLY" structural, not prompt-enforced.
- *  (Sanitized tool names keep the Composio verb words, so isRead matches them directly.) */
+ *  (Sanitized tool names keep the Composio verb words, so isRead matches them directly.)
+ *  The `call` closure is ALSO gated here, not just the schema list — filtering the schema alone still let
+ *  a hallucinated call to a real write action name (one never offered) reach `t.call` unconditionally, the
+ *  exact "enforcement can't rely on the model just not trying" gap runTask's PLAN-ONLY mode already guards
+ *  against with its own code-level WRITE_NAME check. The generation sweep is the one that's supposed to be
+ *  strictest (pure read, runs unattended) — it shouldn't be the one relying purely on prompt/schema discipline. */
 export function readOnly(t: AgentTools): AgentTools {
-  return { tools: t.tools.filter((x) => isRead(x.name)), call: t.call, connected: t.connected };
+  return {
+    tools: t.tools.filter((x) => isRead(x.name)),
+    call: (name, args) => isRead(name) ? t.call(name, args) : Promise.resolve(`Blocked: "${name}" is a write action — this run is read-only.`),
+    connected: t.connected,
+  };
 }
 
 /** Creating a brand-new Google Doc/Sheet/Slides (never editing an existing one) — private to the user,
@@ -949,18 +958,28 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
 }
 
 // Connection statuses for the hot /api/status path — cached briefly so polling doesn't hammer Composio.
+// TTL must be LONGER than the client's status poll interval (45s — see client/App.tsx's syncTick), or
+// every single poll misses the cache and re-hits Composio anyway, defeating the point of caching at all.
 const statusCache = new Map<string, { at: number; data: Record<string, boolean> }>();
 export async function connectionStatusesCached(userId: string, apps: string[]): Promise<Record<string, boolean>> {
   if (!integrationsReady() || !userId) return Object.fromEntries(apps.map((a) => [a, false]));
   const hit = statusCache.get(userId);
-  if (hit && Date.now() - hit.at < 30_000) return hit.data;
+  if (hit && Date.now() - hit.at < 60_000) return hit.data;
   const data = await getAllConnectionStatuses(userId, apps);
   statusCache.set(userId, { at: Date.now(), data });
   return data;
 }
 
 /** Drop cached tools + statuses for a user (after they connect/disconnect something). */
-export function invalidateTools(userId: string): void { cache.delete(userId); statusCache.delete(userId); acctListCache.delete(userId); }
+/** Drop cached tools + statuses for a user (after they connect/disconnect something). `cache` can also hold
+ *  account-routed entries keyed `${userId}::${toolkit}:${accountId}` (see getAgentTools) — deleting only the
+ *  plain `userId` key left those surviving for up to CACHE_MS after a disconnect, still offering tools/
+ *  routing for an account that's no longer connected. Clear every key prefixed with this user's id. */
+export function invalidateTools(userId: string): void {
+  for (const k of cache.keys()) if (k === userId || k.startsWith(`${userId}::`)) cache.delete(k);
+  statusCache.delete(userId);
+  acctListCache.delete(userId);
+}
 
 /**
  * Like getAgentTools() but WITHOUT the write-gate — used ONLY for user-approved step runs.

@@ -93,19 +93,22 @@ const taskDateLabel = (t: WebTask, L: (fr: string, en: string) => string): strin
 const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
 // Name WHAT a link is, not just where it points — "Doc" beats "docs.google.com" on the card. Kept short —
 // this is a button label, not a description, so it should read at a glance next to "Open ↗".
-function linkKind(u?: string): string {
+// `L` defaults to identity (English) for any caller that hasn't been updated — but every in-app call site
+// now passes the real L() so a French student doesn't see a bare English noun ("Ouvrir Doc ↗") spliced
+// into an otherwise-translated sentence, which is what happened before this had no L param at all.
+function linkKind(u?: string, L: (fr: string, en: string) => string = (_fr, en) => en): string {
   const s = u || "";
-  if (/docs\.google\.com\/document/.test(s)) return "Doc";
-  if (/docs\.google\.com\/spreadsheets/.test(s)) return "Sheet";
-  if (/docs\.google\.com\/presentation/.test(s)) return "Slides";
-  if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return "Form";
-  if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? "Draft" : "Email";
-  if (/calendar\.google\.com/.test(s)) return "Event";
-  if (/drive\.google\.com/.test(s)) return "File";
-  if (/maps\.google\.com|google\.com\/maps/.test(s)) return "Directions";
-  if (/^tel:/.test(s)) return "Call";
+  if (/docs\.google\.com\/document/.test(s)) return L("Document", "Doc");
+  if (/docs\.google\.com\/spreadsheets/.test(s)) return L("Feuille", "Sheet");
+  if (/docs\.google\.com\/presentation/.test(s)) return L("Diapositives", "Slides");
+  if (/docs\.google\.com\/forms|forms\.gle/.test(s)) return L("Formulaire", "Form");
+  if (/mail\.google\.com/.test(s)) return /#drafts/.test(s) ? L("Brouillon", "Draft") : L("Email", "Email");
+  if (/calendar\.google\.com/.test(s)) return L("Événement", "Event");
+  if (/drive\.google\.com/.test(s)) return L("Fichier", "File");
+  if (/maps\.google\.com|google\.com\/maps/.test(s)) return L("Itinéraire", "Directions");
+  if (/^tel:/.test(s)) return L("Appel", "Call");
   if (/github\.com\/[^/]+\/[^/]+\/pull/.test(s)) return "PR";
-  if (/github\.com\/[^/]+\/[^/]+\/issues/.test(s)) return "Issue";
+  if (/github\.com\/[^/]+\/[^/]+\/issues/.test(s)) return L("Ticket", "Issue");
   if (/[a-z0-9-]+\.slack\.com/.test(s)) return "Slack";
   if (/notion\.so/.test(s)) return "Notion";
   return urlHost(s);
@@ -262,7 +265,6 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   const [decided, setDecided] = useState<Record<number, string>>({});
 
   const { leaving, leaveKind, leave } = useTaskLeave(task.id, { onChange, onConfirmed, onLeft });
-  const act = async (fn: () => Promise<WebTask[]>) => { onChange(await fn()); };
   // Optimistic: this endpoint is a pure data flip server-side (no automation, no AI call — see
   // server/index.ts's /step/:index/done route), so there's no reason the checkmark should wait on the
   // round trip. Flip it locally first, reconcile with the server's response, revert on failure.
@@ -304,6 +306,25 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
       }
     });
   };
+  // Same ordering guarantee as markStepDone above, and for the same reason: this ALSO mutates task.steps
+  // via its own independent server call, so un-ticking one step while marking another done (or answering a
+  // question) in the same second could still let whichever response landed second silently overwrite the
+  // other's just-applied change — the exact symptom the queue exists to prevent, just via a call site that
+  // wasn't routed through it.
+  const undoStep = (i: number) => {
+    stepQueueRef.current = stepQueueRef.current.then(async () => {
+      const currentTask = taskRef.current;
+      setStepDoneLocal(i, false);
+      try {
+        const list = await api.stepDone(currentTask.id, i, false);
+        if (!Array.isArray(list)) throw new Error((list as any)?.error || L("Session expirée — recharge la page.", "Session expired — reload the page."));
+        onChange(list);
+      } catch (e: any) {
+        onTask(currentTask); // revert the optimistic un-tick — onTask merges by id, onChange([...]) would nuke the whole list
+        notify(e?.message || L("Impossible d'annuler cette étape.", "Couldn't undo this step."), "error");
+      }
+    });
+  };
   // A step with `question`/`options` is automatable but blocked on ONE piece of info Otto couldn't find or
   // infer (see the "submit" tool schema's `question` field in server/claude.ts) — answering it should
   // actually RUN the step with that answer (api.runStep), not just mark it done like the plain "what did
@@ -315,20 +336,26 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   // so there's nothing left to wait on here. Clear the question/options optimistically so the student isn't
   // staring at a stale prompt while it works in the background; the open tab's kick loop (client/App.tsx)
   // picks the actual run up within seconds and folds the real result in once it's done.
-  const answerStep = async (i: number, answer: string) => {
+  // Routed through the same stepQueueRef chain as markStepDone/undoStep — onTask(updated) below replaces
+  // the task's ENTIRE steps array with a server snapshot, so answering a question while ticking/un-ticking
+  // a different step in the same second could otherwise let whichever response landed second silently
+  // overwrite the other's already-applied change (the same ordering bug the queue exists to prevent).
+  const answerStep = (i: number, answer: string) => {
     if (!answer.trim()) return;
-    setAnswering(i);
-    const currentTask = task;
-    const optimisticSteps = (task.steps || []).map((s, si) => si !== i ? s
-      : { ...s, question: undefined, options: undefined, result: L(`Tu as répondu : ${answer.trim()} — Otto s'en occupe…`, `You answered: ${answer.trim()} — Otto's on it…`) });
-    onTask({ ...task, steps: optimisticSteps });
-    try {
-      const updated = await api.runStep(task.id, i, answer.trim());
-      onTask(updated);
-    } catch (e: any) {
-      onTask(currentTask); // revert — restores the real question so the student can retry
-      notify(e?.message || L("Échec de la réponse — réessaie.", "Couldn't send that answer — try again."), "error");
-    } finally { setAnswering((cur) => (cur === i ? null : cur)); }
+    stepQueueRef.current = stepQueueRef.current.then(async () => {
+      setAnswering(i);
+      const currentTask = taskRef.current;
+      const optimisticSteps = (currentTask.steps || []).map((s, si) => si !== i ? s
+        : { ...s, question: undefined, options: undefined, result: L(`Tu as répondu : ${answer.trim()} — Otto s'en occupe…`, `You answered: ${answer.trim()} — Otto's on it…`) });
+      onTask({ ...currentTask, steps: optimisticSteps });
+      try {
+        const updated = await api.runStep(currentTask.id, i, answer.trim());
+        onTask(updated);
+      } catch (e: any) {
+        onTask(currentTask); // revert — restores the real question so the student can retry
+        notify(e?.message || L("Échec de la réponse — réessaie.", "Couldn't send that answer — try again."), "error");
+      } finally { setAnswering((cur) => (cur === i ? null : cur)); }
+    });
   };
 
   // ── chat state lives here so "Je bloque" (hero) and "Aide" (step list) can both seed the thread ──
@@ -446,13 +473,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           <Disclosure label={L("Toutes les étapes", "All steps")} count={`${doneCount}/${steps.length}`}
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
             <StepList task={task} steps={steps} decided={decided} setDecided={setDecided}
-              onStepDone={markStepDone} onUndo={(i) => {
-                setStepDoneLocal(i, false);
-                void act(() => api.stepDone(task.id, i, false)).catch((e: any) => {
-                  onTask(task); // revert the optimistic un-tick — onTask merges by id, onChange([...]) would nuke the whole list
-                  notify(e?.message || L("Impossible d'annuler cette étape.", "Couldn't undo this step."), "error");
-                });
-              }}
+              onStepDone={markStepDone} onUndo={undoStep}
               onAsk={askAboutStep} onChange={onChange} onTask={onTask} onAnswer={answerStep} answering={answering} />
           </Disclosure>
         ) : null}
@@ -672,7 +693,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
                 else setOpenedIdx(currentIdx);
               }}
             >
-              {L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}
+              {L(`Ouvrir ${linkKind(s.url, L) || "le lien"} ↗`, `Open ${linkKind(s.url, L) || "link"} ↗`)}
             </button>
           ) : (
             <button className="btn primary" onClick={() => onStepDone(currentIdx)}>{L("C'est fait", "Done")}</button>
@@ -847,7 +868,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                         {sub.result ? <span className="step-result note substep-result">{sub.result}</span> : null}
                         {/* Same "land one click from done" affordance as a parent step's own url — a
                             sub-action can point at a real resource Otto already found (see expandStep). */}
-                        {sub.url ? <button type="button" className="btn xs ghost substep-link" title={sub.url} onClick={() => openTab(sub.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(sub.url) || "le lien"} ↗`, `Open ${linkKind(sub.url) || "link"} ↗`)}</button> : null}
+                        {sub.url ? <button type="button" className="btn xs ghost substep-link" title={sub.url} onClick={() => openTab(sub.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(sub.url, L) || "le lien"} ↗`, `Open ${linkKind(sub.url, L) || "link"} ↗`)}</button> : null}
                         {/* A pure lookup Otto can just answer (see expandStep's `automatable` classification)
                             instead of the student going to find it themselves. */}
                         {sub.automatable && !sub.done ? (
@@ -870,7 +891,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
               </div>
               <div className="step-act">
                 {/* A URL step keeps its "Open ↗" link ALWAYS — even after Otto opened it. */}
-                {s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(s.url) || "le lien"} ↗`, `Open ${linkKind(s.url) || "link"} ↗`)}</button> : null}
+                {s.url ? <button className="btn xs ghost" title={s.url} onClick={() => openTab(s.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(s.url, L) || "le lien"} ↗`, `Open ${linkKind(s.url, L) || "link"} ↗`)}</button> : null}
                 {!s.done ? <button className="btn xs ghost" onClick={() => onAsk(i, s.text)}>{L("Aide", "Help")}</button> : null}
               </div>
             </li>
@@ -925,7 +946,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
         </>
       ) : null}
       {task.links?.length ? (
-        <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
+        <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
       ) : null}
       {/* Audit trail: what Otto actually called/created/blocked on this task, in plain language — so a
           parent or teacher can verify "never does the work" is enforced, not just claimed. */}

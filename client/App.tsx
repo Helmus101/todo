@@ -467,7 +467,10 @@ export function App() {
     finally { setBusy(false); }
   };
   const signOut = async () => {
-    await api.logout();
+    // Was unguarded — offline, api.logout() throws and skips everything below, leaving local state (and
+    // the localStorage cache) intact on what's supposed to be a shared/school-computer-safe sign-out.
+    // The local cleanup matters MORE than the server call succeeding, so it happens regardless.
+    try { await api.logout(); } catch { /* the local cleanup below is what actually matters here */ }
     // Clear every local cache keyed to THIS account — without this, the next sign-in on the same browser
     // (a different person, or the same person after clearing cookies) would hydrate instantly from the
     // PREVIOUS account's cached tasks/status (see CACHED_TASKS/CACHED_STATUS above) before the real fetch
@@ -500,9 +503,12 @@ export function App() {
     setSeenTasks((prev) => { const next = new Set(prev); next.add(openId); saveSeenTasks(next); return next; });
   }, [openId]);
 
-  // Legal pages are PUBLIC — reachable logged-out or in, and even before status loads.
-  if (route === "privacy") return <LegalPage kind="privacy" />;
-  if (route === "terms") return <LegalPage kind="terms" />;
+  // Legal pages are PUBLIC — reachable logged-out or in, and even before status loads. Rendered before
+  // the LangContext.Provider further down mounts, so they get their own — otherwise useLang() inside them
+  // silently defaults to French regardless of the account's actual language (or the signed-out visitor's
+  // browser), which is exactly how these ended up 100% English-hardcoded with no L() calls at all.
+  if (route === "privacy") return <LegalPage kind="privacy" lang={status?.language} />;
+  if (route === "terms") return <LegalPage kind="terms" lang={status?.language} />;
 
   if (!status) {
     if (loadError) {
@@ -1255,8 +1261,10 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
         <h3>{L("Compte", "Account")}</h3>
         <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
-        {/* French parents care about RGPD more than the AI-spend number itself — show both, but privacy first. */}
-        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré, tes données restent hébergées en France/UE, jamais revendues.", "Your Pronote password is encrypted, your data stays hosted in France/EU, never resold.")}</span></div>
+        {/* French parents care about RGPD more than the AI-spend number itself — show both, but privacy first.
+            NEVER claim EU-only data residency here — the AI calls (server/claude.ts) go to DeepSeek, which has
+            no confirmed EU residency and no DPA (see DATA_PROTECTION.md). Only state what's actually true. */}
+        <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails sur le traitement de tes données →", "Details on how your data is handled →")}</a></span></div>
         {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn)}</span></div>}
         <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
         {/* GDPR self-serve: download everything stored (Art. 20, portability) and permanently delete it
@@ -1578,7 +1586,11 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             <h2>{L("Ta langue", "Your language")}</h2>
             <p className="onboard-lead">{L("Change l'interface et tout ce qu'Otto écrit — modifiable à tout moment dans les Réglages.", "Switches the interface and everything Otto writes — changeable any time in Settings.")}</p>
             <div className="set-list onboard-prefs">
-              <PreferencesFields profile={null} />
+              {/* onChanged MUST call onStatus — PreferencesFields.saveLang persists server-side, but
+                  status.language (which drives the whole app's LangContext) only updates when something
+                  calls loadStatus. Without this, a new signup's language pick in onboarding silently never
+                  applied to the actual UI — the dashboard kept rendering in the account default. */}
+              <PreferencesFields profile={null} onChanged={() => void onStatus()} />
             </div>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
@@ -1608,13 +1620,14 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
+  const [consent, setConsent] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
-    if (busy || !email.trim() || !pw) return;
+    if (busy || !email.trim() || !pw || (mode === "signup" && !consent)) return;
     setBusy(true); setErr("");
     try {
-      const r = mode === "signup" ? await api.signup(email.trim(), pw) : await api.login(email.trim(), pw);
+      const r = mode === "signup" ? await api.signup(email.trim(), pw, consent) : await api.login(email.trim(), pw);
       if (r.ok) onDone(mode === "signup"); else setErr(r.error || L("Une erreur est survenue.", "Something went wrong."));
     } catch {
       setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
@@ -1637,8 +1650,16 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
           <label className="field"><span>{L("Mot de passe", "Password")}</span>
             <input className="addinput" type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder={L("6 caractères minimum", "At least 6 characters")} value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} />
           </label>
+          {/* RGPD Art.8: under-15s need a parent to set the account up (see Privacy Policy) — a required,
+              recorded checkbox instead of the previous text-only claim with no actual signal captured. */}
+          {mode === "signup" && (
+            <label className="field-check">
+              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+              <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
+            </label>
+          )}
           {err && <div className="autherr">{err}</div>}
-          <button className="btn primary big" disabled={busy || !email.trim() || !pw} onClick={() => void submit()}>{busy ? "…" : mode === "signup" ? L("Créer le compte", "Create account") : L("Se connecter", "Log in")}</button>
+          <button className="btn primary big" disabled={busy || !email.trim() || !pw || (mode === "signup" && !consent)} onClick={() => void submit()}>{busy ? "…" : mode === "signup" ? L("Créer le compte", "Create account") : L("Se connecter", "Log in")}</button>
           <button className="btn ghost" onClick={() => { setMode((m) => (m === "signup" ? "login" : "signup")); setErr(""); }}>
             {mode === "signup" ? L("Déjà un compte ? Se connecter", "Have an account? Log in") : L("Nouveau ici ? Créer un compte", "New here? Create an account")}
           </button>
@@ -1786,7 +1807,7 @@ function Landing() {
         <h2 className="reveal">Un guide, pas un exécutant</h2>
         <div className="features">
           <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>Jamais ton travail à ta place</h3><p>Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle. La compréhension reste la tienne, pas celle d'une IA.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Identifiants chiffrés, données en France/UE</h3><p>Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé. Données hébergées en France/UE. Jamais revendu.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Identifiants chiffrés, jamais revendus</h3><p>Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé. Données jamais revendues — <a href="/privacy">détail du traitement dans notre politique de confidentialité</a>.</p></div></div>
           <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>Plafond de coût visible</h3><p>Coût de l'IA plafonné et affiché dans les Réglages — pas de surprise.</p></div></div>
         </div>
       </section>
@@ -1848,119 +1869,129 @@ function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: (
   );
 }
 
-function LegalPage({ kind }: { kind: "privacy" | "terms" }) {
+function LegalPage({ kind, lang }: { kind: "privacy" | "terms"; lang?: string }) {
+  return (
+    <LangContext.Provider value={lang === "en" ? "en" : "fr"}>
+      <LegalPageBody kind={kind} />
+    </LangContext.Provider>
+  );
+}
+function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
+  const L = useLang();
   return (
     <div className="landing legal-page">
       <header className="landing-nav">
         <a className="brand" href="/"><Logo size={22} /> Otto</a>
         <nav className="landing-navlinks">
-          <a className="btn ghost" href="/privacy">Privacy</a>
-          <a className="btn ghost" href="/terms">Terms</a>
+          <a className="btn ghost" href="/privacy">{L("Confidentialité", "Privacy")}</a>
+          <a className="btn ghost" href="/terms">{L("Conditions", "Terms")}</a>
         </nav>
       </header>
       <main className="legal">
         {kind === "privacy" ? <PrivacyBody /> : <TermsBody />}
-        <p className="legal-meta">Last updated: {LEGAL_UPDATED} · Operated by {LEGAL_ENTITY} · Contact: {LEGAL_EMAIL}</p>
-        <a className="legal-back" href="/">← Back to Otto</a>
+        <p className="legal-meta">{L(`Dernière mise à jour : ${LEGAL_UPDATED} · Géré par ${LEGAL_ENTITY} · Contact : ${LEGAL_EMAIL}`, `Last updated: ${LEGAL_UPDATED} · Operated by ${LEGAL_ENTITY} · Contact: ${LEGAL_EMAIL}`)}</p>
+        <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
       </main>
     </div>
   );
 }
 
 function PrivacyBody() {
+  const L = useLang();
   return (
     <>
-      <h1>Privacy Policy</h1>
-      <p>Otto ("we", "us") is a to-do assistant that reads the apps you connect and prepares work for you. This policy explains what we access, why, and your choices. Otto is operated by {LEGAL_ENTITY}.</p>
+      <h1>{L("Politique de confidentialité", "Privacy Policy")}</h1>
+      <p>{L(`Otto (« nous ») est un assistant de tâches qui lit les applications que tu connectes et prépare le travail pour toi. Cette politique explique ce à quoi nous accédons, pourquoi, et tes choix. Otto est géré par ${LEGAL_ENTITY}.`, `Otto ("we", "us") is a to-do assistant that reads the apps you connect and prepares work for you. This policy explains what we access, why, and your choices. Otto is operated by ${LEGAL_ENTITY}.`)}</p>
 
-      <h2>What we access</h2>
-      <p>Only the apps you explicitly connect, and only to do the work you asked for:</p>
+      <h2>{L("Ce à quoi nous accédons", "What we access")}</h2>
+      <p>{L("Uniquement les applications que tu connectes explicitement, et uniquement pour faire le travail demandé :", "Only the apps you explicitly connect, and only to do the work you asked for:")}</p>
       <ul>
-        <li><b>Gmail</b> — to read recent threads and prepare draft replies. Otto creates drafts; it never sends, deletes, or modifies mail on its own.</li>
-        <li><b>Google Calendar</b> — to read events and prepare drafts of new events for your review.</li>
-        <li><b>Google Drive / Docs / Sheets / Slides</b> — to read relevant files and create documents it makes for you. Otto only ever edits a document it created itself — it never modifies a file that's already yours.</li>
-        <li><b>Pronote</b> (optional, unofficial — no official Pronote API exists) — read-only, to see homework due dates. Otto never writes anything back to Pronote.</li>
-        <li><b>Other integrations you connect</b> — accessed only for the tasks they relate to.</li>
+        <li><b>Gmail</b> — {L("pour lire les fils récents et préparer des brouillons de réponse. Otto crée des brouillons ; il n'envoie, ne supprime, ni ne modifie jamais un mail de lui-même.", "to read recent threads and prepare draft replies. Otto creates drafts; it never sends, deletes, or modifies mail on its own.")}</li>
+        <li><b>Google Calendar</b> — {L("pour lire les événements et préparer des brouillons de nouveaux événements pour ta relecture.", "to read events and prepare drafts of new events for your review.")}</li>
+        <li><b>Google Drive / Docs / Sheets / Slides</b> — {L("pour lire les fichiers pertinents et créer des documents qu'il fait pour toi. Otto ne modifie jamais que les documents qu'il a lui-même créés — jamais un fichier qui est déjà le tien.", "to read relevant files and create documents it makes for you. Otto only ever edits a document it created itself — it never modifies a file that's already yours.")}</li>
+        <li><b>Pronote</b> ({L("optionnel, non officiel — aucune API Pronote officielle n'existe", "optional, unofficial — no official Pronote API exists")}) — {L("lecture seule, pour voir les dates de rendu des devoirs. Otto n'écrit jamais rien sur Pronote.", "read-only, to see homework due dates. Otto never writes anything back to Pronote.")}</li>
+        <li>{L("Autres intégrations que tu connectes", "Other integrations you connect")} — {L("accédées uniquement pour les tâches auxquelles elles se rapportent.", "accessed only for the tasks they relate to.")}</li>
       </ul>
-      <p>Otto performs <b>reversible</b> work autonomously (drafts, documents, research). Anything irreversible — sending an email, posting, inviting, deleting, or paying — is <b>never</b> done without your explicit confirmation. It also never edits a document, sheet, or slide deck that it didn't create — only your own files, never Otto's.</p>
+      <p>{L("Otto effectue de manière autonome le travail ", "Otto performs autonomously the work that is ")}<b>{L("réversible", "reversible")}</b>{L(" (brouillons, documents, recherche). Tout ce qui est irréversible — envoyer un mail, publier, inviter, supprimer, ou payer — n'est ", " (drafts, documents, research). Anything irreversible — sending an email, posting, inviting, deleting, or paying — is ")}<b>{L("jamais", "never")}</b>{L(" fait sans ta confirmation explicite. Il ne modifie jamais non plus un document, une feuille ou une présentation qu'il n'a pas créé — seulement tes propres fichiers, jamais ceux d'Otto.", " done without your explicit confirmation. It also never edits a document, sheet, or slide deck that it didn't create — only your own files, never Otto's.")}</p>
 
-      <h2>What we store</h2>
+      <h2>{L("Ce que nous stockons", "What we store")}</h2>
       <ul>
-        <li>Your account email and a securely hashed password (we never store your password in plain text).</li>
-        <li>The tasks Otto generates and a profile of facts it learns to do better work (people, projects, preferences) — you can view and delete these any time in Settings.</li>
-        <li>Approximate AI-usage counts for showing your monthly usage.</li>
+        <li>{L("Ton email de compte et un mot de passe haché de manière sécurisée (nous ne stockons jamais ton mot de passe en clair).", "Your account email and a securely hashed password (we never store your password in plain text).")}</li>
+        <li>{L("Les tâches qu'Otto génère et un profil de faits qu'il apprend pour mieux travailler (personnes, projets, préférences) — tu peux les consulter et les supprimer à tout moment dans les Réglages.", "The tasks Otto generates and a profile of facts it learns to do better work (people, projects, preferences) — you can view and delete these any time in Settings.")}</li>
+        <li>{L("Un décompte approximatif de l'usage IA pour afficher ton utilisation mensuelle.", "Approximate AI-usage counts for showing your monthly usage.")}</li>
       </ul>
-      <p>We do not sell your data, use it for advertising, or use your content to train foundation models.</p>
+      <p>{L("Nous ne vendons pas tes données, ne les utilisons pas pour de la publicité, et n'utilisons pas ton contenu pour entraîner des modèles de fondation.", "We do not sell your data, use it for advertising, or use your content to train foundation models.")}</p>
 
-      <h2>Service providers</h2>
-      <p>Otto shares data with the processors needed to run the service, under their terms:</p>
+      <h2>{L("Prestataires de service", "Service providers")}</h2>
+      <p>{L("Otto partage des données avec les prestataires nécessaires au fonctionnement du service, selon leurs conditions :", "Otto shares data with the processors needed to run the service, under their terms:")}</p>
       <ul>
-        <li><b>Composio</b> — brokers the OAuth connections to your apps and executes read/write actions on your behalf.</li>
-        <li><b>DeepSeek</b> — the AI model that reads context and drafts the work. Relevant content is sent to generate each task/draft.</li>
-        <li><b>Supabase</b> — stores your account, tasks, and profile.</li>
-        <li>Hosting/infrastructure providers that run the app.</li>
+        <li><b>Composio</b> — {L("gère les connexions OAuth vers tes applications et exécute les actions de lecture/écriture en ton nom.", "brokers the OAuth connections to your apps and executes read/write actions on your behalf.")}</li>
+        <li><b>DeepSeek</b> — {L("le modèle IA qui lit le contexte et rédige le travail. Le contenu pertinent est envoyé pour générer chaque tâche/brouillon.", "the AI model that reads context and drafts the work. Relevant content is sent to generate each task/draft.")}</li>
+        <li><b>Supabase</b> — {L("stocke ton compte, tes tâches et ton profil.", "stores your account, tasks, and profile.")}</li>
+        <li>{L("Prestataires d'hébergement/infrastructure qui font tourner l'application.", "Hosting/infrastructure providers that run the app.")}</li>
       </ul>
 
-      <h2>Retention & deletion</h2>
-      <p>Your data is kept only while your account is active — nothing is kept "just in case" after that. You're in control, with no email-and-wait required: clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time (revokes Otto's access immediately), download everything stored about you via Settings → "Download my data", or permanently delete your account and everything with it via Settings → "Delete everything" — instant, self-serve, and irreversible.</p>
+      <h2>{L("Conservation et suppression", "Retention & deletion")}</h2>
+      <p>{L(`Tes données sont conservées uniquement tant que ton compte est actif — rien n'est gardé « au cas où » après ça. Tu gardes le contrôle, sans email ni attente nécessaire : efface tout ce qu'Otto a appris via Réglages → « Tout oublier », déconnecte n'importe quelle application à tout moment (révoque immédiatement l'accès d'Otto), télécharge tout ce qui est stocké sur toi via Réglages → « Télécharger mes données », ou supprime définitivement ton compte et tout ce qu'il contient via Réglages → « Tout supprimer » — instantané, en libre-service, et irréversible.`, `Your data is kept only while your account is active — nothing is kept "just in case" after that. You're in control, with no email-and-wait required: clear everything Otto has learned via Settings → "Forget everything", disconnect any app at any time (revokes Otto's access immediately), download everything stored about you via Settings → "Download my data", or permanently delete your account and everything with it via Settings → "Delete everything" — instant, self-serve, and irreversible.`)}</p>
 
-      <h2>Security</h2>
-      <p>Google and other OAuth-based connections mean we never see your app passwords. Pronote is the one exception — it has no OAuth, so its username/password pass through our server once to connect; the password itself is never stored or logged, only a rotating token Pronote issues in its place. Data is transmitted over HTTPS and access is scoped to your account. No system is perfectly secure, but we take reasonable measures to protect your information.</p>
+      <h2>{L("Sécurité", "Security")}</h2>
+      <p>{L("Google et les autres connexions via OAuth signifient que nous ne voyons jamais tes mots de passe d'application. Pronote est la seule exception — il n'a pas d'OAuth, donc son identifiant/mot de passe transitent une seule fois par notre serveur pour se connecter ; le mot de passe lui-même n'est jamais stocké ni journalisé, seulement un jeton rotatif que Pronote émet à sa place. Les données sont transmises via HTTPS et l'accès est limité à ton compte. Aucun système n'est parfaitement sûr, mais nous prenons des mesures raisonnables pour protéger tes informations.", "Google and other OAuth-based connections mean we never see your app passwords. Pronote is the one exception — it has no OAuth, so its username/password pass through our server once to connect; the password itself is never stored or logged, only a rotating token Pronote issues in its place. Data is transmitted over HTTPS and access is scoped to your account. No system is perfectly secure, but we take reasonable measures to protect your information.")}</p>
 
-      <h2>Google API disclosure</h2>
-      <p>Otto's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+      <h2>{L("Déclaration API Google", "Google API disclosure")}</h2>
+      <p>{L("L'utilisation par Otto des informations reçues des API Google respecte la ", "Otto's use of information received from Google APIs adheres to the ")}<a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noreferrer">{L("politique d'utilisation des données utilisateur des services API Google", "Google API Services User Data Policy")}</a>{L(", y compris les exigences de Limited Use.", ", including the Limited Use requirements.")}</p>
 
-      <h2>Your rights (GDPR)</h2>
-      <p>If you're in the EU/EEA, GDPR gives you the right to access, correct, export (portability), or delete (erasure) your data, and to object to or restrict how it's processed. The first three are self-serve in Settings, right now, with no request needed; for anything else, or if you're elsewhere and want the same, contact {LEGAL_EMAIL} and we'll handle it directly. Our legal basis for processing is performing the service you asked for (contract) plus our legitimate interest in making Otto work well for you.</p>
+      <h2>{L("Tes droits (RGPD)", "Your rights (GDPR)")}</h2>
+      <p>{L(`Si tu es dans l'UE/EEE, le RGPD te donne le droit d'accéder à, de corriger, d'exporter (portabilité), ou de supprimer (effacement) tes données, et de t'opposer à ou de restreindre leur traitement. Les trois premiers sont en libre-service dans les Réglages, dès maintenant, sans demande nécessaire ; pour tout le reste, ou si tu es ailleurs et souhaites la même chose, contacte ${LEGAL_EMAIL} et nous nous en occuperons directement. Notre base légale de traitement est l'exécution du service que tu as demandé (contrat) plus notre intérêt légitime à faire bien fonctionner Otto pour toi.`, `If you're in the EU/EEA, GDPR gives you the right to access, correct, export (portability), or delete (erasure) your data, and to object to or restrict how it's processed. The first three are self-serve in Settings, right now, with no request needed; for anything else, or if you're elsewhere and want the same, contact ${LEGAL_EMAIL} and we'll handle it directly. Our legal basis for processing is performing the service you asked for (contract) plus our legitimate interest in making Otto work well for you.`)}</p>
 
-      <h2>International transfers</h2>
-      <p>Your data is processed by providers based outside {LEGAL_JURISDICTION} (including the US and elsewhere) — Composio, DeepSeek, Supabase, and our hosting provider. We only use providers that commit contractually to protecting your data (e.g. standard contractual clauses where applicable) to the standard GDPR requires.</p>
+      <h2>{L("Transferts internationaux", "International transfers")}</h2>
+      <p>{L(`Tes données sont traitées par des prestataires situés hors de ${LEGAL_JURISDICTION} (y compris aux États-Unis et ailleurs) — Composio, DeepSeek, Supabase, et notre hébergeur. Nous n'utilisons que des prestataires qui s'engagent contractuellement à protéger tes données (par ex. des clauses contractuelles types le cas échéant) au niveau exigé par le RGPD.`, `Your data is processed by providers based outside ${LEGAL_JURISDICTION} (including the US and elsewhere) — Composio, DeepSeek, Supabase, and our hosting provider. We only use providers that commit contractually to protecting your data (e.g. standard contractual clauses where applicable) to the standard GDPR requires.`)}</p>
 
-      <h2>Age</h2>
-      <p>Otto is built with students in mind, but opening an account requires being old enough to consent to data processing on your own (15 in {LEGAL_JURISDICTION}); younger than that, a parent or guardian should set it up and stay involved.</p>
+      <h2>{L("Âge", "Age")}</h2>
+      <p>{L(`Otto est pensé pour les élèves, mais ouvrir un compte nécessite d'avoir l'âge légal pour consentir soi-même au traitement de ses données (15 ans en ${LEGAL_JURISDICTION}) ; en dessous, un parent ou tuteur doit le créer et rester impliqué.`, `Otto is built with students in mind, but opening an account requires being old enough to consent to data processing on your own (15 in ${LEGAL_JURISDICTION}); younger than that, a parent or guardian should set it up and stay involved.`)}</p>
 
-      <h2>Changes & contact</h2>
-      <p>We'll update this policy as the service evolves and note the date above. Questions or anything not covered here: {LEGAL_EMAIL}.</p>
+      <h2>{L("Modifications et contact", "Changes & contact")}</h2>
+      <p>{L(`Nous mettrons à jour cette politique au fil de l'évolution du service et noterons la date ci-dessus. Questions ou tout ce qui n'est pas couvert ici : ${LEGAL_EMAIL}.`, `We'll update this policy as the service evolves and note the date above. Questions or anything not covered here: ${LEGAL_EMAIL}.`)}</p>
     </>
   );
 }
 
 function TermsBody() {
+  const L = useLang();
   return (
     <>
-      <h1>Terms of Service</h1>
-      <p>By using Otto, operated by {LEGAL_ENTITY}, you agree to these terms.</p>
+      <h1>{L("Conditions d'utilisation", "Terms of Service")}</h1>
+      <p>{L(`En utilisant Otto, géré par ${LEGAL_ENTITY}, tu acceptes ces conditions.`, `By using Otto, operated by ${LEGAL_ENTITY}, you agree to these terms.`)}</p>
 
-      <h2>The service</h2>
-      <p>Otto reads the apps you connect and prepares work — drafts, documents, and organized tasks. It performs reversible actions autonomously and asks for your confirmation before anything irreversible (sending, posting, inviting, deleting, paying). You are responsible for reviewing anything Otto prepares before you act on it.</p>
+      <h2>{L("Le service", "The service")}</h2>
+      <p>{L("Otto lit les applications que tu connectes et prépare le travail — brouillons, documents, et tâches organisées. Il effectue les actions réversibles de manière autonome et demande ta confirmation avant tout ce qui est irréversible (envoyer, publier, inviter, supprimer, payer). Tu es responsable de la relecture de tout ce qu'Otto prépare avant d'agir dessus.", "Otto reads the apps you connect and prepares work — drafts, documents, and organized tasks. It performs reversible actions autonomously and asks for your confirmation before anything irreversible (sending, posting, inviting, deleting, paying). You are responsible for reviewing anything Otto prepares before you act on it.")}</p>
 
-      <h2>Your responsibilities</h2>
+      <h2>{L("Tes responsabilités", "Your responsibilities")}</h2>
       <ul>
-        <li>Keep your account credentials secure and provide accurate information.</li>
-        <li>Only connect accounts you are authorized to use.</li>
-        <li>Use Otto lawfully and not to send spam, harass, or violate others' rights or the connected apps' terms.</li>
+        <li>{L("Garde tes identifiants de compte en sécurité et fournis des informations exactes.", "Keep your account credentials secure and provide accurate information.")}</li>
+        <li>{L("Ne connecte que des comptes que tu es autorisé à utiliser.", "Only connect accounts you are authorized to use.")}</li>
+        <li>{L("Utilise Otto de manière licite et non pour envoyer du spam, harceler, ou violer les droits d'autrui ou les conditions des applications connectées.", "Use Otto lawfully and not to send spam, harass, or violate others' rights or the connected apps' terms.")}</li>
       </ul>
 
-      <h2>AI-generated content — review everything</h2>
-      <p>Otto uses AI, which can be inaccurate, incomplete, or wrong. Every draft, document, and suggestion is a starting point that <b>you must review and verify</b> before sending, saving, or relying on it. You are solely responsible for anything you choose to send, publish, or act upon. Otto only prepares reversible work and asks for your confirmation before anything irreversible; the decision — and its consequences — are yours.</p>
+      <h2>{L("Contenu généré par IA — tout relire", "AI-generated content — review everything")}</h2>
+      <p>{L("Otto utilise l'IA, qui peut être inexacte, incomplète, ou erronée. Chaque brouillon, document, et suggestion est un point de départ que ", "Otto uses AI, which can be inaccurate, incomplete, or wrong. Every draft, document, and suggestion is a starting point that ")}<b>{L("tu dois relire et vérifier", "you must review and verify")}</b>{L(" avant de l'envoyer, l'enregistrer, ou t'y fier. Tu es seul responsable de tout ce que tu choisis d'envoyer, publier, ou sur quoi tu agis. Otto ne prépare que du travail réversible et demande ta confirmation avant tout ce qui est irréversible ; la décision — et ses conséquences — t'appartiennent.", " before sending, saving, or relying on it. You are solely responsible for anything you choose to send, publish, or act upon. Otto only prepares reversible work and asks for your confirmation before anything irreversible; the decision — and its consequences — are yours.")}</p>
 
-      <h2>No warranty</h2>
-      <p>The service is provided "as is" and "as available", without warranties of any kind, whether express, implied, or statutory — including any implied warranties of merchantability, fitness for a particular purpose, accuracy, or non-infringement. We do not warrant that Otto will be uninterrupted, error-free, secure, or that its output will be correct or suitable for any purpose. You use it at your own risk.</p>
+      <h2>{L("Aucune garantie", "No warranty")}</h2>
+      <p>{L("Le service est fourni « tel quel » et « selon disponibilité », sans garantie d'aucune sorte, expresse, implicite, ou légale — y compris toute garantie implicite de qualité marchande, d'adéquation à un usage particulier, d'exactitude, ou de non-contrefaçon. Nous ne garantissons pas qu'Otto sera ininterrompu, sans erreur, sécurisé, ou que ses résultats seront corrects ou adaptés à un usage quelconque. Tu l'utilises à tes propres risques.", "The service is provided \"as is\" and \"as available\", without warranties of any kind, whether express, implied, or statutory — including any implied warranties of merchantability, fitness for a particular purpose, accuracy, or non-infringement. We do not warrant that Otto will be uninterrupted, error-free, secure, or that its output will be correct or suitable for any purpose. You use it at your own risk.")}</p>
 
-      <h2>Limitation of liability</h2>
-      <p>To the fullest extent permitted by applicable law, {LEGAL_ENTITY} and anyone involved in providing Otto shall not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, nor for any loss of data, profits, revenue, goodwill, missed communications, mistaken sends, or business interruption, arising out of or relating to your use of (or inability to use) Otto or anything it prepares or does — even if advised of the possibility. To the fullest extent permitted by law, our total aggregate liability for all claims relating to the service will not exceed the greater of the amount you paid us in the 12 months before the claim, or €50. Nothing in these terms excludes liability that cannot be excluded under applicable law.</p>
+      <h2>{L("Limitation de responsabilité", "Limitation of liability")}</h2>
+      <p>{L(`Dans toute la mesure permise par la loi applicable, ${LEGAL_ENTITY} et toute personne impliquée dans la fourniture d'Otto ne sauraient être tenus responsables de dommages indirects, accessoires, spéciaux, consécutifs, exemplaires, ou punitifs, ni d'aucune perte de données, de profits, de revenus, de clientèle, de communications manquées, d'envois erronés, ou d'interruption d'activité, découlant de ou liés à ton utilisation (ou incapacité d'utiliser) Otto ou de tout ce qu'il prépare ou fait — même si informé de cette possibilité. Dans toute la mesure permise par la loi, notre responsabilité totale cumulée pour toutes les réclamations liées au service n'excédera pas le plus élevé entre le montant que tu nous as payé au cours des 12 mois précédant la réclamation, ou 50 €. Rien dans ces conditions n'exclut une responsabilité qui ne peut être exclue en vertu de la loi applicable.`, `To the fullest extent permitted by applicable law, ${LEGAL_ENTITY} and anyone involved in providing Otto shall not be liable for any indirect, incidental, special, consequential, exemplary, or punitive damages, nor for any loss of data, profits, revenue, goodwill, missed communications, mistaken sends, or business interruption, arising out of or relating to your use of (or inability to use) Otto or anything it prepares or does — even if advised of the possibility. To the fullest extent permitted by law, our total aggregate liability for all claims relating to the service will not exceed the greater of the amount you paid us in the 12 months before the claim, or €50. Nothing in these terms excludes liability that cannot be excluded under applicable law.`)}</p>
 
-      <h2>Your data & your responsibility</h2>
-      <p>You are responsible for the accounts and content you connect and for ensuring you have the right to do so. You act as the controller of the personal data in your connected accounts; Otto processes it only to provide the service, as described in the Privacy Policy. You agree to indemnify and hold {LEGAL_ENTITY} harmless from any claims, losses, or expenses arising from your use of Otto, your content, or your breach of these terms or of any third party's rights or terms.</p>
+      <h2>{L("Tes données et ta responsabilité", "Your data & your responsibility")}</h2>
+      <p>{L(`Tu es responsable des comptes et du contenu que tu connectes et de t'assurer que tu as le droit de le faire. Tu agis en tant que responsable de traitement des données personnelles dans tes comptes connectés ; Otto ne les traite que pour fournir le service, comme décrit dans la Politique de confidentialité. Tu acceptes d'indemniser et de dégager ${LEGAL_ENTITY} de toute réclamation, perte, ou dépense découlant de ton utilisation d'Otto, de ton contenu, ou de ta violation de ces conditions ou des droits ou conditions d'un tiers.`, `You are responsible for the accounts and content you connect and for ensuring you have the right to do so. You act as the controller of the personal data in your connected accounts; Otto processes it only to provide the service, as described in the Privacy Policy. You agree to indemnify and hold ${LEGAL_ENTITY} harmless from any claims, losses, or expenses arising from your use of Otto, your content, or your breach of these terms or of any third party's rights or terms.`)}</p>
 
-      <h2>Availability & changes</h2>
-      <p>Otto is an independent tool and is not endorsed by or affiliated with Google, or any other integrated provider. We may change, suspend, limit (including via a monthly AI budget), or discontinue any part of the service at any time without liability.</p>
+      <h2>{L("Disponibilité et modifications", "Availability & changes")}</h2>
+      <p>{L("Otto est un outil indépendant et n'est ni approuvé par ni affilié à Google, ou tout autre prestataire intégré. Nous pouvons modifier, suspendre, limiter (y compris via un budget IA mensuel), ou interrompre toute partie du service à tout moment sans responsabilité.", "Otto is an independent tool and is not endorsed by or affiliated with Google, or any other integrated provider. We may change, suspend, limit (including via a monthly AI budget), or discontinue any part of the service at any time without liability.")}</p>
 
-      <h2>Termination</h2>
-      <p>You may stop using Otto and delete your account at any time. We may suspend or terminate accounts that violate these terms or that create risk or legal exposure.</p>
+      <h2>{L("Résiliation", "Termination")}</h2>
+      <p>{L("Tu peux arrêter d'utiliser Otto et supprimer ton compte à tout moment. Nous pouvons suspendre ou résilier les comptes qui violent ces conditions ou qui créent un risque ou une exposition légale.", "You may stop using Otto and delete your account at any time. We may suspend or terminate accounts that violate these terms or that create risk or legal exposure.")}</p>
 
-      <h2>Governing law & contact</h2>
-      <p>These terms are governed by the laws of {LEGAL_JURISDICTION}, without regard to conflict-of-laws rules, and the courts of {LEGAL_JURISDICTION} have jurisdiction, except where mandatory local consumer law provides otherwise. If any provision is held unenforceable, the rest remains in effect. Questions: {LEGAL_EMAIL}.</p>
+      <h2>{L("Droit applicable et contact", "Governing law & contact")}</h2>
+      <p>{L(`Ces conditions sont régies par les lois de ${LEGAL_JURISDICTION}, sans égard aux règles de conflit de lois, et les tribunaux de ${LEGAL_JURISDICTION} sont compétents, sauf disposition contraire d'une loi locale impérative sur la consommation. Si une disposition est jugée inapplicable, le reste demeure en vigueur. Questions : ${LEGAL_EMAIL}.`, `These terms are governed by the laws of ${LEGAL_JURISDICTION}, without regard to conflict-of-laws rules, and the courts of ${LEGAL_JURISDICTION} have jurisdiction, except where mandatory local consumer law provides otherwise. If any provision is held unenforceable, the rest remains in effect. Questions: ${LEGAL_EMAIL}.`)}</p>
     </>
   );
 }

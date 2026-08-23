@@ -51,7 +51,11 @@ export function isNoise(it: SourceItem): boolean {
   return NOISE_SENDER.test(it.sender || "") || NOISE_SUBJECT.test(it.title || "");
 }
 
-const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+// Collapse (not strip) separators — stripping entirely let two DIFFERENT anchors collide, e.g. GitHub's
+// "owner/x1#2" and "owner/x#12" both normalized to "githubownerx12", so dedupeByThread/filterCandidates
+// could silently drop or hide a genuinely new issue. A single placeholder character keeps the digit
+// boundary intact while still ignoring cosmetic punctuation differences.
+const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
 // Composio response shapes drift between versions — read every known key defensively.
 function gmailToItems(data: any, label: string, account?: { id?: string; email?: string }): SourceItem[] {

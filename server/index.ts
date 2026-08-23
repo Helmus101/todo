@@ -10,7 +10,7 @@ import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -157,7 +157,12 @@ const requireAuth: RequestHandler = (req, res, next) => {
 // client loop or a leaked session can't run up the bill. Keyed by account email (falls back to IP).
 const rlHits = new Map<string, number[]>();
 const rateLimit = (max: number, windowMs: number): RequestHandler => (req, res, next) => {
-  const key = `${req.session.user || req.ip}:${req.path}`;
+  // MUST key on the route's TEMPLATE (req.route.path, e.g. "/api/tasks/:id/run"), never req.path (the
+  // resolved URL with the actual id/index baked in) — keying on req.path gave every distinct task/step id
+  // its own independent counter, so cycling ids fully bypassed every per-task cap in this file (verified:
+  // /run, /refine, /send/:index, /confirm, /dismiss, /step/:index/* all parameterized). req.route is set
+  // by the time this runs since rateLimit is itself one of the matched route's own handlers.
+  const key = `${req.session.user || req.ip}:${req.baseUrl}${req.route?.path || req.path}`;
   const now = Date.now();
   const hits = (rlHits.get(key) || []).filter((t) => now - t < windowMs);
   if (hits.length >= max) {
@@ -181,6 +186,10 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   if (!validEmail(email) || password.length < 6) { res.status(400).json({ error: "Enter a valid email and a password of at least 6 characters." }); return; }
+  // The Privacy Policy states under-15s need a parent to set the account up (RGPD Art.8) — this was
+  // previously enforced by text alone. Not real age verification, but a required, recorded affirmative
+  // signal beats none.
+  if (req.body?.consent !== true) { res.status(400).json({ error: "Please confirm you're 15 or older, or that a parent set this account up for you." }); return; }
   if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
   if (await getUser(email)) { res.status(409).json({ error: "An account with that email already exists — log in instead." }); return; }
   if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: "Couldn't create the account." }); return; }
@@ -192,7 +201,7 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
   // BRAND NEW one on the very next request (the safety-net middleware above only fills these in when
   // they're `undefined`, which they aren't in that case) — they'd even get merged into and saved onto the
   // new account's cloud row. A fresh signup always starts from empty state.
-  req.session.profile = emptyProfile();
+  req.session.profile = { ...emptyProfile(), ageConsentAt: new Date().toISOString() };
   req.session.tasks = [];
   await saveSession(req);
   res.json({ ok: true });
@@ -241,8 +250,12 @@ app.get("/api/account/export", requireAuth, async (req, res) => {
   const email = req.session.user!;
   try {
     const state = cloudEnabled() ? await loadState(email) : { profile: req.session.profile, tasks: req.session.tasks };
+    // Was profile+tasks only — deleteAccount also wipes job records and the audit/event trail, so an
+    // export used to return strictly LESS than what's actually stored (and later erased), incomplete
+    // relative to a GDPR Art.15 access request.
+    const { jobs, events } = cloudEnabled() ? await exportJobsAndEvents(email) : { jobs: [], events: [] };
     res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
-    res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks });
+    res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, jobs, events });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "Couldn't export your data — try again." });
   }
@@ -298,18 +311,21 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
   if (typeof url !== "string" || typeof username !== "string" || typeof password !== "string") {
     res.status(400).json({ error: "URL, username and password are required." }); return;
   }
-  const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
-  // Pull grades right away on a fresh connect — otherwise a student wouldn't see any until the next daily
-  // sweep or a manual "Sync from Pronote" click, and "I just connected Pronote" is exactly the moment
-  // grades should already be there. Best-effort: never fails the connect itself.
-  if (result.ok) {
-    try {
-      const p = (req.session.profile ||= emptyProfile());
-      pronoteSvc.applyPronoteGrades(p, await pronoteSvc.pronoteGrades(req.session.user!));
-      await commit(req);
-    } catch { /* best-effort */ }
-  }
-  res.status(result.ok ? 200 : 400).json(result);
+  try {
+    const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
+    if (result.ok) pronoteSvc.invalidatePronoteStatus(req.session.user!); // else /api/status's cache keeps reporting "not connected" for up to 60s
+    // Pull grades right away on a fresh connect — otherwise a student wouldn't see any until the next daily
+    // sweep or a manual "Sync from Pronote" click, and "I just connected Pronote" is exactly the moment
+    // grades should already be there. Best-effort: never fails the connect itself.
+    if (result.ok) {
+      try {
+        const p = (req.session.profile ||= emptyProfile());
+        pronoteSvc.applyPronoteGrades(p, await pronoteSvc.pronoteGrades(req.session.user!));
+        await commit(req);
+      } catch { /* best-effort */ }
+    }
+    res.status(result.ok ? 200 : 400).json(result);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't connect to Pronote — try again." }); }
 });
 // Upcoming tests for the dashboard's exam countdown strip — a plain read, separate from the task pipeline
 // (a test already has/will have a task, but the countdown needs the raw subject+date list to lay out as a
@@ -323,8 +339,11 @@ app.get("/api/pronote/tests", requireAuth, async (req, res) => {
   } catch { res.json({ tests: [] }); }
 });
 app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
-  await pronoteSvc.disconnectPronote(req.session.user!);
-  res.json({ ok: true });
+  try {
+    await pronoteSvc.disconnectPronote(req.session.user!);
+    pronoteSvc.invalidatePronoteStatus(req.session.user!);
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect Pronote — try again." }); }
 });
 // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
 app.get("/api/pronote/grades", requireAuth, async (req, res) => {
@@ -353,41 +372,48 @@ app.get("/api/workload", requireAuth, async (req, res) => {
 
 app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
   const app2 = String(req.params.app);
-  const result = integrations.integrationsReady() ? await integrations.disconnect(app2, req.session.user!) : { ok: true };
-  if (req.session.integrations) delete req.session.integrations[app2];
-  integrations.invalidateTools(req.session.user!);
-  await saveSession(req);
-  res.json(result);
+  try {
+    const result = integrations.integrationsReady() ? await integrations.disconnect(app2, req.session.user!) : { ok: true };
+    if (req.session.integrations) delete req.session.integrations[app2];
+    integrations.invalidateTools(req.session.user!);
+    await saveSession(req);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
 });
 
 // Disconnect a specific account by ID (for multi-account support)
 app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req, res) => {
   const app2 = String(req.params.app);
   const accountId = String(req.params.accountId);
-  // Verify the account belongs to this user and app before disconnecting
-  const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2) : [];
-  const account = accounts.find((a) => a.id === accountId);
-  if (!account) { res.status(404).json({ error: "Account not found." }); return; }
-  const result = await integrations.disconnectAccount(accountId);
-  integrations.invalidateTools(req.session.user!);
-  await saveSession(req);
-  res.json(result);
+  try {
+    // Verify the account belongs to this user and app before disconnecting
+    const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2) : [];
+    const account = accounts.find((a) => a.id === accountId);
+    if (!account) { res.status(404).json({ error: "Account not found." }); return; }
+    const result = await integrations.disconnectAccount(accountId);
+    integrations.invalidateTools(req.session.user!);
+    await saveSession(req);
+    res.json(result);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); return; }
 });
 
 // ── Status ──────────────────────────────────────────────────────────────────
 // googleConnected now means "Gmail is connected via Composio" (the minimum to generate tasks). Cached
 // briefly so polling this hot endpoint doesn't hammer Composio.
 app.get("/api/status", async (req, res) => {
-  let googleConnected = false;
-  if (req.session.user && integrations.integrationsReady()) {
-    try { googleConnected = !!(await integrations.connectionStatusesCached(req.session.user, ["gmail"]))["gmail"]; } catch { /* treat as not connected */ }
-  }
-  // Otto Lycée: Pronote is now a first-class data source on its own, not just a Google add-on — a lycéen
-  // with ONLY Pronote connected (no Gmail) must still see their dashboard, not get stuck on ConnectCard.
-  let pronoteConnected = false;
-  if (req.session.user) {
-    try { pronoteConnected = (await pronoteSvc.pronoteConnected(req.session.user)).connected; } catch { /* treat as not connected */ }
-  }
+  // Both checks are independent reads — running them sequentially (the old code awaited one, then the
+  // other) doubled this endpoint's latency for no reason. It's polled on every app open/focus/tab-switch
+  // (see client/App.tsx's status refresh), so that add-up was a real, constant source of felt latency.
+  const [googleConnected, pronoteConnected] = await Promise.all([
+    req.session.user && integrations.integrationsReady()
+      ? integrations.connectionStatusesCached(req.session.user, ["gmail"]).then((s) => !!s["gmail"]).catch(() => false)
+      : Promise.resolve(false),
+    // Otto Lycée: Pronote is now a first-class data source on its own, not just a Google add-on — a lycéen
+    // with ONLY Pronote connected (no Gmail) must still see their dashboard, not get stuck on ConnectCard.
+    req.session.user
+      ? pronoteSvc.pronoteConnectedCached(req.session.user).then((s) => s.connected).catch(() => false)
+      : Promise.resolve(false),
+  ]);
   const s: ConnectionStatus = {
     loggedIn: !!req.session.user,
     user: req.session.user,
@@ -420,18 +446,22 @@ const overInteractive = (req: express.Request): boolean => overInteractiveBudget
 const BUDGET_MSG = "Otto's reached its monthly AI budget (including the interactive reserve) — it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
 // Visiting /unlimited (client-side route, see App.tsx) removes this account's monthly AI spend cap.
 app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
-  const p = (req.session.profile ||= emptyProfile());
-  p.unlimited = true;
-  await commit(req);
-  res.json(p);
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    p.unlimited = true;
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
 });
 
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
-  const p = (req.session.profile ||= emptyProfile());
-  p.paused = req.body?.paused === true;
-  p.pausedAt = new Date().toISOString();
-  await commit(req);
-  res.json(p);
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    p.paused = req.body?.paused === true;
+    p.pausedAt = new Date().toISOString();
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
 });
 
 // Live integration check — create → verify → clean up against the REAL connected account, on the user's
@@ -499,7 +529,7 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
   }
 });
 
-app.post("/api/tasks", requireAuth, async (req, res) => {
+app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   const title = String(req.body?.title || "").trim();
   if (!title) { res.status(400).json({ error: "title required" }); return; }
   // Optional explicit date (personal commitments — a job shift, a club meeting, an appointment) from a
@@ -543,10 +573,12 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
   if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: "not found" }); return; }
-  const refined = await refineManualTask(t.title, req.session.profile);
-  tasks.applyRefinement(req.session.tasks || [], t.id, refined);
-  await commit(req);
-  res.json(req.session.tasks || []);
+  try {
+    const refined = await refineManualTask(t.title, req.session.profile);
+    tasks.applyRefinement(req.session.tasks || [], t.id, refined);
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't refine that task — try again." }); }
 });
 
 // Per-task coaching chat — grounded in that one task's own context/steps, so a student stuck on it can
@@ -678,33 +710,39 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
 // "handled" count + the deep-link "already handled" fallback keep working after a confirm/dismiss.
 app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
-  const task = await findTaskOrReload(req, id);
-  if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
-  task.status = "done";
-  task.updatedAt = new Date().toISOString();
-  const profile = req.session.profile ||= emptyProfile();
-  bumpStreak(profile, tzOf(profile));
-  await commit(req);
-  void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
-  res.json(req.session.tasks || []);
+  try {
+    const task = await findTaskOrReload(req, id);
+    if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+    task.status = "done";
+    task.updatedAt = new Date().toISOString();
+    const profile = req.session.profile ||= emptyProfile();
+    bumpStreak(profile, tzOf(profile));
+    await commit(req);
+    void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't confirm that task — try again." }); }
 });
-app.post("/api/tasks/:id/reject", requireAuth, async (req, res) => {
+app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
-  const task = await findTaskOrReload(req, id);
-  if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
-  tasks.reject(req.session.tasks || [], id);
-  await commit(req);
-  res.json(req.session.tasks || []);
+  try {
+    const task = await findTaskOrReload(req, id);
+    if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+    tasks.reject(req.session.tasks || [], id);
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't reject that task — try again." }); }
 });
 app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
-  const task = await findTaskOrReload(req, id);
-  if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
-  task.status = "dismissed";
-  task.updatedAt = new Date().toISOString();
-  await commit(req);
-  void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
-  res.json(req.session.tasks || []);
+  try {
+    const task = await findTaskOrReload(req, id);
+    if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+    task.status = "dismissed";
+    task.updatedAt = new Date().toISOString();
+    await commit(req);
+    void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't dismiss that task — try again." }); }
 });
 // Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue, same
 // as full runs, so it's durably locked and audited. Enqueue-and-return, NOT enqueue-and-drain: a step run
@@ -756,13 +794,15 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
   const task = (req.session.tasks || []).find((t) => t.id === id);
   const step = task?.steps?.[index];
   if (!task || !step) { res.status(404).json({ error: "not found" }); return; }
-  const substeps = await expandStep({ title: task.title, why: task.why }, { text: step.text }, req.session.profile, task.links);
-  if (substeps.length) {
-    step.substeps = substeps;
-    task.updatedAt = new Date().toISOString();
-    await commit(req);
-  }
-  res.json(req.session.tasks || []);
+  try {
+    const substeps = await expandStep({ title: task.title, why: task.why }, { text: step.text }, req.session.profile, task.links);
+    if (substeps.length) {
+      step.substeps = substeps;
+      task.updatedAt = new Date().toISOString();
+      await commit(req);
+    }
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't break this step down — try again." }); }
 });
 // Tick/untick one sub-step — independent of the parent step's own "done" (see the Profile.grades-style
 // comment on TaskStep.substeps: a working checklist, not a completion gate).
@@ -773,12 +813,16 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
   const done = req.body?.done !== false;
   const task = (req.session.tasks || []).find((t) => t.id === id);
   const sub = task?.steps?.[index]?.substeps?.[subIndex];
-  if (sub) {
+  // Was a silent no-op on a bad id/index — still 200'd with the unchanged list, indistinguishable from
+  // success. Every sibling route (confirm/dismiss/step-done) already 404s on a missing target; this one
+  // was missed.
+  if (!task || !sub) { res.status(404).json({ error: "Sub-step not found — it may have already changed elsewhere." }); return; }
+  try {
     sub.done = done;
-    task!.updatedAt = new Date().toISOString();
+    task.updatedAt = new Date().toISOString();
     await commit(req);
-  }
-  res.json(req.session.tasks || []);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save this sub-step — try again." }); }
 });
 // Let Otto just answer an automatable sub-action (see expandStep's `automatable` classification) instead
 // of the student having to look it up themselves — a read-only web search + synthesis, no permissioned
@@ -822,11 +866,13 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async 
   // a task that already states a real deadline must never have it silently overwritten by a "which day is
   // lighter" heuristic, whether the client is right or not.
   if (task.when?.trim()) { res.status(409).json({ error: "This task already has a deadline — it can't be moved." }); return; }
-  task.when = when;
-  task.updatedAt = new Date().toISOString();
-  tasks.applyDeadlineUrgency([task]);
-  await commit(req);
-  res.json(req.session.tasks || []);
+  try {
+    task.when = when;
+    task.updatedAt = new Date().toISOString();
+    tasks.applyDeadlineUrgency([task]);
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't move that task — try again." }); }
 });
 
 // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
@@ -837,15 +883,17 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   const s = t?.sendables?.[Number(req.params.index)];
   if (!t || !s) { res.status(404).json({ error: "not found" }); return; }
-  if (!s.sent) {
-    const r = await integrations.sendSendable(req.session.user!, s);
-    if (!r.ok) { res.status(500).json({ error: r.error || "send failed" }); return; }
-    s.sent = true;
-    t!.updatedAt = new Date().toISOString();
-    await commit(req);
-    void recordEvent(req.session.user!, "sent", { taskId: t!.id, message: `${s.label}${s.to ? ` → ${s.to}` : ""}` });
-  }
-  res.json(t);
+  try {
+    if (!s.sent) {
+      const r = await integrations.sendSendable(req.session.user!, s);
+      if (!r.ok) { res.status(500).json({ error: r.error || "send failed" }); return; }
+      s.sent = true;
+      t.updatedAt = new Date().toISOString();
+      await commit(req);
+      void recordEvent(req.session.user!, "sent", { taskId: t.id, message: `${s.label}${s.to ? ` → ${s.to}` : ""}` });
+    }
+    res.json(t);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't send — try again." }); }
 });
 // Manual edit of an unsent draft — the user typing directly into the draft box, not an AI rewrite (that's
 // /revise). For Gmail this pushes the edit to the REAL draft (GMAIL_SEND_DRAFT sends whatever's live in
@@ -858,17 +906,19 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_00
   const subject = typeof req.body?.subject === "string" ? req.body.subject.slice(0, 300) : undefined;
   const body = typeof req.body?.body === "string" ? req.body.body.slice(0, 20_000) : undefined;
   const text = typeof req.body?.text === "string" ? req.body.text.slice(0, 20_000) : undefined;
-  if (s.app === "gmail" && s.draftId) {
-    const r = await integrations.updateGmailDraft(req.session.user!, s.draftId, { subject, body, to: s.to });
-    if (!r.ok) { res.status(500).json({ error: r.error || "couldn't save your edit to the draft" }); return; }
-    if (subject !== undefined) s.subject = subject;
-    if (body !== undefined) s.body = body;
-  } else if (s.app === "slack") {
-    if (text !== undefined) s.text = text;
-  } else { res.status(400).json({ error: "this draft can't be edited here" }); return; }
-  t!.updatedAt = new Date().toISOString();
-  await commit(req);
-  res.json(t);
+  try {
+    if (s.app === "gmail" && s.draftId) {
+      const r = await integrations.updateGmailDraft(req.session.user!, s.draftId, { subject, body, to: s.to });
+      if (!r.ok) { res.status(500).json({ error: r.error || "couldn't save your edit to the draft" }); return; }
+      if (subject !== undefined) s.subject = subject;
+      if (body !== undefined) s.body = body;
+    } else if (s.app === "slack") {
+      if (text !== undefined) s.text = text;
+    } else { res.status(400).json({ error: "this draft can't be edited here" }); return; }
+    t.updatedAt = new Date().toISOString();
+    await commit(req);
+    res.json(t);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save your edit — try again." }); }
 });
 
 // ── Jobs + timeline (the durable execution layer's public surface) ────────────
@@ -1024,30 +1074,42 @@ app.post("/api/profile/grade", requireAuth, async (req, res) => {
 // subject for anything still lacking an id (a pre-history-model entry that never got normalized) or for
 // a bulk "remove this whole subject" — same param, whichever matches.
 app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
-  const p = (req.session.profile ||= emptyProfile());
-  const key = decodeURIComponent(String(req.params.key || ""));
-  const list = p.grades || [];
-  p.grades = list.some((g) => g.id === key) ? list.filter((g) => g.id !== key) : list.filter((g) => g.subject.toLowerCase() !== key.toLowerCase());
-  // commit()'s cross-device merge unions this list with whatever's still in the cloud copy — a plain
-  // remove-then-commit would have the deleted grade resurface (the cloud copy doesn't know it was removed,
-  // same tombstone-less limitation as the preference/people/project lists). Persist the deletion to cloud
-  // directly FIRST, so by the time commit() reloads "current" for the merge, it already reflects the delete.
-  if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
-  await commit(req);
-  res.json(p);
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const key = decodeURIComponent(String(req.params.key || ""));
+    const list = p.grades || [];
+    p.grades = list.some((g) => g.id === key) ? list.filter((g) => g.id !== key) : list.filter((g) => g.subject.toLowerCase() !== key.toLowerCase());
+    // commit()'s cross-device merge unions this list with whatever's still in the cloud copy — a plain
+    // remove-then-commit would have the deleted grade resurface (the cloud copy doesn't know it was removed,
+    // same tombstone-less limitation as the preference/people/project lists). Persist the deletion to cloud
+    // directly FIRST, so by the time commit() reloads "current" for the merge, it already reflects the delete.
+    if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't delete that grade — try again." }); }
 });
 // Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
 app.delete("/api/profile", requireAuth, async (req, res) => {
-  req.session.profile = emptyProfile();
-  await commit(req);
-  res.json(req.session.profile);
+  try {
+    req.session.profile = emptyProfile();
+    await commit(req);
+    res.json(req.session.profile);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't reset your profile — try again." }); }
 });
 app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   const k = listKey(String(req.params.category));
   const i = Number(String(req.params.index));
-  if (k && Array.isArray((p as any)[k]) && i >= 0 && i < (p as any)[k].length) { (p as any)[k].splice(i, 1); await commit(req); }
-  res.json(p);
+  // Was a silent no-op on a bad category/out-of-range index — still 200'd with the unchanged profile,
+  // indistinguishable from success (same anti-pattern already fixed on the task routes).
+  if (!k || !Array.isArray((p as any)[k]) || !(i >= 0 && i < (p as any)[k].length)) {
+    res.status(404).json({ error: "Nothing to delete there — it may have already changed elsewhere." }); return;
+  }
+  try {
+    (p as any)[k].splice(i, 1);
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't delete that — try again." }); }
 });
 
 // ── Static (production) ─────────────────────────────────────────────────────

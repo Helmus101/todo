@@ -44,7 +44,7 @@ export function applyDeadlineUrgency<T extends { when?: string; urgency: number;
   for (const t of list) {
     if (t.status && t.status !== "ready") continue;
     const due = Date.parse(t.when || "");
-    if (!due || Number.isNaN(due)) continue;
+    if (Number.isNaN(due)) continue;
     const daysLeft = (due - now) / 86_400_000;
     // >14d out: no boost (a model that already sees it as calm can stay calm). Inside two weeks it climbs
     // fast; overdue/today maxes out — exactly when procrastination is most costly.

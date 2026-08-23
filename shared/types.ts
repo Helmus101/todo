@@ -43,6 +43,10 @@ export interface Profile {
   courses: string[];
   unlimited?: boolean;    // account has no monthly AI spend cap (set by visiting /unlimited) — overMonthlyBudget/
                           // overInteractiveBudget always read false for it, regardless of monthCostUsd
+  // Stamped at signup once the required "I'm 15+, or a parent set this up for me" checkbox is checked
+  // (server/index.ts's /api/auth/signup rejects signup without it) — a real audit trail for the RGPD
+  // Art.8 parental-consent requirement, not just a UI gate that leaves no record.
+  ageConsentAt?: string;
   paused?: boolean;       // "pause all AI usage" — blocks generation and task runs server-side
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
   lastSweepAt?: string;   // ISO stamp of the last SUCCESSFUL generation sweep — durable "did we check today"

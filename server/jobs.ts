@@ -165,10 +165,27 @@ async function processSweep(job: store.Job): Promise<string> {
 // the recipient's mail client. Exported so tests/run.mjs can pin this without a network-calling send.
 export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] || c));
 
+// Local hour (0-23) in a given IANA timezone — used only to keep the task-alert email out of the
+// student's sleep hours; `isPeakHourUtc` elsewhere is about DeepSeek pricing, not this.
+function localHour(tz: string, now: Date = new Date()): number {
+  try { return Number(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false }).format(now).replace(/\D/g, "")) % 24; }
+  catch { return now.getUTCHours(); }
+}
+const QUIET_HOURS_START = 22, QUIET_HOURS_END = 7; // 22:00–07:00 local — no email, task still lands in-app
+
 /** New-task email alert — one email per sweep that found something, listing every fresh task with its
  *  "why" so the subject line alone tells the student something real happened, not just "check the app". */
 async function notifyNewTasks(email: string, found: WebTask[], profile: Profile): Promise<void> {
   if (!(await integrations.connectionStatusesCached(email, ["gmail"]))["gmail"]) return; // no Gmail, nothing to send through
+  // A student who opens the app at midnight (or has generation cadence turned up) could otherwise get
+  // "you have new homework" pinged in the middle of the night — the task itself still shows up in-app
+  // immediately; only the EMAIL nudge waits. Skipped, not queued — the next sweep that finds something
+  // (or the student just opening the app) covers it, so nothing is silently lost.
+  const h = localHour(tzOf(profile));
+  if (h >= QUIET_HOURS_START || h < QUIET_HOURS_END) {
+    void store.recordEvent(email, "task_alert_sent", { message: `Skipped: quiet hours (${h}:00 local)` });
+    return;
+  }
   const appUrl = process.env.PUBLIC_URL || "https://hiotto.vercel.app";
   const subject = found.length === 1 ? `Otto — nouvelle tâche : ${found[0].title}` : `Otto — ${found.length} nouvelles tâches`;
   const items = found.slice(0, 10).map((t) => `<li><b>${escapeHtml(t.title)}</b>${t.why ? ` — ${escapeHtml(t.why)}` : ""}</li>`).join("");
@@ -328,15 +345,27 @@ async function processExecuteStep(job: store.Job): Promise<string> {
     }).catch(() => undefined);
   }
   const academic = await loadAcademicContext(email);
-  const updated = await tasks.runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : undefined, academic);
-  if (updated && (updated.links?.length || updated.sendables?.length)) {
-    const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);
-    for (const d of droppedArtifacts) void store.recordEvent(email, "artifact_dropped", { taskId, jobId: job.id, message: d.slice(0, 200) });
+  // Unlike processExecuteTask (which reverts the task's status and stamps lastError on failure), this had
+  // NO try/catch at all — a thrown AI/tool error left the task stuck at "queued" forever with no error
+  // surfaced, until cron's once-a-day orphan recovery silently reran it as a full execute_task instead of
+  // retrying the specific step. Mirror processExecuteTask's pattern here too.
+  try {
+    const updated = await tasks.runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : undefined, academic);
+    if (updated && (updated.links?.length || updated.sendables?.length)) {
+      const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);
+      for (const d of droppedArtifacts) void store.recordEvent(email, "artifact_dropped", { taskId, jobId: job.id, message: d.slice(0, 200) });
+    }
+    restStatus();
+    await commitUser(email, profile, list);
+    await store.recordEvent(email, "step_done", { taskId, jobId: job.id, message: updated?.steps?.[index]?.text?.slice(0, 200) });
+    return "step executed";
+  } catch (e: any) {
+    restStatus();
+    if (t && !isHandled(t.status)) t.lastError = String(e?.message || e).slice(0, 300);
+    await commitUser(email, profile, list);
+    void store.recordEvent(email, "step_failed", { taskId, jobId: job.id, message: String(e?.message || e).slice(0, 200) });
+    throw e;
   }
-  restStatus();
-  await commitUser(email, profile, list);
-  await store.recordEvent(email, "step_done", { taskId, jobId: job.id, message: updated?.steps?.[index]?.text?.slice(0, 200) });
-  return "step executed";
 }
 
 /** Run ONE claimed job to completion. Throwing marks it failed (retryable until max_attempts). */
@@ -365,11 +394,11 @@ export async function drain(limit = 3, budgetMs = 240_000, userEmail?: string): 
     const beat = setInterval(() => { void store.renewLock(job.id, workerId).then((ok) => { if (!ok) clearInterval(beat); }); }, store.heartbeatIntervalMs);
     try {
       const note = await processJob(job);
-      await store.finishJob(job.id, "succeeded", undefined, { note });
+      await store.finishJob(job.id, workerId, "succeeded", undefined, { note });
       processed++;
     } catch (e: any) {
       console.error(`[jobs] ${job.type} failed for ${job.user_email}${job.task_id ? ` task ${job.task_id}` : ""}:`, e?.message || e);
-      await store.finishJob(job.id, "failed", e?.message || String(e));
+      await store.finishJob(job.id, workerId, "failed", e?.message || String(e));
       if (job.task_id) void store.recordEvent(job.user_email, "run_failed", { taskId: job.task_id, jobId: job.id, message: String(e?.message || e).slice(0, 200) });
       failed++;
     } finally {

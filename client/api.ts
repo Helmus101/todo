@@ -68,7 +68,7 @@ const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: st
 
 export const api = {
   status: (): Promise<ConnectionStatus> => req("/api/status").then(j),
-  signup: (email: string, password: string) => authPost("/api/auth/signup", { email, password }),
+  signup: (email: string, password: string, consent: boolean) => authPost("/api/auth/signup", { email, password, consent }),
   login: (email: string, password: string) => authPost("/api/auth/login", { email, password }),
   integrations: (): Promise<IntegrationsResp> => req("/api/integrations").then(j),
   integrationAccounts: (app: string): Promise<{ accounts: ConnectedAccount[] }> => req(`/api/integrations/${app}/accounts`).then(j),

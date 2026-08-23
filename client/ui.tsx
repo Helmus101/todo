@@ -429,12 +429,20 @@ export function QuizPlayer({ quiz }: { quiz: TaskQuiz }) {
             <button key={oi} type="button" className={`quiz-opt ${state}`} disabled={picked !== null} onClick={() => pick(oi)}>
               <span className="quiz-opt-key">{oi + 1}</span>
               <span className="quiz-opt-text">{opt}</span>
+              {/* Was border/background-only (deliberately not red/green — see the one-accent rule) but with
+                  no text/icon and no aria-live announcement, a screen-reader student got zero signal about
+                  which answer was right after picking. */}
+              {state === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓ {L("Correct", "Correct")}</span>}
+              {state === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗ {L("Incorrect", "Incorrect")}</span>}
             </button>
           );
         })}
       </div>
       {picked !== null && (
         <>
+          <p className="sr-only" role="status" aria-live="polite">
+            {picked === q!.correct ? L("Correct.", "Correct.") : L(`Incorrect. La bonne réponse était : ${q!.options[q!.correct]}.`, `Incorrect. The correct answer was: ${q!.options[q!.correct]}.`)}
+          </p>
           {q!.why && <p className="quiz-why">{q!.why}</p>}
           <div className="deck-acts">
             <button className="btn primary" onClick={next}>{L("Suivant", "Next")} →</button>

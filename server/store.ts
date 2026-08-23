@@ -247,6 +247,7 @@ export interface Job {
   max_attempts: number;
   idempotency_key: string;
   locked_until?: string | null;
+  locked_by?: string | null;
   input?: any;
   output?: any;
   last_error?: string | null;
@@ -265,6 +266,9 @@ const EVENTS = "weave_web_job_events";
 // worker ever loses its lock.
 const LOCK_MS = 15 * 60_000;
 const HEARTBEAT_MS = 4 * 60_000; // re-extend the lease this often while a job runs
+// Exponential backoff before a retried (non-terminal) job becomes claimable again — 2s, 4s, 8s, capped at
+// 30s. `attemptCount` is the count AFTER the failed attempt (i.e. how many tries have happened so far).
+const retryBackoffUntil = (attemptCount: number): string => new Date(Date.now() + Math.min(2 ** attemptCount * 1000, 30_000)).toISOString();
 
 // In-memory fallback (dev without a reachable jobs table).
 const memJobs: Job[] = [];
@@ -324,12 +328,16 @@ export async function claimJob(workerId: string, userEmail?: string): Promise<Jo
   if (db) {
     // Two passes: fresh queued jobs first, then expired-lock running jobs (retry of a crashed claim).
     for (const pass of ["queued", "expired"] as const) {
-      let q = db.from(JOBS).select("id,status,attempt_count,max_attempts").order("created_at", { ascending: true }).limit(5);
+      let q = db.from(JOBS).select("id,status,attempt_count,max_attempts,locked_until").order("created_at", { ascending: true }).limit(5);
       if (userEmail) q = q.eq("user_email", userEmail);
       const { data: candidates } = pass === "queued"
         ? await q.eq("status", "queued")
         : await q.eq("status", "running").lt("locked_until", now.toISOString());
       for (const c of candidates || []) {
+        // A retried job stamps `locked_until` with a short BACKOFF window before going back to "queued"
+        // (see finishJob) — skip it here until that window passes, so a systemic outage doesn't burn
+        // through max_attempts in a rapid back-to-back burst.
+        if (pass === "queued" && c.locked_until && c.locked_until > now.toISOString()) continue;
         if (c.attempt_count >= c.max_attempts) { // exhausted — close it out instead of spinning forever
           await db.from(JOBS).update({ status: "failed_terminal", finished_at: now.toISOString(), last_error: "max attempts exceeded" }).eq("id", c.id).eq("status", c.status);
           continue;
@@ -346,7 +354,7 @@ export async function claimJob(workerId: string, userEmail?: string): Promise<Jo
   const job = memJobs.find((j) => (!userEmail || j.user_email === userEmail) && (j.status === "queued" || (j.status === "running" && j.locked_until && j.locked_until < now.toISOString())));
   if (!job) return null;
   if (job.attempt_count >= job.max_attempts) { job.status = "failed_terminal"; job.last_error = "max attempts exceeded"; return claimJob(workerId, userEmail); }
-  job.status = "running"; job.locked_until = lockUntil; job.started_at = now.toISOString(); job.attempt_count++;
+  job.status = "running"; job.locked_until = lockUntil; job.locked_by = workerId; job.started_at = now.toISOString(); job.attempt_count++;
   return job;
 }
 
@@ -363,36 +371,47 @@ export async function renewLock(id: string, workerId: string): Promise<boolean> 
     return !!(data && data.length);
   }
   const job = memJobs.find((j) => j.id === id);
-  if (!job || job.status !== "running") return false;
+  if (!job || job.status !== "running" || job.locked_by !== workerId) return false;
   job.locked_until = until;
   return true;
 }
 export const heartbeatIntervalMs = HEARTBEAT_MS;
 
-/** Mark a claimed job finished — success, retryable failure (goes back to queued-like claimable state), or terminal. */
-export async function finishJob(id: string, outcome: "succeeded" | "failed", error?: string, output?: any): Promise<void> {
+/** Mark a claimed job finished — success, retryable failure (goes back to queued-like claimable state), or
+ *  terminal. `workerId` MUST match the worker `claimJob` gave this job to (like `renewLock` already
+ *  requires) — without that check, a worker whose lease expired mid-run (a Supabase blip spanning one
+ *  heartbeat cycle) while a SECOND worker legitimately reclaimed the same job would still get to overwrite
+ *  whatever the second worker's run produced, with no detection — real duplicate side effects (a second
+ *  draft, double AI spend) going unnoticed. A no-op update (0 rows) means another worker already finished
+ *  it; that's not an error, just nothing left for this call to do. */
+export async function finishJob(id: string, workerId: string, outcome: "succeeded" | "failed", error?: string, output?: any): Promise<void> {
   const db = await jobsDb();
   const now = new Date().toISOString();
   if (db) {
     if (outcome === "succeeded") {
-      await db.from(JOBS).update({ status: "succeeded", finished_at: now, output: output ?? null, locked_until: null }).eq("id", id);
+      await db.from(JOBS).update({ status: "succeeded", finished_at: now, output: output ?? null, locked_until: null }).eq("id", id).eq("locked_by", workerId).eq("status", "running");
     } else {
       const { data } = await db.from(JOBS).select("attempt_count,max_attempts").eq("id", id).maybeSingle();
       const terminal = (data?.attempt_count ?? 1) >= (data?.max_attempts ?? 3);
       await db.from(JOBS).update({
         status: terminal ? "failed_terminal" : "queued", // retryable → back to queued for the next drain
-        ...(terminal ? { finished_at: now } : {}), last_error: String(error || "").slice(0, 500), locked_until: null,
-      }).eq("id", id);
+        ...(terminal ? { finished_at: now } : {}), last_error: String(error || "").slice(0, 500),
+        // Backoff, not an immediate re-claim — during a systemic outage (e.g. the AI provider down),
+        // requeuing with no delay let a job burn through all its attempts in one rapid back-to-back
+        // burst instead of spacing them out. claimJob's "queued" pass now respects this window.
+        locked_until: terminal ? null : retryBackoffUntil(data?.attempt_count ?? 1),
+      }).eq("id", id).eq("locked_by", workerId).eq("status", "running");
     }
     return;
   }
-  const job = memJobs.find((j) => j.id === id);
-  if (!job) return;
+  const job = memJobs.find((j) => j.id === id && j.locked_by === workerId && j.status === "running");
+  if (!job) return; // already finished by someone else, or never ours
   if (outcome === "succeeded") { job.status = "succeeded"; job.finished_at = now; job.output = output; }
   else {
     const terminal = job.attempt_count >= job.max_attempts;
     job.status = terminal ? "failed_terminal" : "queued";
     job.last_error = String(error || "").slice(0, 500);
+    job.locked_until = terminal ? null : retryBackoffUntil(job.attempt_count);
     if (terminal) job.finished_at = now;
   }
   job.locked_until = null;
@@ -466,4 +485,22 @@ export async function eventsForTask(userEmail: string, taskId: string, limit = 2
     return (data as JobEvent[]) || [];
   }
   return memEvents.filter((e) => e.user_email === userEmail && e.task_id === taskId).slice(-limit).reverse();
+}
+
+/** Every job + audit-event record for a user — for GET /api/account/export. Without this, an export
+ *  returned strictly LESS than what deleteAccount actually wipes (it clears these same tables), so a
+ *  GDPR Art.15 access request came back incomplete relative to what's really stored and later erased. */
+export async function exportJobsAndEvents(userEmail: string): Promise<{ jobs: Job[]; events: JobEvent[] }> {
+  const db = await jobsDb();
+  if (db) {
+    const [{ data: jobs }, { data: events }] = await Promise.all([
+      db.from(JOBS).select("*").eq("user_email", userEmail).order("created_at", { ascending: false }).limit(1000),
+      db.from(EVENTS).select("kind,message,at,task_id,job_id").eq("user_email", userEmail).order("at", { ascending: false }).limit(1000),
+    ]);
+    return { jobs: (jobs as Job[]) || [], events: (events as JobEvent[]) || [] };
+  }
+  return {
+    jobs: memJobs.filter((j) => j.user_email === userEmail),
+    events: memEvents.filter((e) => e.user_email === userEmail),
+  };
 }

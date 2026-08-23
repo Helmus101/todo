@@ -128,11 +128,27 @@ export async function pronoteConnected(email: string): Promise<{ connected: bool
   return stored ? { connected: true, username: stored.username } : { connected: false };
 }
 
+// Cached wrapper for the hot /api/status path (client/App.tsx polls it every 45s, plus on every focus/
+// visibility change) — pronoteConnected() otherwise does a full cloud state load on EVERY call, with no
+// caching at all, for a value that only ever changes on an explicit connect/disconnect. 60s TTL, longer
+// than the poll interval so a normal poll actually hits the cache instead of re-reading every time.
+const connectedCache = new Map<string, { at: number; data: { connected: boolean; username?: string } }>();
+export async function pronoteConnectedCached(email: string): Promise<{ connected: boolean; username?: string }> {
+  const hit = connectedCache.get(email);
+  if (hit && Date.now() - hit.at < 60_000) return hit.data;
+  const data = await pronoteConnected(email);
+  connectedCache.set(email, { at: Date.now(), data });
+  return data;
+}
+/** Invalidate after an explicit connect/disconnect so the status endpoint reflects it immediately
+ *  instead of waiting out the cache TTL. */
+export function invalidatePronoteStatus(email: string): void { connectedCache.delete(email); }
+
 /** Open a fresh Pronote session from the stored token, run `fn`, then persist the ROTATED token (pawnote
  *  issues a new one on every login) before returning — skipping that would lock the next read out. Never
  *  throws; a login/read failure returns undefined and is logged (best-effort, same pattern as the rest of
  *  the discovery pipeline — one flaky source must not break the whole sweep). */
-async function withPronoteSession<T>(email: string, fn: (session: pronote.SessionHandle) => Promise<T>): Promise<T | undefined> {
+async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.SessionHandle) => Promise<T>): Promise<T | undefined> {
   const { pronote: stored } = await loadState(email);
   if (!stored) return undefined;
   try {
@@ -150,6 +166,20 @@ async function withPronoteSession<T>(email: string, fn: (session: pronote.Sessio
     console.warn("[pronote] session failed:", e?.message || e);
     return undefined;
   }
+}
+
+// Pronote's refresh token is single-use/rotating — two concurrent sessions for the SAME account (e.g. a
+// discovery sweep's Promise.all fetching homework and tests together, server/discover.ts) would both read
+// the same stored token, both rotate it, and whichever saveState lands last silently discards the other's
+// rotated token even though Pronote may already consider it the current one — locking the account out
+// until the student re-enters their real password. Serialize per-account so only one session is ever
+// mid-rotation at a time; a failed run doesn't poison the chain for the next caller.
+const pronoteLocks = new Map<string, Promise<unknown>>();
+async function withPronoteSession<T>(email: string, fn: (session: pronote.SessionHandle) => Promise<T>): Promise<T | undefined> {
+  const prior = pronoteLocks.get(email) || Promise.resolve();
+  const run = prior.then(() => runPronoteSessionOnce(email, fn), () => runPronoteSessionOnce(email, fn));
+  pronoteLocks.set(email, run.catch(() => undefined));
+  return run;
 }
 
 export interface PronoteHomeworkItem { id: string; subject: string; description: string; deadline: string; done: boolean; }

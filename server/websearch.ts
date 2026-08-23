@@ -30,8 +30,10 @@ async function duckDuckGo(query: string): Promise<{ title: string; url: string; 
   while ((m = linkRe.exec(html)) && out.length < 8) {
     const url = decodeDdgUrl(m[1]);
     const title = stripTags(m[2]);
-    if (url && title) out.push({ title, url, snippet: snippets[i] || "" });
-    i++;
+    // Only advance the snippet index for an entry actually pushed — result__a and result__snippet are
+    // matched by two independent regexes with no guaranteed 1:1 correspondence, so incrementing on every
+    // match (including filtered-out ones) misaligned a later result with the WRONG snippet.
+    if (url && title) { out.push({ title, url, snippet: snippets[i] || "" }); i++; }
   }
   return out;
 }
