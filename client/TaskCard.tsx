@@ -688,6 +688,17 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
     catch (e: any) { notify(e?.message || L("Impossible de détailler cette étape.", "Couldn't break this step down."), "error"); }
     finally { setExpanding((cur) => (cur === i ? null : cur)); }
   };
+  // "Do it" on an automatable sub-action (a pure lookup — see expandStep's classification): Otto answers
+  // it directly instead of the student having to go find it. Keyed "i-subIndex" since two different steps
+  // can both have a sub-action running at once.
+  const [runningSub, setRunningSub] = useState<string | null>(null);
+  const runSubstep = async (i: number, subIndex: number) => {
+    const key = `${i}-${subIndex}`;
+    setRunningSub(key);
+    try { onChange(await api.runSubstep(task.id, i, subIndex)); }
+    catch (e: any) { notify(e?.message || L("Otto n'a pas réussi à répondre.", "Otto couldn't get an answer."), "error"); }
+    finally { setRunningSub((cur) => (cur === key ? null : cur)); }
+  };
   // Optimistic: flip the checkbox instantly (this is the highest-frequency, lowest-latency-tolerance
   // interaction on the card) instead of waiting on the round trip, then reconcile with the server's
   // response — or revert if the call fails, so the UI never lies about what's actually persisted.
@@ -809,7 +820,10 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                     ephemeral chat output, so it's there next time the task is opened. */}
                 {s.substeps?.length ? (
                   <ul className="substeps">
-                    {s.substeps.map((sub, si) => (
+                    {s.substeps.map((sub, si) => {
+                      const subKey = `${i}-${si}`;
+                      const subRunning = runningSub === subKey;
+                      return (
                       <li key={si} className={`substep ${sub.done ? "done" : ""}`}>
                         <button type="button" className="substep-mark" aria-pressed={sub.done}
                           aria-label={sub.done ? L(`Marquer « ${sub.text} » comme pas encore faite`, `Mark "${sub.text}" as not done`) : L(`Marquer « ${sub.text} » comme faite`, `Mark "${sub.text}" as done`)}
@@ -817,11 +831,20 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                           <span aria-hidden="true">{sub.done ? "✓" : ""}</span>
                         </button>
                         <span className="substep-text">{sub.text}</span>
+                        {sub.result ? <span className="step-result note substep-result">{sub.result}</span> : null}
                         {/* Same "land one click from done" affordance as a parent step's own url — a
                             sub-action can point at a real resource Otto already found (see expandStep). */}
                         {sub.url ? <button type="button" className="btn xs ghost substep-link" title={sub.url} onClick={() => openTab(sub.url!, TAB_GROUP)}>{L(`Ouvrir ${linkKind(sub.url) || "le lien"} ↗`, `Open ${linkKind(sub.url) || "link"} ↗`)}</button> : null}
+                        {/* A pure lookup Otto can just answer (see expandStep's `automatable` classification)
+                            instead of the student going to find it themselves. */}
+                        {sub.automatable && !sub.done ? (
+                          <button type="button" className="btn xs ghost substep-run" disabled={subRunning} onClick={() => void runSubstep(i, si)}>
+                            {subRunning ? L("Otto cherche…", "Otto's looking…") : L("Laisser Otto répondre", "Let Otto answer")}
+                          </button>
+                        ) : null}
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 ) : !s.done && !blk ? (
                   // Available on any step, not just big-project milestones — a step that reads simple to

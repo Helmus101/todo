@@ -421,7 +421,11 @@ export interface TaskStep {
    *  ephemeral chat output), so it survives reloads and reads as part of the task's real plan, not
    *  advice that scrolled away. Generated once per step; the student ticks them off independently of the
    *  parent step (the parent still needs its own "C'est fait" — sub-steps are a working aid, not a gate). */
-  substeps?: { text: string; done: boolean; url?: string }[];
+  /** `automatable`: a pure lookup/research sub-action (hours, prices, a schedule, a fact) that needs no
+   *  login and isn't the student's own graded/learning work — Otto can just run it (see runSubstep in
+   *  server/claude.ts) and fill `result` in, same "Otto did this part" affordance a parent step's own
+   *  `automatable` flag already has. Unset/false sub-actions stay manual, ticked by the student. */
+  substeps?: { text: string; done: boolean; url?: string; automatable?: boolean; result?: string }[];
   /** Realistic minutes this step should take (1-240), when Otto estimated one. Advisory only — never a
    *  timer or a deadline, just lets the UI answer "what can I fit in 15 minutes right now". Clamped in
    *  server/claude.ts's sanitizeStepExtras. */

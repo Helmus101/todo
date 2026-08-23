@@ -2450,10 +2450,15 @@ export async function expandStep(
           `If one of RESOURCES ALREADY ON THIS TASK above is exactly the page a sub-action needs, give that ` +
           `sub-action a "url" copied VERBATIM from the list — never invent or guess one, and never a url that ` +
           `isn't in that list. Most sub-actions won't have one.\n\n` +
-          `Return ONLY this JSON: {"substeps": [{"text": "...", "url": "..." (optional)}, ...]}.`,
+          `Mark "automatable": true ONLY for a sub-action that's a pure lookup/research fact (a schedule, a ` +
+          `price, an opening hour, an address, a definition) that needs no login and isn't the student's own ` +
+          `graded/learning work — Otto can just go find the answer for those. Everything else (writing, ` +
+          `deciding, arguing, practicing, anything the student has to actually do or learn) is "automatable": ` +
+          `false. Most sub-actions are NOT automatable.\n\n` +
+          `Return ONLY this JSON: {"substeps": [{"text": "...", "url": "..." (optional), "automatable": true|false}, ...]}.`,
       }],
     }));
-    const out = firstJson<{ substeps?: ({ text?: string; url?: string } | string)[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const out = firstJson<{ substeps?: ({ text?: string; url?: string; automatable?: boolean } | string)[] }>(String(res.choices?.[0]?.message?.content || ""));
     const linkUrls = new Set(links.map((l) => l.url));
     return (out?.substeps || [])
       .map((s) => {
@@ -2462,12 +2467,45 @@ export async function expandStep(
         const raw = typeof s === "string" ? { text: s } : (s || {});
         const text = String(raw.text || "").trim().slice(0, 140);
         const url = raw.url && linkUrls.has(String(raw.url)) ? String(raw.url) : undefined;
-        return { text, url };
+        const automatable = raw.automatable === true && !url; // a sub-action with its own url is opened, not run
+        return { text, url, automatable };
       })
       .filter((s) => s.text)
       .slice(0, 6)
-      .map(({ text, url }) => ({ text, done: false, ...(url ? { url } : {}) }));
+      .map(({ text, url, automatable }) => ({ text, done: false, ...(url ? { url } : {}), ...(automatable ? { automatable: true } : {}) }));
   } catch { return []; }
+}
+
+/** Run ONE automatable sub-action (see expandStep's `automatable` classification): a pure lookup, not the
+ *  student's own work, so it's safe to just answer with a web search + a short synthesis — no permissioned
+ *  tools, no approval gate, same posture as any other read-only research the agent already does. Runs
+ *  inline in the request (unlike a full step, this never needs the job queue: it's bounded, read-only,
+ *  and has nothing to retry against on failure). Throws on failure — the route surfaces that as an error. */
+export async function runSubstep(
+  task: { title: string; why: string },
+  step: { text: string },
+  substep: { text: string },
+  profile?: Profile,
+): Promise<string> {
+  const results = await webSearch(`${substep.text} ${task.title}`);
+  const client = deepseekClient();
+  const context = results.slice(0, 5).map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join("\n") || "(no search results found)";
+  const res: any = await retryRequest(() => client.chat.completions.create({
+    model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
+    max_tokens: 200,
+    temperature: 0.2,
+    messages: [{
+      role: "user",
+      content: `TASK: "${task.title}" (${task.why})\nSTEP: "${step.text}"\nSUB-ACTION TO ANSWER: "${substep.text}"\n\n` +
+        `SEARCH RESULTS:\n${context}\n\n` +
+        languageLine(profile) +
+        `Answer the sub-action directly in 1-2 short sentences, using ONLY the search results above. If they ` +
+        `don't actually answer it, say so plainly instead of guessing. No preamble, just the answer.`,
+    }],
+  }));
+  const answer = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 400);
+  if (!answer) throw new Error("Otto n'a pas trouvé de réponse — essaie manuellement.");
+  return answer;
 }
 
 /**

@@ -106,6 +106,9 @@ export const api = {
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
   expandStep: (id: string, index: number): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/expand`),
   substepDone: (id: string, index: number, subIndex: number, done = true): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/substep/${subIndex}/done`, { done }),
+  // 25s, same reasoning as runStep: a real web search + synthesis, bounded so a stuck click surfaces an
+  // error instead of sitting there looking broken.
+  runSubstep: (id: string, index: number, subIndex: number): Promise<WebTask[]> => postTimed(`/api/tasks/${id}/step/${index}/substep/${subIndex}/run`, 25000),
   sendDraft: (id: string, index: number): Promise<WebTask> => post(`/api/tasks/${id}/send/${index}`),
   editDraft: (id: string, index: number, patch: { subject?: string; body?: string; text?: string }): Promise<WebTask> => post(`/api/tasks/${id}/sendable/${index}/edit`, patch),
   // Profile responses are normalized to a valid shape (and fall back to empty on a 401/odd body) so the

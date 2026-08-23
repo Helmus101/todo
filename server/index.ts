@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -764,6 +764,29 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
     await commit(req);
   }
   res.json(req.session.tasks || []);
+});
+// Let Otto just answer an automatable sub-action (see expandStep's `automatable` classification) instead
+// of the student having to look it up themselves — a read-only web search + synthesis, no permissioned
+// tools needed, so it runs inline here rather than through the job queue.
+app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLimit(20, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to use this." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
+  const id = String(req.params.id);
+  const index = Number(req.params.index);
+  const subIndex = Number(req.params.subIndex);
+  const task = (req.session.tasks || []).find((t) => t.id === id);
+  const step = task?.steps?.[index];
+  const sub = step?.substeps?.[subIndex];
+  if (!task || !step || !sub) { res.status(404).json({ error: "Sub-step not found — it may have already changed elsewhere." }); return; }
+  if (!sub.automatable) { res.status(400).json({ error: "This one isn't something Otto can do for you." }); return; }
+  try {
+    sub.result = await runSubstep({ title: task.title, why: task.why }, { text: step.text }, { text: sub.text }, req.session.profile);
+    sub.done = true;
+    task.updatedAt = new Date().toISOString();
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Otto n'a pas réussi à répondre." }); }
 });
 // "Move to a lighter day" from the workload widget — a manual, reversible nudge (never AI-driven): the
 // student picks the day, Otto just relabels the task's own `when` and re-scores it, same deadline-urgency
