@@ -230,7 +230,19 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/auth/logout", (req, res) => { req.session.destroy(() => res.json({ ok: true })); });
+app.post("/api/auth/logout", (req, res) => {
+  req.session.destroy(() => {
+    // Belt-and-suspenders on top of destroy(): if some OTHER request already in flight on this same
+    // cookie (a background sweep/kick tick — see client/App.tsx's signedOutRef) still calls
+    // req.session.save() after this destroy() runs, it can silently re-insert the session row under the
+    // same id, and the browser's still-held cookie would then resolve to a "logged in" session again —
+    // exactly the "auto logs in after sign out" report. Clearing the cookie here doesn't stop that other
+    // request's write, but it does mean any tab that DIDN'T just receive a resurrected Set-Cookie no
+    // longer presents the old id at all, closing off the most common path back in.
+    res.clearCookie("connect.sid", { httpOnly: true, sameSite: "lax", secure: PROD });
+    res.json({ ok: true });
+  });
+});
 
 // GDPR right-to-erasure, self-serve: permanently deletes every row this account owns (see
 // store.deleteAccount) and destroys the session. Irreversible — the client confirms before calling this.

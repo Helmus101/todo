@@ -197,6 +197,14 @@ export function App() {
     setPreLoginLang(v);
     try { localStorage.setItem("otto-landing-lang", v); } catch { /* ignore */ }
   }, []);
+  // Guards every periodic/background request (sweep, sync, kick) from firing once sign-out has been
+  // clicked. Without this, the 4s "kick" interval (drains an in-flight job) or the 45s sync tick could
+  // still be mid-flight — or fire again before React tears down their effects — right as the user signs
+  // out; that request's own server-side session write (commit()) can resurrect the just-destroyed session
+  // under the same cookie, which is what showed up as "auto logs in again after I signed out". Checked at
+  // the top of every tick before it does anything, and before acting on a response that lands late; reset
+  // the moment a fresh sign-in actually succeeds.
+  const signedOutRef = useRef(false);
   const [route] = usePathRoute();
   const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
@@ -345,7 +353,9 @@ export function App() {
   // `loaded` — even on an empty/failed fetch — so the loading screen can never hang half-forever (the
   // 15-min tick + focus re-sync retry a transient miss).
   const syncTasks = useCallback(async () => {
+    if (signedOutRef.current) return;
     const t = await api.tasks().catch(() => null);
+    if (signedOutRef.current) return; // signed out while the request was in flight — drop the stale response
     if (t) setTasks((prev) => keepLocalHandled(prev, retryFlags(t)));
     setLoaded(true);
   }, []);
@@ -360,7 +370,7 @@ export function App() {
   const SWEEP_EVERY_MS = Math.floor(24 * 60 * 60_000 / genPerDay);
   const sweeping = useRef(false);
   const sweepIfDue = useCallback(async () => {
-    if (!connected || status?.paused || status?.overBudget || sweeping.current) return;
+    if (signedOutRef.current || !connected || status?.paused || status?.overBudget || sweeping.current) return;
     let last = 0;
     try { last = Number(localStorage.getItem("otto-lastgen") || 0); } catch { /* sweep anyway */ }
     if (Date.now() - last < SWEEP_EVERY_MS) return;
@@ -402,7 +412,7 @@ export function App() {
   // list is never stuck waiting for a tab-switch to show up.
   useEffect(() => {
     if (!connected) return;
-    const on = () => { if (!document.hidden) { void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); } };
+    const on = () => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); } };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
     // A backend-generated task (from cron, another device, or a queued-but-not-auto-run item) is only ever
@@ -412,7 +422,7 @@ export function App() {
     // (sweepIfDue is a fast no-op until due), so this doesn't sweep more often. Also re-pull /api/status on
     // the same tick — account-level fields (language, in particular) can change in another tab/device, and
     // without this an already-open session would show a stale language until reload.
-    const syncTick = setInterval(() => { if (!document.hidden) { void syncTasks(); void loadStatus(); } }, 45_000);
+    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 45_000);
     const fullTick = setInterval(on, 5 * 60_000); // periodic budget refresh + cadence-gated sweep check
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
   }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus]);
@@ -431,10 +441,11 @@ export function App() {
     if (!connected || !loaded || status?.paused) return;
     if (!hasActiveWork(tasks)) return;
     const tick = async () => {
-      if (kicking.current) return;
+      if (kicking.current || signedOutRef.current) return;
       kicking.current = true;
       try {
         const out = await api.kick();
+        if (signedOutRef.current) return; // signed out mid-flight — don't act on a stale/resurrecting response
         setRetryingIds(Array.isArray(out.activeTaskIds) ? out.activeTaskIds : []);
         if (Array.isArray(out.tasks) && out.tasks.length) {
           setTasks((prev) => keepLocalHandled(prev, out.tasks));
@@ -484,6 +495,10 @@ export function App() {
     finally { setBusy(false); }
   };
   const signOut = async () => {
+    // Set BEFORE the async logout call (not after) — every background interval/tick checks this, so a
+    // kick/sync/sweep that would otherwise fire in the gap while `api.logout()` is still in flight is
+    // stopped at the source instead of racing the server-side session destroy (see signedOutRef above).
+    signedOutRef.current = true;
     // Was unguarded — offline, api.logout() throws and skips everything below, leaving local state (and
     // the localStorage cache) intact on what's supposed to be a shared/school-computer-safe sign-out.
     // The local cleanup matters MORE than the server call succeeding, so it happens regardless.
@@ -554,9 +569,9 @@ export function App() {
     return (
       <LangContext.Provider value={preLoginLang}>
         {route === "login" || route === "signup"
-          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async (isNew) => { if (isNew) { await onNewAccount(); startOnboard(); } await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : "login"} />
+          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async (isNew) => { signedOutRef.current = false; if (isNew) { await onNewAccount(); startOnboard(); } await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : "login"} />
           : route === "unlimited"
-          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { await loadStatus(); navigate("unlimited"); }} initialMode="login" />
+          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate("unlimited"); }} initialMode="login" />
           : <Landing lang={preLoginLang} onLangChange={setLandingLang} />}
       </LangContext.Provider>
     );
