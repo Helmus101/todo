@@ -325,7 +325,22 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
     autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
-    language: p2.language ?? p1.language,
+    // `language` is never actually undefined (normalizeProfile always defaults it to "fr"), so a plain
+    // `??` here could never detect "this side never touched it" and always kept p2 (the local session's
+    // stale copy), silently reverting another device's language switch on every commit. Use the stamp,
+    // same pattern as `paused`/`pausedAt` above; if neither side ever stamped one (older data), fall back
+    // to p2 so existing behavior is unchanged rather than flipping languages on old accounts.
+    ...(() => {
+      const setAt = (p: Profile) => Date.parse(p.languageSetAt || "") || 0;
+      const s1 = setAt(p1), s2 = setAt(p2);
+      if (s1 || s2) {
+        const side = s2 >= s1 ? p2 : p1;
+        return { language: side.language, languageSetAt: side.languageSetAt };
+      }
+      // Neither side ever stamped one (older data, or a raw object in a test) — same fallback as before
+      // this fix, so nothing changes for accounts/tests that predate the stamp.
+      return { language: p2.language ?? p1.language, languageSetAt: p2.languageSetAt ?? p1.languageSetAt };
+    })(),
     // Grades are a HISTORY now (see the Profile.grades type comment), not one row per subject — a manual
     // entry from device A must not be dropped just because device B's copy doesn't have it yet. Union by
     // id (each manual entry gets a unique one at creation); a Pronote-sourced row keeps its subject-level

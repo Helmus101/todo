@@ -873,6 +873,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                             instead of the student going to find it themselves. */}
                         {sub.automatable && !sub.done ? (
                           <button type="button" className="btn xs ghost substep-run" disabled={subRunning} onClick={() => void runSubstep(i, si)}>
+                            {subRunning ? <span className="spinner xs" aria-hidden="true" /> : null}
                             {subRunning ? L("Otto cherche…", "Otto's looking…") : L("Laisser Otto répondre", "Let Otto answer")}
                           </button>
                         ) : null}
@@ -885,6 +886,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                   // Otto can still feel like too much in the moment, so the option to split it further is
                   // always one tap away instead of being reserved for a detected big project.
                   <button type="button" className="btn xs ghost substep-expand" disabled={expanding === i} onClick={() => void expandStep(i)}>
+                    {expanding === i ? <span className="spinner xs" aria-hidden="true" /> : null}
                     {expanding === i ? L("Découpage…", "Breaking down…") : L("Détailler cette étape", "Break this step down")}
                   </button>
                 ) : null}

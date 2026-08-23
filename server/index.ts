@@ -109,27 +109,31 @@ const mergeProfiles = tasks.mergeProfileStates;
 // account email — so it follows the account across devices and survives restarts. (Integration
 // connections live in Composio, keyed by the same account email, so there's nothing extra to store.)
 const commit = async (req: express.Request) => {
-  // The session-store write and the cloud-state read are independent (different tables, neither depends
-  // on the other's result) — run them concurrently instead of back-to-back to cut one round-trip off
-  // every task-mutating request (confirm/dismiss/run/revise/step...).
-  const sessionSaved = saveSession(req);
-  if (req.session.user) {
+  // Only the session-store write is awaited: it's what a same-device follow-up request depends on
+  // (sessions are cloud-backed too — makeSessionStore() — so this is the account's cross-request
+  // truth, and it's a single round trip). The cross-device cloud sync below (read this account's cloud
+  // row, merge, write it back) used to run — and be retried up to 3x on a blip — IN LINE before the
+  // response, turning every confirm/dismiss/step-done tap into 2 sequential Supabase round trips
+  // minimum. Every one of this function's ~20 call sites responds with the LOCAL req.session state
+  // (never the merged result) immediately after commit() resolves, so nothing depends on the merge
+  // finishing first — detach it as best-effort background work instead, matching saveState's own "never
+  // throws into the request path" contract and the `void recordEvent(...)` fire-and-forget pattern
+  // already used right after several of these call sites.
+  await saveSession(req);
+  if (!req.session.user) return;
+  const email = req.session.user;
+  const localTasks = req.session.tasks || [];
+  const localProfile = req.session.profile || emptyProfile();
+  void (async () => {
     try {
-      const [current] = await Promise.all([loadState(req.session.user), sessionSaved]);
-      const mergedTasks = mergeTasks(current.tasks || [], req.session.tasks || []);
-      const mergedProfile = mergeProfiles(current.profile || emptyProfile(), req.session.profile || emptyProfile());
-      req.session.tasks = mergedTasks;
-      req.session.profile = mergedProfile;
-      await saveState(req.session.user, { profile: mergedProfile, tasks: mergedTasks });
+      const current = await loadState(email);
+      const mergedTasks = mergeTasks(current.tasks || [], localTasks);
+      const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
+      await saveState(email, { profile: mergedProfile, tasks: mergedTasks });
     } catch {
-      await Promise.all([sessionSaved, saveState(req.session.user, {
-        profile: req.session.profile || emptyProfile(),
-        tasks: req.session.tasks || [],
-      })]);
+      await saveState(email, { profile: localProfile, tasks: localTasks }).catch(() => {});
     }
-  } else {
-    await sessionSaved;
-  }
+  })();
 };
 
 // Simple synchronous task-mutating routes (confirm/reject/dismiss/step-done) used to just `find()` in
@@ -1056,6 +1060,7 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     (p.primaryAccounts ||= {})[value.app] = value.accountId;
   } else if (key === "language" && (value === "fr" || value === "en")) {
     p.language = value;
+    p.languageSetAt = new Date().toISOString();
   } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {
     p.track = value;
   }

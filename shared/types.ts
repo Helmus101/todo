@@ -80,6 +80,11 @@ export interface Profile {
   // Otto Lycée defaults to French; a student can switch the whole app (UI + AI-generated content) to
   // English in Settings. Undefined/anything else is treated as "fr".
   language?: "fr" | "en";
+  languageSetAt?: string; // ISO stamp of the last language toggle — see pausedAt above, same reason:
+                          // `normalizeProfile` always defaults `language` to "fr" (never leaves it
+                          // undefined), so a plain `??` merge could never tell "never set" apart from
+                          // "explicitly fr" and always kept the LOCAL session's copy, silently reverting
+                          // another device's language switch on the next commit from this one.
   // Grades — lets Otto know which subject is actually slipping, not just what's due soonest, so a low
   // grade gets more lead time/attention than the deadline alone would suggest. Two sources coexist:
   // "pronote" entries are the school's own current subject average (Pronote's read API doesn't expose
@@ -142,6 +147,7 @@ export function normalizeProfile(p: any): Profile {
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
       : undefined,
     language: p?.language === "en" ? "en" : "fr",
+    languageSetAt: typeof p?.languageSetAt === "string" ? p.languageSetAt : undefined,
     grades: Array.isArray(p?.grades)
       ? p.grades.map((g: any) => ({
           id: typeof g?.id === "string" && g.id ? g.id : newId(),

@@ -180,6 +180,23 @@ export function App() {
   // one place the whole app's active language is decided (the LangContext.Provider value below), so it's
   // the right place to keep the document attribute in sync with it.
   useEffect(() => { document.documentElement.lang = status?.language === "en" ? "en" : "fr"; }, [status?.language]);
+  // The landing page and login/signup screen render BEFORE any account exists, so they have no
+  // status.language to read (the server always answers "fr" for a signed-out session) — every L()/useLang()
+  // call in them silently fell back to LangContext's hardcoded "fr" default, regardless of the visitor's
+  // browser language, making the whole pre-account experience French-only even in English-language markets.
+  // This is a local, persisted choice for that pre-account window only; it's carried into the account's own
+  // language preference once the visitor actually signs up (see onDone below).
+  const [preLoginLang, setPreLoginLang] = useState<"fr" | "en">(() => {
+    try {
+      const saved = localStorage.getItem("otto-landing-lang");
+      if (saved === "fr" || saved === "en") return saved;
+    } catch { /* ignore */ }
+    return typeof navigator !== "undefined" && /^en/i.test(navigator.language) ? "en" : "fr";
+  });
+  const setLandingLang = useCallback((v: "fr" | "en") => {
+    setPreLoginLang(v);
+    try { localStorage.setItem("otto-landing-lang", v); } catch { /* ignore */ }
+  }, []);
   const [route] = usePathRoute();
   const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
@@ -235,9 +252,6 @@ export function App() {
   // sweep folding in) must not replay the whole cascade — that's what made loads feel janky.
   const [settled, setSettled] = useState(false);
   const generatedOnce = useRef(false);
-  // "This week"/exam context used to render inline, splitting the task list in two — it's ambient
-  // reference info, not a task, so it now lives behind a small trigger and opens as a popup instead.
-  const [showWeekPopup, setShowWeekPopup] = useState(false);
 
   const loadStatus = useCallback(async () => { try { setStatus(await api.status()); } catch { /* keep last */ } }, []);
 
@@ -510,8 +524,8 @@ export function App() {
   // the LangContext.Provider further down mounts, so they get their own — otherwise useLang() inside them
   // silently defaults to French regardless of the account's actual language (or the signed-out visitor's
   // browser), which is exactly how these ended up 100% English-hardcoded with no L() calls at all.
-  if (route === "privacy") return <LegalPage kind="privacy" lang={status?.language} />;
-  if (route === "terms") return <LegalPage kind="terms" lang={status?.language} />;
+  if (route === "privacy") return <LegalPage kind="privacy" lang={status?.loggedIn ? status.language : preLoginLang} />;
+  if (route === "terms") return <LegalPage kind="terms" lang={status?.loggedIn ? status.language : preLoginLang} />;
 
   if (!status) {
     if (loadError) {
@@ -532,11 +546,20 @@ export function App() {
     return <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
   }
   if (!status.loggedIn) {
-    return route === "login" || route === "signup"
-      ? <LoginPage status={status} onDone={async (isNew) => { if (isNew) startOnboard(); await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : "login"} />
-      : route === "unlimited"
-      ? <LoginPage status={status} onDone={async () => { await loadStatus(); navigate("unlimited"); }} initialMode="login" />
-      : <Landing />;
+    // Carry the visitor's pre-account language choice into their new account — otherwise every signup
+    // silently reset to French the moment status.language (server-driven, defaults "fr") took over.
+    const onNewAccount = async () => {
+      try { await api.setProfilePreference("language", preLoginLang); } catch { /* best-effort */ }
+    };
+    return (
+      <LangContext.Provider value={preLoginLang}>
+        {route === "login" || route === "signup"
+          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async (isNew) => { if (isNew) { await onNewAccount(); startOnboard(); } await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : "login"} />
+          : route === "unlimited"
+          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { await loadStatus(); navigate("unlimited"); }} initialMode="login" />
+          : <Landing lang={preLoginLang} onLangChange={setLandingLang} />}
+      </LangContext.Provider>
+    );
   }
   if (route === "unlimited") return <UnlimitedPage status={status} onDone={loadStatus} />;
 
@@ -735,21 +758,7 @@ export function App() {
               )}
             </div>
 
-            <button type="button" className="dash-rail-trigger" onClick={() => setShowWeekPopup(true)}>
-              <span>{en ? "This week" : "Cette semaine"}</span>
-              <span className="dash-rail-trigger-arrow">›</span>
-            </button>
-            {showWeekPopup && (
-              <TaskModal onClose={() => setShowWeekPopup(false)} title={en ? "This week" : "Cette semaine"}>
-                <div className="dash-rail">
-                  {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
-                      (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
-                  {false && <Milestones tasks={live} />}
-                  {status.pronoteConnected && <ExamCountdown lang={status.language} />}
-                  <WeekLoad lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
-                </div>
-              </TaskModal>
-            )}
+            <WeekRailFab lang={status.language} pronoteConnected={!!status.pronoteConnected} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
 
             <div className="dash-more">
               {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
@@ -948,6 +957,41 @@ function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
   );
 }
 
+/** Always-on-screen entry point for the exam/week ambient context. Used to render inline in the task
+ *  list (splitting it in two), then as a full-screen modal (too heavy for what's basically a glance-and-
+ *  close panel) — this is a small floating button, fixed to the same spot at every scroll position, that
+ *  opens a compact anchored popover instead of taking over the whole screen. */
+function WeekRailFab({ lang, pronoteConnected, onTask }: { lang?: "fr" | "en"; pronoteConnected: boolean; onTask: (t: WebTask) => void }) {
+  const en = lang === "en";
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  return (
+    <div className="week-fab-wrap" ref={wrapRef}>
+      <button type="button" className="week-fab" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span>{en ? "This week" : "Cette semaine"}</span>
+      </button>
+      {open && (
+        <div className="week-fab-popover" role="dialog" aria-label={en ? "This week" : "Cette semaine"}>
+          {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
+              (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
+          {pronoteConnected && <ExamCountdown lang={lang} />}
+          <WeekLoad lang={lang} onTask={onTask} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 type WorkloadDay = { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number };
 
 /** Deterministic "this week" strip — no AI call, just real Pronote homework/tests + open tasks bucketed
@@ -985,14 +1029,25 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   const todayKey = days[0]?.date;
 
   const moveTask = async (taskId: string, to: string) => {
-    setMoving(taskId);
+    const prevDays = days;
     setPickingFor(null);
+    setMoving(taskId);
+    const from = days.find((d) => d.items.some((it) => it.taskId === taskId));
+    const item = from?.items.find((it) => it.taskId === taskId);
+    if (from && item) {
+      setDays(days.map((d) => {
+        if (d.date === from.date) return { ...d, items: d.items.filter((it) => it.taskId !== taskId), totalEffort: d.totalEffort - item.effort };
+        if (d.date === to) return { ...d, items: [...d.items, item], totalEffort: d.totalEffort + item.effort };
+        return d;
+      }));
+    }
     try {
       const list = await api.rescheduleTask(taskId, to);
       const updated = list.find((t) => t.id === taskId);
       if (updated) onTask(updated);
       load();
     } catch (e: any) {
+      setDays(prevDays);
       notify(e?.message || (en ? "Couldn't move that task — try again." : "Impossible de déplacer cette tâche — réessaie."), "error");
     }
     setMoving(null);
@@ -1218,7 +1273,7 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
                   </div>
                 ) : null}
                 {open ? (
-                  <ul className="grade-entries">
+                  <ul className="grade-entries grade-row-body">
                     {s.entries.map((g) => (
                       <li key={g.id} className="grade-entry">
                         <span className="grade-entry-value">{g.grade}/{g.scale}</span>
@@ -1342,7 +1397,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
           <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
           <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
-        {showKnows && <><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></>}
+        {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
       </section>
     </main>
   );
@@ -1625,8 +1680,8 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
 }
 
 /** Dedicated login / sign-up PAGE (routes /login and /signup). Its own clean, centered card. */
-function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; onDone: (isNew?: boolean) => void; initialMode: "login" | "signup" }) {
-  const en = status.language === "en";
+function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status: ConnectionStatus; lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void; onDone: (isNew?: boolean) => void; initialMode: "login" | "signup" }) {
+  const en = lang === "en";
   const L = (fr: string, e: string) => (en ? e : fr);
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [email, setEmail] = useState("");
@@ -1648,7 +1703,10 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
   };
   return (
     <div className="login-page">
-      <header className="landing-nav"><a className="brand" href="/"><Logo size={20} /> Otto</a></header>
+      <header className="landing-nav">
+        <a className="brand" href="/"><Logo size={20} /> Otto</a>
+        <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
+      </header>
       <main className="login-main">
         <div className="login-card">
           <h1 className="login-title">{mode === "signup" ? L("Crée ton compte", "Create your account") : L("Content de te revoir", "Welcome back")}</h1>
@@ -1686,11 +1744,13 @@ function LoginPage({ status, onDone, initialMode }: { status: ConnectionStatus; 
  *  mock built from the SAME card/chip/step classes the real app uses, so the shape you see here is the
  *  shape you'll actually get, just with canned data instead of your real inbox. Purely local state —
  *  no network calls, safe for a signed-out visitor. */
-function Walkthrough() {
+function Walkthrough({ lang }: { lang: "fr" | "en" }) {
+  const en = lang === "en";
+  const L = (fr: string, e: string) => (en ? e : fr);
   const STAGES = [
-    { n: "01", label: "Lit ton Pronote" },
-    { n: "02", label: "Prépare le travail" },
-    { n: "03", label: "Tu fais le reste" },
+    { n: "01", label: L("Lit ton Pronote", "Reads your Pronote") },
+    { n: "02", label: L("Prépare le travail", "Preps the work") },
+    { n: "03", label: L("Tu fais le reste", "You do the rest") },
   ] as const;
   const [stage, setStage] = useState(0);
   const [done, setDone] = useState(false);
@@ -1710,47 +1770,52 @@ function Walkthrough() {
       <div className="walk-panel">
         {stage === 0 && (
           <div className="walk-scan">
-            <div className="walk-row"><span className="chip chip-muted">Maths</span><span className="walk-row-text">Contrôle vendredi — chapitre sur les suites</span><span className="walk-check">✓ lu</span></div>
-            <div className="walk-row"><span className="chip chip-muted">Physique</span><span className="walk-row-text">DM à rendre lundi — mécanique</span><span className="walk-check">✓ lu</span></div>
-            <div className="walk-row"><span className="chip chip-muted">Philo</span><span className="walk-row-text">Dissertation sur la conscience — rendu dans 10 jours</span><span className="walk-check">✓ lu</span></div>
-            <p className="walk-caption">Otto lit ton Pronote et ne garde que ce qui compte vraiment pour aujourd'hui — le reste attend son tour.</p>
+            <div className="walk-row"><span className="chip chip-muted">{L("Maths", "Math")}</span><span className="walk-row-text">{L("Contrôle vendredi — chapitre sur les suites", "Test Friday — chapter on sequences")}</span><span className="walk-check">✓ {L("lu", "read")}</span></div>
+            <div className="walk-row"><span className="chip chip-muted">{L("Physique", "Physics")}</span><span className="walk-row-text">{L("DM à rendre lundi — mécanique", "Homework due Monday — mechanics")}</span><span className="walk-check">✓ {L("lu", "read")}</span></div>
+            <div className="walk-row"><span className="chip chip-muted">{L("Philo", "Philosophy")}</span><span className="walk-row-text">{L("Dissertation sur la conscience — rendu dans 10 jours", "Essay on consciousness — due in 10 days")}</span><span className="walk-check">✓ {L("lu", "read")}</span></div>
+            <p className="walk-caption">{L("Otto lit ton Pronote et ne garde que ce qui compte vraiment pour aujourd'hui — le reste attend son tour.", "Otto reads your Pronote and keeps only what actually matters for today — the rest waits its turn.")}</p>
           </div>
         )}
         {stage === 1 && (
           <div className="walk-card">
-            <div className="card-title">Réviser le contrôle de Maths de vendredi</div>
-            <div className="card-badges"><span className="chip chip-muted">Pronote</span><span className="chip chip-bad">Urgent</span></div>
-            <h4 className="walk-h">Contexte <span className="chip chip-muted context-source">Pronote</span></h4>
-            <p className="context-text">Contrôle vendredi sur les suites numériques (chapitre 4). Ton dernier contrôle sur ce chapitre datait d'il y a 3 semaines.</p>
-            <h4 className="walk-h">Ce qu'Otto a préparé</h4>
-            <ul className="bullets"><li>Fiche de révision : définitions, formules, 3 méthodes types</li></ul>
-            <p className="walk-caption">La fiche est prête à consulter — à toi de réviser avec.</p>
+            <div className="card-title">{L("Réviser le contrôle de Maths de vendredi", "Revise for Friday's Math test")}</div>
+            <div className="card-badges"><span className="chip chip-muted">Pronote</span><span className="chip chip-bad">{L("Urgent", "Urgent")}</span></div>
+            <h4 className="walk-h">{L("Contexte", "Context")} <span className="chip chip-muted context-source">Pronote</span></h4>
+            <p className="context-text">{L("Contrôle vendredi sur les suites numériques (chapitre 4). Ton dernier contrôle sur ce chapitre datait d'il y a 3 semaines.", "Test Friday on number sequences (chapter 4). Your last test on this chapter was 3 weeks ago.")}</p>
+            <h4 className="walk-h">{L("Ce qu'Otto a préparé", "What Otto prepped")}</h4>
+            <ul className="bullets"><li>{L("Fiche de révision : définitions, formules, 3 méthodes types", "Revision sheet: definitions, formulas, 3 standard methods")}</li></ul>
+            <p className="walk-caption">{L("La fiche est prête à consulter — à toi de réviser avec.", "The sheet is ready to read — it's on you to revise with it.")}</p>
           </div>
         )}
         {stage === 2 && (
           <div className="walk-card">
-            <p className="walk-draft-body">1. Relire le cours p.42 (10 min)<br/>2. Faire l'exercice 3 (15 min)<br/>3. Vérifier la correction (5 min)</p>
+            <p className="walk-draft-body">{L("1. Relire le cours p.42 (10 min)", "1. Reread the notes p.42 (10 min)")}<br/>{L("2. Faire l'exercice 3 (15 min)", "2. Do exercise 3 (15 min)")}<br/>{L("3. Vérifier la correction (5 min)", "3. Check the correction (5 min)")}</p>
             {!done ? (
-              <button className="btn primary send-btn" onClick={() => setDone(true)}>Marquer comme fait</button>
+              <button className="btn primary send-btn" onClick={() => setDone(true)}>{L("Marquer comme fait", "Mark as done")}</button>
             ) : (
-              <button className="btn primary send-btn sent" disabled>Fait ✓</button>
+              <button className="btn primary send-btn sent" disabled>{L("Fait ✓", "Done ✓")}</button>
             )}
-            <p className="walk-caption">{done ? "C'est toi qui coches, jamais Otto." : "Otto te guide étape par étape — c'est toi qui fais le travail."}</p>
+            <p className="walk-caption">{done ? L("C'est toi qui coches, jamais Otto.", "You're the one checking it off — never Otto.") : L("Otto te guide étape par étape — c'est toi qui fais le travail.", "Otto guides you step by step — you're the one doing the work.")}</p>
           </div>
         )}
       </div>
 
       <div className="walk-nav">
-        <button className="btn ghost" disabled={stage === 0} onClick={() => go(stage - 1)}>← Retour</button>
-        <button className="btn ghost" disabled={stage === STAGES.length - 1} onClick={() => go(stage + 1)}>Suivant →</button>
+        <button className="btn ghost" disabled={stage === 0} onClick={() => go(stage - 1)}>{L("← Retour", "← Back")}</button>
+        <button className="btn ghost" disabled={stage === STAGES.length - 1} onClick={() => go(stage + 1)}>{L("Suivant →", "Next →")}</button>
       </div>
     </div>
   );
 }
 
 /** Marketing landing (signed out, route /). CTAs route to the dedicated login / sign-up page. */
-function Landing() {
-  const DRAFT = "1. Relire le cours p.42 (10 min) 2. Faire l'exercice 3 (15 min) 3. Vérifier la correction (5 min)";
+function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
+  const en = lang === "en";
+  const L = (fr: string, e: string) => (en ? e : fr);
+  const DRAFT = L(
+    "1. Relire le cours p.42 (10 min) 2. Faire l'exercice 3 (15 min) 3. Vérifier la correction (5 min)",
+    "1. Reread the notes p.42 (10 min) 2. Do exercise 3 (15 min) 3. Check the correction (5 min)",
+  );
   const [typed, setTyped] = useState("");
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -1758,81 +1823,86 @@ function Landing() {
 
   // Live typewriter in the hero demo — types the draft out, then holds. (Full text immediately if reduced-motion.)
   useEffect(() => {
+    setTyped("");
     if (reduced) { setTyped(DRAFT); return; }
     let i = 0; const start = setTimeout(function tick() {
       i++; setTyped(DRAFT.slice(0, i));
       if (i < DRAFT.length) setTimeout(tick, 26 + (DRAFT[i] === " " ? 40 : 0));
     }, 900);
     return () => clearTimeout(start);
-  }, [reduced]);
+  }, [reduced, DRAFT]);
 
   return (
     <div className="landing">
       <header className="landing-nav">
         <span className="brand"><Logo size={22} /> Otto</span>
         <nav className="landing-navlinks">
-          <a className="btn ghost" href="/login">Se connecter</a>
-          <a className="btn primary" href="/signup">Commencer</a>
+          <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
+          <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
+          <a className="btn primary" href="/signup">{L("Commencer", "Get started")}</a>
         </nav>
       </header>
 
       <main className="hero">
-        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>Le prolongement de Pronote qui te guide — jamais qui fait à ta place.</h1>
-        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>Dimanche 19h, 11 devoirs et 2 contrôles sur Pronote — panique. Otto se branche sur ton Pronote et transforme le mur de devoirs en 3 tâches claires pour aujourd'hui, avec un temps estimé et un point de départ pour chacune. Il t'accompagne pas à pas ; l'exercice, la dissertation, la réponse au contrôle restent toujours les tiens.</p>
+        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>{L("Le prolongement de Pronote qui te guide — jamais qui fait à ta place.", "The Pronote companion that guides you — never does it for you.")}</h1>
+        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>{L(
+          "Dimanche 19h, 11 devoirs et 2 contrôles sur Pronote — panique. Otto se branche sur ton Pronote et transforme le mur de devoirs en 3 tâches claires pour aujourd'hui, avec un temps estimé et un point de départ pour chacune. Il t'accompagne pas à pas ; l'exercice, la dissertation, la réponse au contrôle restent toujours les tiens.",
+          "Sunday, 7pm — 11 pieces of homework and 2 tests on Pronote, and you're panicking. Otto connects to your Pronote and turns the wall of homework into 3 clear tasks for today, each with an estimated time and a starting point. It walks you through it step by step; the exercise, the essay, the test answer are always yours to do.",
+        )}</p>
         <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.25s" }}>
-          <a className="btn primary big" href="/signup">Connecter mon Pronote</a>
-          <a className="btn ghost" href="/login">Se connecter</a>
+          <a className="btn primary big" href="/signup">{L("Connecter mon Pronote", "Connect my Pronote")}</a>
+          <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
         </div>
-        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>Un guide, pas un exécutant — Otto ne fait jamais tes devoirs à ta place.</div>
+        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>{L("Un guide, pas un exécutant — Otto ne fait jamais tes devoirs à ta place.", "A guide, not a doer — Otto never does your homework for you.")}</div>
         {/* One product visual: a Pronote-wall-of-devoirs → 3-card plan, not a Gmail draft. */}
         <div className="hero-demo hero-in" style={{ ["--d" as any]: "0.42s" }} aria-hidden="true">
-          <div className="hero-demo-label"><span className="live-dot" /> Exemple — ton plan du jour</div>
+          <div className="hero-demo-label"><span className="live-dot" /> {L("Exemple — ton plan du jour", "Example — your plan for today")}</div>
           <div className="demo-window">
             <div className="demo-titlebar"><span /><span /><span /></div>
             <div className="demo-body">
-              <p className="demo-line"><b>Maths</b> — Contrôle vendredi <span className="demo-badge">⏱ 35 min</span></p>
+              <p className="demo-line"><b>{L("Maths", "Math")}</b> — {L("Contrôle vendredi", "Test on Friday")} <span className="demo-badge">⏱ 35 {L("min", "min")}</span></p>
               <p className="demo-line gap">{typed}<span className="demo-caret" /></p>
-              <p className="demo-line"><b>Physique</b> — DM à rendre lundi</p>
-              <p className="demo-line"><b>Philo</b> — Fiche de révision prête</p>
+              <p className="demo-line"><b>{L("Physique", "Physics")}</b> — {L("DM à rendre lundi", "Homework due Monday")}</p>
+              <p className="demo-line"><b>{L("Philo", "Philosophy")}</b> — {L("Fiche de révision prête", "Revision sheet ready")}</p>
             </div>
           </div>
         </div>
       </main>
 
       <section className="landing-sec">
-        <h2 className="reveal">Ce qu'Otto prépare pour toi</h2>
+        <h2 className="reveal">{L("Ce qu'Otto prépare pour toi", "What Otto preps for you")}</h2>
         <div className="outcomes">
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.0s" }}><span className="outcome-mark">✓</span><div><h3>Fiche de révision</h3><p>Plan, définitions, formules — à partir de l'énoncé et de tes documents Drive.</p></div></div>
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.1s" }}><span className="outcome-mark">✓</span><div><h3>Checklist étape par étape</h3><p>"1. Relire le cours p.42 (10 min) 2. Faire l'exercice 3 (15 min) 3. Vérifier la correction (5 min)."</p></div></div>
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.2s" }}><span className="outcome-mark">✓</span><div><h3>Jamais l'exercice fait à ta place</h3><p>Pas de dissertation rédigée, pas d'exercice corrigé, pas de réponse de contrôle. Otto te guide, jamais ne fait le travail noté.</p></div></div>
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.0s" }}><span className="outcome-mark">✓</span><div><h3>{L("Fiche de révision", "Revision sheet")}</h3><p>{L("Plan, définitions, formules — à partir de l'énoncé et de tes documents Drive.", "Outline, definitions, formulas — built from the assignment and your Drive documents.")}</p></div></div>
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.1s" }}><span className="outcome-mark">✓</span><div><h3>{L("Checklist étape par étape", "Step-by-step checklist")}</h3><p>{L("\"1. Relire le cours p.42 (10 min) 2. Faire l'exercice 3 (15 min) 3. Vérifier la correction (5 min).\"", "\"1. Reread the notes p.42 (10 min) 2. Do exercise 3 (15 min) 3. Check the correction (5 min).\"")}</p></div></div>
+          <div className="outcome reveal" style={{ ["--d" as any]: "0.2s" }}><span className="outcome-mark">✓</span><div><h3>{L("Jamais l'exercice fait à ta place", "Never the exercise done for you")}</h3><p>{L("Pas de dissertation rédigée, pas d'exercice corrigé, pas de réponse de contrôle. Otto te guide, jamais ne fait le travail noté.", "No essay written for you, no exercise solved for you, no test answer. Otto guides you — it never does the graded work.")}</p></div></div>
         </div>
       </section>
 
       <section className="landing-sec">
-        <h2 className="reveal">Comment ça marche</h2>
-        <p className="lead reveal">Connecte ton Pronote une fois — Otto vit à côté, pas à la place. Il surveille tes devoirs et contrôles et prépare le terrain avant que tu paniques ; le travail noté reste le tien. Clique pour voir les étapes.</p>
-        <Walkthrough />
+        <h2 className="reveal">{L("Comment ça marche", "How it works")}</h2>
+        <p className="lead reveal">{L("Connecte ton Pronote une fois — Otto vit à côté, pas à la place. Il surveille tes devoirs et contrôles et prépare le terrain avant que tu paniques ; le travail noté reste le tien. Clique pour voir les étapes.", "Connect your Pronote once — Otto lives alongside you, not instead of you. It watches your homework and tests and preps the ground before you panic; the graded work stays yours. Click to see the steps.")}</p>
+        <Walkthrough lang={lang} />
       </section>
 
       <section className="landing-sec">
-        <h2 className="reveal">Un guide, pas un exécutant</h2>
+        <h2 className="reveal">{L("Un guide, pas un exécutant", "A guide, not a doer")}</h2>
         <div className="features">
-          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>Jamais ton travail à ta place</h3><p>Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle. La compréhension reste la tienne, pas celle d'une IA.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>Identifiants chiffrés, jamais revendus</h3><p>Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé. Données jamais revendues — <a href="/privacy">détail du traitement dans notre politique de confidentialité</a>.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>Plafond de coût visible</h3><p>Coût de l'IA plafonné et affiché dans les Réglages — pas de surprise.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>{L("Jamais ton travail à ta place", "Never your work done for you")}</h3><p>{L("Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle. La compréhension reste la tienne, pas celle d'une IA.", "Otto preps sheets, checklists and drafts — never the essay, the exercise, or the test answer. Understanding stays yours, not an AI's.")}</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>{L("Identifiants chiffrés, jamais revendus", "Credentials encrypted, never resold")}</h3><p>{L("Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé. Données jamais revendues — ", "Your Pronote password is used once and never stored. Data is never resold — ")}<a href="/privacy">{L("détail du traitement dans notre politique de confidentialité", "details in our privacy policy")}</a>.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>{L("Plafond de coût visible", "Visible cost cap")}</h3><p>{L("Coût de l'IA plafonné et affiché dans les Réglages — pas de surprise.", "AI cost is capped and shown in Settings — no surprises.")}</p></div></div>
         </div>
       </section>
 
       <section className="cta-band reveal">
-        <h2>Arrête de paniquer devant Pronote.</h2>
-        <p>Connecte ton Pronote et laisse Otto préparer le travail — à toi de faire le reste. Gratuit pour commencer, prêt en moins d'une minute.</p>
-        <a className="btn big cta-band-btn" href="/signup">Connecter mon Pronote</a>
-        <div className="cta-fine">Sans carte bancaire · Otto ne fait jamais tes devoirs à ta place</div>
+        <h2>{L("Arrête de paniquer devant Pronote.", "Stop panicking over Pronote.")}</h2>
+        <p>{L("Connecte ton Pronote et laisse Otto préparer le travail — à toi de faire le reste. Gratuit pour commencer, prêt en moins d'une minute.", "Connect your Pronote and let Otto prep the work — the rest is yours to do. Free to start, ready in under a minute.")}</p>
+        <a className="btn big cta-band-btn" href="/signup">{L("Connecter mon Pronote", "Connect my Pronote")}</a>
+        <div className="cta-fine">{L("Sans carte bancaire · Otto ne fait jamais tes devoirs à ta place", "No credit card · Otto never does your homework for you")}</div>
       </section>
 
       <div className="landing-foot">
-        <div>Chaque dimanche soir, Otto a déjà lu Pronote pour toi.</div>
-        <nav className="foot-links"><a href="/privacy">Confidentialité</a><a href="/terms">CGU</a><span className="foot-mit">MIT — open source</span></nav>
+        <div>{L("Chaque dimanche soir, Otto a déjà lu Pronote pour toi.", "Every Sunday night, Otto has already read your Pronote for you.")}</div>
+        <nav className="foot-links"><a href="/privacy">{L("Confidentialité", "Privacy")}</a><a href="/terms">{L("CGU", "Terms")}</a><span className="foot-mit">{L("MIT — open source", "MIT — open source")}</span></nav>
       </div>
     </div>
   );

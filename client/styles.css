@@ -301,28 +301,40 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    gets a little more breathing room. Add-task leads (the one always-available
    capture action), the TaskHero spotlight follows, then Later/Completed. The
    exam/week widget is ambient reference info, not a task — it used to render
-   inline and split the task list in two, so it now lives behind a small trigger
-   chip and opens as a popup instead of taking up flow space. */
+   inline and split the task list in two, then as a full-screen modal; it's now
+   a fixed floating button (see .week-fab below) that's out of document flow
+   entirely, so there's no `order` slot for it here any more. */
 .dash-grid { display: flex; flex-direction: column; }
 .dash-addtask { margin-bottom: var(--space-6); order: 0; }
 .dash-today { order: 1; }
-.dash-rail-trigger {
-  display: flex; align-items: center; justify-content: space-between; width: 100%;
-  order: 2; margin: 0 0 24px; padding: 12px 16px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+.dash-more { margin-top: 24px; order: 2; }
+
+/* ─── "This week" floating button + popover ───────────────────────────────────
+   Fixed to the same corner of the viewport at every scroll position — always reachable without
+   hunting through the task list for it. The popover is anchored to the button (not a full-screen
+   modal): a glance-and-close panel doesn't need to take over the whole screen or lock body scroll. */
+.week-fab-wrap { position: fixed; right: var(--space-4, 16px); bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 30; }
+.week-fab {
+  display: flex; align-items: center; gap: 6px; padding: 12px 18px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill, 999px);
   box-shadow: var(--shadow-card); font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink);
-  transition: background 120ms var(--ease);
+  transition: background 120ms var(--ease), transform 120ms var(--ease);
 }
+.week-fab[aria-expanded="true"] { background: var(--hover-wash); }
 @media (hover: hover) {
-  .dash-rail-trigger:hover { background: var(--hover-wash); }
+  .week-fab:hover { background: var(--hover-wash); }
 }
-.dash-rail-trigger-arrow { color: var(--ink-3); font-size: 16px; }
-/* One shared "at a glance" panel instead of two separately-bordered/independently-animating widgets —
-   the exam strip and week-load strip now read as two rows of the same list (divided by a hairline),
-   not two competing panels. Rendered inside the popup, so no card chrome of its own here. */
-.dash-rail { display: flex; flex-direction: column; gap: var(--space-5); }
-.dash-rail > * + * { padding-top: 20px; border-top: 1px solid var(--line-soft); }
-.dash-more { margin-top: 24px; order: 3; }
+.week-fab:active { transform: scale(0.97); }
+.week-fab-popover {
+  position: absolute; right: 0; bottom: calc(100% + 10px); z-index: 30;
+  display: flex; flex-direction: column; gap: var(--space-5);
+  width: min(340px, calc(100vw - 2 * var(--space-4, 16px)));
+  max-height: min(70vh, 520px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-card); padding: 20px;
+  animation: modalPop 160ms var(--ease);
+}
+.week-fab-popover > * + * { padding-top: 20px; border-top: 1px solid var(--line-soft); }
 .exam-strip-wrap { margin: 0; }
 .exam-strip-label { font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--space-2); opacity: 0.85; }
 /* One row per exam, same treatment as .week-load-strip/.week-day right below it in the same panel —
@@ -960,7 +972,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .disclosure.open .disclosure-head .caret { transform: rotate(90deg); }
 .disclosure-label { flex: 1; font-size: var(--text-base); font-weight: var(--weight-medium); }
 .disclosure-count { font-size: var(--text-sm); color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.disclosure-body { padding: 2px 2px var(--space-3); }
+.disclosure-body { padding: 2px 2px var(--space-3); animation: fadeIn 0.16s var(--ease); }
 .tf-foot { display: flex; justify-content: flex-end; }
 
 .bullets { margin: 0; padding-left: 18px; }
@@ -1178,7 +1190,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .substep-expand { margin-top: 6px; }
 /* A step's own on-demand checklist — indented under the step text so it visually reads as "part of this
    step", one level down from the main .steps list rather than a sibling of it. */
-.substeps { list-style: none; margin: 8px 0 0; padding-left: 4px; display: flex; flex-direction: column; gap: var(--space-1); }
+.substeps { list-style: none; margin: 8px 0 0; padding-left: 4px; display: flex; flex-direction: column; gap: var(--space-1); animation: fadeIn 0.18s var(--ease); }
 .substep { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-2); font-size: 13px; }
 .substep.done .substep-text { color: var(--ink-3); text-decoration: line-through; }
 .substep-text { flex: 1 1 auto; min-width: 0; }
@@ -1257,6 +1269,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .loading-head { display: flex; align-items: center; gap: 10px; padding: 4px 2px 18px; }
 .loading-msg { font-size: 14px; color: var(--ink-2); font-weight: var(--weight-medium); }
 .spinner.sm { width: 16px; height: 16px; border-width: 2px; }
+.spinner.xs { width: 11px; height: 11px; border-width: 1.5px; display: inline-block; vertical-align: -1.5px; margin-right: 5px; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 /* A top-level page's own entrance (dashboard/Settings) — a touch richer than the plain fadeIn used for
    overlays/toasts/loading (a full-bleed backdrop or an ephemeral toast shouldn't visibly "rise"). */
@@ -1291,6 +1304,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .sec-toggle h3 { margin: 0; }
 .sec-toggle .caret { color: var(--ink-3); font-size: 18px; line-height: 1; transition: transform var(--duration-base) var(--ease); }
 .sec-toggle .caret.open { transform: rotate(90deg); }
+.settings-reveal { animation: fadeIn 0.18s var(--ease); }
 
 .modal-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 10px 0; }
 .modal-row + .modal-row { border-top: 1px solid var(--line-soft); }
@@ -1380,6 +1394,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .grade-row-toggle { width: 100%; background: none; border: none; padding: 0; cursor: pointer; font: inherit; color: inherit; text-align: left; }
 .grade-row-toggle .caret { transition: transform var(--duration-base) var(--ease); }
 .grade-row-toggle .caret.open { transform: rotate(90deg); }
+.grade-row-body { animation: fadeIn 0.16s var(--ease); }
 .grade-subject { font-size: var(--text-base); font-weight: var(--weight-medium); flex: 1; }
 .grade-value { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; color: var(--ink-2); }
 .grade-count { font-family: inherit; color: var(--ink-3); }
@@ -1508,6 +1523,16 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .landing-navlinks { display: flex; align-items: center; gap: var(--space-2); }
 .landing-navlinks .btn { height: 34px; padding: 0 14px; font-size: 13px; }
+/* FR/EN switch for the signed-out landing/login screens — no account yet to read a language preference
+   from, so this is the one place the choice has to be a plain, always-visible toggle. */
+.lang-toggle {
+  height: 34px; padding: 0 12px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+  color: var(--ink-2); background: transparent; border: 1px solid var(--line); border-radius: var(--radius-pill, 999px);
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+@media (hover: hover) {
+  .lang-toggle:hover { background: var(--hover-wash); color: var(--ink); }
+}
 
 .hero {
   display: flex; flex-direction: column; align-items: center; text-align: center;

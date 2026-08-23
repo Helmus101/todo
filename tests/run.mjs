@@ -129,6 +129,16 @@ const pm = mergeProfileStates(
 );
 check("newer pause toggle wins", pm.paused === false);
 check("structured settings survive merge", pm.responseStyle === "concise");
+// Regression: `language` is never actually undefined (normalizeProfile always defaults it to "fr"), so a
+// plain `p2.language ?? p1.language` could never tell "device B never touched it" apart from "device B
+// explicitly chose fr" — the stale LOCAL session's copy always won, silently reverting another device's
+// switch to English on the very next commit from the stale session. Device A switches to English (stamped);
+// device B's still-open, never-reloaded session (still "fr", unstamped) merges next — English must survive.
+const pmLang = mergeProfileStates(
+  { ...emptyProfile(), language: "en", languageSetAt: newer },
+  { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle
+);
+check("newer-stamped language switch survives a stale unstamped session's merge", pmLang.language === "en");
 const pmAcct = mergeProfileStates(
   { ...emptyProfile(), primaryAccounts: { gmail: "acct-a" } },
   { ...emptyProfile(), primaryAccounts: { googlecalendar: "acct-b" } },

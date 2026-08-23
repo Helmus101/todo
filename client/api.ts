@@ -7,6 +7,29 @@ export interface IntegrationsResp { ready: boolean; items: IntegrationItem[]; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Best-effort read of the account's chosen language, straight from what App.tsx already persists on every
+// status load — this module has no React context to read LangContext from. Several server error strings
+// (paused/budget gates — server/index.ts) are hardcoded English regardless of the account's language, so
+// without this a French-language session could hit a "Lancer" click and see a raw English toast, jarring
+// and easy to misread as "the button didn't do anything" rather than an explained, actionable state.
+function currentLang(): "fr" | "en" {
+  try {
+    const raw = localStorage.getItem("weave-status");
+    if (raw && JSON.parse(raw)?.language === "en") return "en";
+  } catch { /* ignore */ }
+  return "fr";
+}
+function translateServerError(msg: string): string {
+  const en = currentLang() === "en";
+  if (/AI is paused|otto is paused/i.test(msg)) return en
+    ? "Otto is paused — resume it in Settings to continue."
+    : "Otto est en pause — réactive-le dans les Réglages pour continuer.";
+  if (/monthly AI budget/i.test(msg)) return en
+    ? "Otto's reached its monthly AI budget — it resets on the 1st."
+    : "Otto a atteint son plafond mensuel d'IA — ça se renouvelle le 1er.";
+  return msg;
+}
+
 /**
  * fetch() that survives a brief backend outage — e.g. the `tsx watch` dev server restarting on a file
  * change drops port 8788 for ~2s, during which the Vite proxy answers with ECONNREFUSED. We retry through
@@ -53,7 +76,8 @@ const postTimed = (url: string, timeoutMs: number, body?: unknown) =>
 
 const j = async (r: Response) => {
   if (!r.ok && r.status !== 401) {
-    const err: any = new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    const raw = (await r.json().catch(() => ({}))).error || `HTTP ${r.status}`;
+    const err: any = new Error(translateServerError(raw));
     err.status = r.status; // callers need this to tell "already running elsewhere" (409) from a real failure
     throw err;
   }
