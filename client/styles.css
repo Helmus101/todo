@@ -299,24 +299,29 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    No desktop-only sidebar split — a real mobile app doesn't grow a second column
    just because the viewport got wider, it stays one column and the "screen" just
    gets a little more breathing room. Add-task leads (the one always-available
-   capture action), the TaskHero spotlight follows, then the rail (ambient
-   exam/week context), then Later/Completed — same order at any screen size,
-   `order` alone gives the stacking. */
+   capture action), the TaskHero spotlight follows, then Later/Completed. The
+   exam/week widget is ambient reference info, not a task — it used to render
+   inline and split the task list in two, so it now lives behind a small trigger
+   chip and opens as a popup instead of taking up flow space. */
 .dash-grid { display: flex; flex-direction: column; }
 .dash-addtask { margin-bottom: var(--space-6); order: 0; }
 .dash-today { order: 1; }
-/* One shared "at a glance" panel instead of two separately-bordered/independently-animating widgets —
-   the exam strip and week-load strip now read as two rows of the same card (divided by a hairline),
-   not two competing panels. */
-.dash-rail {
-  display: flex; flex-direction: column; gap: var(--space-5); margin: 0 0 28px; order: 2;
+.dash-rail-trigger {
+  display: flex; align-items: center; justify-content: space-between; width: 100%;
+  order: 2; margin: 0 0 24px; padding: 12px 16px;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-  box-shadow: var(--shadow-card); padding: 20px;
+  box-shadow: var(--shadow-card); font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink);
+  transition: background 120ms var(--ease);
 }
+@media (hover: hover) {
+  .dash-rail-trigger:hover { background: var(--hover-wash); }
+}
+.dash-rail-trigger-arrow { color: var(--ink-3); font-size: 16px; }
+/* One shared "at a glance" panel instead of two separately-bordered/independently-animating widgets —
+   the exam strip and week-load strip now read as two rows of the same list (divided by a hairline),
+   not two competing panels. Rendered inside the popup, so no card chrome of its own here. */
+.dash-rail { display: flex; flex-direction: column; gap: var(--space-5); }
 .dash-rail > * + * { padding-top: 20px; border-top: 1px solid var(--line-soft); }
-/* Both widgets can independently render nothing (no exam data, no workload) — collapse the panel
-   entirely rather than showing an empty bordered box. */
-.dash-rail:empty { display: none; border: none; box-shadow: none; padding: 0; margin: 0; }
 .dash-more { margin-top: 24px; order: 3; }
 .exam-strip-wrap { margin: 0; }
 .exam-strip-label { font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--space-2); opacity: 0.85; }

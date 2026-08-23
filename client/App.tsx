@@ -235,6 +235,9 @@ export function App() {
   // sweep folding in) must not replay the whole cascade — that's what made loads feel janky.
   const [settled, setSettled] = useState(false);
   const generatedOnce = useRef(false);
+  // "This week"/exam context used to render inline, splitting the task list in two — it's ambient
+  // reference info, not a task, so it now lives behind a small trigger and opens as a popup instead.
+  const [showWeekPopup, setShowWeekPopup] = useState(false);
 
   const loadStatus = useCallback(async () => { try { setStatus(await api.status()); } catch { /* keep last */ } }, []);
 
@@ -732,13 +735,21 @@ export function App() {
               )}
             </div>
 
-            <div className="dash-rail">
-              {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
-                  (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
-              {false && <Milestones tasks={live} />}
-              {status.pronoteConnected && <ExamCountdown lang={status.language} />}
-              <WeekLoad lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
-            </div>
+            <button type="button" className="dash-rail-trigger" onClick={() => setShowWeekPopup(true)}>
+              <span>{en ? "This week" : "Cette semaine"}</span>
+              <span className="dash-rail-trigger-arrow">›</span>
+            </button>
+            {showWeekPopup && (
+              <TaskModal onClose={() => setShowWeekPopup(false)} title={en ? "This week" : "Cette semaine"}>
+                <div className="dash-rail">
+                  {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
+                      (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
+                  {false && <Milestones tasks={live} />}
+                  {status.pronoteConnected && <ExamCountdown lang={status.language} />}
+                  <WeekLoad lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
+                </div>
+              </TaskModal>
+            )}
 
             <div className="dash-more">
               {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
