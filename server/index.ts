@@ -249,13 +249,21 @@ app.post("/api/account/delete", requireAuth, async (req, res) => {
 app.get("/api/account/export", requireAuth, async (req, res) => {
   const email = req.session.user!;
   try {
-    const state = cloudEnabled() ? await loadState(email) : { profile: req.session.profile, tasks: req.session.tasks };
+    const state = cloudEnabled() ? await loadState(email) : { profile: req.session.profile, tasks: req.session.tasks, google: undefined, pronote: undefined };
     // Was profile+tasks only — deleteAccount also wipes job records and the audit/event trail, so an
     // export used to return strictly LESS than what's actually stored (and later erased), incomplete
     // relative to a GDPR Art.15 access request.
     const { jobs, events } = cloudEnabled() ? await exportJobsAndEvents(email) : { jobs: [], events: [] };
+    // Connection METADATA only, never the live credential — state.google.tokens/state.pronote.token are
+    // active OAuth/session secrets (a password-equivalent for Pronote specifically); handing those back
+    // in a downloadable JSON file would be a real account-takeover risk, not a compliance win. Access
+    // still covers what matters for Art.15: which accounts are connected and their non-secret identity.
+    const connections = {
+      google: state.google ? { connected: true, email: state.google.email } : null,
+      pronote: state.pronote ? { connected: true, url: state.pronote.url, username: state.pronote.username } : null,
+    };
     res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
-    res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, jobs, events });
+    res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "Couldn't export your data — try again." });
   }

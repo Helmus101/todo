@@ -122,6 +122,7 @@ Marche sur n'importe quel hébergeur Node (Render, Railway, Fly, une VM, ou Dock
 - 🎓 Ne fait jamais le travail noté à ta place : pas de dissertation rédigée, pas d'exercice corrigé, pas de réponse de contrôle — les documents créés sont des guides, et l'exercice reste toujours une étape pour toi.
 - 🧠 Passe au crible Pronote/Gmail/Calendar/Drive pour les faits ; seul ce qui a *vraiment besoin de toi* remonte.
 - 🗂️ Données stockées par compte, chiffrées au repos (Postgres/Supabase par défaut, plus AES-256-GCM applicatif sur le seul identifiant qu'on stocke nous-mêmes) ; rien n'est partagé, revendu, ou utilisé pour entraîner des modèles.
+- 📤 RGPD intégré : consentement explicite à l'inscription, export complet de tes données en un clic (`/api/account/export` — tâches, jobs, connexions, jamais les jetons/mots de passe), et suppression de compte instantanée et définitive depuis Réglages.
 
 ## Extension Chrome Otto Tabs (optionnelle)
 
