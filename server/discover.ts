@@ -32,7 +32,14 @@ export interface SourceItem {
 // Deterministic noise filters — mass mail never even reaches the model.
 const NOISE_SENDER = /no-?reply|donotreply|newsletter|marketing|notifications?@|updates?@|news@|mailer@|bounce|billing@|receipts?@|noreply/i;
 const NOISE_SUBJECT = /unsubscribe|newsletter|weekly digest|daily digest|% off|sale ends|flash sale|your receipt|order confirmation|payment received|has shipped|delivery update|verify your email|security alert/i;
+// Otto's own "new task" alert (server/jobs.ts's notifyNewTasks) is sent from the user's Gmail to that
+// same address — it shows up in both "inbox" and "sent" reads with a normal sender, so neither noise
+// filter above would catch it. Left unfiltered, the NEXT sweep reads its own alert email back as a
+// "new" item and can turn it into a task about itself. Match its fixed subject shape (kept in sync with
+// notifyNewTasks) before any other check, regardless of label.
+const OTTO_SELF_EMAIL_SUBJECT = /^otto\s*[—-]\s*(nouvelle t[âa]che|\d+\s*nouvelles t[âa]ches)/i;
 export function isNoise(it: SourceItem): boolean {
+  if (it.sourceApp === "gmail" && OTTO_SELF_EMAIL_SUBJECT.test(it.title || "")) return true;
   if (it.labels.includes("sent")) return false; // the user's own commitments are never noise
   return NOISE_SENDER.test(it.sender || "") || NOISE_SUBJECT.test(it.title || "");
 }

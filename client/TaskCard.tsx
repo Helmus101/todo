@@ -612,6 +612,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
               {s.options.map((opt, oi) => (
                 <button key={oi} type="button" className="btn xs" disabled={answering === currentIdx} onClick={() => onAnswer(currentIdx, opt)}>{opt}</button>
               ))}
+              {answering === currentIdx ? <span className="card-spin" aria-hidden="true" /> : null}
             </div>
           ) : null}
           <input

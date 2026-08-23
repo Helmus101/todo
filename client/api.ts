@@ -26,12 +26,30 @@ async function req(url: string, init?: RequestInit, retries = 6): Promise<Respon
         if (!ct.includes("application/json")) { await sleep(500 + attempt * 250); continue; } // proxy error page → retry
       }
       return r;
-    } catch (e) {
+    } catch (e: any) {
+      // A caller-supplied AbortSignal timing out (see `timeoutMs` below) is a deliberate "stop waiting,"
+      // not a dropped connection — retrying it would just silently re-run the same wait 6 more times,
+      // turning one timeout into six and making a hung click look hung for even longer.
+      if (e?.name === "AbortError") throw e;
       if (attempt < retries) { await sleep(500 + attempt * 250); continue; } // connection refused → server restarting
       throw e;
     }
   }
 }
+
+/** post() with a hard client-side timeout — for interactive actions (answering a step, running one step)
+ *  where the button click needs to resolve into SOMETHING within a bounded time, success or a clear error,
+ *  rather than waiting indefinitely on a slow AI/tool call and reading as "the click didn't do anything." */
+const postTimed = (url: string, timeoutMs: number, body?: unknown) =>
+  req(url, {
+    method: "POST",
+    headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(timeoutMs),
+  }).then(j).catch((e: any) => {
+    if (e?.name === "AbortError") throw new Error("Otto met du temps à répondre — réessaie dans un instant.");
+    throw e;
+  });
 
 const j = async (r: Response) => {
   if (!r.ok && r.status !== 401) {
@@ -81,7 +99,10 @@ export const api = {
   confirm: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/confirm`),
   reject: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reject`),
   dismiss: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/dismiss`),
-  runStep: (id: string, index: number, answer?: string): Promise<WebTask> => post(`/api/tasks/${id}/step/${index}/run`, answer ? { answer } : undefined),
+  // 25s: an execute_step run through the queue can involve a real tool call (open a page, search, draft
+  // something) — long enough to let a normal one finish, short enough that a stuck click surfaces an
+  // error instead of sitting there looking broken.
+  runStep: (id: string, index: number, answer?: string): Promise<WebTask> => postTimed(`/api/tasks/${id}/step/${index}/run`, 25000, answer ? { answer } : undefined),
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
   expandStep: (id: string, index: number): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/expand`),
   substepDone: (id: string, index: number, subIndex: number, done = true): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/substep/${subIndex}/done`, { done }),
