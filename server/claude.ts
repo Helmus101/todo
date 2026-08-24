@@ -684,7 +684,11 @@ const GEN_SYSTEM =
   `for promises THEY made to others — "I'll send you X", "I'll get back to you by Friday", "let me check and ` +
   `follow up" — and create a task to FULFILL each one that looks unfulfilled (no later reply/attachment in the ` +
   `thread). Title it as the commitment ("Send Sarah the budget deck"), set "when" from the promised deadline, ` +
-  `and anchor it to the sent thread ('gmail:<threadId>'). A broken promise is worse than a missed email.\n` +
+  `and anchor it to the sent thread ('gmail:<threadId>'). A broken promise is worse than a missed email. DO NOT ` +
+  `RUSH THIS, though: unless they named an earlier deadline themselves, a message they sent 1-3 days ago with no ` +
+  `reply yet is completely normal, not a broken promise — only surface it once it's been genuinely quiet for ` +
+  `4-5+ days (or the promised deadline has passed, if sooner). And never create a follow-up task for a thread ` +
+  `that already has one open on their list, even under a different name/wording for the same person.\n` +
   `- CONTEXT GATHERING: For every actionable item, GATHER FULL CONTEXT — search related threads, check calendar ` +
   `for conflicts, find relevant docs, pull in CRM data. A task without context is half-baked.\n` +
   `Surface a clear, actionable to-do for EVERYTHING that needs them (one per item). Skip true non-actionable ` +
@@ -1071,7 +1075,15 @@ export async function classifyCandidates(
     `("I'll send you the deck Friday", "I'll call you back") counts as SENT-BY-USER. When genuinely unsure ` +
     `whether something is firm, leave it out — a missed maybe costs nothing, a false "you promised this" erodes ` +
     `trust in every task after it. Inbox items: does someone await their reply / ask something of them? SENT-BY-USER ` +
-    `items are commitments THEY made ("I'll send you X") — create a task to FULFILL unfulfilled ones. Events: only ` +
+    `items are commitments THEY made ("I'll send you X") — create a task to FULFILL unfulfilled ones, BUT DO NOT ` +
+    `RUSH A FOLLOW-UP: unless the sender's own message named an earlier deadline, give a plain unanswered message ` +
+    `at least 4-5 days of silence before it's worth a "follow up"/"nudge again" task — a same-day or next-day ` +
+    `silence is completely normal, not yet something to chase. Use the item's "when" timestamp to judge this; if ` +
+    `it's been less than ~4 days, leave it off the list entirely (it can resurface next sweep once it's actually ` +
+    `been long enough). Also never create a SECOND "follow up"/"nudge" task for a thread that already has an open, ` +
+    `unhandled task on their list — see ALREADY ON THEIR LIST — even if the wording or the name you'd extract ` +
+    `differs slightly.\n` +
+    `Events: only ` +
     `if prep or a response is genuinely needed (within ~48h, or with real stakes). SHARED-WITH-USER files: only if ` +
     `someone is clearly waiting on their review/input. GitHub ASSIGNED-TO-USER issues and REVIEW-REQUESTED PRs ` +
     `are actionable while open. Pronote homework (labeled "homework"): actionable while not yet marked done; ` +
@@ -1668,7 +1680,7 @@ const RUN_TOOLS = [
       type: "array",
       description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). Often empty.",
       items: { type: "object", properties: {
-        text: { type: "string", description: "ONE concrete action, ONE clause — imperative verb + the specific thing, ≤ 8 words, no hedging, cut every word that isn't load-bearing. NEVER stack multiple asks with a colon/semicolon/'and' into one step ('thank her, ask X, and mention Y' is THREE steps, not one) — split each into its own step instead. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'. Exception: a step that GATES a later one (see dependsOn) may name a couple more words of what to capture for that later step, but still stays ONE short clause — never a run-on sentence." },
+        text: { type: "string", description: "ONE concrete action, ONE clause — imperative verb + the specific thing, ≤ 8 words, no hedging, cut every word that isn't load-bearing. NEVER stack multiple asks with a colon/semicolon/'and' into one step ('thank her, ask X, and mention Y' is THREE steps, not one) — split each into its own step instead. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'. NEVER describe TONE/STYLE/FORMALITY in the step text itself ('short lowercase reply', 'casual message') — those are drafting instructions for when you actually WRITE the reply, not part of what the step is; name WHO and WHAT only, e.g. 'Reply to Miri about the exchange', never 'Write a short casual reply to Miri'. Exception: a step that GATES a later one (see dependsOn) may name a couple more words of what to capture for that later step, but still stays ONE short clause — never a run-on sentence." },
         automatable: { type: "boolean", description: "true = OTTO can do it with its tools or by finding info (read/search, draft, create/update a doc/sheet/event/task, ENTER/FILL data, comment, research, open a page) — do it NOW unless it waits on a user step (then set dependsOn). false = needs the USER, ONLY for: a judgment/decision/approval, a credential you lack, a payment, or a physical act. NOT for being specific/numeric/tedious; sending a message is a one-click send, not a step." },
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
