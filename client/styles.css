@@ -380,10 +380,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    (day name, count, tap to expand) shows all 7 days at once at any width — the bar chart's own visual
    comparison only worked side-by-side anyway, so the count alone carries the "how much" signal here. */
 .week-load-wrap { margin: 0; }
-/* The day-by-day "This week" strip duplicates what the task list itself already shows (each card carries
-   its own due date) and eats vertical space that's scarcer on a phone than on desktop — drop it on mobile
-   rather than cram a 7-day breakdown above the list. */
-@media (max-width: 640px) { .week-load-wrap { display: none; } }
+/* NOTE: this used to be `display: none` below 640px, back when the strip rendered INLINE in the dashboard
+   and ate space that's scarcer on a phone. It now only ever renders inside the "This week" popup/modal
+   (WeekRailFab) — that old rule was hiding its entire content on every mobile screen, so the popup opened
+   but showed nothing, which is exactly what got reported as "doesn't work on mobile". No width restriction
+   needed any more; the modal already scrolls its own content. */
 .week-load-strip { display: flex; flex-direction: column; }
 .week-day {
   flex: none; display: flex; flex-direction: row; align-items: center; justify-content: space-between;
