@@ -639,7 +639,7 @@ export function App() {
       {onboard && <Onboarding onStatus={loadStatus} onDone={finishOnboard} />}
 
       {route === "settings" ? (
-        <SettingsPage status={status} onSignOut={signOut} onChanged={loadStatus} />
+        <SettingsPage status={status} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -1213,7 +1213,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
 /** Self-reported per-subject grades (Pronote's read API doesn't expose grades) — feeds profileBlock() so
  *  Otto weighs a weak subject more heavily than the deadline alone would suggest. Simple add/edit/remove
  *  list, same pattern as ProfileEditor's fact lists. */
-function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profile | null; onChanged?: (p: Profile) => void; pronoteConnected?: boolean }) {
+function GradesEditor({ profile, onChanged, pronoteConnected, onTasksChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void; pronoteConnected?: boolean; onTasksChanged: (tasks: WebTask[]) => void }) {
   const L = useLang();
   const notify = useNotify();
   const [subject, setSubject] = useState("");
@@ -1242,16 +1242,19 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
   const overallAvg20 = bySubject.length ? bySubject.reduce((sum, s) => sum + s.avg20, 0) / bySubject.length : null;
   const [addTaskError, setAddTaskError] = useState<{ subject: string; message: string } | null>(null);
   // Fires from Settings, which has no access to the dashboard's task-list state (that lives in the top-
-  // level App component). The original version just awaited api.add() and flashed a small "Ajoutée ✓" —
-  // with no try/catch, a failed call (session hiccup, AI refinement erroring) threw silently and the
-  // button visually did nothing, which is exactly what got reported as "the button doesn't work". Now:
-  // errors surface inline, and success navigates straight to the Tasks page so the new task is actually
-  // visible immediately instead of trusting the student to notice a checkmark and go look for it later.
+  // level App component) — onTasksChanged threads a setter down for exactly this. The original version
+  // just awaited api.add() and flashed a small "Ajoutée ✓" with no try/catch, so a failed call (session
+  // hiccup, AI refinement erroring) threw silently and the button visually did nothing ("the button
+  // doesn't work"). A later fix added error handling and navigated to Tasks on success, but never actually
+  // applied api.add()'s own response to the app's task state — the dashboard's `tasks` state only refreshes
+  // on its own poll (up to 45s) or a route change it's watching, neither of which "navigate to Tasks"
+  // triggers, so the new task still didn't visibly appear right away even though it WAS created. Applying
+  // the response here directly closes that gap.
   const addTask = async (subj: string) => {
     setAddTaskError(null);
     setAddedTaskFor(subj);
     try {
-      await api.add(L(`Réviser ${subj}`, `Review ${subj}`));
+      onTasksChanged(await api.add(L(`Réviser ${subj}`, `Review ${subj}`)));
       navigate("tasks");
     } catch (e: any) {
       setAddedTaskFor(null);
@@ -1322,7 +1325,7 @@ function GradesEditor({ profile, onChanged, pronoteConnected }: { profile: Profi
 /** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
-function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void }) {
+function SettingsPage({ status, onSignOut, onChanged, onTasksChanged }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void }) {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -1406,7 +1409,7 @@ function SettingsPage({ status, onSignOut, onChanged }: { status: ConnectionStat
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.12s" }}>
         <h3>{L("Tes notes", "Your grades")}</h3>
         <p className="settings-hint">{L("Aide Otto à voir quelle matière a vraiment besoin d'attention, pas juste ce qui est dû bientôt.", "Helps Otto see which subject actually needs attention, not just what's due soonest.")}</p>
-        <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} />
+        <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} onTasksChanged={onTasksChanged} />
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
