@@ -979,29 +979,26 @@ function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
 function WeekRailFab({ lang, pronoteConnected, onTask }: { lang?: "fr" | "en"; pronoteConnected: boolean; onTask: (t: WebTask) => void }) {
   const en = lang === "en";
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
-  }, [open]);
 
   return (
-    <div className="week-fab-wrap" ref={wrapRef}>
-      <button type="button" className="week-fab" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+    <div className="week-fab-wrap">
+      <button type="button" className="week-fab" onClick={() => setOpen(true)}>
         <span>{en ? "This week" : "Cette semaine"}</span>
       </button>
+      {/* A hand-rolled outside-click/Escape popover here turned out unreliable (reported as "loads but
+          doesn't open") — TaskModal is the SAME popup mechanism already proven to open/close correctly
+          everywhere else in the app (task detail, settings), so reuse it instead of a second bespoke
+          implementation. `nested` keeps it from re-locking body scroll if it's ever opened from inside
+          another modal. */}
       {open && (
-        <div className="week-fab-popover" role="dialog" aria-label={en ? "This week" : "Cette semaine"}>
-          {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
-              (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
-          {pronoteConnected && <ExamCountdown lang={lang} />}
-          <WeekLoad lang={lang} onTask={onTask} />
-        </div>
+        <TaskModal onClose={() => setOpen(false)} title={en ? "This week" : "Cette semaine"}>
+          <div className="week-fab-popover-body">
+            {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
+                (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
+            {pronoteConnected && <ExamCountdown lang={lang} />}
+            <WeekLoad lang={lang} onTask={onTask} />
+          </div>
+        </TaskModal>
       )}
     </div>
   );
