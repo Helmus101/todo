@@ -1026,7 +1026,12 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const load = useCallback(() => { void api.workload().then((r) => setDays(r.days)).catch(() => setDays([])); }, []);
   useEffect(() => { load(); }, [load]);
-  if (!days || days.every((d) => d.items.length === 0)) return null;
+  // This used to return null and rely on the OLD dash-rail card collapsing itself via `.dash-rail:empty` —
+  // now it renders standalone inside the "This week" popover (WeekRailFab), so a silent null here just
+  // reads as "the popup doesn't work": you click the button and nothing shows up, loading or genuinely
+  // empty look identical (blank). Say which one it actually is instead.
+  if (!days) return <p className="muted small">{en ? "Loading…" : "Chargement…"}</p>;
+  if (days.every((d) => d.items.length === 0)) return <p className="muted small">{en ? "Nothing due this week." : "Rien de prévu cette semaine."}</p>;
 
   const max = Math.max(1, ...days.map((d) => d.totalEffort));
   // Baselined against days that actually have something due (not the whole week) — see server/workload.ts's
