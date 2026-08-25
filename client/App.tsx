@@ -1662,8 +1662,13 @@ function GoogleAppAccounts({ appKey, onChanged }: { appKey: string; onChanged?: 
 
 // Otto Lycée v1 keeps Gmail, Calendar, and Drive — kept alongside Pronote (explicit ask) so teacher/club
 // emails, calendar deadlines, and PDFs teachers drop in Drive can still surface as tasks even when Pronote
-// itself doesn't have them. Everything else in Composio (GitHub/Slack/Notion/Linear/…) stays hidden.
+// itself doesn't have them. Everything else in Composio (GitHub/Slack/Linear/…) stays hidden.
 const GOOGLE_LYCEE_APPS = ["gmail", "googlecalendar", "googledrive"];
+// For IB/Other tracks: the FULL Composio catalog (GitHub/Slack/Linear/Todoist/…) turned out to be more
+// than actually wanted — the curated set is Google Workspace (all of it, not just the 3-app Lycée subset —
+// Docs/Sheets/Slides matter for building study materials) plus Notion, alongside Pronote which is its own
+// separate tile. Not the whole catalog.
+const GOOGLE_EXPANDED_APPS = ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides", "notion"];
 const GOOGLE_APP_BLURBS: Record<string, string> = {
   gmail: "Emails de profs, clubs, associations — Otto ne fait qu'y répondre en brouillon, jamais d'envoi automatique.",
   googlecalendar: "Événements et échéances à venir, pour préparer ce qui arrive.",
@@ -1676,11 +1681,13 @@ const GOOGLE_APP_BLURBS_EN: Record<string, string> = {
 };
 
 /** Integrations grid. `restricted` (default true) scopes it to just Gmail/Calendar/Drive (GOOGLE_LYCEE_APPS,
- *  the French-Bac default); false shows the full Composio catalog the backend already supports. */
+ *  the French-Bac default); false shows the curated IB/Other set — Google Workspace + Notion
+ *  (GOOGLE_EXPANDED_APPS), not the entire Composio catalog. */
 function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void; restricted?: boolean }) {
   const [items, setItems] = useState<IntegrationItem[] | null | undefined>(undefined); // undefined = loading, null = unavailable
   const load = useCallback(async () => {
-    try { const r = await api.integrations(); setItems(restricted ? r.items.filter((i) => GOOGLE_LYCEE_APPS.includes(i.key)) : r.items); }
+    const allow = restricted ? GOOGLE_LYCEE_APPS : GOOGLE_EXPANDED_APPS;
+    try { const r = await api.integrations(); setItems(r.items.filter((i) => allow.includes(i.key))); }
     catch { setItems(null); }
   }, [restricted]);
   useEffect(() => { void load(); }, [load]);
