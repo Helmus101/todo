@@ -5,7 +5,7 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningS
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, dayKeyOf, bumpStreak } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, dayKeyOf, bumpStreak, nextLeitnerReview } from "../shared/types.ts";
 import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 
@@ -139,6 +139,19 @@ const pmLang = mergeProfileStates(
   { ...emptyProfile(), language: "fr" }, // stale session, never itself touched the language toggle
 );
 check("newer-stamped language switch survives a stale unstamped session's merge", pmLang.language === "en");
+// A manually-logged exam added on one device (no Pronote — most IB/international schools don't have one)
+// must survive a merge against another device's copy that doesn't have it yet, same union-by-id pattern as
+// manual grades below.
+const pmExams = mergeProfileStates(
+  { ...emptyProfile(), manualExams: [{ id: "e1", subject: "Math HL", deadline: "2026-09-10" }] },
+  { ...emptyProfile(), manualExams: [{ id: "e2", subject: "Physics SL", deadline: "2026-09-12" }] },
+);
+check("manual exams union across devices by id", pmExams.manualExams?.length === 2);
+const pmExamsDup = mergeProfileStates(
+  { ...emptyProfile(), manualExams: [{ id: "e1", subject: "Math HL", deadline: "2026-09-10" }] },
+  { ...emptyProfile(), manualExams: [{ id: "e1", subject: "Math HL", deadline: "2026-09-10" }] },
+);
+check("same-id manual exam doesn't duplicate on merge", pmExamsDup.manualExams?.length === 1);
 const pmAcct = mergeProfileStates(
   { ...emptyProfile(), primaryAccounts: { gmail: "acct-a" } },
   { ...emptyProfile(), primaryAccounts: { googlecalendar: "acct-b" } },
@@ -1021,6 +1034,21 @@ section("expandStep substep url — bounded to the task's own links");
   const propose = (raw) => { const url = raw.url && linkUrls.has(raw.url) ? raw.url : undefined; return { text: raw.text, url }; };
   check("substep url matching a real task link kept", propose({ text: "Fill in the form", url: "https://example.edu/register" }).url === "https://example.edu/register");
   check("substep url NOT on the task is dropped, never fabricated", propose({ text: "Fill in the form", url: "https://totally-invented.example/register" }).url === undefined);
+}
+
+section("nextLeitnerReview — flashcard spaced-repetition schedule");
+{
+  const now = new Date("2026-08-25T12:00:00Z");
+  const first = nextLeitnerReview(undefined, true, now);
+  check("first-ever correct review starts at box 1", first.box === 1);
+  check("box 1 schedules 1 day out", Date.parse(first.dueAt) - now.getTime() === 1 * 86_400_000);
+  const advanced = nextLeitnerReview(2, true, now);
+  check("correct review advances the box", advanced.box === 3);
+  check("box 3 schedules 4 days out", Date.parse(advanced.dueAt) - now.getTime() === 4 * 86_400_000);
+  const capped = nextLeitnerReview(5, true, now);
+  check("box caps at 5, never grows unbounded", capped.box === 5);
+  const missed = nextLeitnerReview(4, false, now);
+  check("a missed review resets to box 1 regardless of prior progress", missed.box === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

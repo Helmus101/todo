@@ -109,6 +109,10 @@ export const api = {
   rescheduleTask: (id: string, when: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reschedule`, { when }),
   setGrade: (subject: string, grade: number, scale?: number): Promise<Profile> => post("/api/profile/grade", { subject, grade, scale }).then(normalizeProfile),
   deleteGrade: (subject: string): Promise<Profile> => req(`/api/profile/grade/${encodeURIComponent(subject)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
+  reviewFlashcard: (taskId: string, deckId: string, cardIndex: number, correct: boolean): Promise<WebTask[]> => post(`/api/tasks/${taskId}/flashcard/${deckId}/${cardIndex}/review`, { correct }),
+  reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] }> => req("/api/reviews/due").then(j),
+  addExam: (subject: string, deadline: string): Promise<Profile> => post("/api/profile/exam", { subject, deadline }).then(normalizeProfile),
+  deleteExam: (id: string): Promise<Profile> => req(`/api/profile/exam/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
   // Returns the fresh list + the sweep's own result line ("swept: 3 new tasks…" / "skipped: nothing
   // connected") so the UI reports what actually happened rather than inferring it.

@@ -16,6 +16,7 @@ import * as claude from "./claude.ts";
 import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPronoteGrades } from "./pronote.ts";
 import type { AcademicContext } from "./claude.ts";
 import { replanMilestones } from "./milestones.ts";
+import { computeWorkload } from "./workload.ts";
 
 /** Live Pronote homework/exams for a task's own run/chat context — best-effort, never blocks execution. */
 async function loadAcademicContext(email: string): Promise<AcademicContext | undefined> {
@@ -155,7 +156,7 @@ async function processSweep(job: store.Job): Promise<string> {
   // Every fresh task from this sweep gets an email — best-effort, non-blocking: a failed/skipped send
   // (no Gmail connected, Composio hiccup) never fails the sweep itself, same posture the old daily
   // briefing had. Sent via the same system-email path (sendSystemEmail), not the agent's gated toolset.
-  if (found.length) void notifyNewTasks(email, found, profile).catch(() => {});
+  if (found.length) void notifyNewTasks(email, found, profile, next).catch(() => {});
 
   return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued${learned.length ? `, learned ${learned.length} fact${learned.length === 1 ? "" : "s"}` : ""}`;
 }
@@ -175,7 +176,7 @@ const QUIET_HOURS_START = 22, QUIET_HOURS_END = 7; // 22:00–07:00 local — no
 
 /** New-task email alert — one email per sweep that found something, listing every fresh task with its
  *  "why" so the subject line alone tells the student something real happened, not just "check the app". */
-async function notifyNewTasks(email: string, found: WebTask[], profile: Profile): Promise<void> {
+async function notifyNewTasks(email: string, found: WebTask[], profile: Profile, list: WebTask[]): Promise<void> {
   if (!(await integrations.connectionStatusesCached(email, ["gmail"]))["gmail"]) return; // no Gmail, nothing to send through
   // A student who opens the app at midnight (or has generation cadence turned up) could otherwise get
   // "you have new homework" pinged in the middle of the night — the task itself still shows up in-app
@@ -187,9 +188,31 @@ async function notifyNewTasks(email: string, found: WebTask[], profile: Profile)
     return;
   }
   const appUrl = process.env.PUBLIC_URL || "https://hiotto.vercel.app";
+  // Pile-up detection (server/workload.ts) was PULL-only — real, but the student had to open the app's
+  // "This week" popup to see a heavy day coming. This reuses the ALREADY-throttled once-daily new-task
+  // email (rather than a second notification channel) to also mention the heaviest upcoming day, when it's
+  // genuinely a pile-up — best-effort, never blocks the email if Pronote is unreachable.
+  let pileUpLine = "";
+  try {
+    const [homework, tests] = (await pronoteConnected(email)).connected
+      ? await Promise.all([pronoteHomework(email), pronoteTests(email)])
+      : [[], []];
+    const allTests = [...tests, ...(profile.manualExams || [])];
+    const { days } = computeWorkload({ homework, tests: allTests, tasks: list.filter((t) => !isHandled(t.status)), grades: profile.grades, timezone: tzOf(profile) });
+    const busy = days.map((d) => d.totalEffort).filter((e) => e > 0).sort((a, b) => a - b);
+    const median = busy[Math.floor(busy.length / 2)] || 0;
+    // Same "pileUp" heuristic as WeekLoad's client-side one (client/App.tsx) — kept in sync deliberately,
+    // not re-derived independently, so "heavy" means the same thing whether the student sees it in-app or
+    // in this email.
+    const heavy = days.find((d, i) => i > 0 && d.totalEffort > 0 && (busy.length < 2 ? d.totalEffort >= 3 : d.totalEffort >= median * 1.6));
+    if (heavy) {
+      const dow = new Date(`${heavy.date}T00:00:00`).toLocaleDateString("fr-FR", { weekday: "long" });
+      pileUpLine = `<p>${dow} s'annonce chargé — ${heavy.items.length} chose${heavy.items.length > 1 ? "s" : ""} prévue${heavy.items.length > 1 ? "s" : ""}.</p>`;
+    }
+  } catch { /* best-effort — never blocks the new-task email */ }
   const subject = found.length === 1 ? `Otto — nouvelle tâche : ${found[0].title}` : `Otto — ${found.length} nouvelles tâches`;
   const items = found.slice(0, 10).map((t) => `<li><b>${escapeHtml(t.title)}</b>${t.why ? ` — ${escapeHtml(t.why)}` : ""}</li>`).join("");
-  const body = `<p>Otto a trouvé ${found.length === 1 ? "une nouvelle tâche" : `${found.length} nouvelles tâches`} :</p><ul>${items}</ul><p><a href="${appUrl}/tasks">Ouvrir Otto →</a></p>`;
+  const body = `<p>Otto a trouvé ${found.length === 1 ? "une nouvelle tâche" : `${found.length} nouvelles tâches`} :</p><ul>${items}</ul>${pileUpLine}<p><a href="${appUrl}/tasks">Ouvrir Otto →</a></p>`;
   const result = await integrations.sendSystemEmail(email, { to: email, subject, body, primaryAccounts: profile.primaryAccounts });
   void store.recordEvent(email, "task_alert_sent", { message: result.ok ? `Emailed ${found.length} new task${found.length === 1 ? "" : "s"}` : `Skipped: ${result.error || "send failed"}` });
 }

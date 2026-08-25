@@ -93,6 +93,12 @@ export interface Profile {
   // the student logs by hand (any scale, e.g. /7 for IB) — these ACCUMULATE, never overwritten, so a
   // subject's grade history and its own average are both visible, not just the latest number.
   grades?: { id: string; subject: string; grade: number; scale: number; updatedAt: string; source?: "pronote" | "manual" }[];
+  // Manually-logged exams/deadlines — the Pronote-less equivalent of PronoteTestItem (server/pronote.ts),
+  // same {subject, deadline} shape so it merges trivially with Pronote's own list wherever tests are
+  // consumed (ExamCountdown, computeWorkload). Most IB/international schools don't use Pronote at all — self
+  // reporting a small `PronoteTestItem`, `subject`, and `deadline` is the same low-friction pattern as the
+  // `grades` self-report above, not a new mechanism.
+  manualExams?: { id: string; subject: string; deadline: string }[];
   // Which track this student is on — drives AI vocabulary (isBigIbProject/trackLine in claude.ts) and
   // unlocks the milestone/big-project breakdown for IB (EE/IA/TOK/CAS). Set from Settings.
   track?: "ib" | "bac" | "other";
@@ -157,6 +163,13 @@ export function normalizeProfile(p: any): Profile {
           updatedAt: typeof g?.updatedAt === "string" ? g.updatedAt : new Date().toISOString(),
           source: g?.source === "pronote" ? "pronote" as const : "manual" as const,
         })).filter((g: { subject: string }) => g.subject).slice(0, 200)
+      : undefined,
+    manualExams: Array.isArray(p?.manualExams)
+      ? p.manualExams.map((e: any) => ({
+          id: typeof e?.id === "string" && e.id ? e.id : newId(),
+          subject: String(e?.subject || "").trim().slice(0, 60),
+          deadline: typeof e?.deadline === "string" ? e.deadline : "",
+        })).filter((e: { subject: string; deadline: string }) => e.subject && e.deadline).slice(0, 100)
       : undefined,
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
@@ -565,15 +578,28 @@ export interface TaskNote {
   createdAt: string;
 }
 
+// Leitner spacing schedule for flashcard review (box 1 = review again tomorrow, box 5 = review again in
+// 16 days) — simple, proven, and enough to make retrieval practice compound over time instead of a deck
+// being a one-shot artifact. Shared by client (optimistic update) and server (source of truth).
+export const LEITNER_INTERVAL_DAYS = [1, 2, 4, 8, 16];
+export function nextLeitnerReview(prevBox: number | undefined, correct: boolean, now: Date = new Date()): { box: number; dueAt: string } {
+  const box = correct ? Math.min(5, (prevBox || 0) + 1) : 1;
+  const days = LEITNER_INTERVAL_DAYS[box - 1];
+  return { box, dueAt: new Date(now.getTime() + days * 86_400_000).toISOString() };
+}
+
 export interface TaskFlashcards {
   id: string;
   title: string;
   cards: {
     front: string; back: string;
-    /** Per-card drill history — the minimum SM-2 needs (`dueAt` + `ease`) to eventually schedule spaced
-     *  review, plus raw seen/correct for a "how am I doing on this deck" read. Not yet scheduled anywhere
-     *  (no reviewer surfaces `dueAt`) — this is groundwork so a later pass doesn't need a data migration. */
-    review?: { seen: number; correct: number; lastAt?: string; dueAt?: string; ease?: number };
+    /** Per-card drill history. `box` (1-5, Leitner) is now the ACTUAL spacing schedule FlashcardDeck writes
+     *  on every review (see reviewCard in client/ui.tsx) — a correct review advances the box (and pushes
+     *  `dueAt` further out per LEITNER_INTERVAL_DAYS), a miss resets to box 1. `ease`/`dueAt` were already
+     *  here as SM-2 groundwork before any reviewer surfaced them; `dueAt` is now genuinely used (by `box`'s
+     *  schedule, not a separate SM-2 ease calculation — `ease` stays unused groundwork for a future, more
+     *  precise scheduler). `seen`/`correct` remain the raw "how am I doing on this deck" counts. */
+    review?: { seen: number; correct: number; lastAt?: string; dueAt?: string; ease?: number; box?: number };
   }[];
   createdAt: string;
   lastReviewedAt?: string;

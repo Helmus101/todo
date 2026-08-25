@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
@@ -355,12 +355,13 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
 // (a test already has/will have a task, but the countdown needs the raw subject+date list to lay out as a
 // timeline rather than dig it back out of task titles).
 app.get("/api/pronote/tests", requireAuth, async (req, res) => {
+  const manual = (req.session.profile?.manualExams || []).map((e) => ({ subject: e.subject, deadline: e.deadline }));
   try {
     const conn = await pronoteSvc.pronoteConnected(req.session.user!);
-    if (!conn.connected) { res.json({ tests: [] }); return; }
+    if (!conn.connected) { res.json({ tests: manual }); return; }
     const tests = await pronoteSvc.pronoteTests(req.session.user!);
-    res.json({ tests: tests.map((t) => ({ subject: t.subject, deadline: t.deadline })) });
-  } catch { res.json({ tests: [] }); }
+    res.json({ tests: [...tests.map((t) => ({ subject: t.subject, deadline: t.deadline })), ...manual] });
+  } catch { res.json({ tests: manual }); }
 });
 app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
   try {
@@ -389,8 +390,11 @@ app.get("/api/workload", requireAuth, async (req, res) => {
       [homework, tests] = await Promise.all([pronoteSvc.pronoteHomework(email), pronoteSvc.pronoteTests(email)]);
     }
   } catch { /* best-effort — an empty Pronote picture still lets open tasks show */ }
+  // Manually-logged exams (server/pronote.ts's PronoteTestItem shape: {id, subject, deadline}) merge in
+  // alongside Pronote's own — so a non-Pronote student's workload view isn't just empty.
+  const allTests = [...tests, ...(req.session.profile?.manualExams || [])];
   const tasks = (req.session.tasks || []).filter((t) => !isHandled(t.status));
-  const { days } = computeWorkload({ homework, tests, tasks, grades: req.session.profile?.grades, timezone: tzOf(req.session.profile) });
+  const { days } = computeWorkload({ homework, tests: allTests, tasks, grades: req.session.profile?.grades, timezone: tzOf(req.session.profile) });
   res.json({ days });
 });
 
@@ -807,6 +811,44 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
   await commit(req);
   res.json(req.session.tasks || []);
 });
+// Record one flashcard review — advances/resets its Leitner box and schedules the next `dueAt` (see
+// nextLeitnerReview in shared/types.ts). Deterministic, no AI call. This is what turns flashcard decks from
+// a one-shot artifact into genuine spaced repetition — see also GET /api/reviews/due below.
+app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rateLimit(200, 60_000), async (req, res) => {
+  const id = String(req.params.id);
+  const deckId = String(req.params.deckId);
+  const cardIndex = Number(req.params.cardIndex);
+  const correct = req.body?.correct !== false;
+  const task = await findTaskOrReload(req, id);
+  const deck = task?.flashcards?.find((d) => d.id === deckId);
+  const card = deck?.cards?.[cardIndex];
+  if (!task || !card) { res.status(404).json({ error: "Card not found — it may have already changed elsewhere." }); return; }
+  const prev = card.review;
+  const { box, dueAt } = nextLeitnerReview(prev?.box, correct);
+  card.review = { seen: (prev?.seen || 0) + 1, correct: (prev?.correct || 0) + (correct ? 1 : 0), lastAt: new Date().toISOString(), dueAt, box };
+  deck!.lastReviewedAt = new Date().toISOString();
+  task.updatedAt = new Date().toISOString();
+  await commit(req);
+  res.json(req.session.tasks || []);
+});
+// Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
+// repetition only actually compounds if the student can see everything due at a glance instead of having
+// to reopen each task to check. Cheap enough to compute on every request (no AI, just a filter/sort).
+app.get("/api/reviews/due", requireAuth, async (req, res) => {
+  const now = Date.now();
+  const due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] = [];
+  for (const t of req.session.tasks || []) {
+    if (isHandled(t.status)) continue;
+    for (const deck of t.flashcards || []) {
+      deck.cards.forEach((c, i) => {
+        // Never-reviewed cards aren't "due" — they're simply unreviewed; a fresh deck showing up in the
+        // due list before the student has even seen it once would be confusing, not helpful.
+        if (c.review?.dueAt && Date.parse(c.review.dueAt) <= now) due.push({ taskId: t.id, taskTitle: t.title, deckId: deck.id, deckTitle: deck.title, cardIndex: i, front: c.front });
+      });
+    }
+  }
+  res.json({ due: due.slice(0, 60) });
+});
 // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.
 // Costs one AI call, so it's gated the same as any other interactive AI action (paused/budget).
 app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {
@@ -1112,6 +1154,31 @@ app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't delete that grade — try again." }); }
+});
+// Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test list (server/pronote.ts),
+// for a student whose school doesn't use it at all (most IB/international schools). Merged into the SAME
+// data ExamCountdown/computeWorkload already consume — see GET /api/pronote/tests and /api/workload below —
+// so a manual-entry student gets the identical exam-countdown/workload experience a Pronote student does.
+app.post("/api/profile/exam", requireAuth, async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const subject = String(req.body?.subject || "").trim().slice(0, 60);
+  const deadline = String(req.body?.deadline || "");
+  if (!subject || !/^\d{4}-\d{2}-\d{2}/.test(deadline)) { res.status(400).json({ error: "subject and a real deadline are required" }); return; }
+  const list = (p.manualExams ||= []);
+  list.push({ id: randomUUID(), subject, deadline });
+  await commit(req);
+  res.json(p);
+});
+app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const id = decodeURIComponent(String(req.params.id || ""));
+    p.manualExams = (p.manualExams || []).filter((e) => e.id !== id);
+    // Same tombstone-less-merge reasoning as the grade delete above — persist the delete to cloud FIRST.
+    if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't remove that exam — try again." }); }
 });
 // Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
 app.delete("/api/profile", requireAuth, async (req, res) => {

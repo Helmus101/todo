@@ -524,6 +524,29 @@ export function App() {
     if (tz && tz !== status.timezone) { tzSynced.current = true; void api.setProfilePreference("timezone", tz).then(loadStatus).catch(() => { tzSynced.current = false; }); }
   }, [status?.loggedIn, status?.timezone, loadStatus]);
 
+  // Streak was a pure passive readout — no loss-aversion framing at all. A single low-key evening mention
+  // (once per local day, via the existing toast — not a popup/push) when there's a real streak to lose and
+  // nothing's been finished yet today. Deliberately restrained: one line, dismisses like any other toast,
+  // no daily nagging before evening (a streak isn't actually "at risk" at 10am).
+  const streakNudgeShown = useRef(false);
+  useEffect(() => {
+    if (streakNudgeShown.current || !status?.loggedIn) return;
+    const current = status.streak?.current || 0;
+    if (current < 1 || status.streak?.lastDayIso === todayIso()) return;
+    if (new Date().getHours() < 20) return;
+    let shownToday = false;
+    try { shownToday = localStorage.getItem("otto-streak-nudge") === todayIso(); } catch { /* ignore */ }
+    if (shownToday) return;
+    streakNudgeShown.current = true;
+    try { localStorage.setItem("otto-streak-nudge", todayIso()); } catch { /* ignore */ }
+    notify(
+      status.language === "en"
+        ? `Your ${current}-day streak is still open — finish one thing today to keep it going.`
+        : `Ta série de ${current} jours n'est pas encore prolongée aujourd'hui — termine une chose pour la garder.`,
+      "info",
+    );
+  }, [status?.loggedIn, status?.streak?.current, status?.streak?.lastDayIso, status?.language, notify]);
+
   const openId = route.startsWith("task/") ? route.slice(5) : null; // the deep-linked task, if any
   // Mark a task "seen" the moment its route opens — this is the ONE place every path into the task
   // modal funnels through (four different onToggle call sites below all navigate here), so hooking it
@@ -684,9 +707,16 @@ export function App() {
             )}
             {/* Consecutive-day streak (server-side, bumped once per local day on a confirmed task — see
                 bumpStreak). Only shown once it's actually something (2+), so day one doesn't read as a
-                countdown to nothing. */}
+                countdown to nothing. Was a bare number — no visual momentum, no loss-aversion framing.
+                A dot meter (filled up to the current streak, capped at 7 with a "+N" past that) gives the
+                same number an actual sense of a run building, without needing new day-by-day history data
+                the server doesn't track. */}
             {(status.streak?.current || 0) >= 2 && (
               <p className="dash-streak">
+                <span className="streak-dots" aria-hidden="true">
+                  {Array.from({ length: Math.min(status.streak!.current, 7) }).map((_, i) => <span key={i} className="streak-dot on" />)}
+                  {Array.from({ length: Math.max(0, 7 - status.streak!.current) }).map((_, i) => <span key={`o${i}`} className="streak-dot" />)}
+                </span>
                 {en
                   ? `${status.streak!.current}-day streak${status.streak!.longest > status.streak!.current ? ` · best ${status.streak!.longest}` : ""}`
                   : `${status.streak!.current} jours d'affilée${status.streak!.longest > status.streak!.current ? ` · record : ${status.streak!.longest}` : ""}`}
@@ -995,11 +1025,44 @@ function WeekRailFab({ lang, pronoteConnected, onTask }: { lang?: "fr" | "en"; p
           <div className="week-fab-popover-body">
             {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
                 (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
+            <DueReviews lang={lang} />
             {pronoteConnected && <ExamCountdown lang={lang} />}
             <WeekLoad lang={lang} onTask={onTask} />
           </div>
         </TaskModal>
       )}
+    </div>
+  );
+}
+
+/** Cards due for spaced-repetition review, across EVERY task — the one genuinely new cross-task view the
+ *  spaced-repetition work needed (see nextLeitnerReview in shared/types.ts): a deck's own player only ever
+ *  shows what's due for THAT task's deck, but the whole point of spacing is seeing everything due at a
+ *  glance without reopening every task to check. Links into the task itself (where the deck opens from) —
+ *  no separate deep-link into a specific deck yet, that's a reasonable follow-on, not required for this to
+ *  already be useful. */
+function DueReviews({ lang }: { lang?: "fr" | "en" }) {
+  const en = lang === "en";
+  const [due, setDue] = useState<{ taskId: string; taskTitle: string; deckTitle: string }[] | null>(null);
+  useEffect(() => { void api.reviewsDue().then((r) => setDue(r.due)).catch(() => setDue([])); }, []);
+  if (!due?.length) return null;
+  // Group by task — several due cards from the same deck shouldn't repeat the task title once each.
+  const byTask = new Map<string, { taskTitle: string; deckTitle: string; count: number }>();
+  for (const d of due) {
+    const cur = byTask.get(d.taskId);
+    if (cur) cur.count++; else byTask.set(d.taskId, { taskTitle: d.taskTitle, deckTitle: d.deckTitle, count: 1 });
+  }
+  return (
+    <div className="due-reviews">
+      <div className="exam-strip-label">{en ? "Due for review" : "À réviser"}</div>
+      <div className="exam-strip">
+        {[...byTask.entries()].map(([taskId, t]) => (
+          <a key={taskId} className="exam-chip due-review-chip" href={`/task/${taskId}`}>
+            <span className="exam-days">{t.count}</span>
+            <span className="exam-subject">{t.deckTitle}</span>
+          </a>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1322,6 +1385,51 @@ function GradesEditor({ profile, onChanged, pronoteConnected, onTasksChanged }: 
   );
 }
 
+/** Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test sync, for a student
+ *  whose school doesn't use it (most IB/international schools). Same add/remove pattern as GradesEditor
+ *  right above it; feeds ExamCountdown/WeekLoad via GET /api/pronote/tests and /api/workload merging
+ *  manualExams in server-side, so this is the ENTIRE client-side surface needed — no other component
+ *  needs to know these two data sources exist. */
+function ExamsEditor({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
+  const L = useLang();
+  const notify = useNotify();
+  const [subject, setSubject] = useState("");
+  const [deadline, setDeadline] = useState("");
+  const exams = [...(profile?.manualExams || [])].sort((a, b) => a.deadline.localeCompare(b.deadline));
+  const add = async () => {
+    const s = subject.trim();
+    if (!s || !deadline) return;
+    try { onChanged?.(await api.addExam(s, deadline)); setSubject(""); setDeadline(""); }
+    catch (e: any) { notify(e?.message || L("Impossible d'ajouter cet examen.", "Couldn't add that exam."), "error"); }
+  };
+  return (
+    <div className="grades-editor">
+      <p className="settings-hint">{L("Si ton école n'utilise pas Pronote, ajoute tes examens ici — ils apparaissent dans le compte à rebours et le planning de la semaine, comme s'ils venaient de Pronote.", "If your school doesn't use Pronote, log your exams here — they show up in the exam countdown and week workload view just like a Pronote one would.")}</p>
+      {exams.length > 0 && (
+        <ul className="grade-list">
+          {exams.map((e) => (
+            <li key={e.id} className="grade-row">
+              <div className="grade-row-top">
+                <span className="grade-subject">{e.subject}</span>
+                <span className="grade-value">{new Date(`${e.deadline}T00:00:00`).toLocaleDateString(L("fr-FR", "en-US"), { day: "numeric", month: "short", year: "numeric" })}</span>
+                <button className="x" title={L("Supprimer", "Remove")} onClick={async () => {
+                  try { onChanged?.(await api.deleteExam(e.id)); }
+                  catch (err: any) { notify(err?.message || L("Impossible de supprimer cet examen.", "Couldn't remove that exam."), "error"); }
+                }}>×</button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="addrow grade-addrow">
+        <input className="addinput sm" placeholder={L("Matière (ex : Maths HL)", "Subject (e.g. Math HL)")} value={subject} onChange={(e) => setSubject(e.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") void add(); }} />
+        <input className="addinput sm" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") void add(); }} />
+        <button className="btn" disabled={!subject.trim() || !deadline} onClick={() => void add()}>{L("Ajouter", "Add")}</button>
+      </div>
+    </div>
+  );
+}
+
 /** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
@@ -1337,7 +1445,19 @@ function SettingsPage({ status, onSignOut, onChanged, onTasksChanged }: { status
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
   useEffect(() => { void api.profile().then(setProfile); void api.usage().then(setUsage).catch(() => {}); }, []);
   // Month-to-date AI spend vs. the cap — both computed server-side (EUR, approximate; for visibility + the cap).
-  const fmtEur = (n: number) => n <= 0 ? "0€" : n < 0.01 ? "< 0,01€" : `${n.toFixed(2).replace(".", ",")}€`;
+  // Was hardcoded to "€" + French comma formatting for every account regardless of language — the
+  // underlying spend is tracked in USD server-side (see monthCostUsd/monthlyBudgetUsd in shared/types.ts),
+  // so a non-French user saw a currency symbol and decimal style that were both simply wrong for them.
+  // Not full multi-currency conversion (no real per-country signal exists yet) — just "not literally
+  // incorrect for every non-French user": USD in English, EUR in French, both properly locale-formatted.
+  const fmtEur = (n: number) => {
+    const en = status.language === "en";
+    const currency = en ? "USD" : "EUR";
+    const nf = new Intl.NumberFormat(en ? "en-US" : "fr-FR", { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (n <= 0) return nf.format(0);
+    if (n < 0.01) return `< ${nf.format(0.01)}`;
+    return nf.format(n);
+  };
   useReveal(); // fades each settings section in on first paint (see `.reveal` in styles.css)
 
   return (
@@ -1378,14 +1498,15 @@ function SettingsPage({ status, onSignOut, onChanged, onTasksChanged }: { status
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
         <h3>{L("Sources", "Sources")}</h3>
-        {/* Otto Lycée v1: France high-school only, scoped to Pronote + Gmail/Calendar/Drive (GOOGLE_LYCEE_APPS)
-            — the rest of Composio (GitHub/Slack/Notion/Linear/…) stays hidden entirely, not just
-            de-prioritized. Google is kept (explicit ask) since teachers/clubs still email lycéens directly,
-            deadlines land on Calendar, and teachers drop PDFs in Drive — every OTHER extra OAuth step is
-            still a dropout, so this isn't reopening the whole Composio grid. */}
+        {/* Otto Lycée v1 originally scoped this to just Pronote + Gmail/Calendar/Drive for EVERY account —
+            correct for a French Bac student, but it silently hid the rest of Composio's catalog
+            (Slack/Notion/GitHub/Linear/…) from every account regardless of track, including IB/international
+            students who often lean on those tools for school coordination more than a French lycéen does.
+            Now gated by track: the narrow Lycée-only grid stays the default for "bac"/unset (unchanged for
+            existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
         <p className="settings-hint">{L("Otto lit ton Pronote (et ton Gmail/Calendar/Drive si tu les connectes) et prépare le travail — il ", "Otto reads your Pronote (and Gmail/Calendar/Drive if you connect them) and preps the work — it ")}<b>{L("n'envoie et ne rend jamais rien à ta place", "never sends or hands anything in for you")}</b>.</p>
         <PronoteTile />
-        <GoogleTiles onChanged={onChanged} />
+        <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
@@ -1410,6 +1531,11 @@ function SettingsPage({ status, onSignOut, onChanged, onTasksChanged }: { status
         <h3>{L("Tes notes", "Your grades")}</h3>
         <p className="settings-hint">{L("Aide Otto à voir quelle matière a vraiment besoin d'attention, pas juste ce qui est dû bientôt.", "Helps Otto see which subject actually needs attention, not just what's due soonest.")}</p>
         <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} onTasksChanged={onTasksChanged} />
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
+        <h3>{L("Tes examens", "Your exams")}</h3>
+        <ExamsEditor profile={profile} onChanged={setProfile} />
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
@@ -1549,13 +1675,14 @@ const GOOGLE_APP_BLURBS_EN: Record<string, string> = {
   googledrive: "Documents your teachers shared — to enrich revision guides.",
 };
 
-/** Google apps grid, scoped to just Gmail/Calendar/Drive for lycée v1 (see GOOGLE_LYCEE_APPS). */
-function GoogleTiles({ onChanged }: { onChanged?: () => void }) {
+/** Integrations grid. `restricted` (default true) scopes it to just Gmail/Calendar/Drive (GOOGLE_LYCEE_APPS,
+ *  the French-Bac default); false shows the full Composio catalog the backend already supports. */
+function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void; restricted?: boolean }) {
   const [items, setItems] = useState<IntegrationItem[] | null | undefined>(undefined); // undefined = loading, null = unavailable
   const load = useCallback(async () => {
-    try { const r = await api.integrations(); setItems(r.items.filter((i) => GOOGLE_LYCEE_APPS.includes(i.key))); }
+    try { const r = await api.integrations(); setItems(restricted ? r.items.filter((i) => GOOGLE_LYCEE_APPS.includes(i.key)) : r.items); }
     catch { setItems(null); }
-  }, []);
+  }, [restricted]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { const id = setTimeout(() => void load(), 1200); return () => clearTimeout(id); }, [load]);
   useEffect(() => {
@@ -1595,7 +1722,7 @@ function GoogleTiles({ onChanged }: { onChanged?: () => void }) {
  *  welcome + name → how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
  *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
  *  finishing (or "Skip") clears the otto-onboard flag. */
-const OB_STEPS = 5;
+const OB_STEPS = 6;
 /** Otto Lycée v1: onboarding is now just name → what Otto does → connect Pronote (the ONE data source) →
  *  done. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone — every extra sign-in step is a
  *  dropout for a lycéen without a work Google account, and Pronote's connect flow (URL + identifiants,
@@ -1605,13 +1732,27 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [pronoteConnected, setPronoteConnected] = useState(false);
+  // Which curriculum/track the student is on — drives both AI vocabulary (trackLine() in server/claude.ts,
+  // already good) and, from here on, whether Pronote gets framed as THE data source or as one option among
+  // several. Previously never asked anywhere, so every account silently defaulted to unset/"bac"-shaped
+  // assumptions regardless of what the student actually needed.
+  const [track, setTrack] = useState<"ib" | "bac" | "other" | null>(null);
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { /* non-blocking */ } }
     setStep(1);
   };
+  const saveTrack = async (t: "ib" | "bac" | "other") => {
+    setTrack(t);
+    try { await api.setProfilePreference("track", t); await onStatus(); } catch { /* non-blocking */ }
+    setStep(2);
+  };
   const checkPronote = useCallback(async () => { try { const s = await api.pronoteStatus(); setPronoteConnected(s.connected); onStatus(); } catch { /* keep last */ } }, [onStatus]);
   useEffect(() => { void checkPronote(); }, [checkPronote]);
+  // Pronote is a French national-education-system tool — real and worth asking about for "bac"/unset, but
+  // actively misleading to lead with for an IB/other-track student whose school very likely doesn't use it
+  // at all (Google Classroom, Managebac, Toddle, or just email/calendar are far more common internationally).
+  const pronoteIsPrimary = track !== "ib" && track !== "other";
 
   return (
     <div className="onboard-overlay" role="dialog" aria-modal="true">
@@ -1638,36 +1779,59 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
 
         {step === 1 && (
           <div className="onboard-step">
-            <h2>{L("Comment Otto t'aide", "How Otto helps")}</h2>
-            <p className="onboard-lead">{L("Chaque jour, Otto regarde ton Pronote et transforme tout en 3 choses simples pour aujourd'hui.", "Every day, Otto checks your Pronote and turns everything into 3 simple things for today.")}</p>
-            <div className="ob-states">
-              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Fait pour toi", "Done for you")}</b><span>{L("Fiches de révision, checklists, brouillons — jamais l'exercice lui-même.", "Study guides, checklists, drafts — never the exercise itself.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot need" /><div><b>{L("À toi de jouer", "Your turn")}</b><span>{L("Le devoir ou le contrôle, avec un plan pas à pas.", "The assignment or test, with a step-by-step plan.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot check" /><div><b>{L("Terminé", "Done")}</b><span>{L("Coché, plus besoin d'y penser.", "Checked off, no need to think about it again.")}</span></div></div>
+            <h2>{L("Ton parcours", "Your track")}</h2>
+            <p className="onboard-lead">{L("Ça change le vocabulaire qu'Otto utilise et, à l'étape suivante, comment il trouve ton travail — modifiable à tout moment dans les Réglages.", "This changes the vocabulary Otto uses and, on the next step, how it finds your work — changeable any time in Settings.")}</p>
+            <div className="onboard-apps">
+              <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{L("Bac français (lycée)", "French Bac (lycée)")}</button>
+              <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>{L("IB", "IB")}</button>
+              <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
             </div>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(2)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(2)}>{L("Passer", "Skip")}</button>
             </div>
           </div>
         )}
 
         {step === 2 && (
           <div className="onboard-step">
-            <h2>{L("Connecte ton Pronote", "Connect your Pronote")}</h2>
-            <p className="onboard-lead">{L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted and never resold.")}</p>
-            <div className="onboard-apps">
-              <PronoteTile onChanged={() => void checkPronote()} />
+            <h2>{L("Comment Otto t'aide", "How Otto helps")}</h2>
+            <p className="onboard-lead">{pronoteIsPrimary
+              ? L("Chaque jour, Otto regarde ton Pronote et transforme tout en 3 choses simples pour aujourd'hui.", "Every day, Otto checks your Pronote and turns everything into 3 simple things for today.")
+              : L("Chaque jour, Otto regarde ton Gmail/Calendar (et tes échéances si tu les ajoutes toi-même) et transforme tout en 3 choses simples pour aujourd'hui.", "Every day, Otto checks your Gmail/Calendar (and any deadlines you log yourself) and turns everything into 3 simple things for today.")}</p>
+            <div className="ob-states">
+              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Fait pour toi", "Done for you")}</b><span>{L("Fiches de révision, checklists, brouillons — jamais l'exercice lui-même.", "Study guides, checklists, drafts — never the exercise itself.")}</span></div></div>
+              <div className="ob-state"><span className="ob-dot need" /><div><b>{L("À toi de jouer", "Your turn")}</b><span>{L("Le devoir ou le contrôle, avec un plan pas à pas.", "The assignment or test, with a step-by-step plan.")}</span></div></div>
+              <div className="ob-state"><span className="ob-dot check" /><div><b>{L("Terminé", "Done")}</b><span>{L("Coché, plus besoin d'y penser.", "Checked off, no need to think about it again.")}</span></div></div>
             </div>
-            <p className="muted small">{L("Tu peux te connecter plus tard depuis les Réglages.", "You can connect later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(1)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(3)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
+              <button className="btn primary big" onClick={() => setStep(3)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
         {step === 3 && (
+          <div className="onboard-step">
+            {/* Pronote is a French national-education-system tool — only worth leading with for a Bac/unset
+                track. An IB/other-track student's school very likely doesn't use it at all, so this step
+                reframes as optional/parallel rather than "the one thing Otto reads" for them. */}
+            <h2>{pronoteIsPrimary ? L("Connecte ton Pronote", "Connect your Pronote") : L("Connecte ton Pronote (si tu en as un)", "Connect your Pronote (if you have one)")}</h2>
+            <p className="onboard-lead">{pronoteIsPrimary
+              ? L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted and never resold.")
+              : L("La plupart des écoles IB n'utilisent pas Pronote — pas de souci. Connecte-le seulement si ton école le propose ; sinon, connecte Gmail/Calendar depuis les Réglages, ou ajoute tes examens/échéances toi-même.", "Most IB schools don't use Pronote — that's fine. Only connect it if your school offers it; otherwise, connect Gmail/Calendar from Settings, or log your own exams/deadlines by hand.")}</p>
+            <div className="onboard-apps">
+              <PronoteTile onChanged={() => void checkPronote()} />
+            </div>
+            <p className="muted small">{L("Tu peux te connecter plus tard depuis les Réglages.", "You can connect later from Settings.")}</p>
+            <div className="onboard-actions onboard-actions-split">
+              <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(4)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
+            </div>
+          </div>
+        )}
+
+        {step === 4 && (
           <div className="onboard-step">
             <h2>{L("Ta langue", "Your language")}</h2>
             <p className="onboard-lead">{L("Change l'interface et tout ce qu'Otto écrit — modifiable à tout moment dans les Réglages.", "Switches the interface and everything Otto writes — changeable any time in Settings.")}</p>
@@ -1679,17 +1843,21 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <PreferencesFields profile={null} onChanged={() => void onStatus()} />
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(4)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(5)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 4 && (
+        {step === 5 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
-            <p className="onboard-lead">{pronoteConnected ? L("Otto se met au travail. Ton plan du jour arrive.", "Otto is getting to work. Your plan for today is on its way.") : L("Connecte ton Pronote quand tu veux depuis les Réglages, et Otto se met au travail.", "Connect your Pronote any time from Settings, and Otto gets to work.")}</p>
+            <p className="onboard-lead">{pronoteConnected
+              ? L("Otto se met au travail. Ton plan du jour arrive.", "Otto is getting to work. Your plan for today is on its way.")
+              : pronoteIsPrimary
+              ? L("Connecte ton Pronote quand tu veux depuis les Réglages, et Otto se met au travail.", "Connect your Pronote any time from Settings, and Otto gets to work.")
+              : L("Connecte Gmail/Calendar ou ajoute tes examens depuis les Réglages, et Otto se met au travail.", "Connect Gmail/Calendar or add your exams from Settings, and Otto gets to work.")}</p>
             <p className="muted small">{L("Otto regarde automatiquement, tous les jours — pas besoin de lui demander. Pour connecter d'autres comptes ou ajuster quoi que ce soit, retrouve tout dans les Réglages.", "Otto always looks automatically, every day — no need to ask. To connect more accounts or adjust anything, it's all in Settings.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{L("Voir mes tâches", "See my tasks")}</button></div>
           </div>
@@ -1864,13 +2032,18 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
       </header>
 
       <main className="hero">
-        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>{L("Le prolongement de Pronote qui te guide — jamais qui fait à ta place.", "The Pronote companion that guides you — never does it for you.")}</h1>
+        {/* French copy stays Pronote-first — genuinely correct for the French Bac audience it targets, who
+            overwhelmingly DO have one. English copy leads with the universal pain point instead and names
+            Pronote as ONE path among several (Gmail/Calendar, or logging exams by hand) — most IB/
+            international schools don't use Pronote at all, and English is this app's reach into that
+            audience; the old English copy was a literal translation of the French, just as Pronote-only. */}
+        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>{L("Le prolongement de Pronote qui te guide — jamais qui fait à ta place.", "The study companion that guides you — never does it for you.")}</h1>
         <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>{L(
           "Dimanche 19h, 11 devoirs et 2 contrôles sur Pronote — panique. Otto se branche sur ton Pronote et transforme le mur de devoirs en 3 tâches claires pour aujourd'hui, avec un temps estimé et un point de départ pour chacune. Il t'accompagne pas à pas ; l'exercice, la dissertation, la réponse au contrôle restent toujours les tiens.",
-          "Sunday, 7pm — 11 pieces of homework and 2 tests on Pronote, and you're panicking. Otto connects to your Pronote and turns the wall of homework into 3 clear tasks for today, each with an estimated time and a starting point. It walks you through it step by step; the exercise, the essay, the test answer are always yours to do.",
+          "Sunday, 7pm — a wall of homework and two tests coming up, and you're panicking. Otto reads your Pronote if your school uses it (or your Gmail/Calendar, or exams you log yourself) and turns it into 3 clear tasks for today, each with an estimated time and a starting point. It walks you through it step by step; the exercise, the essay, the test answer are always yours to do.",
         )}</p>
         <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.25s" }}>
-          <a className="btn primary big" href="/signup">{L("Connecter mon Pronote", "Connect my Pronote")}</a>
+          <a className="btn primary big" href="/signup">{L("Connecter mon Pronote", "Get started free")}</a>
           <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
         </div>
         <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>{L("Un guide, pas un exécutant — Otto ne fait jamais tes devoirs à ta place.", "A guide, not a doer — Otto never does your homework for you.")}</div>

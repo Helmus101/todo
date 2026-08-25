@@ -355,6 +355,11 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
       }
       return [...map.values()];
     })() : undefined,
+    // Union by id, same reasoning as manual grade entries above — a manually-logged exam added on one
+    // device must survive a merge against another device's copy that doesn't have it yet.
+    manualExams: (p1.manualExams?.length || p2.manualExams?.length)
+      ? [...new Map([...(p1.manualExams || []), ...(p2.manualExams || [])].map((e) => [e.id, e])).values()]
+      : undefined,
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
     // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.

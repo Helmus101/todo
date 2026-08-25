@@ -288,7 +288,7 @@ export function renderChatText(text: string): ReactNode {
 /** Drillable flashcard viewer (CREATE_FLASHCARDS): space/click flips the card, → marks it right and
  *  advances, ← marks it wrong and advances. Ends on a score summary with a restart. Keyboard-first so a
  *  student can drill an entire deck without touching the mouse. */
-export function FlashcardDeck({ deck }: { deck: TaskFlashcards }) {
+export function FlashcardDeck({ deck, onReview }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void }) {
   const L = useLang();
   const [i, setI] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -299,6 +299,9 @@ export function FlashcardDeck({ deck }: { deck: TaskFlashcards }) {
   const mark = (ok: boolean) => {
     if (!card) return;
     (ok ? setRight : setWrong)((prev) => [...prev, i]);
+    // Fire-and-forget — the deck's own local right/wrong state (for the score screen) doesn't wait on the
+    // network either, so this shouldn't make marking a card feel any less instant.
+    onReview?.(i, ok);
     setFlipped(false);
     setI((v) => v + 1);
   };

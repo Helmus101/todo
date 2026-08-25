@@ -504,7 +504,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         )}
       </div>
 
-      <ArtifactPopups task={task} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
+      <ArtifactPopups task={task} onTask={onTask} openNote={openNote} openDeck={openDeck} openQuiz={openQuiz}
         setOpenNote={setOpenNote} setOpenDeck={setOpenDeck} setOpenQuiz={setOpenQuiz} />
     </div>
   );
@@ -514,6 +514,36 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
 
 /** Exactly one shape, by precedence. Ticking the current step advances it in place — that's what makes
  *  "one thing at a time" self-evident without a word of instruction. */
+/** A step's `minutes` estimate used to just sit there as a static "~15 min" label — real raw material
+ *  (a model-provided time estimate) for a focus timer that never actually existed anywhere in the app.
+ *  Plain countdown, started on tap; at zero it becomes a gentle "still going?" nudge, never a forced
+ *  cutoff or a notification — this is a focus AID, not a hard limit. Client-side only (a local interval),
+ *  since a timer has no reason to survive a reload; resets automatically per-step via the `key` the caller
+ *  passes (StepHero remounts it on `currentIdx`). */
+function SessionTimer({ minutes }: { minutes: number }) {
+  const L = useLang();
+  const [secsLeft, setSecsLeft] = useState<number | null>(null); // null = not started yet
+  useEffect(() => {
+    if (secsLeft === null) return;
+    const id = setInterval(() => setSecsLeft((s) => (s === null ? s : s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [secsLeft === null]);
+  const fmt = (s: number) => `${Math.floor(Math.abs(s) / 60)}:${String(Math.abs(s) % 60).padStart(2, "0")}`;
+  if (secsLeft === null) {
+    return (
+      <button type="button" className="step-minutes step-timer-start" onClick={() => setSecsLeft(minutes * 60)}>
+        ~{minutes} {L("min", "min")} · {L("Démarrer", "Start timer")}
+      </button>
+    );
+  }
+  const over = secsLeft <= 0;
+  return (
+    <span className={`step-minutes step-timer ${over ? "over" : ""}`}>
+      {over ? L(`Temps écoulé — ${fmt(secsLeft)} de plus, tu continues ?`, `Time's up — still going? +${fmt(secsLeft)}`) : fmt(secsLeft)}
+    </span>
+  );
+}
+
 function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running, decided, setDecided, onStepDone, onRun, onAnswer, answering, onConfirm, onTask }: {
   task: WebTask; steps: TaskStep[]; currentIdx: number; isDone: boolean; cStatus: string;
   retrying?: boolean; running: boolean;
@@ -630,7 +660,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <span className="hero-kicker">{L("À faire maintenant", "Do this now")}</span>
       <p className="hero-step">{withInlineLinks(s.text)}</p>
       {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
-      {s.minutes ? <span className="step-minutes">~{s.minutes} {L("min", "min")}</span> : null}
+      {s.minutes ? <SessionTimer key={currentIdx} minutes={s.minutes} /> : null}
       {s.result ? <span className="step-result note">{s.result}</span> : null}
       {/* A step Otto can DO but is missing ONE piece of info for (server sets `question`, optionally
           `options` — see the "submit" tool schema in server/claude.ts) — this used to be computed and
@@ -1212,13 +1242,21 @@ function SendableReview({ task, onTask }: {
 /** The note/deck/quiz viewers, mounted once for the whole focus view (both the chat chips and the
  *  "prepared" panel open them). A chip can reference an id ARTIFACT_CAP has since evicted — that renders
  *  as nothing rather than crashing. */
-function ArtifactPopups({ task, openNote, openDeck, openQuiz, setOpenNote, setOpenDeck, setOpenQuiz }: {
-  task: WebTask; openNote: string | null; openDeck: string | null; openQuiz: string | null;
+function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNote, setOpenDeck, setOpenQuiz }: {
+  task: WebTask; onTask: (t: WebTask) => void; openNote: string | null; openDeck: string | null; openQuiz: string | null;
   setOpenNote: (v: null) => void; setOpenDeck: (v: null) => void; setOpenQuiz: (v: null) => void;
 }) {
   const note = openNote ? task.notes?.find((x) => x.id === openNote) : null;
   const deck = openDeck ? task.flashcards?.find((x) => x.id === openDeck) : null;
   const quiz = openQuiz ? task.quizzes?.find((x) => x.id === openQuiz) : null;
+  // Best-effort: a failed review write shouldn't interrupt the deck (the local right/wrong score still
+  // works fine) — the card just doesn't get spaced-repetition-scheduled that one time, no user-facing error.
+  const onReview = deck ? (cardIndex: number, correct: boolean) => {
+    void api.reviewFlashcard(task.id, deck.id, cardIndex, correct).then((list) => {
+      const fresh = list.find((t) => t.id === task.id);
+      if (fresh) onTask(fresh);
+    }).catch(() => {});
+  } : undefined;
   return (
     <>
       {note ? (
@@ -1229,7 +1267,7 @@ function ArtifactPopups({ task, openNote, openDeck, openQuiz, setOpenNote, setOp
           </div>
         </TaskModal>
       ) : null}
-      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} /></TaskModal> : null}
+      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} /></TaskModal> : null}
       {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} /></TaskModal> : null}
     </>
   );
