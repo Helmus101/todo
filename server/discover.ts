@@ -245,7 +245,12 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const driveGrabs = driveAccounts.map((acc) => grab(async () => {
     const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split(".")[0];
     const files = driveToItems(await readAction(userEmail, "GOOGLEDRIVE_LIST_FILES", {
-      q: `(sharedWithMe = true or modifiedTime > '${since}') and trashed = false`,
+      // Bound BOTH branches by `since` — `sharedWithMe = true` alone (no time bound) matches every file
+      // ever shared with the account, so a share from months ago could still surface today just for
+      // sitting near the top of the "most recently modified among all-time shares" list. Only a share
+      // that happened recently should count as a fresh signal; a stale share, even an unread one, isn't
+      // "new" and shouldn't compete with this week's actual activity.
+      q: `(sharedWithMeTime > '${since}' or modifiedTime > '${since}') and trashed = false`,
       orderBy: "modifiedTime desc", pageSize: 15,
       fields: "files(id,name,mimeType,webViewLink,modifiedTime,sharedWithMeTime,lastModifyingUser)",
     }, acc.id), acc);
