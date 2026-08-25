@@ -487,12 +487,18 @@ function titleKeywords(title: string): string[] {
  *  enough to pass the WHOLE array, so 1-related-of-3 sailed through. Requiring a MAJORITY catches that while
  *  staying lenient enough that legitimately-phrased steps (which won't all repeat the title's exact nouns)
  *  don't false-positive: any task with just one step is trivially 100%. Skips entirely when the title has no
- *  distinctive words to match against (avoids false positives on short titles). */
+ *  distinctive words to match against (avoids false positives on short titles).
+ *
+ *  STRICTLY greater than half, not >=: observed live, a manual task "Reply to Denis with thanks" came back
+ *  with exactly 2 steps — one about "consolidating Drive files and Gmail messages related to 'Denis'" (an
+ *  entirely different, invented deliverable) and one legitimately on-topic — an exact 1-of-2 tie that the
+ *  old >= 0.5 let sail through as "matching" even though the comment above already called for a MAJORITY,
+ *  which a 50/50 split isn't. */
 function stepsMatchTitle(title: string, steps: { text: string }[]): boolean {
   const kws = titleKeywords(title);
   if (!kws.length || !steps.length) return true;
   const matching = steps.filter((s) => { const t = s.text.toLowerCase(); return kws.some((k) => t.includes(k)); }).length;
-  return matching / steps.length >= 0.5;
+  return matching / steps.length > 0.5;
 }
 
 // Observed live: a task titled "Prepare for the Wharton Investment Competition" came back with steps ALL
@@ -1684,7 +1690,7 @@ const RUN_TOOLS = [
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
         url: { type: "string", description: "a link that puts the user ONE click from doing this step — directions (Google Maps dir link), a tel: number, the exact booking/payment/return page, a form. Include one whenever it exists or can be constructed; not just for 'open a page' steps." },
-        question: { type: "string", description: "LAST RESORT ONLY — one short, specific question, set ONLY when a detail is genuinely missing that you could NOT find in the apps OR infer from context, AND it materially changes the output. You must have searched (inbox/Drive/calendar/their profile/the web) AND been unable to make a reasonable assumption first. A question you could have answered yourself is a failure. Keep automatable=true (you'll run it once they answer)." },
+        question: { type: "string", description: "LAST RESORT ONLY — one short, specific question, set ONLY when a detail is genuinely missing that you could NOT find in the apps OR infer from context, AND it materially changes the output. You must have searched (inbox/Drive/calendar/their profile/the web) AND been unable to make a reasonable assumption first. A question you could have answered yourself is a failure. NEVER ask them to pick the OUTPUT FORMAT/deliverable type (note vs doc vs flashcards vs email, etc.) — that's your own implementation choice to make from the task itself, never something to hand back to the student; a title like 'Reply to Denis' already tells you the deliverable is an email, full stop. Only ask about a FACT only they know (which thread, what was decided, a missing number). Keep automatable=true (you'll run it once they answer)." },
         options: { type: "array", items: { type: "string" }, description: "2-4 likely ANSWERS to 'question', your BEST inference FIRST — each one gets tapped AS-IS and run literally, so every option must be a real, complete answer you could act on if picked (e.g. '12 stores', 'This Friday', 'Skip it'). NEVER a meta-option like 'I'll type my own answer' / 'I have it, let me paste it' / 'Something else' — a free-text field is ALWAYS shown below the options already, so one of those does nothing but submit that literal sentence as if it were the answer. If free text is the realistic response, just omit 'options' entirely." },
         minutes: { type: "number", description: "realistic minutes this step takes (1-240) — a genuine estimate from what the step involves, omit if you can't judge one. See TIME ESTIMATES." },
       }, required: ["text", "automatable"] },
