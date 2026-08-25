@@ -13,7 +13,7 @@ import { readAction, getConnectedAccounts } from "./integrations.ts";
 import { pronoteConnected, pronoteHomework, pronoteTests } from "./pronote.ts";
 
 export interface SourceItem {
-  sourceApp: "gmail" | "calendar" | "drive" | "github" | "pronote";
+  sourceApp: "gmail" | "calendar" | "drive" | "pronote";
   externalId: string;
   anchorKey: string;      // "gmail:<threadId>" / "calendar:<eventId>" / "drive:<fileId>" — the dedupe identity
   url?: string;
@@ -51,10 +51,10 @@ export function isNoise(it: SourceItem): boolean {
   return NOISE_SENDER.test(it.sender || "") || NOISE_SUBJECT.test(it.title || "");
 }
 
-// Collapse (not strip) separators — stripping entirely let two DIFFERENT anchors collide, e.g. GitHub's
-// "owner/x1#2" and "owner/x#12" both normalized to "githubownerx12", so dedupeByThread/filterCandidates
-// could silently drop or hide a genuinely new issue. A single placeholder character keeps the digit
-// boundary intact while still ignoring cosmetic punctuation differences.
+// Collapse (not strip) separators — stripping entirely let two DIFFERENT anchors collide, e.g.
+// "drive:file-12" and "drive:file1-2" both normalizing to the same key, so dedupeByThread/
+// filterCandidates could silently drop or hide a genuinely new item. A single placeholder character
+// keeps the digit boundary intact while still ignoring cosmetic punctuation differences.
 const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
 // Composio response shapes drift between versions — read every known key defensively.
@@ -133,30 +133,6 @@ function driveToItems(data: any, account?: { id?: string; email?: string }): Sou
   }).filter((x): x is SourceItem => !!x);
 }
 
-function githubToItems(data: any, label: string, account?: { id?: string; email?: string }): SourceItem[] {
-  const rows: any[] = data?.issues || data?.items || (Array.isArray(data) ? data : []);
-  return (rows || []).slice(0, 15).map((r: any): SourceItem | null => {
-    const url = String(r?.html_url ?? r?.htmlUrl ?? "").trim();
-    const num = r?.number;
-    // repo from html_url ("…github.com/owner/repo/issues/12") — the repository field shape varies more.
-    const repo = /github\.com\/([^/]+\/[^/]+)\//.exec(url)?.[1] || "";
-    if (!url || !Number.isInteger(num)) return null;
-    return {
-      sourceApp: "github",
-      externalId: `${repo}#${num}`,
-      anchorKey: `github:${repo}#${num}`,
-      url,
-      title: String(r?.title ?? "(untitled)").slice(0, 140),
-      snippet: `${r?.pull_request || /\/pull\//.test(url) ? "PR" : "issue"} in ${repo}${r?.user?.login ? ` — opened by ${r.user.login}` : ""}`,
-      sender: String(r?.user?.login ?? "").slice(0, 120),
-      timestamp: String(r?.updated_at ?? r?.created_at ?? ""),
-      labels: [label],
-      accountId: account?.id,
-      accountEmail: account?.email,
-    };
-  }).filter((x): x is SourceItem => !!x);
-}
-
 // Exported for tests (same precedent as calendarToItems) — the énoncé this carries is what makes every
 // downstream artifact specific, so it's worth pinning that `snippet`/`subject` survive.
 export function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean }[]): SourceItem[] {
@@ -215,7 +191,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
     try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
   };
-  const [gmailAccounts, calAccounts, driveAccounts, githubAccounts, pronoteOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), accountsFor("github"), pronoteConnected(userEmail)]);
+  const [gmailAccounts, calAccounts, driveAccounts, pronoteOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), pronoteConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
@@ -261,17 +237,6 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
     ...gmailGrabs,
     ...calGrabs,
     ...driveGrabs,
-    // GitHub (if connected): things waiting on the user — open issues assigned to them, PRs where their
-    // review was requested. Both fail silently for accounts without GitHub. Multi-account like Gmail/
-    // Calendar/Drive above — a second GitHub account (e.g. work + personal) used to be silently skipped.
-    ...githubAccounts.flatMap((acc) => [
-      grab(async () => githubToItems(await readAction(userEmail, "GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER", {
-        filter: "assigned", state: "open", per_page: 10,
-      }, acc.id), "assigned", acc)),
-      grab(async () => githubToItems(await readAction(userEmail, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS", {
-        q: "is:open is:pr review-requested:@me", per_page: 10,
-      }, acc.id), "review-requested", acc)),
-    ]),
     // Pronote (if connected) — outside the Composio/getConnectedAccounts path entirely; checked separately.
     // Gated OUTSIDE grab() deliberately: grab() marks `attempted` true on any non-throwing call, and a
     // "not connected" check always succeeds — that would make `attempted` true for a user with NOTHING

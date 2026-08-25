@@ -33,6 +33,18 @@ export function eisenhower(urgency: number, importance: number): { quadrant: Qua
   return { quadrant, score: rank + (0.6 * importance + 0.4 * urgency) * 0.99 };
 }
 
+/** Days out to assign when nothing in the source named or implied a deadline (the AI left `when` ''). Keyed
+ *  by the SAME quadrant the task already landed in, so a task already read as urgent+important gets a near
+ *  estimate (and therefore keeps climbing via applyDeadlineUrgency) rather than sitting forever with no date
+ *  for the anti-procrastination curve to act on. */
+const APPROX_DAYS_BY_QUADRANT: Record<Quadrant, number> = { do: 2, delegate: 3, schedule: 6, later: 10 };
+
+/** Deterministic (never model-invented) fallback deadline for a task with no real `when`. Called AFTER
+ *  eisenhower() so the estimate is grounded in the same urgency/importance the task already carries. */
+export function estimateWhen(quadrant: Quadrant, now: Date = new Date()): string {
+  return new Date(now.getTime() + APPROX_DAYS_BY_QUADRANT[quadrant] * 86_400_000).toISOString();
+}
+
 /** Anti-procrastination core: urgency must climb DETERMINISTICALLY as a hard deadline nears, not sit
  *  frozen at whatever the model guessed the day the task was created. A homework due in 10 days would
  *  otherwise rank exactly as calmly the day before it's due as it did when first spotted — the opposite
@@ -568,14 +580,13 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
           }
         }
         // SUPPLEMENTARY SWEEP — discoverSourceItems only makes FIXED read calls against Gmail/Calendar/
-        // Drive/GitHub. Once that "attempted" succeeds (true for any Gmail-connected account), this whole
-        // function returns above — so a connected app OUTSIDE that fixed set (Slack, Notion, Linear,
-        // Todoist, …) was NEVER checked, ever, not even once. That's a silent, permanent recall gap: a
-        // student who connects Slack would never get a task generated from it. Run a small scoped
-        // open-ended sweep over just those OTHER toolkits (reusing the same tested agent as the full
-        // fallback below) and fold its findings in too.
+        // Drive. Once that "attempted" succeeds (true for any Gmail-connected account), this whole
+        // function returns above — so a connected app OUTSIDE that fixed set (Notion) was NEVER checked,
+        // ever, not even once. That's a silent, permanent recall gap: a student who connects Notion would
+        // never get a task generated from it. Run a small scoped open-ended sweep over just those OTHER
+        // toolkits (reusing the same tested agent as the full fallback below) and fold its findings in too.
         if (extras?.tools?.length) {
-          const DETERMINISTIC_KITS = new Set(["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides", "github"]);
+          const DETERMINISTIC_KITS = new Set(["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides"]);
           const otherTools = extras.tools.filter((t) => {
             const kit = /^\[(\w+)\]/.exec(t.description || "")?.[1]?.toLowerCase();
             return kit && !DETERMINISTIC_KITS.has(kit);
@@ -644,11 +655,12 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
   const freshIds = new Set<string>();
   for (const g of genTasks) {
     const e = eisenhower(g.urgency, g.importance);
-    const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : g.source === "github" ? "Open on GitHub" : "Open source", url: g.link }] : undefined;
+    const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : "Open source", url: g.link }] : undefined;
     const id = randomUUID();
     freshIds.add(id);
+    const when = g.when || estimateWhen(e.quadrant, now_);
     candidates.push({
-      id, title: g.title, why: g.why, when: g.when, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
+      id, title: g.title, why: g.why, when, whenApprox: !g.when, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
       sourceDetail: g.sourceDetail, sourceSubject: g.sourceSubject, sourceDue: g.sourceDue,
@@ -677,11 +689,13 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
   const importance = refined ? refined.importance : 0.75;
   const e = eisenhower(urgency, importance);
   const now = new Date().toISOString();
+  const explicit = explicitWhen || refined?.when;
   const task: WebTask = {
     id: randomUUID(),
     title: (refined?.title || title).trim().slice(0, 120),
     why: refined?.why || "Added by you.",
-    when: explicitWhen || refined?.when,
+    when: explicit || estimateWhen(e.quadrant),
+    whenApprox: !explicit,
     source: "manual", risk: "low", urgency, importance, quadrant: e.quadrant, score: e.score,
     status: "ready", createdAt: now,
     ...(markUnrefined ? { unrefined: true } : {}), // AI paused/unavailable — raw text in, background sweep cleans it up
@@ -696,12 +710,14 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
   if (!t || !refined) return t;
   t.title = refined.title.trim().slice(0, 120) || t.title;
   t.why = refined.why || t.why;
-  t.when = refined.when ?? t.when;
   t.urgency = refined.urgency;
   t.importance = refined.importance;
   const e = eisenhower(t.urgency, t.importance);
   t.quadrant = e.quadrant;
   t.score = e.score;
+  const refinedWhen = refined.when ?? t.when;
+  t.when = refinedWhen || estimateWhen(e.quadrant);
+  t.whenApprox = !refinedWhen;
   delete t.unrefined;
   t.updatedAt = new Date().toISOString();
   return t;
@@ -897,7 +913,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   if (out.quizzes?.length) task.quizzes = [...(task.quizzes || []), ...out.quizzes].slice(-ARTIFACT_CAP);
   if (out.audit?.length) task.audit = [...(task.audit || []), ...out.audit].slice(-AUDIT_CAP);
   if (out.sendables?.length) {
-    const key = (s: Sendable) => s.draftId || s.eventId || `${s.channel}:${s.text}`;
+    const key = (s: Sendable) => s.draftId || s.eventId || `${s.app}:${s.to}`;
     const seen = new Set((task.sendables || []).map(key));
     task.sendables = [...(task.sendables || []), ...out.sendables.filter((s) => !seen.has(key(s)))].slice(0, 8);
   }

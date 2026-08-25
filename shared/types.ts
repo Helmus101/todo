@@ -459,14 +459,12 @@ export interface TaskStep {
  *  whose invites aren't sent yet) that the USER can fire with one click. The agent NEVER sends; the user
  *  confirms + clicks — and the recipients are always shown first — and the server executes the send. */
 export interface Sendable {
-  app: "gmail" | "slack" | "gcal";
-  label: string;        // e.g. "Send reply to Sarah", "Post to #team", "Send invites"
-  to?: string;          // recipient (email) or channel — shown before the user confirms
+  app: "gmail" | "gcal";
+  label: string;        // e.g. "Send reply to Sarah", "Send invites"
+  to?: string;          // recipient email — shown before the user confirms
   subject?: string;     // gmail: the drafted subject (for in-app review)
   body?: string;        // gmail: the drafted body (for in-app review)
   draftId?: string;     // gmail: the draft_id to send
-  channel?: string;     // slack: channel id or #name
-  text?: string;        // slack: the message text to post
   attendees?: string[]; // gcal: the people the invite will email — ALWAYS shown before sending
   eventId?: string;     // gcal: the event to patch (send_updates=all) so attendees get invited
   summary?: string;     // gcal: the event title (for in-app review)
@@ -479,7 +477,12 @@ export interface WebTask {
   title: string;
   why: string;
   when?: string;       // concise timeline / deadline, e.g. "today", "by Fri 5pm", "this week"
-  source: string;      // "gmail" | "calendar" | "manual", or a connected-app slug (slack, github, notion, …)
+  /** True when `when` was NOT stated/implied by the source (the AI left it '') and was instead assigned
+   *  deterministically from the task's own urgency/importance (see estimateWhen in server/tasks.ts) so
+   *  ranking/escalation has a real date to work against instead of drifting forever at whatever score it
+   *  started with. Lets the UI show it as "~around Fri" rather than claiming a firm date that doesn't exist. */
+  whenApprox?: boolean;
+  source: string;      // "gmail" | "calendar" | "manual", or a connected-app slug (notion, …)
   /** Reversible tasks auto-run; irreversible (e.g. sending) waits for your confirm. */
   risk: "low" | "high";
   urgency: number;     // 0..1 time pressure
@@ -547,6 +550,10 @@ export interface WebTask {
      *  on every rerun: a bare index could later point at a different step, or none. */
     stepIndex?: number;
     stepText?: string;
+    /** Set on an assistant turn where the "won't do your graded work" guardrail actually tripped this
+     *  turn (see CHAT_DOES_WORK in server/claude.ts) — lets the client tag the exact bubble where the
+     *  boundary held, instead of that only being visible in the per-task Activity log. */
+    guardrail?: boolean;
   }[];
   /** In-app fiches/checklists/reference notes Otto prepared for THIS task — no external account, no
    *  approval needed (nothing leaves the app). This is the DEFAULT artifact for a study guide: rendered

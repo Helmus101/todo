@@ -77,8 +77,7 @@ export function statusChip(t: WebTask, retrying?: boolean, en?: boolean): { labe
 // Short source label for the collapsed card's source badge — same apps as linkKind, just for task.source.
 const SOURCE_BADGE: Record<string, string> = {
   gmail: "Gmail", calendar: "Calendar", googlecalendar: "Calendar", manual: "You",
-  slack: "Slack", github: "GitHub", notion: "Notion", linear: "Linear", todoist: "Todoist",
-  googledrive: "Drive", pronote: "Pronote",
+  notion: "Notion", googledrive: "Drive", pronote: "Pronote",
 };
 const SOURCE_BADGE_EN: Record<string, string> = { ...SOURCE_BADGE, manual: "You" };
 const SOURCE_BADGE_FR: Record<string, string> = { ...SOURCE_BADGE, manual: "Toi" };

@@ -289,6 +289,34 @@ async function processExecuteTask(job: store.Job): Promise<string> {
         void store.recordEvent(email, "reconciled", { taskId, jobId: job.id, message: "Dropped a draft claim with no surviving draft to send" });
       }
     }
+    // Auto-prepare substeps the same way leftover automatable STEPS already auto-run below — a step that
+    // survived into the checklist because it genuinely needs the student can still have a pure-lookup
+    // sub-action buried inside it (an opening hour, a schedule, a definition). Without this, that lookup
+    // sits behind two clicks ("Détailler cette étape" then "Laisser Otto répondre") the student has to make
+    // themselves before ever seeing the benefit. Same functions the manual buttons call
+    // (server/index.ts's /step/:index/expand and /substep/:subIndex/run routes), same bounded-to-2 idiom as
+    // the two blocks below, so this can't spiral into an unbounded chain of AI calls on a bad run.
+    if (updated?.steps?.length) {
+      const expandable = updated.steps
+        .filter((s) => !s.done && !s.synthetic && !s.automatable && !s.substeps?.length)
+        .slice(0, 2);
+      let substepRunsLeft = 2;
+      for (const s of expandable) {
+        try {
+          const substeps = await claude.expandStep({ title: updated.title, why: updated.why }, { text: s.text }, profile, updated.links);
+          if (!substeps.length) continue;
+          s.substeps = substeps;
+          for (const sub of s.substeps) {
+            if (substepRunsLeft <= 0) break;
+            if (!sub.automatable || sub.done) continue;
+            try {
+              sub.result = await claude.runSubstep({ title: updated.title, why: updated.why }, { text: s.text }, { text: sub.text }, profile);
+              substepRunsLeft--;
+            } catch { /* best-effort — the manual "Laisser Otto répondre" button stays available either way */ }
+          }
+        } catch { /* best-effort — expandStep already swallows its own errors, this catches anything else */ }
+      }
+    }
     await commitUser(email, profile, list);
     // Auto-run any FOLLOW-UP tasks the run spun off (distinct new obligations it discovered) — queue each so
     // Otto plans + works it just like a freshly-generated task. Bounded; they run on the next drain/kick.

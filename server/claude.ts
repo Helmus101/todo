@@ -643,7 +643,7 @@ export interface GeneratedTask {
   title: string;
   why: string;
   when?: string;
-  source: string;          // the app this is from: "gmail" | "calendar" | a connected-app slug (slack, github, …)
+  source: string;          // the app this is from: "gmail" | "calendar" | a connected-app slug (notion, …)
   risk: "low" | "high";
   urgency: number;
   importance: number;
@@ -740,9 +740,9 @@ const SUBMIT_TASKS_TOOL = {
   input_schema: { type: "object", properties: {
     tasks: { type: "array", description: "one per actionable thread/event", items: { type: "object", properties: {
       title: { type: "string", description: "short imperative, <= 9 words" },
-      why: { type: "string", description: "one grounded clause naming the concrete trigger" },
+      why: { type: "string", description: "one grounded clause naming the concrete trigger, ≤12 words" },
       when: { type: "string", description: "concise timeline/deadline grounded in the data (e.g. 'today', 'by Fri 5pm') or '' " },
-      source: { type: "string", description: "the connected app this is from, as a lowercase slug: gmail, calendar, slack, github, notion, linear, todoist, …" },
+      source: { type: "string", description: "the connected app this is from, as a lowercase slug: gmail, calendar, notion, …" },
       risk: { type: "string", enum: ["low", "high"], description: "'high' if completing it means sending/inviting (irreversible)" },
       urgency: { type: "number", description: "0..1 time pressure" },
       importance: { type: "number", description: "0..1 stakes" },
@@ -892,7 +892,7 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
 
 // Sources where every item HAS a stable id/link the tools return — a task claiming to come from one of
 // these without either is unverifiable (likely hallucinated or sloppily reported) and gets dropped.
-const ANCHORED_SOURCES = new Set(["gmail", "calendar", "googlecalendar", "slack"]);
+const ANCHORED_SOURCES = new Set(["gmail", "calendar", "googlecalendar"]);
 
 export function parseGenerated(arr: any): GeneratedTask[] {
   if (!Array.isArray(arr)) return [];
@@ -1133,7 +1133,7 @@ export async function classifyCandidates(
     `"Follow up on sent email", "Reply to email", "Respond to message", "Handle request". If you can't name ` +
     `the person or subject from the candidate, you don't understand it well enough to include it — omit it.\n` +
     `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words",` +
-    `"why":"one clause naming the concrete trigger","when":"the REAL deadline stated in or directly implied by the item — NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,` +
+    `"why":"one clause naming the concrete trigger, ≤12 words","when":"the REAL deadline stated in or directly implied by the item — NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,` +
     `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"course"|"name"|"about",` +
     `"fact":"one short sentence"}]} — profileUpdates: 0-3 DURABLE facts about who this person is that these ` +
     `items reveal (a key relationship, an ongoing project) — only lasting identity facts, not task content. ` +
@@ -1171,7 +1171,7 @@ export async function classifyCandidates(
           title: String(r.title).slice(0, 90),
           why: String(r.why).slice(0, 400),
           when: r.when ? String(r.when).slice(0, 40) : undefined,
-          source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : it.sourceApp === "pronote" ? "pronote" : "gmail",
+          source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "pronote" ? "pronote" : "gmail",
           risk: r.risk === "high" ? "high" : "low",
           urgency: clamp01(r.urgency ?? 0.5),
           importance: clamp01(r.importance ?? 0.6),
@@ -1252,7 +1252,7 @@ export async function pickOneTask(
     `The title MUST be specific — name the actual person/company AND subject ("Wish Sonya a happy birthday", ` +
     `"Reply to Chloe at BOND about the demo"), NEVER vague ("Follow up on email", "Handle message").\n` +
     `Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words","why":"one clause ` +
-    `naming the concrete trigger","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,` +
+    `naming the concrete trigger, ≤12 words","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,` +
     `"risk":"low"|"high"}`;
   const client = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
@@ -1273,7 +1273,7 @@ export async function pickOneTask(
       title: String(r.title).slice(0, 90),
       why: String(r.why || "Worth doing today.").slice(0, 400),
       when: r.when ? String(r.when).slice(0, 40) : undefined,
-      source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "github" ? "github" : it.sourceApp === "pronote" ? "pronote" : "gmail",
+      source: it.sourceApp === "calendar" ? "calendar" : it.sourceApp === "drive" ? "drive" : it.sourceApp === "pronote" ? "pronote" : "gmail",
       risk: r.risk === "high" ? "high" : "low",
       urgency: clamp01(r.urgency ?? 0.4),
       importance: clamp01(r.importance ?? 0.5),
@@ -1319,7 +1319,7 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
           "Infer priority from the wording (urgent words, deadlines) and the person's profile only. Output STRICT JSON only." },
         { role: "user", content: profileBlock(profile) +
           `\nRough note: "${raw.slice(0, 300)}"\n\nReturn JSON: {"title": short imperative <= 9 words that names the specific object/person, ` +
-          `"why": one concise clause capturing the intent, ` +
+          `"why": one concise clause capturing the intent, ≤12 words, ` +
           `"when": a deadline for COMPLETING THIS TASK (e.g. "today", "by Fri") — ONLY if the note explicitly says when the TASK itself must be done (e.g. "by tomorrow", "before June 30"). If the note only mentions dates as background context (e.g. a trip date, event date, year mentioned in passing) leave this "", ` +
           `"urgency": 0..1 time pressure, "importance": 0..1 stakes}. JSON only.` }
       ],
@@ -1639,8 +1639,7 @@ const RUN_SYSTEM =
   `ONE-CLICK SEND (the ONLY way anything goes out — always with the recipient shown): for every email you ` +
   `DRAFTED, add a "sendables" entry {app:"gmail", label, to (the recipient, ALWAYS set it), subject, body, ` +
   `draftId} — include the EXACT subject + body you wrote (so the user can review the draft IN THE APP) plus the ` +
-  `draft_id the create-draft tool returned. For every Slack message you COMPOSED, add {app:"slack", label, ` +
-  `channel, text} — do NOT post it. For a calendar event that should invite people, add {app:"gcal", label, ` +
+  `draft_id the create-draft tool returned. For a calendar event that should invite people, add {app:"gcal", label, ` +
   `eventId, attendees:[the invitees' emails], summary, when} — do NOT notify them. Each gives the user a Send ` +
   `button that names the recipient(s) first; you still never send. Don't ALSO add a "send it" step — the button ` +
   `is the send.\n` +
@@ -1675,7 +1674,7 @@ const RUN_TOOLS = [
     isBigProject: { type: "boolean", description: "true ONLY if this is a genuinely BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/mémoire, an IB Extended Essay/TOK/CAS/Internal Assessment, a group project, a major report — where progress happens over weeks/months with real intermediate milestones, not a task doable in one sitting or a few short steps. Judge this from what the task ACTUALLY is, not from whether its title happens to name an acronym. Omit or false for anything ordinary." },
     context: { type: "string", description: "the SURROUNDING FACTS about this task — real, specific, substantive: who's involved, what they actually said/asked, what the doc/event/thread contains, dates, numbers, links. NEVER a meta-description of the task or your own process — 'User requested information about X', 'Performed searches across multiple services', 'Looked into Y' are WORTHLESS filler, not context, and will be rejected. If you truly found nothing useful after a real attempt, say the SPECIFIC thing that's missing ('No upcoming meetings with Gabrielle on the calendar; her last email was 3 weeks ago about the budget') — never a vague description of the search itself. 2-4 bullets, each starting with '- '." },
     synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' NO caveats, NO explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
-    did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
+    did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, each ≤15 words, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
     steps: {
       type: "array",
       description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). Often empty.",
@@ -1700,16 +1699,14 @@ const RUN_TOOLS = [
     },
     sendables: {
       type: "array",
-      description: "ONE-CLICK sends to offer the user for anything you DRAFTED/COMPOSED (you never send; the user clicks, and the recipient is always shown first). Gmail draft → {app:'gmail', label, to:<recipient, ALWAYS set>, subject, body (the EXACT subject + body you drafted, so the user can review it in-app), draftId:<the draft_id the create-draft tool returned>}. Slack message you composed (do NOT post it) → {app:'slack', label, channel:<id or #name>, text:<message>}. Calendar event that should invite people (you created it silently, no notifications) → {app:'gcal', label, eventId:<the event id the create tool returned>, attendees:[invitee emails], summary:<event title>, when:<date/time>}. Omit if you composed nothing to send.",
+      description: "ONE-CLICK sends to offer the user for anything you DRAFTED/COMPOSED (you never send; the user clicks, and the recipient is always shown first). Gmail draft → {app:'gmail', label, to:<recipient, ALWAYS set>, subject, body (the EXACT subject + body you drafted, so the user can review it in-app), draftId:<the draft_id the create-draft tool returned>}. Calendar event that should invite people (you created it silently, no notifications) → {app:'gcal', label, eventId:<the event id the create tool returned>, attendees:[invitee emails], summary:<event title>, when:<date/time>}. Omit if you composed nothing to send.",
       items: { type: "object", properties: {
-        app: { type: "string", enum: ["gmail", "slack", "gcal"] },
+        app: { type: "string", enum: ["gmail", "gcal"] },
         label: { type: "string", description: "short, e.g. 'Send reply to Sarah', 'Send invites'" },
-        to: { type: "string", description: "recipient email or channel — shown to the user before they send" },
+        to: { type: "string", description: "recipient email — shown to the user before they send" },
         subject: { type: "string", description: "gmail: the drafted subject (for in-app review)" },
         body: { type: "string", description: "gmail: the drafted body as plain text (for in-app review)" },
         draftId: { type: "string", description: "gmail: the draft_id to send" },
-        channel: { type: "string", description: "slack: channel id or #name" },
-        text: { type: "string", description: "slack: the message text to post" },
         attendees: { type: "array", items: { type: "string" }, description: "gcal: the invitee emails the invite will notify (shown before sending)" },
         eventId: { type: "string", description: "gcal: the id of the event you created (to patch with send_updates so attendees get invited)" },
         summary: { type: "string", description: "gcal: the event title (for in-app review)" },
@@ -1721,7 +1718,7 @@ const RUN_TOOLS = [
       description: "DISTINCT NEW obligations you discovered while working that deserve their OWN full task — NOT a step of this one. Use this when a 'step' is really a separate, substantial action Otto could plan and execute on its own (e.g. this task was 'reply to X', but you found the user should also 'reach out to Y association' — that's a whole new outreach, not a sub-step). Each becomes its own task Otto will work next. Use SPARINGLY: 0-2, only for genuinely separate substantial actions; a one-click send or a quick human decision is a step/sendable, NOT a follow-up. Never restate THIS task.",
       items: { type: "object", properties: {
         title: { type: "string", description: "the new task as a specific imperative naming who+what, ≤ 11 words, e.g. 'Reach out to Fleur de Bitume association at HEC'" },
-        why: { type: "string", description: "one short clause: why it matters / what triggered it" },
+        why: { type: "string", description: "one short clause, ≤12 words: why it matters / what triggered it" },
       }, required: ["title", "why"] },
     },
     firstAction: {
@@ -1791,6 +1788,10 @@ async function planResearch(task: { title: string; why: string; sourceSubject?: 
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
 export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
+  // The audit trail (logAudit below) is shown to the student/parent verbatim (client/TaskCard.tsx's
+  // Activity log) — it must follow the account's own language like everything else, not default to
+  // French regardless (see the identical `fr` flag in chatAboutTask).
+  const fr = profile?.language !== "en";
   const profileUpdates: ProfileUpdate[] = [];
   // Plan-only mode: withhold every irreversible/other-people-facing write tool structurally, so the agent
   // physically cannot send/post/delete/schedule — same "deny by absence" pattern already used for irreversible
@@ -2030,7 +2031,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // Otto guides; it never claims to have done the student's actual graded/learning work FOR
               // them. Reject every time until the claim is gone, even on the last round (better an honest
               // "Open and handle:" fallback than a false claim a student could act on).
-              logAudit("guardrail", "Bloqué : une réponse ressemblait à un travail fait à la place de l'élève — renvoyée pour reformulation.");
+              logAudit("guardrail", fr
+                ? "Tu as demandé quelque chose qui ressemblait à faire le travail à ta place — Otto a dit non et a fait un guide à la place."
+                : "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
               content = "REJECTED: you claimed to have written/completed/solved the student's actual " +
                 "assignment/essay/exam/problem set FOR them — Otto NEVER does that, no matter how confident " +
                 "or well-researched. Rephrase: whatever you produced must be a GUIDE (outline, checklist, " +
@@ -2167,22 +2170,22 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         else if (toolName === "web_search") {
           searchedWeb = true; content = await runWebSearch(input);
-          logAudit("tool", `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"`);
+          logAudit("tool", fr ? `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"` : `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
         }
         else if (toolName === "CREATE_NOTE") {
           const r = makeNote(input);
           if ("error" in r) content = r.error;
-          else { notesCreated.push(r.note); wroteAny = true; content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", `Fiche créée : « ${r.note.title} »`); }
+          else { notesCreated.push(r.note); wroteAny = true; content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", fr ? `Fiche créée : « ${r.note.title} »` : `Note created: "${r.note.title}"`); }
         }
         else if (toolName === "CREATE_FLASHCARDS") {
           const r = makeDeck(input);
           if ("error" in r) content = r.error;
-          else { flashcardsCreated.push(r.deck); wroteAny = true; content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})`); }
+          else { flashcardsCreated.push(r.deck); wroteAny = true; content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", fr ? `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})` : `Flashcards created: "${r.deck.title}" (${r.deck.cards.length})`); }
         }
         else if (toolName === "CREATE_QUIZ") {
           const r = makeQuiz(input);
           if ("error" in r) content = r.error;
-          else { quizzesCreated.push(r.quiz); wroteAny = true; content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)`); }
+          else { quizzesCreated.push(r.quiz); wroteAny = true; content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", fr ? `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)` : `Quiz created: "${r.quiz.title}" (${r.quiz.questions.length} questions)`); }
         }
         // No autonomous email tool exists — every send goes through the user's explicit "Yes, send" click
         // (see sendSendable in integrations.ts). If a stale/cached tool call still names this, fail safe.
@@ -2232,7 +2235,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
             // with zero trace: the draft genuinely existed in Gmail, but no Send button ever appeared and
             // nothing recorded why. Log it so a future report of "it drafted something but there's no send
             // button" is diagnosable instead of a mystery.
-            else logAudit("tool", `Draft Gmail créé mais son id n'a pas pu être extrait de la réponse — pas de bouton d'envoi cette fois (réponse : ${rs.slice(0, 160)})`);
+            else logAudit("tool", fr
+              ? `Draft Gmail créé mais son id n'a pas pu être extrait de la réponse — pas de bouton d'envoi cette fois (réponse : ${rs.slice(0, 160)})`
+              : `A Gmail draft was created but its id couldn't be extracted from the response — no send button this time (response: ${rs.slice(0, 160)})`);
           }
           // GUARDRAIL — "Otto may only edit what Otto created": extractArtifacts() later grants the
           // no-approval-needed edit carve-out to whatever doc ids land in this set. The model's own
@@ -2256,7 +2261,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // call that reports success but whose response shape none of the id patterns match means
               // BOTH the artifact link AND the "Otto may only edit what it created" carve-out silently never
               // apply to a doc that genuinely exists — previously with zero trace to diagnose it by.
-              logAudit("tool", `${toolName} a réussi mais son id n'a pas pu être extrait de la réponse — pas de lien ni de droit d'édition cette fois (réponse : ${String(r).slice(0, 160)})`);
+              logAudit("tool", fr
+                ? `${toolName} a réussi mais son id n'a pas pu être extrait de la réponse — pas de lien ni de droit d'édition cette fois (réponse : ${String(r).slice(0, 160)})`
+                : `${toolName} succeeded but its id couldn't be extracted from the response — no link or edit rights this time (response: ${String(r).slice(0, 160)})`);
             }
           }
         }
@@ -2331,7 +2338,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
  * Falls back to the research loop's own steps on any failure (never worse than before, only sometimes better).
  */
 export async function writeStepsFromContext(
-  task: { title: string; why: string },
+  // sourceSubject/sourceDetail/sourceDue widen this from the original {title, why}-only shape: the main
+  // research call already gets the teacher's own verbatim assignment text (assignmentBlock) and the
+  // student's own facts (profileBlock) — this dedicated step-writing pass produces the actual concrete,
+  // student-facing action items and was writing them WITHOUT either, so steps came out tailored to a
+  // generic "Physics homework" instead of the specific énoncé and the specific student's situation. Every
+  // caller already has these fields on hand (runTask's own `task` param carries them straight through).
+  task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string; sourceDue?: string },
   context: string,
   links: TaskLink[],
   fallbackSteps: TaskStep[],
@@ -2369,7 +2382,8 @@ export async function writeStepsFromContext(
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\n${context.trim() ? `CONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}\n\n` +
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\n${context.trim() ? `CONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}` +
+          assignmentBlock(task) + profileBlock(profile) + `\n\n` +
           languageLine(profile) + trackLine(profile) + nowBlock() +
           `FIRST, decide: is this a BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/` +
           `mémoire, an IB Extended Essay/TOK/CAS/Internal Assessment, a group project, a major report — where a ` +
@@ -2620,14 +2634,12 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     .slice(0, 3); // max 3 open links per task — the essentials, not a link dump
   const sendables: Sendable[] = (Array.isArray(out?.sendables) ? out.sendables : [])
     .map((s: any): Sendable => ({
-      app: s?.app === "slack" ? "slack" : s?.app === "gcal" ? "gcal" : "gmail",
-      label: String(s?.label || (s?.app === "slack" ? "Send message" : s?.app === "gcal" ? "Send invites" : "Send email")).slice(0, 80),
+      app: s?.app === "gcal" ? "gcal" : "gmail",
+      label: String(s?.label || (s?.app === "gcal" ? "Send invites" : "Send email")).slice(0, 80),
       to: s?.to ? String(s.to).slice(0, 160) : undefined,
       subject: s?.subject ? String(s.subject).slice(0, 300) : undefined,
       body: s?.body ? String(s.body).slice(0, 6000) : undefined,
       draftId: s?.draftId ? String(s.draftId).slice(0, 200) : undefined,
-      channel: s?.channel ? String(s.channel).slice(0, 120) : undefined,
-      text: s?.text ? String(s.text).slice(0, 4000) : undefined,
       attendees: Array.isArray(s?.attendees) ? s.attendees.map((a: any) => String(a).slice(0, 160)).filter(Boolean).slice(0, 50) : undefined,
       eventId: s?.eventId ? String(s.eventId).slice(0, 200) : undefined,
       summary: s?.summary ? String(s.summary).slice(0, 300) : undefined,
@@ -2642,7 +2654,6 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     // calendar invite still needs its event + attendees + what/when.
     .filter((s: Sendable) =>
       (s.app === "gmail" && !!s.draftId && !!(s.subject || s.body)) ||
-      (s.app === "slack" && !!s.channel && !!s.text) ||
       (s.app === "gcal" && !!s.eventId && !!s.attendees?.length && !!(s.summary || s.when)))
     // Never surface a Send button aimed at a FABRICATED recipient (example.com / placeholder) — the model
     // guessed an address it couldn't find. Drop it so the user isn't offered to send into the void.
@@ -2790,6 +2801,10 @@ export interface ChatResult {
   quizzes: TaskQuiz[];
   audit: AuditEvent[];
   tokens: { in: number; out: number; cachedIn?: number };
+  /** Set when CHAT_DOES_WORK tripped this turn (reply text or a note body) — lets the client tag the
+   *  exact chat bubble where the "won't do your graded work" boundary held, instead of that only being
+   *  visible in the per-task Activity log. */
+  guardrailTripped: boolean;
 }
 
 // The tutor's own tool loop is bounded much tighter than runTask's: a chat turn is "maybe look something
@@ -2861,7 +2876,12 @@ export async function chatAboutTask(
     `finished, a subject they're stronger in, the class material referenced in the task.\n` +
     `6. BE HONEST ABOUT UNCERTAINTY. If the task context doesn't contain what's needed to answer well, say so ` +
     `and tell them where to look (their cours, the énoncé, the teacher) rather than inventing plausible ` +
-    `subject content. A confident wrong explanation is far worse than "I don't have that here."\n\n` +
+    `subject content. A confident wrong explanation is far worse than "I don't have that here."\n` +
+    `7. DON'T SUGAR-COAT THEIR OWN ATTEMPT. When they show you something they wrote/tried, say plainly what's ` +
+    `actually wrong or weak FIRST, specifically — not vague ("good start!", "nice effort") and not padded with ` +
+    `praise before the real point. Stay kind, never mocking, but never let politeness replace an honest, ` +
+    `specific assessment: if it's off-topic, doesn't answer the question, or has a real flaw, say exactly ` +
+    `that before anything encouraging.\n\n` +
 
     `THE LINE YOU NEVER CROSS — this is what makes Otto different from asking a chatbot to do it:\n` +
     `Never produce the graded work itself. No essay/dissertation paragraphs (not even "just the intro"), no ` +
@@ -2933,7 +2953,7 @@ export async function chatAboutTask(
   const client = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   const tools = [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, WEB_SEARCH_TOOL];
-  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 } });
+  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
   const finish = (reply: string): ChatResult => {
@@ -2942,7 +2962,10 @@ export async function chatAboutTask(
     // discard them too rather than hand over a chip whose text just got rejected.
     if (CHAT_DOES_WORK.test(reply)) {
       result.notes = []; result.flashcards = []; result.quizzes = [];
-      logAudit("guardrail", "Bloqué : une réponse dans le chat ressemblait à un travail fait à la place de l'élève — remplacée.");
+      result.guardrailTripped = true;
+      logAudit("guardrail", fr
+        ? "Tu as demandé quelque chose qui ressemblait à faire le travail à ta place — Otto a dit non et a fait un guide à la place."
+        : "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
       reply = fr
         ? "Je peux t'aider à débloquer ça, mais je ne vais pas le rédiger à ta place — cette partie est la tienne. On cherche un point de départ ensemble ?"
         : "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?";
@@ -2987,7 +3010,7 @@ export async function chatAboutTask(
         const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length >= CHAT_MAX_ARTIFACTS;
         if (name === "web_search") {
           content = await runWebSearch(input);
-          logAudit("tool", `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"`);
+          logAudit("tool", fr ? `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"` : `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
         }
         else if (name === "CREATE_NOTE") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
@@ -2998,16 +3021,19 @@ export async function chatAboutTask(
             // itself, not just the eventual spoken reply (finish() only ever sees the reply text).
             else if (CHAT_DOES_WORK.test(r.note.body)) {
               content = "REJECTED: that reads like their graded work, not a study aid — a fiche is method/structure/prompts, never the finished essay or solved exercise. Make a structure with prompts instead.";
-              logAudit("guardrail", "Bloqué : une fiche créée en chat ressemblait à un travail fait à la place de l'élève.");
+              result.guardrailTripped = true;
+              logAudit("guardrail", fr
+                ? "Tu as demandé quelque chose qui ressemblait à faire le travail à ta place — Otto a dit non et a fait un guide à la place."
+                : "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
             }
-            else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", `Fiche créée : « ${r.note.title} »`); }
+            else { result.notes.push(r.note); content = JSON.stringify({ ok: true, id: r.note.id }); logAudit("artifact", fr ? `Fiche créée : « ${r.note.title} »` : `Note created: "${r.note.title}"`); }
           }
         } else if (name === "CREATE_FLASHCARDS") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-          else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})`); } }
+          else { const r = makeDeck(input); if ("error" in r) content = r.error; else { result.flashcards.push(r.deck); content = JSON.stringify({ ok: true, id: r.deck.id, count: r.deck.cards.length }); logAudit("artifact", fr ? `Cartes créées : « ${r.deck.title} » (${r.deck.cards.length})` : `Flashcards created: "${r.deck.title}" (${r.deck.cards.length})`); } }
         } else if (name === "CREATE_QUIZ") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
-          else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)`); } }
+          else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", fr ? `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)` : `Quiz created: "${r.quiz.title}" (${r.quiz.questions.length} questions)`); } }
         } else content = "ERROR: unknown tool.";
         messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
       }

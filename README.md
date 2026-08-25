@@ -21,7 +21,7 @@ Otto tourne même quand ton ordi est fermé — un job queue durable (Supabase) 
 3. **Google Calendar** — Contrôles, créneaux libres pour réviser.
 4. **Google Drive** — Cours, fiches, corrections partagés par tes profs — pour enrichir tes fiches de révision.
 
-Tout le reste de Composio (GitHub, Slack, Notion, Linear, …) est supporté côté serveur mais volontairement caché de l'interface pour l'instant — chaque connexion en plus est un frein pour un lycéen qui n'a pas de Gmail pro.
+Notion est supporté côté serveur mais volontairement caché de l'interface pour l'instant — chaque connexion en plus est un frein pour un lycéen qui n'a pas de Gmail pro. Aucune autre intégration (GitHub, Slack, Linear, etc.) n'est supportée : la surface reste volontairement limitée à Google Workspace, Notion et Pronote.
 
 **Et il te rend : Aujourd'hui — 3 cartes, pas 20.** Le reste attend son tour dans "Plus tard" et "Peut attendre".
 

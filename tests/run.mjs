@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
@@ -1049,6 +1049,27 @@ section("nextLeitnerReview — flashcard spaced-repetition schedule");
   check("box caps at 5, never grows unbounded", capped.box === 5);
   const missed = nextLeitnerReview(4, false, now);
   check("a missed review resets to box 1 regardless of prior progress", missed.box === 1);
+}
+
+section("estimateWhen / whenApprox — every task gets a real deadline, none are AI-invented");
+{
+  const now = new Date("2026-08-25T12:00:00Z");
+  const noWhen = [{ title: "Do the lab report", why: "Due soon", source: "pronote", risk: "low", urgency: 0.8, importance: 0.7 }];
+  const foldedNoWhen = foldGenerated([], noWhen, [], now);
+  check("a task with no explicit deadline still gets a parseable `when`", !!foldedNoWhen[0]?.when && !Number.isNaN(Date.parse(foldedNoWhen[0].when)));
+  check("that assigned deadline is flagged approximate, not claimed as real", foldedNoWhen[0]?.whenApprox === true);
+  check("estimateWhen never invents a PAST date", Date.parse(foldedNoWhen[0].when) > now.getTime());
+
+  const withWhen = [{ title: "Reply to Ms. Dubois", why: "She asked yesterday", source: "gmail", risk: "low", urgency: 0.6, importance: 0.6, when: "2026-08-27T08:00:00Z" }];
+  const foldedWithWhen = foldGenerated([], withWhen, [], now);
+  check("an explicit deadline from the source is kept verbatim", foldedWithWhen[0]?.when === "2026-08-27T08:00:00Z");
+  check("an explicit deadline is never marked approximate", !foldedWithWhen[0]?.whenApprox);
+
+  check("estimateWhen puts a 'do' quadrant task closer than a 'later' one", Date.parse(estimateWhen("do", now)) < Date.parse(estimateWhen("later", now)));
+
+  const approxTask = { when: estimateWhen("schedule", now), urgency: 0.4, importance: 0.6, quadrant: "schedule", score: 2, status: "ready" };
+  applyDeadlineUrgency([approxTask], new Date(now.getTime() + 5 * 86_400_000));
+  check("estimated deadlines still feed the anti-procrastination urgency curve as the estimate nears", approxTask.urgency > 0.4);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

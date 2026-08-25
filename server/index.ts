@@ -660,7 +660,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     t.chat = [
       ...history,
       { role: "user" as const, text: message, at: now, ...(stepIndex != null ? { stepIndex, stepText: t.steps![stepIndex].text.slice(0, 80) } : {}) },
-      { role: "assistant" as const, text: out.reply, at: now, ...(artifacts.length ? { artifacts } : {}) },
+      { role: "assistant" as const, text: out.reply, at: now, ...(artifacts.length ? { artifacts } : {}), ...(out.guardrailTripped ? { guardrail: true } : {}) },
     ].slice(-CHAT_CAP);
     t.updatedAt = now;
     await commit(req);
@@ -971,15 +971,12 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_00
   if (s.sent) { res.status(400).json({ error: "already sent" }); return; }
   const subject = typeof req.body?.subject === "string" ? req.body.subject.slice(0, 300) : undefined;
   const body = typeof req.body?.body === "string" ? req.body.body.slice(0, 20_000) : undefined;
-  const text = typeof req.body?.text === "string" ? req.body.text.slice(0, 20_000) : undefined;
   try {
     if (s.app === "gmail" && s.draftId) {
       const r = await integrations.updateGmailDraft(req.session.user!, s.draftId, { subject, body, to: s.to });
       if (!r.ok) { res.status(500).json({ error: r.error || "couldn't save your edit to the draft" }); return; }
       if (subject !== undefined) s.subject = subject;
       if (body !== undefined) s.body = body;
-    } else if (s.app === "slack") {
-      if (text !== undefined) s.text = text;
     } else { res.status(400).json({ error: "this draft can't be edited here" }); return; }
     t.updatedAt = new Date().toISOString();
     await commit(req);

@@ -662,7 +662,7 @@ export function App() {
       {onboard && <Onboarding onStatus={loadStatus} onDone={finishOnboard} />}
 
       {route === "settings" ? (
-        <SettingsPage status={status} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} />
+        <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -761,7 +761,7 @@ export function App() {
                   <div className="empty-state">
                     <div className="empty-mark"><Logo size={28} /></div>
                     <h3>{en ? `Otto is watching your Pronote${who ? `, ${who}` : ""}` : `Otto surveille ton Pronote${who ? `, ${who}` : ""}`}</h3>
-                    <p>{en ? "It reads your homework and tests. New tasks arrive automatically — or check right now." : "Il lit tes devoirs et contrôles. De nouvelles tâches arrivent automatiquement — ou lance une vérification maintenant."}</p>
+                    <p>{en ? "It reads your homework and tests. Tasks arrive automatically." : "Il lit tes devoirs et contrôles. Les tâches arrivent automatiquement."}</p>
                     <button className="btn primary" disabled={busy} onClick={() => void generate()}>{busy ? (en ? "Searching…" : "Recherche…") : (en ? "Check now" : "Vérifier maintenant")}</button>
                   </div>
                 ) : (
@@ -1404,7 +1404,7 @@ function ExamsEditor({ profile, onChanged }: { profile: Profile | null; onChange
   };
   return (
     <div className="grades-editor">
-      <p className="settings-hint">{L("Si ton école n'utilise pas Pronote, ajoute tes examens ici — ils apparaissent dans le compte à rebours et le planning de la semaine, comme s'ils venaient de Pronote.", "If your school doesn't use Pronote, log your exams here — they show up in the exam countdown and week workload view just like a Pronote one would.")}</p>
+      <p className="settings-hint">{L("Pas de Pronote ? Ajoute tes examens ici — ils comptent comme les autres.", "No Pronote? Add exams here — they count just like the rest.")}</p>
       {exams.length > 0 && (
         <ul className="grade-list">
           {exams.map((e) => (
@@ -1433,7 +1433,7 @@ function ExamsEditor({ profile, onChanged }: { profile: Profile | null; onChange
 /** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
-function SettingsPage({ status, onSignOut, onChanged, onTasksChanged }: { status: ConnectionStatus; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void }) {
+function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void }) {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -1487,7 +1487,7 @@ function SettingsPage({ status, onSignOut, onChanged, onTasksChanged }: { status
             className="btn xs danger"
             disabled={deletingAccount}
             onClick={async () => {
-              if (!window.confirm(L("Supprimer définitivement ton compte Otto et tout ce qui y est associé — tâches, profil, connexions ? C'est irréversible.", "Permanently delete your Otto account and everything tied to it — tasks, profile, connections? This can't be undone."))) return;
+              if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
               setDeletingAccount(true);
               try { await api.deleteAccount(); window.location.href = "/"; }
               catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
@@ -1529,7 +1529,7 @@ function SettingsPage({ status, onSignOut, onChanged, onTasksChanged }: { status
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.12s" }}>
         <h3>{L("Tes notes", "Your grades")}</h3>
-        <p className="settings-hint">{L("Aide Otto à voir quelle matière a vraiment besoin d'attention, pas juste ce qui est dû bientôt.", "Helps Otto see which subject actually needs attention, not just what's due soonest.")}</p>
+        <p className="settings-hint">{L("Aide Otto à repérer les matières qui traînent, pas juste ce qui est dû bientôt.", "Helps Otto spot subjects falling behind, not just what's due soonest.")}</p>
         <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} onTasksChanged={onTasksChanged} />
       </section>
 
@@ -1537,6 +1537,24 @@ function SettingsPage({ status, onSignOut, onChanged, onTasksChanged }: { status
         <h3>{L("Tes examens", "Your exams")}</h3>
         <ExamsEditor profile={profile} onChanged={setProfile} />
       </section>
+
+      {(() => {
+        // Not a claimed number — counted straight from each task's own audit trail (kind: "guardrail"),
+        // the same record a parent/teacher can open and verify per task. Only shown once it's actually
+        // happened at least once: a brand-new account showing "0" would read as a hollow promise, not
+        // evidence.
+        const guardrailCount = tasks.reduce((n, t) => n + (t.audit?.filter((a) => a.kind === "guardrail").length || 0), 0);
+        return guardrailCount > 0 ? (
+          <section className="settings-sec reveal" style={{ ["--d" as any]: "0.14s" }}>
+            <p className="settings-hint guardrail-stat">
+              <span aria-hidden="true">🛡</span> {L(
+                `Otto a refusé de faire ton travail à ta place ${guardrailCount} fois — et a fait un guide à la place.`,
+                `Otto has declined to do your graded work ${guardrailCount} times — and made a guide instead.`,
+              )}
+            </p>
+          </section>
+        ) : null;
+      })()}
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
         <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
@@ -1909,7 +1927,7 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
           {/* "Supabase"/an env-var name means nothing to a student — say what's actually broken instead. */}
           {!status.cloud && <div className="warn">{L("Les comptes ne sont pas encore activés sur ce serveur.", "Accounts aren't set up on this server yet.")}</div>}
           <label className="field"><span>{L("Email", "Email")}</span>
-            <input className="addinput" type="email" autoComplete="email" placeholder="toi@email.com" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+            <input className="addinput" type="email" autoComplete="email" placeholder={L("toi@email.com", "you@email.com")} value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
           </label>
           <label className="field"><span>{L("Mot de passe", "Password")}</span>
             <input className="addinput" type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder={L("6 caractères minimum", "At least 6 characters")} value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} />

@@ -32,25 +32,8 @@ export const CATALOG: Integration[] = [
   { key: "googleslides",   name: "Google Slides",    toolkit: "GOOGLESLIDES",   category: "Google", blurb: "Read & build decks." },
   { key: "googledrive",    name: "Google Drive",     toolkit: "GOOGLEDRIVE",    category: "Google", blurb: "Search & read your files." },
   { key: "googlesheets",   name: "Google Sheets",    toolkit: "GOOGLESHEETS",   category: "Google", blurb: "Read & edit spreadsheets." },
-  // Communication
-  { key: "slack",      name: "Slack",       toolkit: "SLACK",        category: "Communication",   blurb: "Read channels & DMs; draft messages." },
-  { key: "discord",    name: "Discord",     toolkit: "DISCORD",      category: "Communication",   blurb: "Read servers & channels." },
-  { key: "linkedin",   name: "LinkedIn",    toolkit: "LINKEDIN",     category: "Communication",   blurb: "Read your feed; draft posts." },
-  // Code & projects
-  { key: "github",     name: "GitHub",      toolkit: "GITHUB",       category: "Code & projects", blurb: "Issues, PRs, notifications." },
-  { key: "linear",     name: "Linear",      toolkit: "LINEAR",       category: "Code & projects", blurb: "Issues, projects, cycles." },
-  { key: "jira",       name: "Jira",        toolkit: "JIRA",         category: "Code & projects", blurb: "Issues & sprints." },
-  // Tasks
-  { key: "todoist",    name: "Todoist",     toolkit: "TODOIST",      category: "Tasks",           blurb: "Tasks & projects." },
-  { key: "asana",      name: "Asana",       toolkit: "ASANA",        category: "Tasks",           blurb: "Tasks & projects." },
-  { key: "trello",     name: "Trello",      toolkit: "TRELLO",       category: "Tasks",           blurb: "Boards & cards." },
-  { key: "clickup",    name: "ClickUp",     toolkit: "CLICKUP",      category: "Tasks",           blurb: "Tasks, docs & goals." },
   // Knowledge & notes
   { key: "notion",     name: "Notion",      toolkit: "NOTION",       category: "Knowledge",       blurb: "Pages & databases." },
-  // Scheduling, CRM & data
-  { key: "calendly",   name: "Calendly",    toolkit: "CALENDLY",     category: "Scheduling & CRM", blurb: "Scheduled events & invitees." },
-  { key: "hubspot",    name: "HubSpot",     toolkit: "HUBSPOT",      category: "Scheduling & CRM", blurb: "Contacts, deals & notes." },
-  { key: "airtable",   name: "Airtable",    toolkit: "AIRTABLE",     category: "Scheduling & CRM", blurb: "Bases & records." },
 ];
 
 const TOOLKIT_OF = (app: string) => CATALOG.find((c) => c.key === app.toLowerCase())?.toolkit ?? app.toUpperCase();
@@ -60,13 +43,10 @@ const norm = (s: string) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, 
 export const MULTI_APPS = new Set(["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"]);
 // A task's `source` (gmail/calendar/drive) → the Composio toolkit prefix, so execution routes that toolkit's
 // actions to the SAME account the task came from.
-const SOURCE_TOOLKIT: Record<string, string> = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE", github: "GITHUB" };
+const SOURCE_TOOLKIT: Record<string, string> = { gmail: "GMAIL", calendar: "GOOGLECALENDAR", drive: "GOOGLEDRIVE" };
 // Google apps Composio lets a user connect more than once (personal + work inbox, etc.) — same list Settings
 // uses to decide whether to offer "Add account". Everything else is effectively single-account per user.
-// "github" is included for implicit WRITE-account resolution (getAgentTools below) even though Settings
-// doesn't yet offer an "Add account" button for it — discovery (discover.ts) already reads every connected
-// GitHub account explicitly, so a write action needs the same account-awareness once more than one exists.
-export const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets", "github"];
+export const MULTI_ACCOUNT_APPS = ["gmail", "googlecalendar", "googledocs", "googleslides", "googledrive", "googlesheets"];
 
 /** Real brand logo for a toolkit — served straight from Composio's logo CDN (SVG). Used by the Settings grid
  *  so each app shows its actual logo (not a hand-drawn icon). Verified to resolve for every catalog slug. */
@@ -104,12 +84,6 @@ export const ACTION_POLICIES: Record<string, ActionMode> = {
   GOOGLESHEETS_BATCH_GET: "auto", GOOGLESHEETS_GET_SPREADSHEET_INFO: "auto", GOOGLESHEETS_LOOKUP_SPREADSHEET_ROW: "auto",
   GOOGLESHEETS_CREATE_GOOGLE_SHEET1: "auto", GOOGLESHEETS_BATCH_UPDATE: "auto", GOOGLESHEETS_UPDATE_VALUES: "auto", GOOGLESHEETS_APPEND_VALUES: "auto",
   GOOGLESHEETS_DELETE_SHEET: "never", GOOGLESHEETS_DELETE_DIMENSION: "never",
-  // GitHub — the two discovery reads (assigned issues, review-requested PRs). Other GitHub actions fall
-  // through to the regex classifiers.
-  GITHUB_LIST_ISSUES_ASSIGNED_TO_THE_AUTHENTICATED_USER: "auto", GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS: "auto",
-  // Slack — read + compose only; posting is the user's click.
-  SLACK_FETCH_CONVERSATION_HISTORY: "auto", SLACK_LIST_ALL_CHANNELS: "auto", SLACK_SEARCH_MESSAGES: "auto", SLACK_FIND_USERS: "auto",
-  SLACK_CHAT_POST_MESSAGE: "never", SLACK_SEND_MESSAGE: "never", SLACK_CHAT_DELETE: "never",
 };
 
 /**
@@ -187,7 +161,7 @@ const acctId = (i: any) => String(i?.id ?? i?.connectedAccountId ?? i?.nanoId ??
 /**
  * Resolve (or lazily create) the ONE managed-OAuth auth config for a toolkit — i.e. one unique connect link
  * per app. An in-flight lock makes concurrent calls (rapid repeat Connect clicks) share a single resolution,
- * so they can't each "find none, create one" and spawn DUPLICATES (the "todoist (3)" problem). A client-side
+ * so they can't each "find none, create one" and spawn duplicate auth configs. A client-side
  * toolkit filter guards against the list API returning anything off-toolkit.
  */
 const authConfigInFlight = new Map<string, Promise<string>>();
@@ -262,9 +236,6 @@ const EMAIL_PROBE: Record<string, { action: string; args: Record<string, unknown
   googlesheets:   DRIVE_ABOUT,
   googleslides:   DRIVE_ABOUT,
   googlecalendar: { action: "GOOGLECALENDAR_GET_CALENDAR_PROFILE", args: {}, pick: (r) => r?.id },
-  // Non-Google: show the account's username/handle where a cheap "who am I" read exists.
-  github:         { action: "GITHUB_GET_THE_AUTHENTICATED_USER", args: {}, pick: (r) => r?.login || r?.email },
-  slack:          { action: "SLACK_TEST_AUTHENTICATION", args: {}, pick: (r) => r?.user || r?.email },
 };
 async function resolveAccountEmail(userId: string, app: string, accountId: string): Promise<string | undefined> {
   const probe = EMAIL_PROBE[app];
@@ -399,14 +370,13 @@ export async function updateGmailDraft(userId: string, draftId: string, patch: {
   } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
 }
 
-/** Fire a USER-CONFIRMED one-click send (a reviewed Gmail draft / a composed Slack message). This is the ONLY
- *  place an irreversible send happens — always from an explicit user click, NEVER the agent (the agent's gated
- *  toolset can't reach these). Server hardcodes the send action; the agent only ever supplies the data. */
-export async function sendSendable(userId: string, s: { app: string; draftId?: string; channel?: string; text?: string; eventId?: string; attendees?: string[] }): Promise<{ ok: boolean; error?: string }> {
+/** Fire a USER-CONFIRMED one-click send (a reviewed Gmail draft). This is the ONLY place an irreversible
+ *  send happens — always from an explicit user click, NEVER the agent (the agent's gated toolset can't
+ *  reach these). Server hardcodes the send action; the agent only ever supplies the data. */
+export async function sendSendable(userId: string, s: { app: string; draftId?: string; eventId?: string; attendees?: string[] }): Promise<{ ok: boolean; error?: string }> {
   if (!integrationsReady() || !userId) return { ok: false, error: "Integrations not configured." };
   let action = "", args: Record<string, unknown> = {};
   if (s.app === "gmail" && s.draftId) { action = "GMAIL_SEND_DRAFT"; args = { draft_id: s.draftId }; }
-  else if (s.app === "slack" && s.channel) { action = "SLACK_CHAT_POST_MESSAGE"; args = { channel: s.channel, ...(s.text ? { text: s.text } : {}) }; }
   // Calendar invite: the agent created the event SILENTLY (send_updates="none" in call()); the user-confirmed
   // click is the ONLY thing that emails the attendees. Patch the event with send_updates="all" so they're invited.
   else if (s.app === "gcal" && s.eventId && s.attendees?.length) { action = "GOOGLECALENDAR_PATCH_EVENT"; args = { event_id: s.eventId, attendees: s.attendees, send_updates: "all" }; }
@@ -597,11 +567,7 @@ const TOOLKIT_HINTS: [RegExp, string][] = [
   [/\b(meet|meeting|call|schedule|calendar|invite|event|appointment|book)\w*/i, "googlecalendar"],
   [/\b(sheet|spreadsheet|cells?|rows?|columns?|track|budget|expense|tabular)\w*/i, "googlesheets"],
   [/\b(deck|slides?|presentation|pitch)\w*/i, "googleslides"],
-  [/\b(repo|pull request|\bpr\b|issue|github|merge|commit)\w*/i, "github"],
   [/\b(notion|wiki|knowledge base)\w*/i, "notion"],
-  [/\b(slack|channel|dm)\b/i, "slack"],
-  [/\b(linear|ticket)\b/i, "linear"],
-  [/\b(todoist)\b/i, "todoist"],
 ];
 // googlesheets is core too, not just a keyword-hint toolkit: the run prompt tells the agent to pick Sheets
 // over a Doc for ANY tabular/tracking artifact, but the task's title/why (fixed at generation time, before
@@ -895,7 +861,7 @@ export async function getAgentTools(userId: string, opts?: { accountApp?: string
   const perToolkit = Math.min(10, Math.max(6, Math.floor(MAX / connected.length)));
   // Task-critical apps first (the to-do list is built from Gmail + Calendar), so they ALWAYS get their share
   // before a big toolkit can crowd them out; anything else keeps its connected order behind these.
-  const PRIORITY = ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "googleslides", "slack", "notion", "linear", "todoist"];
+  const PRIORITY = ["gmail", "googlecalendar", "googledocs", "googledrive", "googlesheets", "googleslides", "notion"];
   const rank = (a: string) => { const i = PRIORITY.indexOf(a); return i === -1 ? PRIORITY.length : i; };
   const ordered = [...connected].sort((a, b) => rank(a) - rank(b));
   for (const app of ordered) {

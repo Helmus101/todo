@@ -87,7 +87,7 @@ function useTaskLeave(
  *  at all, which read as incomplete/broken next to every other card that has one. Falls back to a relative
  *  "Added <when>" from `createdAt`, which every task has unconditionally. */
 const taskDateLabel = (t: WebTask, L: (fr: string, en: string) => string): string =>
-  t.when ? fmtWhen(t.when) : t.createdAt ? L(`Ajoutée ${relTime(t.createdAt)}`, `Added ${relTime(t.createdAt)}`) : "";
+  t.when ? (t.whenApprox ? `~${fmtWhen(t.when)}` : fmtWhen(t.when)) : t.createdAt ? L(`Ajoutée ${relTime(t.createdAt)}`, `Added ${relTime(t.createdAt)}`) : "";
 
 // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
 const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
@@ -107,9 +107,6 @@ function linkKind(u?: string, L: (fr: string, en: string) => string = (_fr, en) 
   if (/drive\.google\.com/.test(s)) return L("Fichier", "File");
   if (/maps\.google\.com|google\.com\/maps/.test(s)) return L("Itinéraire", "Directions");
   if (/^tel:/.test(s)) return L("Appel", "Call");
-  if (/github\.com\/[^/]+\/[^/]+\/pull/.test(s)) return "PR";
-  if (/github\.com\/[^/]+\/[^/]+\/issues/.test(s)) return L("Ticket", "Issue");
-  if (/[a-z0-9-]+\.slack\.com/.test(s)) return "Slack";
   if (/notion\.so/.test(s)) return "Notion";
   return urlHost(s);
 }
@@ -164,6 +161,9 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
   // chip next to a spinner would restate the same fact twice (rule 14, remove redundant UI). A
   // failed-and-retrying task is "busy" too but has no spinner, so it still needs its chip to say so.
   const showChip = chip && chip.tone !== "muted" && chip.tone !== "good" && cStatus !== "executing" ? chip : null;
+  // A quiet, always-visible sign — no need to open the task — that the "won't do your graded work"
+  // boundary was actually tested on this one, not just claimed somewhere in a README.
+  const guardrailHeld = task.audit?.some((a) => a.kind === "guardrail");
 
   const w = taskDateLabel(task, L);
   // Days-to-deadline, not urgency score, drives the visual — same anti-procrastination curve as
@@ -191,7 +191,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       ) : null}
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
-          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau — pas encore ouvert", "New — not yet opened")} /> : null}{task.title}</span>
+          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{task.title}</span>
           {(task.sourceSubject || w || secondary) ? (
             <span className="card-sub">
               {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
@@ -201,6 +201,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           ) : null}
         </span>
         {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
+        {guardrailHeld ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">🛡</span> : null}
         {cStatus === "executing" ? <span className="card-spin" title={L("En cours…", "Working…")} /> : null}
         <span className="caret" aria-hidden="true">›</span>
       </button>
@@ -436,6 +437,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
+          {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">🛡</span> : null}
         </div>
       </div>
 
@@ -593,7 +595,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <div className="step-hero hero-waiting">
         <span className="card-spin" aria-hidden="true" />
         <p className="hero-line">{task.unrefined
-          ? L("Otto met cette tâche au propre — rien à faire, ça arrive tout seul.", "Otto is tidying this task up — nothing to do, it happens on its own.")
+          ? L("Otto prépare ça tout seul.", "Otto's handling this on its own.")
           : L("Otto prépare ça…", "Otto is getting this ready…")}</p>
         {task.unrefined && showRetry ? (
           <div className="hero-acts">
@@ -693,7 +695,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
         {/* "What did you decide?" only when this step GATES a later one — then it feeds that next step. A
             persistent label (not just a placeholder, which vanishes once typing starts) so it stays clear
             this is required to move on, not optional extra info. */}
-        <label className="step-input-label" htmlFor="step-input-hero">{L("Optionnel — précise ce que tu as décidé pour l'étape suivante, ou clique juste « C'est fait » :", "Optional — note what you decided so the next step can use it, or just click \"Done\":")}</label>
+        <label className="step-input-label" htmlFor="step-input-hero">{L("Optionnel — note ce que tu as décidé :", "Optional — note what you decided:")}</label>
         <input
           id="step-input-hero"
           className="step-input"
@@ -846,7 +848,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
                 {!s.done && s.minutes ? <span className="step-minutes">~{s.minutes} {L("min", "min")}</span> : null}
                 {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
-                {!s.done && blk ? <span className="step-dep">{L(`Rien à faire ici pour l'instant — se débloque une fois l'étape ${(s.dependsOn ?? 0) + 1} faite`, `Nothing to do here yet — unlocks once step ${(s.dependsOn ?? 0) + 1} is done`)}</span> : null}
+                {!s.done && blk ? <span className="step-dep">{L(`Débloque à l'étape ${(s.dependsOn ?? 0) + 1}`, `Unlocks at step ${(s.dependsOn ?? 0) + 1}`)}</span> : null}
                 {s.question && !s.done && !blk ? (
                   <div className="step-question">
                     <p className="step-question-text">{withInlineLinks(s.question)}</p>
@@ -868,11 +870,11 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                   </div>
                 ) : gatesAnother && !s.done && !blk && !s.automatable ? (
                   <>
-                  <label className="step-input-label" htmlFor={`step-input-${i}`}>{L("Réponds ici pour continuer :", "Answer here to continue:")}</label>
+                  <label className="sr-only" htmlFor={`step-input-${i}`}>{L("Réponds ici pour continuer :", "Answer here to continue:")}</label>
                   <input
                     id={`step-input-${i}`}
                     className="step-input"
-                    placeholder={L("Écris ta réponse ici pour débloquer la suite…", "Type your answer here to unlock the next step…")}
+                    placeholder={L("Ta réponse…", "Your answer…")}
                     value={decided[i] || ""}
                     onChange={(e) => setDecided((d) => ({ ...d, [i]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === "Enter") onStepDone(i); }}
@@ -1020,7 +1022,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
           navigation, so without this a blind student would never know an answer had come back. */}
       <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")}>
         {!task.chat?.length && !pendingMsg ? (
-          <p className="muted small">{L("Explique-lui ce qui te bloque et il t'aidera à comprendre — pas à te donner la réponse. Montre-lui ton essai, dis-lui quelle étape te perd, ou demande-lui de réexpliquer autrement.", "Tell it what's blocking you and it'll help you understand — not hand you the answer. Show it your attempt, say which step loses you, or ask it to explain a different way.")}</p>
+          <p className="muted small">{L("Dis-lui ce qui bloque. Il explique, il ne donne pas la réponse.", "Say what's blocking you. It'll explain — not hand you the answer.")}</p>
         ) : task.chat?.map((m, i) => (
           <div key={i} className={`chat-msg chat-${m.role}`}>
             {/* Who said it, for anyone not seeing the bubble alignment/colour. */}
@@ -1043,6 +1045,11 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
                   return <button key={a.id} type="button" className="btn xs ghost note-chip" onClick={() => open(a.id)}><span aria-hidden="true">{icon}</span> {a.title}</button>;
                 })}
               </div>
+            ) : null}
+            {/* The exact moment the "won't do your graded work" boundary held, right where it happened —
+                not just a line buried in the Activity log. */}
+            {m.role === "assistant" && m.guardrail ? (
+              <span className="chat-guardrail-tag"><span aria-hidden="true">🛡</span> {L("Otto guide, ne fait pas à ta place", "Otto guides, doesn't do it for you")}</span>
             ) : null}
           </div>
         ))}
@@ -1105,15 +1112,13 @@ function SendableReview({ task, onTask }: {
   const saveDraftEdit = async (i: number) => {
     const edit = draftEdits[i];
     if (!edit || savingDraft != null) return;
-    // The textarea is generically bound to "body" client-side; Slack has no subject and stores its
-    // message under "text" server-side — map to whichever field this sendable's app actually uses.
-    const patch = task.sendables?.[i]?.app === "slack" ? { text: edit.body } : { subject: edit.subject, body: edit.body };
+    const patch = { subject: edit.subject, body: edit.body };
     setSavingDraft(i);
     try { onTask(await api.editDraft(task.id, i, patch)); setDraftEdits((d) => { const { [i]: _, ...rest } = d; return rest; }); }
     catch (e: any) {
       // Edit stays pending — the box keeps the user's text so nothing is lost — but say so instead of
       // letting the spinner just stop with no explanation.
-      notify(e?.message || L("Enregistrement impossible — tes modifications restent dans la case.", "Couldn't save — your edit stays in the box."), "error");
+      notify(e?.message || L("Enregistrement impossible — réessaie.", "Couldn't save — try again."), "error");
     }
     finally { setSavingDraft(null); }
   };
@@ -1143,8 +1148,8 @@ function SendableReview({ task, onTask }: {
     <div className="sendables">
       {task.sendables.map((s, i) => {
         // Who this goes to — ALWAYS shown before the user sends (a calendar invite lists every attendee).
-        const recipients = s.app === "gcal" ? (s.attendees || []).join(", ") : (s.to || s.channel || "");
-        const noun = s.app === "gcal" ? L("l'invitation calendrier", "the calendar invite") : s.app === "slack" ? L("le message Slack", "the Slack message") : L("l'email", "the email");
+        const recipients = s.app === "gcal" ? (s.attendees || []).join(", ") : (s.to || "");
+        const noun = s.app === "gcal" ? L("l'invitation calendrier", "the calendar invite") : L("l'email", "the email");
         return (
           <div key={i} className="sendable">
             {recipients ? (
@@ -1170,7 +1175,7 @@ function SendableReview({ task, onTask }: {
                 <div className="confirm-q">{L("Envoyer", "Send")} {noun} {L("à", "to")} <b>{recipients || L("le destinataire", "the recipient")}</b> ?</div>
                 <div className="confirm-acts">
                   <button className="btn primary xs" onClick={() => void doSend(i)}>{L("Oui, envoyer", "Yes, send")}</button>
-                  <button className="btn xs" onClick={() => { setConfirmIdx(null); setViewDraft(i); setChangeText(""); setChangeIdx(i); }}>{L("Non — changer quelque chose", "No — change something")}</button>
+                  <button className="btn xs" onClick={() => { setConfirmIdx(null); setViewDraft(i); setChangeText(""); setChangeIdx(i); }}>{L("Changer quelque chose", "Change something")}</button>
                   <button className="btn xs ghost" onClick={() => setConfirmIdx(null)}>{L("Annuler", "Cancel")}</button>
                 </div>
               </div>
@@ -1186,13 +1191,13 @@ function SendableReview({ task, onTask }: {
                   </>
                 ) : s.sent ? (
                   <>
-                    {(s.to || s.channel) ? <div className="draft-row"><span className="draft-label">{L("À", "To")}</span><span>{s.to || s.channel}</span></div> : null}
+                    {s.to ? <div className="draft-row"><span className="draft-label">{L("À", "To")}</span><span>{s.to}</span></div> : null}
                     {s.subject ? <div className="draft-row"><span className="draft-label">{L("Objet", "Subject")}</span><span>{s.subject}</span></div> : null}
-                    <pre className="draft-body">{s.body || s.text || L("Envoyé.", "Sent.")}</pre>
+                    <pre className="draft-body">{s.body || L("Envoyé.", "Sent.")}</pre>
                   </>
                 ) : (
                   <>
-                    {(s.to || s.channel) ? <div className="draft-row"><span className="draft-label">{L("À", "To")}</span><span>{s.to || s.channel}</span></div> : null}
+                    {s.to ? <div className="draft-row"><span className="draft-label">{L("À", "To")}</span><span>{s.to}</span></div> : null}
                     {s.app === "gmail" ? (
                       <input className="addinput sm draft-subject" placeholder={L("Objet", "Subject")} aria-label={L("Objet", "Subject")} disabled={revising}
                         value={draftEdits[i]?.subject ?? s.subject ?? ""}
@@ -1203,7 +1208,7 @@ function SendableReview({ task, onTask }: {
                         would just get silently overwritten. */}
                     <textarea className="draft-body-edit" rows={12} disabled={revising} aria-label={L("Contenu du brouillon", "Draft content")}
                       ref={(el) => { if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 600)}px`; } }}
-                      value={draftEdits[i]?.body ?? s.body ?? s.text ?? ""}
+                      value={draftEdits[i]?.body ?? s.body ?? ""}
                       onChange={(e) => { setDraftEdits((d) => ({ ...d, [i]: { ...d[i], body: e.target.value } })); e.target.style.height = "auto"; e.target.style.height = `${Math.min(e.target.scrollHeight, 600)}px`; }} />
                     {draftEdits[i] && !revising ? (
                       <div className="draft-edit-acts">
