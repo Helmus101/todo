@@ -21,7 +21,7 @@
     "test": "tsx tests/run.mjs"
   },
   "dependencies": {
-    "@composio/core": "^0.13.1",
+    "@composio/core": "^0.17.0",
     "@supabase/supabase-js": "^2.43.2",
     "@vercel/analytics": "^2.0.1",
     "bcryptjs": "^2.4.3",
