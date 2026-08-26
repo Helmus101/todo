@@ -606,12 +606,6 @@ export function App() {
   const completed = tasks.filter((t) => t.status === "done").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
-  // Only count tasks that actually have something to look at — a queued/executing task has no content
-  // yet (opening it just shows a spinner), so it shouldn't inflate the "new" badge with nothing to review.
-  // Every per-card "isNew" dot below MUST apply this exact same `!isInFlight` exclusion — it used to only
-  // check `!isHandled` (done/dismissed), which let an in-flight card still show its dot while the navbar
-  // badge above it had already discounted that same card, so the two numbers visibly disagreed.
-  const unseenCount = live.filter((t) => !seenTasks.has(t.id) && !isInFlight(t.status)).length;
   const en = status?.language === "en";
   // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
@@ -643,7 +637,7 @@ export function App() {
       <header className="topbar">
         <div className="brand"><Logo size={20} /> Otto</div>
         <nav className="tabs">
-          <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} aria-current={(route === "" || route === "tasks" || route.startsWith("task/")) ? "page" : undefined} href="/tasks">{status?.language === "en" ? "Tasks" : "Tâches"}{unseenCount > 0 ? <span className="tab-badge">{unseenCount}</span> : null}</a>
+          <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} aria-current={(route === "" || route === "tasks" || route.startsWith("task/")) ? "page" : undefined} href="/tasks">{status?.language === "en" ? "Tasks" : "Tâches"}{live.length > 0 ? <span className="tab-badge">{live.length}</span> : null}</a>
           <a className={`tab ${route === "settings" ? "active" : ""}`} aria-current={route === "settings" ? "page" : undefined} href="/settings">{status?.language === "en" ? "Settings" : "Réglages"}</a>
         </nav>
         <div className="spacer" />
