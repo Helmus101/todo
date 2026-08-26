@@ -1574,7 +1574,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
 function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
   const L = useLang();
   const notify = useNotify();
-  const [status, setStatus] = useState<{ connected: boolean; username?: string } | null>(null);
+  const [status, setStatus] = useState<{ connected: boolean; username?: string; needsReconnect?: boolean } | null>(null);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
@@ -1611,19 +1611,26 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
               Index Éducation) — self-hosted at public/logos/pronote.png, see public/logos/ATTRIBUTION.md. */}
           <span className="int-logo pronote-logo"><img src="/logos/pronote.png" alt="" loading="lazy" /></span>
           <div className="int-info">
-            <div className="int-name">Pronote{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-            <div className="int-blurb">{L(
-              "Devoirs et contrôles à venir. Lecture seule — Otto ne coche jamais rien dans Pronote à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe sert une seule fois puis n'est jamais conservé ; un jeton chiffré le remplace ensuite.",
-              "Upcoming homework and tests. Read-only — Otto never checks anything off in Pronote for you. Unofficial connection (Index Éducation has no public API) — your password is used once and never stored; an encrypted token replaces it afterwards."
-            )}</div>
+            <div className="int-name">Pronote{status.connected && !status.needsReconnect && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
+            {status.needsReconnect ? (
+              <div className="int-blurb warn">{L(
+                "Ta session Pronote a expiré — reconnecte-toi pour qu'Otto continue à voir tes devoirs et contrôles.",
+                "Your Pronote session expired — reconnect so Otto can keep seeing your homework and tests."
+              )}</div>
+            ) : (
+              <div className="int-blurb">{L(
+                "Devoirs et contrôles à venir. Lecture seule — Otto ne coche jamais rien dans Pronote à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe sert une seule fois puis n'est jamais conservé ; un jeton chiffré le remplace ensuite.",
+                "Upcoming homework and tests. Read-only — Otto never checks anything off in Pronote for you. Unofficial connection (Index Éducation has no public API) — your password is used once and never stored; an encrypted token replaces it afterwards."
+              )}</div>
+            )}
           </div>
-          {status.connected
+          {status.connected && !status.needsReconnect
             ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
-            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? L("Annuler", "Cancel") : L("Connecter", "Connect")}</button>}
+            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? L("Annuler", "Cancel") : status.needsReconnect ? L("Se reconnecter", "Reconnect") : L("Connecter", "Connect")}</button>}
         </div>
       </div>
-      {status.connected && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
-      {open && !status.connected && (
+      {status.connected && !status.needsReconnect && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
+      {open && (!status.connected || status.needsReconnect) && (
         <div className="pronote-form">
           <input className="addinput sm" placeholder={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")}
             value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />

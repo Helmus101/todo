@@ -5,7 +5,7 @@ import session from "express-session";
 import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
@@ -78,9 +78,16 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "1mb" }));
+// PROD already fails closed above if SESSION_SECRET is unset (see the boot check). This fallback only
+// ever runs in a misconfigured non-PROD deployment — it must NOT be a fixed string: the old default
+// ("dev-insecure-secret-change-me") is sitting in every public clone of this repo, so any deployment
+// that forgot to set NODE_ENV=production would sign session cookies with a secret the whole internet
+// already knows. A random-per-boot secret means sessions won't survive a restart in that misconfigured
+// case — correct behavior for a deployment that was never meant to run this way, not a regression.
+const FALLBACK_SESSION_SECRET = randomBytes(32).toString("hex");
 app.use(session({
   store: await makeSessionStore(), // Supabase-backed when cloud is configured → sessions survive restarts/deploys
-  secret: process.env.SESSION_SECRET || "dev-insecure-secret-change-me",
+  secret: process.env.SESSION_SECRET || FALLBACK_SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: "lax", secure: PROD, maxAge: 30 * 24 * 3600 * 1000 },
@@ -159,6 +166,11 @@ const requireAuth: RequestHandler = (req, res, next) => {
 
 // Per-account rate limiter (in-memory sliding window) for the expensive AI/Composio endpoints, so a runaway
 // client loop or a leaked session can't run up the bill. Keyed by account email (falls back to IP).
+// KNOWN LIMITATION (documented, not fixed): this Map is per-process. On a multi-instance/serverless
+// deploy (Vercel) each instance keeps its own counter, so the real-world cap is effectively
+// max × instance-count, not max. A correct fix needs a shared store (a Supabase table or Redis) for the
+// hit counters — a meaningfully bigger change than a single-process in-memory Map, deliberately out of
+// scope for now; flagging it here rather than leaving it silently assumed to be a hard cap.
 const rlHits = new Map<string, number[]>();
 const rateLimit = (max: number, windowMs: number): RequestHandler => (req, res, next) => {
   // MUST key on the route's TEMPLATE (req.route.path, e.g. "/api/tasks/:id/run"), never req.path (the
@@ -189,7 +201,7 @@ const validEmail = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
-  if (!validEmail(email) || password.length < 6) { res.status(400).json({ error: "Enter a valid email and a password of at least 6 characters." }); return; }
+  if (!validEmail(email) || password.length < 8 || password.length > 200) { res.status(400).json({ error: "Enter a valid email and a password between 8 and 200 characters." }); return; }
   // The Privacy Policy states under-15s need a parent to set the account up (RGPD Art.8) — this was
   // previously enforced by text alone. Not real age verification, but a required, recorded affirmative
   // signal beats none.
@@ -198,17 +210,24 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
   if (await getUser(email)) { res.status(409).json({ error: "An account with that email already exists — log in instead." }); return; }
   if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: "Couldn't create the account." }); return; }
   void mirrorAuthUser(email, password); // best-effort — shows the account in Supabase's own Auth tab too
-  req.session.user = email;
-  // Must explicitly reset these, exactly like /api/auth/login does — if this browser's session cookie
-  // already had another account's tasks/profile in it (e.g. someone created a new account without signing
-  // out of the previous one first), leaving them untouched here leaked the OLD account's tasks into the
-  // BRAND NEW one on the very next request (the safety-net middleware above only fills these in when
-  // they're `undefined`, which they aren't in that case) — they'd even get merged into and saved onto the
-  // new account's cloud row. A fresh signup always starts from empty state.
-  req.session.profile = { ...emptyProfile(), ageConsentAt: new Date().toISOString() };
-  req.session.tasks = [];
-  await saveSession(req);
-  res.json({ ok: true });
+  // Regenerate the session id on every privilege change (login/signup) — never write the authenticated
+  // user onto a pre-existing session id. Without this, a session id fixed on a victim's browser BEFORE
+  // they sign up (e.g. planted via an unrelated XSS/subdomain trick) would become a live authenticated
+  // session the moment they complete signup — classic session fixation.
+  req.session.regenerate((err) => {
+    if (err) { res.status(500).json({ error: "Couldn't create the account — try again." }); return; }
+    req.session.user = email;
+    // Must explicitly reset these, exactly like /api/auth/login does — if this browser's session cookie
+    // already had another account's tasks/profile in it (e.g. someone created a new account without signing
+    // out of the previous one first), leaving them untouched here leaked the OLD account's tasks into the
+    // BRAND NEW one on the very next request (the safety-net middleware above only fills these in when
+    // they're `undefined`, which they aren't in that case) — they'd even get merged into and saved onto the
+    // new account's cloud row. A fresh signup always starts from empty state.
+    req.session.profile = { ...emptyProfile(), ageConsentAt: new Date().toISOString() };
+    req.session.tasks = [];
+    void recordEvent(email, "signup", {});
+    saveSession(req).then(() => res.json({ ok: true }));
+  });
 });
 
 app.post("/api/auth/login", rateLimit(10, 15 * 60_000), async (req, res) => {
@@ -219,18 +238,28 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), async (req, res) => {
   // wrong path (retyping/resetting a password that was never the actual problem). Same check signup has.
   if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase) — sign-in can't work until that's set." }); return; }
   const u = await getUser(email);
-  if (!u || !bcrypt.compareSync(password, u.pass_hash)) { res.status(401).json({ error: "Wrong email or password." }); return; }
-  req.session.user = email;
-  // Bring back this account's saved profile + tasks. (App connections live in Composio, keyed by this
-  // same account email, so they're already linked — nothing to restore here.)
-  const restored = await loadState(email);
-  req.session.profile = restored.profile;
-  req.session.tasks = restored.tasks;
-  await saveSession(req);
-  res.json({ ok: true });
+  if (!u || !bcrypt.compareSync(password, u.pass_hash)) {
+    void recordEvent(email, "login_failed", {}); // never the password — email only, for brute-force visibility
+    res.status(401).json({ error: "Wrong email or password." });
+    return;
+  }
+  // Regenerate the session id on login — see the signup handler's comment on why (session fixation).
+  req.session.regenerate(async (err) => {
+    if (err) { res.status(500).json({ error: "Couldn't log you in — try again." }); return; }
+    req.session.user = email;
+    // Bring back this account's saved profile + tasks. (App connections live in Composio, keyed by this
+    // same account email, so they're already linked — nothing to restore here.)
+    const restored = await loadState(email);
+    req.session.profile = restored.profile;
+    req.session.tasks = restored.tasks;
+    void recordEvent(email, "login", {});
+    await saveSession(req);
+    res.json({ ok: true });
+  });
 });
 
 app.post("/api/auth/logout", (req, res) => {
+  const email = req.session.user;
   req.session.destroy(() => {
     // Belt-and-suspenders on top of destroy(): if some OTHER request already in flight on this same
     // cookie (a background sweep/kick tick — see client/App.tsx's signedOutRef) still calls
@@ -240,14 +269,21 @@ app.post("/api/auth/logout", (req, res) => {
     // request's write, but it does mean any tab that DIDN'T just receive a resurrected Set-Cookie no
     // longer presents the old id at all, closing off the most common path back in.
     res.clearCookie("connect.sid", { httpOnly: true, sameSite: "lax", secure: PROD });
+    if (email) void recordEvent(email, "logout", {});
     res.json({ ok: true });
   });
 });
 
 // GDPR right-to-erasure, self-serve: permanently deletes every row this account owns (see
 // store.deleteAccount) and destroys the session. Irreversible — the client confirms before calling this.
-app.post("/api/account/delete", requireAuth, async (req, res) => {
+app.post("/api/account/delete", requireAuth, rateLimit(5, 60_000), async (req, res) => {
   const email = req.session.user!;
+  // NOT recordEvent(): deleteAccount() below purges this account's OWN rows from the events table as
+  // part of the erasure, so a "deleted" event written there would erase itself in the same request —
+  // the one event that most needs to survive would leave zero trace. console.warn instead: platform log
+  // retention (Vercel/Railway/etc.) is a separate system from the app's own DB, so this line survives
+  // the account row being gone, which is the actual point of a deletion audit trail.
+  console.warn(`[audit] account_deleted: ${email}`);
   try {
     const result = await deleteAccount(email);
     // Only destroy the session on a confirmed result — destroying it on a thrown error (below) would make
@@ -262,8 +298,9 @@ app.post("/api/account/delete", requireAuth, async (req, res) => {
 });
 
 // GDPR right to data portability, self-serve: everything Otto has stored for this account, as one JSON file.
-app.get("/api/account/export", requireAuth, async (req, res) => {
+app.get("/api/account/export", requireAuth, rateLimit(5, 60_000), async (req, res) => {
   const email = req.session.user!;
+  void recordEvent(email, "account_exported", {});
   try {
     const state = cloudEnabled() ? await loadState(email) : { profile: req.session.profile, tasks: req.session.tasks, google: undefined, pronote: undefined };
     // Was profile+tasks only — deleteAccount also wipes job records and the audit/event trail, so an
@@ -432,22 +469,23 @@ app.get("/api/status", async (req, res) => {
   // Both checks are independent reads — running them sequentially (the old code awaited one, then the
   // other) doubled this endpoint's latency for no reason. It's polled on every app open/focus/tab-switch
   // (see client/App.tsx's status refresh), so that add-up was a real, constant source of felt latency.
-  const [googleConnected, pronoteConnected] = await Promise.all([
+  const [googleConnected, pronoteStatus] = await Promise.all([
     req.session.user && integrations.integrationsReady()
       ? integrations.connectionStatusesCached(req.session.user, ["gmail"]).then((s) => !!s["gmail"]).catch(() => false)
       : Promise.resolve(false),
     // Otto Lycée: Pronote is now a first-class data source on its own, not just a Google add-on — a lycéen
     // with ONLY Pronote connected (no Gmail) must still see their dashboard, not get stuck on ConnectCard.
     req.session.user
-      ? pronoteSvc.pronoteConnectedCached(req.session.user).then((s) => s.connected).catch(() => false)
-      : Promise.resolve(false),
+      ? pronoteSvc.pronoteConnectedCached(req.session.user).catch((): { connected: boolean; username?: string; needsReconnect?: boolean } => ({ connected: false }))
+      : Promise.resolve<{ connected: boolean; username?: string; needsReconnect?: boolean }>({ connected: false }),
   ]);
   const s: ConnectionStatus = {
     loggedIn: !!req.session.user,
     user: req.session.user,
     name: req.session.profile?.name,
     googleConnected,
-    pronoteConnected,
+    pronoteConnected: pronoteStatus.connected,
+    ...(pronoteStatus.needsReconnect ? { pronoteNeedsReconnect: true } : {}),
     aiReady: aiReady(),
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
@@ -477,6 +515,7 @@ app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());
     p.unlimited = true;
+    void recordEvent(req.session.user!, "settings_changed", { message: "unlimited enabled" });
     await commit(req);
     res.json(p);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
@@ -487,6 +526,7 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
     const p = (req.session.profile ||= emptyProfile());
     p.paused = req.body?.paused === true;
     p.pausedAt = new Date().toISOString();
+    void recordEvent(req.session.user!, "settings_changed", { message: p.paused ? "AI paused" : "AI resumed" });
     await commit(req);
     res.json(p);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
@@ -951,7 +991,7 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async
   if (!t || !s) { res.status(404).json({ error: "not found" }); return; }
   try {
     if (!s.sent) {
-      const r = await integrations.sendSendable(req.session.user!, s);
+      const r = await integrations.sendSendable(req.session.user!, s, req.session.profile?.primaryAccounts);
       if (!r.ok) { res.status(500).json({ error: r.error || "send failed" }); return; }
       s.sent = true;
       t.updatedAt = new Date().toISOString();

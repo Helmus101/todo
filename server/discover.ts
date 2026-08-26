@@ -135,18 +135,29 @@ function driveToItems(data: any, account?: { id?: string; email?: string }): Sou
 
 // Exported for tests (same precedent as calendarToItems) — the énoncé this carries is what makes every
 // downstream artifact specific, so it's worth pinning that `snippet`/`subject` survive.
-export function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean }[]): SourceItem[] {
-  return items.map((a): SourceItem => ({
-    sourceApp: "pronote",
-    externalId: a.id,
-    anchorKey: `pronote:${a.id}`,
-    // No stable deep-link into a specific assignment — Pronote's read API doesn't expose one.
-    title: `${a.subject} homework`.slice(0, 140),
-    snippet: a.description || `Due ${a.deadline}`,
-    timestamp: a.deadline,
-    labels: ["homework"],
-    subject: a.subject,
-  }));
+export function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean; attachments?: { name: string; url: string }[] }[]): SourceItem[] {
+  return items.map((a): SourceItem => {
+    // A teacher-attached worksheet/link — until this, Otto had zero visibility that one even existed,
+    // not just an inability to read it. Folded into the snippet (becomes task.sourceDetail, what
+    // assignmentBlock in claude.ts shows the model) so the model at least knows a file exists alongside
+    // the assignment's own text, and the first one becomes the task's real link (same `url` plumbing
+    // Gmail/Calendar/Drive items already use — see foldGenerated in tasks.ts).
+    const attachmentNote = (a.attachments || []).slice(0, 2).map((x) => `\n[Pièce jointe : ${x.name}]`).join("");
+    return {
+      sourceApp: "pronote",
+      externalId: a.id,
+      anchorKey: `pronote:${a.id}`,
+      // No stable deep-link into a specific assignment — Pronote's read API doesn't expose one. An
+      // attachment's own url is a different, real thing (a specific file/link the teacher gave), not a
+      // fallback for that missing assignment permalink.
+      title: `${a.subject} homework`.slice(0, 140),
+      snippet: (a.description || `Due ${a.deadline}`) + attachmentNote,
+      url: a.attachments?.[0]?.url,
+      timestamp: a.deadline,
+      labels: ["homework"],
+      subject: a.subject,
+    };
+  });
 }
 
 export function pronoteTestsToItems(items: { id: string; subject: string; deadline: string }[]): SourceItem[] {

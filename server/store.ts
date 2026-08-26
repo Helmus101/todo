@@ -19,6 +19,12 @@ export interface StoredPronote { url: string; username: string; kind: number; to
    *  are computed from, so they're real fixed dates that actually pass (and stop being returned) as time
    *  goes on, instead of always being "N days from right now" on every fetch. */
   mockConnectedAt?: string;
+  /** Set when a session attempt fails with a genuinely dead token (SessionExpiredError/BadCredentialsError,
+   *  not a transient network/portal blip) — without this, a dead token looks IDENTICAL to "no homework
+   *  today" forever: pronoteConnected() only checks that a row exists, so the student sees an empty task
+   *  list with no signal to reconnect. Cleared on the next successful session (see runPronoteSessionOnce)
+   *  and on a fresh connectPronote(). */
+  needsReconnect?: boolean;
 }
 
 // Cloud persistence, keyed by the user's Google email — so memory + tasks survive restarts and follow

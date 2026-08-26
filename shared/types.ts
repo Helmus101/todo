@@ -642,6 +642,8 @@ export interface ConnectionStatus {
   name?: string;              // what to call the user (from their profile) — personalizes the UI
   googleConnected: boolean;   // Gmail is connected (via Composio) — the minimum to generate tasks
   pronoteConnected: boolean;  // Pronote is connected — the OTHER minimum (Otto Lycée works on Pronote alone)
+  pronoteNeedsReconnect?: boolean; // the stored token is dead (expired/revoked) — reads silently return
+    // empty otherwise, so this is the only signal that "connected" doesn't mean "actually working"
   aiReady: boolean;           // DEEPSEEK_API_KEY present
   googleConfigured: boolean;  // Composio configured (COMPOSIO_API_KEY) — powers Google + every integration
   cloud: boolean;             // Supabase configured → accounts + state persist

@@ -338,17 +338,57 @@ async function listConnectedToolkits(userId: string): Promise<string[]> {
   }
 }
 
+// Same transient-failure shape claude.ts's retryRequest/isTransient already use for the LLM calls — a
+// local copy rather than an import: claude.ts imports FROM this module, so importing back would be a
+// circular dependency. A transient network blip or a Google 5xx/429 used to fail a Composio tool call
+// outright with zero retry, unlike every LLM call in this app which already gets 3 attempts.
+function isTransientComposioError(e: any): boolean {
+  const code = String(e?.code || e?.cause?.code || "");
+  if (["ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(code)) return true;
+  const msg = `${e?.message || ""} ${e?.cause?.message || ""}`;
+  if (/fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed/i.test(msg)) return true;
+  return [429, 500, 502, 503, 504].includes(Number(e?.status));
+}
+async function executeWithRetry(action: string, args: Record<string, unknown>, retries = 2, delayMs = 500): Promise<any> {
+  let lastErr: any;
+  for (let i = 0; i <= retries; i++) {
+    try { return await sdk().tools.execute(action, args as any); }
+    catch (e: any) {
+      lastErr = e;
+      if (!isTransientComposioError(e) || i === retries) throw e;
+      console.warn(`[integrations] ${action} failed (${e?.message || e}), retrying in ${delayMs}ms... (attempt ${i + 1}/${retries})`);
+      await new Promise((r) => setTimeout(r, delayMs));
+      delayMs *= 2;
+    }
+  }
+  throw lastErr;
+}
+// Google's OAuth token-expired/revoked shape — distinct from a generic failure so callers (discovery's
+// grab(), the agent loop) COULD react differently (a stale connection isn't "nothing found," it's "this
+// needs reconnecting"), even though today most callers still just surface it as an error either way.
+// Tagging it here means that distinction is at least diagnosable in logs instead of invisible.
+function isReconnectNeeded(e: any): boolean {
+  const msg = `${e?.message || ""} ${e?.error || ""}`;
+  return /invalid_grant|invalid_client|token.*(expired|revoked)|unauthorized_client/i.test(msg) || Number(e?.status) === 401;
+}
+
 /** Run a Composio action for a user. `connectedAccountId` disambiguates WHICH connected account to use —
  *  required for Gmail once the user has more than one (otherwise Composio can't tell which inbox). */
 async function execute(action: string, userId: string, args: Record<string, unknown>, connectedAccountId?: string): Promise<string> {
-  const result: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
+  const callArgs = { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) };
+  let result: any;
+  try { result = await executeWithRetry(action, callArgs); }
+  catch (e: any) {
+    return `ERROR: ${isReconnectNeeded(e) ? "RECONNECT_NEEDED: " : ""}${action} failed — ${e?.message || e}`;
+  }
   // Composio signals a failed action with { successful: false, error: "..." } — it does NOT throw. Left
   // unchecked, this JSON gets stringified and handed back as a normal-looking tool result: the agent loop's
   // isRealWrite check only looks for a string starting with "ERROR"/"PERMISSION_REQUIRED", so a failed write
   // (bad scope, stale connection, invalid id, ...) was silently counted as a REAL write — clearing the
   // fabrication guardrail and letting the model report "created the sheet" when nothing was actually created.
   if (result && (result.successful === false || result.error)) {
-    return `ERROR: ${action} failed — ${String(result.error || "no further detail")}`;
+    const tag = isReconnectNeeded({ message: String(result.error || "") }) ? "RECONNECT_NEEDED: " : "";
+    return `ERROR: ${tag}${action} failed — ${String(result.error || "no further detail")}`;
   }
   return JSON.stringify(result ?? {}, null, 2).slice(0, 4000);
 }
@@ -373,16 +413,29 @@ export async function updateGmailDraft(userId: string, draftId: string, patch: {
 /** Fire a USER-CONFIRMED one-click send (a reviewed Gmail draft). This is the ONLY place an irreversible
  *  send happens — always from an explicit user click, NEVER the agent (the agent's gated toolset can't
  *  reach these). Server hardcodes the send action; the agent only ever supplies the data. */
-export async function sendSendable(userId: string, s: { app: string; draftId?: string; eventId?: string; attendees?: string[] }): Promise<{ ok: boolean; error?: string }> {
+export async function sendSendable(userId: string, s: { app: string; draftId?: string; eventId?: string; attendees?: string[] }, primaryAccounts?: Record<string, string>): Promise<{ ok: boolean; error?: string }> {
   if (!integrationsReady() || !userId) return { ok: false, error: "Integrations not configured." };
-  let action = "", args: Record<string, unknown> = {};
-  if (s.app === "gmail" && s.draftId) { action = "GMAIL_SEND_DRAFT"; args = { draft_id: s.draftId }; }
+  let action = "", args: Record<string, unknown> = {}, toolkit: "gmail" | "googlecalendar" = "gmail";
+  if (s.app === "gmail" && s.draftId) { action = "GMAIL_SEND_DRAFT"; args = { draft_id: s.draftId }; toolkit = "gmail"; }
   // Calendar invite: the agent created the event SILENTLY (send_updates="none" in call()); the user-confirmed
   // click is the ONLY thing that emails the attendees. Patch the event with send_updates="all" so they're invited.
-  else if (s.app === "gcal" && s.eventId && s.attendees?.length) { action = "GOOGLECALENDAR_PATCH_EVENT"; args = { event_id: s.eventId, attendees: s.attendees, send_updates: "all" }; }
+  else if (s.app === "gcal" && s.eventId && s.attendees?.length) { action = "GOOGLECALENDAR_PATCH_EVENT"; args = { event_id: s.eventId, attendees: s.attendees, send_updates: "all" }; toolkit = "googlecalendar"; }
   else return { ok: false, error: "Nothing to send." };
+  // Same multi-account routing as sendSystemEmail below — with more than one account connected for this
+  // toolkit, an unrouted send left Composio to guess WHICH one to use. This is the ONE truly irreversible
+  // action a user confirms in the whole app (a real email actually leaves an account); it must never fire
+  // from the wrong inbox. Prefer the user's designated primary (Settings), else whichever was connected
+  // first — same fallback used everywhere else this decision comes up.
+  let connectedAccountId: string | undefined;
   try {
-    const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+    const accts = await getConnectedAccounts(userId, toolkit, false);
+    if (accts.length > 1) {
+      const primary = primaryAccounts?.[toolkit];
+      connectedAccountId = (primary && accts.find((a) => a.id === primary)?.id) || accts[0]?.id;
+    }
+  } catch { /* best-effort — falls through to Composio's own default */ }
+  try {
+    const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
     if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Send failed.") };
     return { ok: true };
   } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
@@ -599,8 +652,12 @@ export async function readAction(userId: string, action: string, args: Record<st
   if (!integrationsReady() || !userId) throw new Error("integrations not configured");
   const policy = ACTION_POLICIES[action.toUpperCase()];
   if (policy !== "auto" || !isRead(action.toUpperCase())) throw new Error(`not an allowed read action: ${action}`);
-  const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
-  if (r && r.successful === false) throw new Error(String(r.error || `read failed: ${action}`));
+  const callArgs = { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) };
+  const r: any = await executeWithRetry(action, callArgs);
+  if (r && r.successful === false) {
+    const tag = isReconnectNeeded({ message: String(r.error || "") }) ? "RECONNECT_NEEDED: " : "";
+    throw new Error(`${tag}${String(r.error || `read failed: ${action}`)}`);
+  }
   // `successful` being anything other than an explicit `true`/`false` (missing, or a degraded/partial
   // response from a Composio hiccup) used to be silently treated as a normal success — the caller (and
   // the model reasoning over it) had no way to tell "genuinely nothing here" from "this read actually
