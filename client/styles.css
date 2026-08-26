@@ -743,6 +743,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-face-text { font-size: 18px; line-height: 1.5; max-height: 130px; overflow-y: auto; }
 .deck-hint { font-size: 12px; color: var(--ink-3); margin: 12px 0; }
 .deck-acts { display: flex; gap: var(--space-2); justify-content: center; margin-top: var(--space-1); }
+.deck-btn-back { display: block; margin: var(--space-2) auto 0; }
 .deck-btn-wrong:hover { background: var(--bg-2); border-color: var(--ink-2); }
 .deck-btn-right { background: var(--accent); border-color: var(--accent); }
 .deck-done { padding: 12px 2px; }

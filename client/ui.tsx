@@ -297,13 +297,21 @@ export function FlashcardDeck({ deck, onReview }: { deck: TaskFlashcards; onRevi
   const card = !done ? deck.cards[i] : null;
   const mark = (ok: boolean) => {
     if (!card) return;
-    (ok ? setRight : setWrong)((prev) => [...prev, i]);
+    // Dedupe by index, not just append: going back to a card (see `back` below) and re-marking it must
+    // REPLACE its earlier verdict, never leave both a stale "wrong" and a fresh "right" counted for the
+    // same card at once — that would silently inflate the final score screen.
+    (ok ? setRight : setWrong)((prev) => [...prev.filter((x) => x !== i), i]);
+    (ok ? setWrong : setRight)((prev) => prev.filter((x) => x !== i));
     // Fire-and-forget — the deck's own local right/wrong state (for the score screen) doesn't wait on the
     // network either, so this shouldn't make marking a card feel any less instant.
     onReview?.(i, ok);
     setFlipped(false);
     setI((v) => v + 1);
   };
+  // Revisit a card marked in error, or just double-check it — matches the score screen's own "you can
+  // always restart" spirit, but for one card instead of the whole deck. Never removes its recorded
+  // verdict on its own; re-marking it (see `mark` above) is what actually changes the score.
+  const back = () => { if (i === 0) return; setFlipped(false); setI((v) => v - 1); };
   const restart = () => { setI(0); setFlipped(false); setRight([]); setWrong([]); };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -353,6 +361,9 @@ export function FlashcardDeck({ deck, onReview }: { deck: TaskFlashcards; onRevi
         <button className="btn ghost" onClick={() => setFlipped((v) => !v)}>{L("Retourner", "Flip")}</button>
         <button className="btn primary deck-btn-right" onClick={() => mark(true)}>{L("Correct", "Correct")} →</button>
       </div>
+      {i > 0 ? (
+        <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Carte précédente", "‹ Previous card")}</button>
+      ) : null}
     </div>
   );
 }
@@ -477,12 +488,25 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
 
   const panelRef = useRef<HTMLDivElement>(null);
 
+  // `doClose` depends on `onClose`, which callers overwhelmingly pass as an inline arrow
+  // (`onClose={() => navigate("")}`) — a fresh function identity on EVERY parent re-render (any poll tick,
+  // any setTasks). That used to sit directly in this effect's dependency array, so the entire mount-time
+  // setup below (focus trap, initial focus, body scroll lock) re-ran on every single parent re-render
+  // while the modal was open — including the `(first || panelRef.current)?.focus()` call, which yanked
+  // focus away from wherever the user actually was (mid-keystroke in the chat input) back to the modal's
+  // first focusable element. Observed live as "I type and it jumps out of the input." Route through a ref
+  // instead so the effect depends on nothing but `nested` and only ever runs on genuine mount/unmount,
+  // while Escape/the modal stack still always call the CURRENT onClose (never a stale closure).
+  const doCloseRef = useRef(doClose);
+  useEffect(() => { doCloseRef.current = doClose; }, [doClose]);
+
   useEffect(() => {
-    modalStack.push(doClose);
+    const stableClose = () => doCloseRef.current();
+    modalStack.push(stableClose);
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (modalStack[modalStack.length - 1] !== doClose) return; // only the topmost modal responds
-      doClose();
+      if (modalStack[modalStack.length - 1] !== stableClose) return; // only the topmost modal responds
+      stableClose();
     };
     document.addEventListener("keydown", onKey);
     // `overflow: hidden` alone does NOT stop background scroll on iOS Safari (a long-standing WebKit quirk)
@@ -525,13 +549,13 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
     };
     document.addEventListener("keydown", onTrapTab);
     return () => {
-      modalStack.splice(modalStack.indexOf(doClose), 1);
+      modalStack.splice(modalStack.indexOf(stableClose), 1);
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("keydown", onTrapTab);
       restoreBody?.();
       previouslyFocused?.focus?.();
     };
-  }, [doClose, nested]);
+  }, [nested]);
 
   const L = useLang();
   return createPortal(

@@ -969,7 +969,12 @@ function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
   const en = lang === "en";
   const [tests, setTests] = useState<{ subject: string; deadline: string }[] | null>(null);
   const [showAll, setShowAll] = useState(false);
-  useEffect(() => { void api.pronoteTests().then((r) => setTests(r.tests)).catch(() => setTests([])); }, []);
+  // A failed fetch used to render identically to "genuinely no tests" (both `setTests([])`) — the widget
+  // just silently vanished either way, which reads as "nothing coming up" when it might actually mean the
+  // load broke. Track the two cases separately so a real failure says so instead of going quiet.
+  const [error, setError] = useState(false);
+  useEffect(() => { void api.pronoteTests().then((r) => setTests(r.tests)).catch(() => { setTests([]); setError(true); }); }, []);
+  if (error) return <div className="exam-strip-wrap"><p className="rewrite-error small">{en ? "Couldn't load upcoming tests." : "Impossible de charger les contrôles à venir."}</p></div>;
   if (!tests?.length) return null;
   const all = [...tests].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline));
   const sorted = showAll ? all : all.slice(0, 4);
@@ -1044,7 +1049,9 @@ function WeekRailFab({ lang, pronoteConnected, onTask }: { lang?: "fr" | "en"; p
 function DueReviews({ lang }: { lang?: "fr" | "en" }) {
   const en = lang === "en";
   const [due, setDue] = useState<{ taskId: string; taskTitle: string; deckTitle: string }[] | null>(null);
-  useEffect(() => { void api.reviewsDue().then((r) => setDue(r.due)).catch(() => setDue([])); }, []);
+  const [error, setError] = useState(false);
+  useEffect(() => { void api.reviewsDue().then((r) => setDue(r.due)).catch(() => { setDue([]); setError(true); }); }, []);
+  if (error) return <p className="rewrite-error small">{en ? "Couldn't load reviews due." : "Impossible de charger les révisions dues."}</p>;
   if (!due?.length) return null;
   // Group by task — several due cards from the same deck shouldn't repeat the task title once each.
   const byTask = new Map<string, { taskTitle: string; deckTitle: string; count: number }>();
@@ -1084,13 +1091,17 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   // chooses WHICH later day, since "lighter" and "when I actually want to do it" aren't always the same
   // day (a lighter Thursday doesn't help if there's a match Thursday evening).
   const [pickingFor, setPickingFor] = useState<string | null>(null);
-  const load = useCallback(() => { void api.workload().then((r) => setDays(r.days)).catch(() => setDays([])); }, []);
+  // A failed load also fell into `setDays([])`, same as a genuinely empty week — "Nothing due this week"
+  // is reassuring when it's actually a load failure, exactly the misleading case this pass targets.
+  const [error, setError] = useState(false);
+  const load = useCallback(() => { setError(false); void api.workload().then((r) => setDays(r.days)).catch(() => { setDays([]); setError(true); }); }, []);
   useEffect(() => { load(); }, [load]);
   // This used to return null and rely on the OLD dash-rail card collapsing itself via `.dash-rail:empty` —
   // now it renders standalone inside the "This week" popover (WeekRailFab), so a silent null here just
   // reads as "the popup doesn't work": you click the button and nothing shows up, loading or genuinely
   // empty look identical (blank). Say which one it actually is instead.
   if (!days) return <p className="muted small">{en ? "Loading…" : "Chargement…"}</p>;
+  if (error) return <p className="rewrite-error small">{en ? "Couldn't load this week." : "Impossible de charger la semaine."} <button type="button" className="btn xs ghost" onClick={load}>{en ? "Retry" : "Réessayer"}</button></p>;
   if (days.every((d) => d.items.length === 0)) return <p className="muted small">{en ? "Nothing due this week." : "Rien de prévu cette semaine."}</p>;
 
   const max = Math.max(1, ...days.map((d) => d.totalEffort));
@@ -1442,8 +1453,13 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  // A failed profile load used to leave `profile` at null forever with no signal — every `profile?.x` below
+  // just silently reads as "empty account" (0 grades, restricted integrations by default) instead of "this
+  // didn't load." Track it explicitly so Settings can say so instead of quietly looking like a fresh account.
+  const [profileError, setProfileError] = useState(false);
+  const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
-  useEffect(() => { void api.profile().then(setProfile); void api.usage().then(setUsage).catch(() => {}); }, []);
+  useEffect(() => { loadProfile(); void api.usage().then(setUsage).catch(() => {}); }, []);
   // Month-to-date AI spend vs. the cap — both computed server-side (EUR, approximate; for visibility + the cap).
   // Was hardcoded to "€" + French comma formatting for every account regardless of language — the
   // underlying spend is tracked in USD server-side (see monthCostUsd/monthlyBudgetUsd in shared/types.ts),
@@ -1463,6 +1479,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   return (
     <main className="settings-page">
       <h1 className="settings-title">{L("Réglages", "Settings")}</h1>
+      {profileError ? (
+        <p className="rewrite-error">{L("Certaines infos du profil n'ont pas pu être chargées.", "Some profile info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
+      ) : null}
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
         <h3>{L("Compte", "Account")}</h3>
@@ -2309,7 +2328,12 @@ function ProfileEditor() {
   const L = useLang();
   const notify = useNotify();
   const [p, setP] = useState<Profile | null>(null);
-  useEffect(() => { void api.profile().then(setP).catch(() => setP(null)); }, []);
+  // A load failure used to be indistinguishable from "still loading" — `catch(() => setP(null))` left this
+  // stuck on "Chargement…" forever with no way to tell the user anything went wrong or let them retry.
+  const [loadError, setLoadError] = useState(false);
+  const load = () => { setLoadError(false); void api.profile().then(setP).catch(() => setLoadError(true)); };
+  useEffect(load, []);
+  if (loadError) return <p className="rewrite-error">{L("Impossible de charger ton profil.", "Couldn't load your profile.")} <button type="button" className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button></p>;
   if (!p) return <p className="muted small">{L("Chargement…", "Loading…")}</p>;
   const saveErr = () => L("Enregistrement impossible — réessaie.", "Couldn't save — try again.");
   const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length + p.courses.length;

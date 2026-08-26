@@ -315,7 +315,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
   return {
     name: p2.name || p1.name,
     about: p2.about || p1.about,
-    track: p2.track || p1.track,
     learningStyle: p2.learningStyle ?? p1.learningStyle,
     preferences: dedupeFacts([...(p1.preferences || []), ...(p2.preferences || [])]),
     people: dedupeFacts([...(p1.people || []), ...(p2.people || [])]),
@@ -328,15 +327,31 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
-    genPerDay: p2.genPerDay ?? p1.genPerDay,
-    timezone: p2.timezone ?? p1.timezone,
-    // Structured settings: explicit ?? picks (a plain {...p2} spread would clobber p1's values with
-    // p2's explicit `undefined` keys from normalizeProfile).
-    responseStyle: p2.responseStyle ?? p1.responseStyle,
-    autoApprove: p2.autoApprove ?? p1.autoApprove,
-    highPriorityPeople: p2.highPriorityPeople ?? p1.highPriorityPeople,
-    autoArchivePatterns: p2.autoArchivePatterns ?? p1.autoArchivePatterns,
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
+    // genPerDay/timezone/responseStyle/autoApprove/highPriorityPeople/autoArchivePatterns/track: all set
+    // through the ONE POST /api/profile/preference route (server/index.ts), all stamped together via
+    // preferencesUpdatedAt. A plain `p2 ?? p1` here used to mean "whichever session touched ANYTHING
+    // most recently wins for ALL of these," not "whichever session actually changed this setting" — a
+    // stale tab on device B doing something unrelated (confirming a task) would silently revert a
+    // setting device A just changed, the "settings aren't the same everywhere" bug. Same stamp-comparison
+    // pattern as `language`/`languageSetAt` above; no stamp on either side (older data) falls back to the
+    // pre-fix behavior so nothing changes for accounts that predate this.
+    ...(() => {
+      const updatedAt = (p: Profile) => Date.parse(p.preferencesUpdatedAt || "") || 0;
+      const u1 = updatedAt(p1), u2 = updatedAt(p2);
+      const side = u1 || u2 ? (u2 >= u1 ? p2 : p1) : p2;
+      const fallback = u1 || u2 ? (u2 >= u1 ? p1 : p2) : p1;
+      return {
+        genPerDay: side.genPerDay ?? fallback.genPerDay,
+        timezone: side.timezone ?? fallback.timezone,
+        responseStyle: side.responseStyle ?? fallback.responseStyle,
+        autoApprove: side.autoApprove ?? fallback.autoApprove,
+        highPriorityPeople: side.highPriorityPeople ?? fallback.highPriorityPeople,
+        autoArchivePatterns: side.autoArchivePatterns ?? fallback.autoArchivePatterns,
+        track: side.track ?? fallback.track,
+        preferencesUpdatedAt: side.preferencesUpdatedAt ?? fallback.preferencesUpdatedAt,
+      };
+    })(),
     // `language` is never actually undefined (normalizeProfile always defaults it to "fr"), so a plain
     // `??` here could never detect "this side never touched it" and always kept p2 (the local session's
     // stale copy), silently reverting another device's language switch on every commit. Use the stamp,

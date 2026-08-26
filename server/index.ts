@@ -837,19 +837,22 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), a
 });
 // Mark a step done/undone (a manual step the user did, or after the client opened a URL step).
 app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), async (req, res) => {
-  const id = String(req.params.id);
-  const index = Number(req.params.index);
-  const done = req.body?.done !== false;
-  const result = typeof req.body?.result === "string" ? req.body.result : undefined;
-  const task = await findTaskOrReload(req, id);
-  const step = task?.steps?.[index];
-  if (!task || !step) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
-  step.done = done;
-  step.doneAt = done ? new Date().toISOString() : undefined;
-  if (result !== undefined) step.result = result;
-  task.updatedAt = new Date().toISOString();
-  await commit(req);
-  res.json(req.session.tasks || []);
+  try {
+    const id = String(req.params.id);
+    const index = Number(req.params.index);
+    if (!Number.isInteger(index) || index < 0) { res.status(400).json({ error: "Invalid step index." }); return; }
+    const done = req.body?.done !== false;
+    const result = typeof req.body?.result === "string" ? req.body.result : undefined;
+    const task = await findTaskOrReload(req, id);
+    const step = task?.steps?.[index];
+    if (!task || !step) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
+    step.done = done;
+    step.doneAt = done ? new Date().toISOString() : undefined;
+    if (result !== undefined) step.result = result;
+    task.updatedAt = new Date().toISOString();
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't update the step — try again." }); }
 });
 // Record one flashcard review — advances/resets its Leitner box and schedules the next `dueAt` (see
 // nextLeitnerReview in shared/types.ts). Deterministic, no AI call. This is what turns flashcard decks from
@@ -1120,43 +1123,62 @@ app.get("/api/usage", requireAuth, async (req, res) => {
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
 app.get("/api/profile", requireAuth, (req, res) => { res.json(req.session.profile || emptyProfile()); });
 app.post("/api/profile", requireAuth, async (req, res) => {
-  const p = (req.session.profile ||= emptyProfile());
-  const category = String(req.body?.category || "");
-  const value = String(req.body?.value || "").trim();
-  if (category === "name") { p.name = value.slice(0, 60) || undefined; }
-  else if (category === "about") { p.about = value.slice(0, 400); }
-  else { const k = listKey(category); if (k && value && !(p as any)[k].some((x: string) => x.toLowerCase() === value.toLowerCase())) (p as any)[k].push(value.slice(0, 160)); }
-  await commit(req);
-  res.json(p);
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const category = String(req.body?.category || "");
+    const value = String(req.body?.value || "").trim();
+    if (category === "name") { p.name = value.slice(0, 60) || undefined; }
+    else if (category === "about") { p.about = value.slice(0, 400); }
+    else {
+      const k = listKey(category);
+      if (!k) { res.status(400).json({ error: `Unknown profile category "${category}".` }); return; }
+      if (value && !(p as any)[k].some((x: string) => x.toLowerCase() === value.toLowerCase())) (p as any)[k].push(value.slice(0, 160));
+    }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
 });
 app.post("/api/profile/preference", requireAuth, async (req, res) => {
-  const p = (req.session.profile ||= emptyProfile());
-  const key = String(req.body?.key || "");
-  const value = req.body?.value;
-  if (key === "responseStyle" && ["concise", "detailed", "casual", "formal"].includes(value)) {
-    p.responseStyle = value;
-  } else if (key === "autoApprove" && Array.isArray(value)) {
-    p.autoApprove = value.map(String);
-  } else if (key === "genPerDay") {
-    p.genPerDay = Math.min(4, Math.max(1, Math.round(Number(value) || 1)));
-  } else if (key === "timezone" && typeof value === "string" && isValidTz(value)) {
-    p.timezone = value;
-  } else if (key === "highPriorityPeople" && Array.isArray(value)) {
-    p.highPriorityPeople = value.map(String);
-  } else if (key === "autoArchivePatterns" && Array.isArray(value)) {
-    p.autoArchivePatterns = value.map(String);
-  } else if (key === "primaryAccount" && value && typeof value === "object" && typeof value.app === "string" && typeof value.accountId === "string") {
-    // Which connected account a multi-account app (Gmail, Calendar, Docs…) defaults to when a task isn't
-    // tied to a specific one (a manual task, a brand-new doc) — see integrations.getAgentTools.
-    (p.primaryAccounts ||= {})[value.app] = value.accountId;
-  } else if (key === "language" && (value === "fr" || value === "en")) {
-    p.language = value;
-    p.languageSetAt = new Date().toISOString();
-  } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {
-    p.track = value;
-  }
-  await commit(req);
-  res.json(p);
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const key = String(req.body?.key || "");
+    const value = req.body?.value;
+    // Every branch below except primaryAccount (a per-app map, merged by union — see mergeProfileStates)
+    // stamps preferencesUpdatedAt: without it, a stale session on another device/tab committing ANYTHING
+    // unrelated could silently overwrite a setting just changed here — see preferencesUpdatedAt's doc
+    // comment in shared/types.ts for the full "settings aren't the same everywhere" failure mode this fixes.
+    if (key === "responseStyle" && ["concise", "detailed", "casual", "formal"].includes(value)) {
+      p.responseStyle = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "autoApprove" && Array.isArray(value)) {
+      p.autoApprove = value.map(String); p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "genPerDay") {
+      p.genPerDay = Math.min(4, Math.max(1, Math.round(Number(value) || 1))); p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "timezone" && typeof value === "string" && isValidTz(value)) {
+      p.timezone = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "highPriorityPeople" && Array.isArray(value)) {
+      p.highPriorityPeople = value.map(String); p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "autoArchivePatterns" && Array.isArray(value)) {
+      p.autoArchivePatterns = value.map(String); p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "primaryAccount" && value && typeof value === "object" && typeof value.app === "string" && typeof value.accountId === "string") {
+      // Which connected account a multi-account app (Gmail, Calendar, Docs…) defaults to when a task isn't
+      // tied to a specific one (a manual task, a brand-new doc) — see integrations.getAgentTools. No stamp
+      // needed: mergeProfileStates unions this per-app map instead of picking one side wholesale.
+      (p.primaryAccounts ||= {})[value.app] = value.accountId;
+    } else if (key === "language" && (value === "fr" || value === "en")) {
+      p.language = value;
+      p.languageSetAt = new Date().toISOString();
+    } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {
+      p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else {
+      // Every recognized key/value combo is handled above — anything else used to fall through to a
+      // silent no-op 200 (profile committed unchanged, client reads back success). A typo'd key or an
+      // out-of-range value should say so, not look like it saved.
+      res.status(400).json({ error: `Unrecognized preference "${key}" or invalid value.` });
+      return;
+    }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
 });
 // Per-subject grades — self-reported (Pronote's read API doesn't expose grades), so Otto can weigh which
 // subject actually needs attention, not just what's due soonest. Upsert by subject name (case-insensitive).

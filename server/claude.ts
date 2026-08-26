@@ -809,7 +809,7 @@ const CREATE_FLASHCARDS_TOOL = {
     title: { type: "string", description: "short label shown on the button, e.g. 'Vocabulaire — Chapitre 4'" },
     cards: {
       type: "array",
-      description: "8-20 cards, MEDIUM length each side (a phrase/sentence, not one word and not a paragraph) — real content from the task's subject, never placeholders.",
+      description: "Around 25 by default when the student didn't name a number, adapted to the actual task (a short formula sheet needs fewer, a whole chapter's vocabulary needs more) and to the student (more if they're drilling hard for a contrôle, fewer for a quick review). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller deck with no explanation, and never try to cram more than 50 into one call (it will fail/truncate before you can even reply). MEDIUM length each side (a phrase/sentence, not one word and not a paragraph) — real content from the task's subject, never placeholders.",
       items: { type: "object", properties: {
         front: { type: "string", description: "the prompt side — a term, question, or formula name" },
         back: { type: "string", description: "the answer side — the definition, translation, or value" },
@@ -860,7 +860,11 @@ export function makeDeck(input: any): { deck: TaskFlashcards } | { error: string
   const cards = (Array.isArray(input?.cards) ? input.cards : [])
     .map((c: any) => ({ front: String(c?.front || "").trim().slice(0, 300), back: String(c?.back || "").trim().slice(0, 300) }))
     .filter((c: { front: string; back: string }) => c.front && c.back)
-    .slice(0, 30);
+    // No real product cap — a student who names a specific count (e.g. "100 flashcards") should get it,
+    // not an arbitrary product-level ceiling; see CREATE_FLASHCARDS_TOOL's description for the model-side
+    // half of this. This slice is a sanity backstop only, against a malformed/runaway response, sized well
+    // above anything OUT.chat's own token budget could ever actually produce in one completion anyway.
+    .slice(0, 300);
   if (!cards.length) return { error: "ERROR: no valid cards (each needs a non-empty front and back)." };
   return { deck: { id: randomUUID(), title, cards, createdAt: new Date().toISOString() } };
 }
@@ -1683,7 +1687,7 @@ const RUN_TOOLS = [
     did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, each ≤15 words, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
     steps: {
       type: "array",
-      description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). Often empty.",
+      description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). NEVER narrate one real action as a chain of its own sub-parts — 'draft the reply', 'create the Gmail draft', 'send it' is the SAME single action (draft it now with your tools, then it's one 'send'-type step, not three); don't manufacture a lookup/research step for something you could and should have just found yourself this run. Often empty.",
       items: { type: "object", properties: {
         text: { type: "string", description: "ONE concrete action, ONE clause — imperative verb + the specific thing, ≤ 8 words, no hedging, cut every word that isn't load-bearing. NEVER stack multiple asks with a colon/semicolon/'and' into one step ('thank her, ask X, and mention Y' is THREE steps, not one) — split each into its own step instead. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'. NEVER describe TONE/STYLE/FORMALITY in the step text itself ('short lowercase reply', 'casual message') — those are drafting instructions for when you actually WRITE the reply, not part of what the step is; name WHO and WHAT only, e.g. 'Reply to Miri about the exchange', never 'Write a short casual reply to Miri'. Exception: a step that GATES a later one (see dependsOn) may name a couple more words of what to capture for that later step, but still stays ONE short clause — never a run-on sentence." },
         automatable: { type: "boolean", description: "true = OTTO can do it with its tools or by finding info (read/search, draft, create/update a doc/sheet/event/task, ENTER/FILL data, comment, research, open a page) — do it NOW unless it waits on a user step (then set dependsOn). false = needs the USER, ONLY for: a judgment/decision/approval, a credential you lack, a payment, or a physical act. NOT for being specific/numeric/tedious; sending a message is a one-click send, not a step." },
@@ -1801,12 +1805,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const profileUpdates: ProfileUpdate[] = [];
   // Plan-only mode: withhold every irreversible/other-people-facing write tool structurally, so the agent
   // physically cannot send/post/delete/schedule — same "deny by absence" pattern already used for irreversible
-  // sends (see isGatedAction). It DOES still get two prep actions: creating a resource doc/sheet/slides, and
-  // drafting (never sending) a Gmail email — see readOnlyPlusPrep.
+  // sends (see isGatedAction). It DOES still get one external prep action: drafting (never sending) a Gmail
+  // email — see readOnlyPlusPrep. Anything document-shaped goes through Otto's own in-house note/flashcard/
+  // quiz tools instead (CREATE_NOTE_TOOL etc. below — always available, not gated by EXECUTION_ENABLED).
   const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusPrep(extras);
   const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
-    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus creating a resource doc/sheet/slides or drafting a Gmail email — never sending"}): ${extras.connected.join(", ")}.\n`
+    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus drafting a Gmail email — never sending. Use your in-house note/flashcard/quiz/brief tools, not Docs/Sheets/Slides, for anything document-shaped"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
   const manualHint = task.source === "manual"
     ? `\nThe USER added this to-do themselves, typed as a rough note. Treat the title as their intent: use your ` +
@@ -1843,7 +1848,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const messages: any[] = [{
     role: "user",
     content: !EXECUTION_ENABLED
-      ? head + deadlineHint + manualHint + `\nGather what you need and record the key facts in submit's "context". You have NO write/create/draft tools this run — do not attempt to act. Break the work into a clear, ordered "steps" list (see PLAN-ONLY MODE above) so the user has an exact plan of what Otto will do once executed, then call submit.`
+      ? head + deadlineHint + manualHint + `\nGather what you need and record the key facts in submit's "context". You DO have a tool to draft a Gmail email right now, plus your own in-house note/flashcard/quiz/brief tools for anything document-shaped — never listing "draft the reply" / "make a note of X" as a step handed to the user when you could just do it now. Actually create that email draft/note/deck NOW with your tools; sending/posting/deleting, and creating a real external Google Doc/Sheet/Slides, are the only things withheld. Only once you've done everything you can, break what's genuinely LEFT (sending, a decision only the user can make, anything needing a tool you don't have) into a clear, ordered "steps" list (see PLAN-ONLY MODE above), then call submit.`
       : focus
       // Focused single-step run (the user hit "Auto-do" on one automatable step).
       ? head + deadlineHint + `\nDo ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) — don't describe it, DO it — then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.`
@@ -1930,7 +1935,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // "did" backstop: the model sometimes omits the structured did[] field even after genuinely writing
     // something (submit still requires synthesis, which then carries the same information) — fall back to
     // the one-line synthesis rather than showing an empty "What Otto did" section for real work.
-    const did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
+    let did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
+    // In-house artifact backstop: a real note/flashcard-deck/quiz call is VERIFIED (it's in *Created below,
+    // not just claimed), same bar as the doc/gmail backstops above — but the model frequently narrates the
+    // task's OTHER work in "did" and forgets to mention the artifact itself, since PreparedPanel already
+    // shows it as a chip. That left a card with real content and no plain-language "Otto made you a note
+    // titled X" line — reported live as "what Otto did isn't clear enough". Add one bullet per artifact
+    // that isn't ALREADY referenced (by title) in an existing did bullet, so the artifact is never silent.
+    const mentions = (title: string) => did.some((d) => d.toLowerCase().includes(title.toLowerCase().slice(0, 20)));
+    const artifactBullets = [
+      ...notesCreated.filter((n) => !mentions(n.title)).map((n) => fr ? `Fiche créée : « ${n.title} »` : `Made a note: "${n.title}"`),
+      ...flashcardsCreated.filter((f) => !mentions(f.title)).map((f) => fr ? `Cartes créées : « ${f.title} » (${f.cards.length})` : `Made flashcards: "${f.title}" (${f.cards.length} cards)`),
+      ...quizzesCreated.filter((q) => !mentions(q.title)).map((q) => fr ? `Quiz créé : « ${q.title} » (${q.questions.length} questions)` : `Made a quiz: "${q.title}" (${q.questions.length} questions)`),
+    ];
+    if (artifactBullets.length) did = [...did, ...artifactBullets].slice(0, 6);
     // Links backstop: if the last doc/sheet/slide it created isn't already linked, add it — a "did" bullet
     // describing an artifact with no way to open it is a broken card, the same failure class as a drafted
     // reply with no Send button (see lastGmailDraft above).
@@ -2205,11 +2223,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
         }
         // Plan-only mode: even a hallucinated call to a write tool name (not offered in the schema, so
         // unlikely, but not impossible) is blocked here too — enforcement can't rely on the model just not
-        // trying. Reads/searches still pass through below. TWO exceptions: creating a resource doc/sheet/
-        // slides, or drafting (never sending) a Gmail email — plan-only's allowed writes (see
-        // readOnlyPlusPrep) — fall through to the real call below instead of being blocked.
+        // trying. Reads/searches still pass through below. ONE exception: drafting (never sending) a Gmail
+        // email — plan-only's one allowed external write (see readOnlyPlusPrep) — falls through to the real
+        // call below instead of being blocked. A real Google Doc/Sheet/Slides create is NOT exempted; the
+        // in-house note/flashcard/quiz tools cover that need without touching a real external account.
         else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName)) && !isPlanOnlyAllowedWrite(String(toolName))) {
-          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run (except creating a NEW resource doc/sheet/slides, or drafting a Gmail email). Put this in \"steps\" instead.";
+          content = "BLOCKED: plan-only mode — no write/create/draft tool is available this run (except drafting a Gmail email, or your in-house note/flashcard/quiz tools). Put this in \"steps\" instead.";
         }
         else {
           // A connected-integration tool (Gmail/Calendar/Slack/GitHub/…). Returns null if it isn't one.
@@ -2410,7 +2429,15 @@ export async function writeStepsFromContext(
           `resource above was already CREATED (not just found), do NOT list ` +
           `"create X" as a step — that's done; instead say what to DO with it now (review it, send it, use it, ` +
           `decide something). Only list creating a document/draft as a step if none of the resources above cover ` +
-          `it yet. Order them; set "dependsOn" to an earlier step's index (0-based, in THIS list) when one must ` +
+          `it yet. NEVER split ONE action into a chain of steps that just narrate its own sub-parts — "draft the ` +
+          `reply" then "create the Gmail draft" then "send it" is ONE step ("Draft the reply to <person>"), not ` +
+          `three; composing a message and creating the draft that holds it are the SAME action, not sequential ` +
+          `ones. Likewise, don't surface "look up/locate/find <thing already needed to write this>" as its own ` +
+          `step — that's research Otto does itself while drafting, not something to hand back to the student; ` +
+          `only make lookup its own step when the step's OUTCOME (a date, a decision, a piece of missing info) ` +
+          `genuinely has to reach the student before the rest can proceed. When in doubt, prefer FEWER, bigger ` +
+          `steps over splitting one real action into its narrated sub-parts. Order them; set "dependsOn" to an ` +
+          `earlier step's index (0-based, in THIS list) when one must ` +
           `happen first — e.g. an automatable step that's blocked until the user makes a call on an earlier one. ` +
           `1 to 6 steps, omit "dependsOn" when a step doesn't wait on another.\n\n` +
           `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
@@ -3013,7 +3040,15 @@ export async function chatAboutTask(
 
   const runRounds = async (): Promise<ChatResult> => {
     for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
-      if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) break; // circuit breaker — see CHAT_TOKEN_CEILING
+      if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) {
+        // Reproduced live: a big tool-call payload (e.g. a large flashcard deck) plus the growing
+        // conversation history can blow the ceiling on round 0 or 1, landing here BEFORE the loop ever
+        // reaches `lastRound` (which is what normally forces a plain-text reply by stripping `tools` from
+        // the request). That used to be completely silent — zero log line, same generic fallback text as
+        // a genuine API failure, with no way to tell the two apart. Log it so it's diagnosable.
+        console.error(`[chat] hit CHAT_TOKEN_CEILING at round ${round} (${result.tokens.in + result.tokens.out} tokens) — falling back`);
+        break;
+      }
       const lastRound = round === CHAT_MAX_ROUNDS - 1;
       const apiMessages = lastRound
         ? [...messages, { role: "user" as const, content: "Out of tool calls for this turn — reply in plain words now, no more tool use." }]
@@ -3080,13 +3115,24 @@ export async function chatAboutTask(
         messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: String(content).slice(0, 2000) });
       }
     }
-    return finish(""); // exhausted CHAT_MAX_ROUNDS still calling tools — the honest fallback line, not silence
+    // Shouldn't normally be reachable — lastRound strips `tools` from the request, which should force a
+    // plain-text reply before the loop runs out — but logged in case some other path lands here, same
+    // reasoning as the CHAT_TOKEN_CEILING log above.
+    console.error(`[chat] exhausted ${CHAT_MAX_ROUNDS} rounds without a plain-text reply — falling back`);
+    return finish("");
   };
   // Hard SLA: the student is staring at a "thinking…" indicator, not reading a report — whatever's still
   // in flight past this point (a slow model round, a hung tool call) gets abandoned in favor of the honest
   // fallback line rather than leave them waiting indefinitely. A Promise.race can't cancel the underlying
   // HTTP call, but it guarantees THIS function returns within the deadline regardless of what DeepSeek does.
-  const CHAT_DEADLINE_MS = 28_000;
+  // Was 28s — reproduced live: a single round asking for a large CREATE_FLASHCARDS batch (DeepSeek v4's
+  // hidden reasoning tokens plus ~50 cards of real output) routinely took LONGER than that, so the
+  // deadline fired and silently discarded a round that was actually about to succeed (visible after the
+  // fact: round 0 finished with real content just after this raced fallback had already been returned).
+  // The client's own `chat` call has no timeout of its own (plain `post`, not `postTimed`) and Vercel's
+  // function ceiling is 300s (vercel.json), so there's ample room to raise this without creating a
+  // mismatch — 45s covers a genuinely large batch while still bailing well before anything else times out.
+  const CHAT_DEADLINE_MS = 45_000;
   return Promise.race([
     runRounds(),
     new Promise<ChatResult>((resolve) => setTimeout(() => resolve(finish("")), CHAT_DEADLINE_MS)),

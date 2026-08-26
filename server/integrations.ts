@@ -589,23 +589,20 @@ export function readOnly(t: AgentTools): AgentTools {
   };
 }
 
-/** Creating a brand-new Google Doc/Sheet/Slides (never editing an existing one) — private to the user,
- *  fully reversible via delete, same "safe to auto-allow" reasoning as isWriteGatedAction's create-new carve-out. */
-export const isResourceCreateTool = (n: string): boolean =>
-  /^GOOGLE(DOCS|SHEETS|SLIDES)_/.test(n) && /CREATE/.test(n) &&
-  !/(UPDATE|MODIFY|PATCH|REPLACE|BATCH|DELETE|APPEND|INSERT)/.test(n);
-
 /** Drafting (never sending) a Gmail email — GMAIL_CREATE/UPDATE_EMAIL_DRAFT are both policy "auto": a draft
  *  sits in the user's own Drafts folder until THEY click Send (GMAIL_SEND_* is separately policy "never" and
- *  isn't matched here), so it's exactly as reversible/safe as the resource-doc carve-out above. */
+ *  isn't matched here), so it's fully reversible via delete. */
 export const isEmailDraftTool = (n: string): boolean => /^GMAIL_(CREATE|UPDATE)_EMAIL_DRAFT/.test(n);
 
-/** Plan-only mode's one exception's-worth of writes: creating a resource doc/sheet/slides, or drafting
- *  (never sending) an email. Both land as reviewable artifacts the user acts on — never an autonomous send. */
-export const isPlanOnlyAllowedWrite = (n: string): boolean => isResourceCreateTool(n) || isEmailDraftTool(n);
+/** Plan-only mode's one exception's-worth of EXTERNAL writes: drafting (never sending) a Gmail email. A new
+ *  Google Doc/Sheet/Slides is deliberately NOT in this carve-out — Otto's own in-house note/flashcard/quiz
+ *  tools (CREATE_NOTE_TOOL etc., always available regardless of EXECUTION_ENABLED — see runTask) already
+ *  cover "make something the student can use" without touching a real external account, so there's no need
+ *  to also grant a live Google Docs/Sheets/Slides create in a mode meant to withhold external writes. */
+export const isPlanOnlyAllowedWrite = (n: string): boolean => isEmailDraftTool(n);
 
-/** Read-only PLUS the two write actions plan-only mode is allowed: creating a new Doc/Sheet/Slides resource,
- *  or drafting a Gmail email for the user to review and send. Every other write stays stripped. */
+/** Read-only PLUS the one write action plan-only mode is allowed: drafting a Gmail email for the user to
+ *  review and send. Every other write (including a new Google Doc/Sheet/Slides) stays stripped. */
 export function readOnlyPlusPrep(t: AgentTools): AgentTools {
   return { tools: t.tools.filter((x) => isRead(x.name) || isPlanOnlyAllowedWrite(x.name)), call: t.call, connected: t.connected };
 }

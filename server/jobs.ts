@@ -192,6 +192,10 @@ async function notifyNewTasks(email: string, found: WebTask[], profile: Profile,
   // "This week" popup to see a heavy day coming. This reuses the ALREADY-throttled once-daily new-task
   // email (rather than a second notification channel) to also mention the heaviest upcoming day, when it's
   // genuinely a pile-up — best-effort, never blocks the email if Pronote is unreachable.
+  // System-sent notification emails (this one included) are Otto's OWN voice, not a drafted reply mirroring
+  // a thread — so unlike a drafted email (which correctly mirrors the recipient's/thread's language), THIS
+  // one must follow the account's own language setting, same as every other user-facing string in the app.
+  const en = profile.language === "en";
   let pileUpLine = "";
   try {
     const [homework, tests] = (await pronoteConnected(email)).connected
@@ -206,13 +210,21 @@ async function notifyNewTasks(email: string, found: WebTask[], profile: Profile,
     // in this email.
     const heavy = days.find((d, i) => i > 0 && d.totalEffort > 0 && (busy.length < 2 ? d.totalEffort >= 3 : d.totalEffort >= median * 1.6));
     if (heavy) {
-      const dow = new Date(`${heavy.date}T00:00:00`).toLocaleDateString("fr-FR", { weekday: "long" });
-      pileUpLine = `<p>${dow} s'annonce chargé — ${heavy.items.length} chose${heavy.items.length > 1 ? "s" : ""} prévue${heavy.items.length > 1 ? "s" : ""}.</p>`;
+      const dow = new Date(`${heavy.date}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long" });
+      pileUpLine = en
+        ? `<p>${dow} is looking busy — ${heavy.items.length} thing${heavy.items.length > 1 ? "s" : ""} planned.</p>`
+        : `<p>${dow} s'annonce chargé — ${heavy.items.length} chose${heavy.items.length > 1 ? "s" : ""} prévue${heavy.items.length > 1 ? "s" : ""}.</p>`;
     }
   } catch { /* best-effort — never blocks the new-task email */ }
-  const subject = found.length === 1 ? `Otto — nouvelle tâche : ${found[0].title}` : `Otto — ${found.length} nouvelles tâches`;
+  const subject = en
+    ? (found.length === 1 ? `Otto — new task: ${found[0].title}` : `Otto — ${found.length} new tasks`)
+    : (found.length === 1 ? `Otto — nouvelle tâche : ${found[0].title}` : `Otto — ${found.length} nouvelles tâches`);
   const items = found.slice(0, 10).map((t) => `<li><b>${escapeHtml(t.title)}</b>${t.why ? ` — ${escapeHtml(t.why)}` : ""}</li>`).join("");
-  const body = `<p>Otto a trouvé ${found.length === 1 ? "une nouvelle tâche" : `${found.length} nouvelles tâches`} :</p><ul>${items}</ul>${pileUpLine}<p><a href="${appUrl}/tasks">Ouvrir Otto →</a></p>`;
+  const intro = en
+    ? `<p>Otto found ${found.length === 1 ? "a new task" : `${found.length} new tasks`}:</p>`
+    : `<p>Otto a trouvé ${found.length === 1 ? "une nouvelle tâche" : `${found.length} nouvelles tâches`} :</p>`;
+  const openLine = en ? `<p><a href="${appUrl}/tasks">Open Otto →</a></p>` : `<p><a href="${appUrl}/tasks">Ouvrir Otto →</a></p>`;
+  const body = `${intro}<ul>${items}</ul>${pileUpLine}${openLine}`;
   const result = await integrations.sendSystemEmail(email, { to: email, subject, body, primaryAccounts: profile.primaryAccounts });
   void store.recordEvent(email, "task_alert_sent", { message: result.ok ? `Emailed ${found.length} new task${found.length === 1 ? "" : "s"}` : `Skipped: ${result.error || "send failed"}` });
 }
@@ -393,7 +405,7 @@ async function processExecuteStep(job: store.Job): Promise<string> {
     permTools = await integrations.getAgentTools(email, {
       ...(t?.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {}),
       primaryAccounts: profile.primaryAccounts,
-    }).catch(() => undefined);
+    }).catch((e2) => { console.error(`[jobs] fallback getAgentTools ALSO failed for step ${index} on task ${taskId}:`, e2); return undefined; });
   }
   const academic = await loadAcademicContext(email);
   // Unlike processExecuteTask (which reverts the task's status and stamps lastError on failure), this had
@@ -401,6 +413,11 @@ async function processExecuteStep(job: store.Job): Promise<string> {
   // surfaced, until cron's once-a-day orphan recovery silently reran it as a full execute_task instead of
   // retrying the specific step. Mirror processExecuteTask's pattern here too.
   try {
+    // Both tool loads failed above — don't let the step proceed and fail confusingly deep inside runStep
+    // (which would stamp a generic AI/tool error onto lastError with no hint the real cause was "couldn't
+    // reach your connected accounts"). Throw a specific message now, INSIDE this try, so the catch below
+    // stamps it onto task.lastError and reverts status exactly like any other step failure.
+    if (!permTools) throw new Error("Couldn't connect to your accounts — try again in a moment.");
     const updated = await tasks.runStep(list, taskId, index, profile, permTools, job.input?.answer ? String(job.input.answer) : undefined, academic);
     if (updated && (updated.links?.length || updated.sendables?.length)) {
       const droppedArtifacts = await integrations.verifyTaskArtifacts(email, updated).catch(() => []);

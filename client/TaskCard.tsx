@@ -953,10 +953,14 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
       ) : null}
       {/* In-app notes, flashcard decks and quizzes — no external tab, they open right here in a popup.
           Row-card layout (icon badge + title + meta) rather than an inline pill: these are real artifacts
-          worth a proper tap target, not tags, and stacking them makes it obvious there are several. */}
+          worth a proper tap target, not tags, and stacking them makes it obvious there are several. The
+          "Made for you" label used to only show when `did` ALSO had bullets, so a run that created an
+          artifact but wrote no matching `did` bullet (an in-house tool call the model didn't narrate) left
+          the chips floating with no heading at all — unclear these were things Otto just made. Show the
+          label off artifactCount alone so the chips are never unlabeled. */}
       {artifactCount > 0 ? (
         <>
-          {task.did?.length ? <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span> : null}
+          <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
           <div className="note-chips prepared-chips">
             {task.notes?.map((n) => (
               <button key={n.id} type="button" className="note-chip" onClick={() => onOpenNote(n.id)}>

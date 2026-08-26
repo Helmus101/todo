@@ -61,6 +61,14 @@ export interface Profile {
   autoArchivePatterns?: string[]; // email patterns to auto-archive (e.g., ["newsletter", "promotions"])
   timezone?: string;      // the user's IANA timezone (auto-captured from the browser) — source of truth for
                           // all "local day" boundaries (sweep cadence, daily-minimum). Falls back to UTC.
+  /** ISO stamp of the last change to ANY of genPerDay/timezone/responseStyle/autoApprove/
+   *  highPriorityPeople/autoArchivePatterns/track (all set through the single POST /api/profile/preference
+   *  route) — same reason as pausedAt/languageSetAt: without a stamp, mergeProfileStates's cross-device
+   *  merge had no way to tell "this side actually changed the setting" from "this side just has an old
+   *  session lying around," so a plain `p2 ?? p1` picked whichever device happened to commit ANYTHING
+   *  (even an unrelated task click) most recently — silently reverting a real settings change made on
+   *  another device/tab the moment the stale session did something else. */
+  preferencesUpdatedAt?: string;
   // Cumulative AI token usage across sweeps + task runs (for the Settings "usage" view). Cumulative counters
   // are monotonic (merged by MAX across devices); the month* counters roll over each calendar month and back
   // the monthly spend cap. Approximate — for visibility + a cost ceiling, not exact billing.
@@ -154,6 +162,7 @@ export function normalizeProfile(p: any): Profile {
       : undefined,
     language: p?.language === "en" ? "en" : "fr",
     languageSetAt: typeof p?.languageSetAt === "string" ? p.languageSetAt : undefined,
+    preferencesUpdatedAt: typeof p?.preferencesUpdatedAt === "string" ? p.preferencesUpdatedAt : undefined,
     grades: Array.isArray(p?.grades)
       ? p.grades.map((g: any) => ({
           id: typeof g?.id === "string" && g.id ? g.id : newId(),

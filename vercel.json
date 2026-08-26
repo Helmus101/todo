@@ -6,6 +6,7 @@
       "maxDuration": 300
     }
   },
+  "regions": ["cdg1"],
   "crons": [
     { "path": "/api/cron/drain", "schedule": "0 12 * * *" }
   ],

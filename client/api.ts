@@ -1,5 +1,5 @@
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { emptyProfile, normalizeProfile } from "../shared/types.ts";
+import { normalizeProfile } from "../shared/types.ts";
 
 export interface IntegrationItem { key: string; name: string; blurb: string; category: string; logo: string; connected: boolean; accounts?: ConnectedAccount[]; }
 export interface ConnectedAccount { id: string; email?: string; toolkit: string; status: string; }
@@ -139,9 +139,12 @@ export const api = {
   runSubstep: (id: string, index: number, subIndex: number): Promise<WebTask[]> => postTimed(`/api/tasks/${id}/step/${index}/substep/${subIndex}/run`, 25000),
   sendDraft: (id: string, index: number): Promise<WebTask> => post(`/api/tasks/${id}/send/${index}`),
   editDraft: (id: string, index: number, patch: { subject?: string; body?: string; text?: string }): Promise<WebTask> => post(`/api/tasks/${id}/sendable/${index}/edit`, patch),
-  // Profile responses are normalized to a valid shape (and fall back to empty on a 401/odd body) so the
-  // editor never receives a non-Profile object and crashes.
-  profile: (): Promise<Profile> => req("/api/profile").then(j).then(normalizeProfile).catch(() => emptyProfile()),
+  // Profile responses are normalized to a valid shape. Used to swallow EVERY failure (network drop, a real
+  // 500, a malformed body) into a silent `emptyProfile()` — so a genuine load failure looked identical to
+  // "you just have no profile facts yet," and a caller like ProfileEditor's "Chargement…" state could sit
+  // there resolved-but-empty forever with no way to tell the user anything went wrong. Now it only rethrows;
+  // callers show a real "couldn't load" state and offer retry (see ProfileEditor/SettingsPage in App.tsx).
+  profile: (): Promise<Profile> => req("/api/profile").then(j).then(normalizeProfile),
   setProfile: (category: string, value: string): Promise<Profile> => post("/api/profile", { category, value }).then(normalizeProfile),
   setProfilePreference: (key: string, value: any): Promise<Profile> => post("/api/profile/preference", { key, value }).then(normalizeProfile),
   delProfile: (category: string, index: number): Promise<Profile> => req(`/api/profile/${category}/${index}`, { method: "DELETE" }).then(j).then(normalizeProfile),
