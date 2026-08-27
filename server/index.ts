@@ -159,6 +159,15 @@ async function findTaskOrReload(req: express.Request, id: string): Promise<WebTa
   return (req.session.tasks || []).find((t) => t.id === id);
 }
 
+// Express 4 does NOT auto-catch a rejected promise from an async route handler — a route that forgets
+// its own try/catch (verified: ~12 routes did, below) lets that rejection fall through to the process-
+// level `unhandledRejection` listener at the bottom of this file, which only logs. The ORIGINAL request
+// never gets a response at all — it hangs until the client's own timeout, instead of the clean 500 the
+// catch-all error middleware (also at the bottom of this file) is already built to return. This routes
+// exactly those otherwise-unguarded rejections into that EXISTING middleware via `next(err)`, rather
+// than adding a second one — every route that already has its own try/catch is unaffected either way.
+const ah = (fn: RequestHandler): RequestHandler => (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
+
 const requireAuth: RequestHandler = (req, res, next) => {
   if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
   next();
@@ -198,7 +207,7 @@ const toolsFor = (req: express.Request) => integrations.getAgentTools(req.sessio
 const normEmail = (s: unknown) => String(s || "").trim().toLowerCase();
 const validEmail = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
 
-app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
+app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   if (!validEmail(email) || password.length < 8 || password.length > 200) { res.status(400).json({ error: "Enter a valid email and a password between 8 and 200 characters." }); return; }
@@ -228,9 +237,9 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), async (req, res) => {
     void recordEvent(email, "signup", {});
     saveSession(req).then(() => res.json({ ok: true }));
   });
-});
+}));
 
-app.post("/api/auth/login", rateLimit(10, 15 * 60_000), async (req, res) => {
+app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   // Without this, getUser() always returns null when Supabase isn't configured (e.g. local dev with no
@@ -256,7 +265,7 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), async (req, res) => {
     await saveSession(req);
     res.json({ ok: true });
   });
-});
+}));
 
 app.post("/api/auth/logout", (req, res) => {
   const email = req.session.user;
@@ -327,7 +336,7 @@ app.get("/api/account/export", requireAuth, rateLimit(5, 60_000), async (req, re
 
 // ── Integrations (Composio: Google, Slack, GitHub, Notion, Linear, …) ───────────
 // List the catalog + which the account has connected (status is queried LIVE from Composio per account).
-app.get("/api/integrations", requireAuth, async (req, res) => {
+app.get("/api/integrations", requireAuth, ah(async (req, res) => {
   const ready = integrations.integrationsReady();
   const apps = integrations.CATALOG.map((c) => c.key);
   const statuses = ready ? await integrations.getAllConnectionStatuses(req.session.user!, apps, req.session.integrations || {}) : {};
@@ -335,15 +344,15 @@ app.get("/api/integrations", requireAuth, async (req, res) => {
     ready,
     items: integrations.CATALOG.map((c) => ({ key: c.key, name: c.name, blurb: c.blurb, category: c.category, logo: integrations.logoFor(c.toolkit), connected: !!(statuses as any)[c.key] })),
   });
-});
+}));
 
 // Get connected accounts for a specific app (supports multiple accounts)
-app.get("/api/integrations/:app/accounts", requireAuth, async (req, res) => {
+app.get("/api/integrations/:app/accounts", requireAuth, ah(async (req, res) => {
   const app2 = String(req.params.app);
   if (!integrations.CATALOG.some((c) => c.key === app2)) { res.status(404).json({ error: "Unknown integration." }); return; }
   const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2, true) : [];
   res.json({ accounts });
-});
+}));
 
 // GET so a plain <a href> can carry the user through the OAuth redirect (like /auth/google).
 app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
@@ -364,9 +373,9 @@ app.get("/integrations/callback", (_req, res) => res.redirect("/settings"));
 
 // ── Pronote — parallel to the Composio-routed integrations above: no OAuth exists, so this is a plain
 // credential form instead of a redirect. READ-ONLY (homework); never wired into the agent's toolset.
-app.get("/api/integrations/pronote/status", requireAuth, async (req, res) => {
+app.get("/api/integrations/pronote/status", requireAuth, ah(async (req, res) => {
   res.json(await pronoteSvc.pronoteConnected(req.session.user!));
-});
+}));
 app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_000), async (req, res) => {
   const { url, username, password, kind } = req.body || {};
   if (typeof url !== "string" || typeof username !== "string" || typeof password !== "string") {
@@ -465,7 +474,7 @@ app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req
 // ── Status ──────────────────────────────────────────────────────────────────
 // googleConnected now means "Gmail is connected via Composio" (the minimum to generate tasks). Cached
 // briefly so polling this hot endpoint doesn't hammer Composio.
-app.get("/api/status", async (req, res) => {
+app.get("/api/status", ah(async (req, res) => {
   // Both checks are independent reads — running them sequentially (the old code awaited one, then the
   // other) doubled this endpoint's latency for no reason. It's polled on every app open/focus/tab-switch
   // (see client/App.tsx's status refresh), so that add-up was a real, constant source of felt latency.
@@ -499,7 +508,7 @@ app.get("/api/status", async (req, res) => {
     streak: req.session.profile?.streak,
   };
   res.json(s);
-});
+}));
 
 // "Pause all AI usage" — the ONE toggle that stops generation and task runs. Enforced server-side
 // (isPaused, used below) so it holds even if a stale client tab tries to call one of those routes anyway.
@@ -857,7 +866,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
 // Record one flashcard review — advances/resets its Leitner box and schedules the next `dueAt` (see
 // nextLeitnerReview in shared/types.ts). Deterministic, no AI call. This is what turns flashcard decks from
 // a one-shot artifact into genuine spaced repetition — see also GET /api/reviews/due below.
-app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rateLimit(200, 60_000), async (req, res) => {
+app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rateLimit(200, 60_000), ah(async (req, res) => {
   const id = String(req.params.id);
   const deckId = String(req.params.deckId);
   const cardIndex = Number(req.params.cardIndex);
@@ -873,11 +882,11 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   task.updatedAt = new Date().toISOString();
   await commit(req);
   res.json(req.session.tasks || []);
-});
+}));
 // Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
 // repetition only actually compounds if the student can see everything due at a glance instead of having
 // to reopen each task to check. Cheap enough to compute on every request (no AI, just a filter/sort).
-app.get("/api/reviews/due", requireAuth, async (req, res) => {
+app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
   const now = Date.now();
   const due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] = [];
   for (const t of req.session.tasks || []) {
@@ -891,7 +900,7 @@ app.get("/api/reviews/due", requireAuth, async (req, res) => {
     }
   }
   res.json({ due: due.slice(0, 60) });
-});
+}));
 // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.
 // Costs one AI call, so it's gated the same as any other interactive AI action (paused/budget).
 app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {
@@ -1028,14 +1037,14 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_00
 });
 
 // ── Jobs + timeline (the durable execution layer's public surface) ────────────
-app.get("/api/jobs/:id", requireAuth, async (req, res) => {
+app.get("/api/jobs/:id", requireAuth, ah(async (req, res) => {
   const job = await getJob(String(req.params.id), req.session.user!);
   if (!job) { res.status(404).json({ error: "not found" }); return; }
   res.json({ id: job.id, type: job.type, status: job.status, taskId: job.task_id, attempts: job.attempt_count, error: job.last_error, createdAt: job.created_at, finishedAt: job.finished_at });
-});
-app.get("/api/tasks/:id/events", requireAuth, async (req, res) => {
+}));
+app.get("/api/tasks/:id/events", requireAuth, ah(async (req, res) => {
   res.json(await eventsForTask(req.session.user!, String(req.params.id)));
-});
+}));
 // Client-driven drain "kick": while any of the user's jobs are queued (e.g. execution queued by a sweep),
 // the OPEN client kicks one job at a time so online users see work happen within seconds, not at the next
 // cron tick. Each kick is one bounded function invocation — serverless-friendly.
@@ -1159,7 +1168,12 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
       p.highPriorityPeople = value.map(String); p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "autoArchivePatterns" && Array.isArray(value)) {
       p.autoArchivePatterns = value.map(String); p.preferencesUpdatedAt = new Date().toISOString();
-    } else if (key === "primaryAccount" && value && typeof value === "object" && typeof value.app === "string" && typeof value.accountId === "string") {
+    } else if (key === "primaryAccount" && value && typeof value === "object" && typeof value.app === "string" && typeof value.accountId === "string"
+      // Defense-in-depth: value.app is attacker-controlled and becomes an object key below. Not currently
+      // exploitable (accountId is constrained to a string, and assigning a string through the __proto__
+      // setter is a documented no-op), but an explicit denylist means it can never become exploitable if
+      // that value-type constraint ever loosens.
+      && !["__proto__", "constructor", "prototype"].includes(value.app)) {
       // Which connected account a multi-account app (Gmail, Calendar, Docs…) defaults to when a task isn't
       // tied to a specific one (a manual task, a brand-new doc) — see integrations.getAgentTools. No stamp
       // needed: mergeProfileStates unions this per-app map instead of picking one side wholesale.
@@ -1187,7 +1201,7 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
 // A manually-logged grade always APPENDS a new entry — never overwrites a same-subject one. Unlike the
 // Pronote sync (which writes "the current average as of now", one row per subject), a hand-entered grade
 // is a specific test/assignment score the student is choosing to keep a record of, so history matters.
-app.post("/api/profile/grade", requireAuth, async (req, res) => {
+app.post("/api/profile/grade", requireAuth, ah(async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   const subject = String(req.body?.subject || "").trim().slice(0, 60);
   const grade = Number(req.body?.grade);
@@ -1197,7 +1211,7 @@ app.post("/api/profile/grade", requireAuth, async (req, res) => {
   list.push({ id: randomUUID(), subject, grade: Math.max(0, Math.min(scale, grade)), scale, updatedAt: new Date().toISOString(), source: "manual" });
   await commit(req);
   res.json(p);
-});
+}));
 // Delete ONE grade entry by id (the normal path from the UI's per-row × ). Falls back to matching by
 // subject for anything still lacking an id (a pre-history-model entry that never got normalized) or for
 // a bulk "remove this whole subject" — same param, whichever matches.
@@ -1220,7 +1234,7 @@ app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
 // for a student whose school doesn't use it at all (most IB/international schools). Merged into the SAME
 // data ExamCountdown/computeWorkload already consume — see GET /api/pronote/tests and /api/workload below —
 // so a manual-entry student gets the identical exam-countdown/workload experience a Pronote student does.
-app.post("/api/profile/exam", requireAuth, async (req, res) => {
+app.post("/api/profile/exam", requireAuth, ah(async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   const subject = String(req.body?.subject || "").trim().slice(0, 60);
   const deadline = String(req.body?.deadline || "");
@@ -1229,7 +1243,7 @@ app.post("/api/profile/exam", requireAuth, async (req, res) => {
   list.push({ id: randomUUID(), subject, deadline });
   await commit(req);
   res.json(p);
-});
+}));
 app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());
