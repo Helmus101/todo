@@ -685,7 +685,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       }
     } catch { /* best-effort */ }
     const out = await chatAboutTask(
-      { title: t.title, why: t.why, context: t.context, steps: t.steps, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue },
+      { title: t.title, why: t.why, context: t.context, steps: t.steps, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       req.session.profile,
@@ -914,6 +914,25 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   const { box, dueAt } = nextLeitnerReview(prev?.box, correct);
   card.review = { seen: (prev?.seen || 0) + 1, correct: (prev?.correct || 0) + (correct ? 1 : 0), lastAt: new Date().toISOString(), dueAt, box };
   deck!.lastReviewedAt = new Date().toISOString();
+  task.updatedAt = new Date().toISOString();
+  await commit(req);
+  res.json(req.session.tasks || []);
+}));
+// Record one quiz attempt (a full pass through the quiz, not per-question) — mirrors the flashcard review
+// route above: deterministic, no AI call, just persists the score so it survives closing the popup. Capped
+// at 20 attempts, newest last (TaskQuiz.attempts was already reserved for this — see shared/types.ts).
+const QUIZ_ATTEMPT_CAP = 20;
+app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_000), ah(async (req, res) => {
+  const id = String(req.params.id);
+  const quizId = String(req.params.quizId);
+  const total = Number(req.body?.total);
+  const score = Number(req.body?.score);
+  const wrong = Array.isArray(req.body?.wrong) ? req.body.wrong.filter((n: any) => Number.isInteger(n)).slice(0, 50) : undefined;
+  if (!Number.isInteger(total) || total <= 0 || !Number.isInteger(score) || score < 0 || score > total) { res.status(400).json({ error: "Invalid score." }); return; }
+  const task = await findTaskOrReload(req, id);
+  const quiz = task?.quizzes?.find((q) => q.id === quizId);
+  if (!task || !quiz) { res.status(404).json({ error: "Quiz not found — it may have already changed elsewhere." }); return; }
+  quiz.attempts = [...(quiz.attempts || []), { at: new Date().toISOString(), score, total, ...(wrong?.length ? { wrong } : {}) }].slice(-QUIZ_ATTEMPT_CAP);
   task.updatedAt = new Date().toISOString();
   await commit(req);
   res.json(req.session.tasks || []);

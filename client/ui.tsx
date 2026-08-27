@@ -176,6 +176,48 @@ export function withInlineLinks(text: string): ReactNode {
   return parts;
 }
 
+// DeepSeek regularly answers math questions in raw LaTeX (`\(a^2+b^2\)`, `\frac{1}{2}`) even though nothing
+// asks it to — reported live: a chat reply showing literal backslashes/braces instead of real math. Pulling
+// in a LaTeX renderer (KaTeX etc.) for what's still plain chat prose is more machinery than this needs;
+// instead rewrite the common subset to plain Unicode math so it just reads correctly, no library, no
+// clickable/interactive output — this is a pure text→text pass, same string type in and out.
+const SUPERSCRIPT: Record<string, string> = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "+": "⁺", "-": "⁻", "=": "⁼", "(": "⁽", ")": "⁾", n: "ⁿ", i: "ⁱ" };
+const SUBSCRIPT: Record<string, string> = { "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉", "+": "₊", "-": "₋", "=": "₌", "(": "₍", ")": "₎" };
+// A char with no Unicode counterpart (most letters) falls back to `^x`/`_x` rather than silently dropping
+// it — losing the exponent entirely would be worse than an unconverted caret.
+const scriptify = (s: string, map: Record<string, string>, marker: string): string =>
+  [...s].every((c) => map[c]) ? [...s].map((c) => map[c]).join("") : `${marker}${s.length > 1 ? `(${s})` : s}`;
+const LATEX_SYMBOLS: [RegExp, string][] = [
+  [/\\times/g, "×"], [/\\cdot/g, "·"], [/\\div/g, "÷"], [/\\pm/g, "±"], [/\\mp/g, "∓"],
+  [/\\leq?/g, "≤"], [/\\geq?/g, "≥"], [/\\neq/g, "≠"], [/\\approx/g, "≈"], [/\\equiv/g, "≡"],
+  [/\\(right|left)?arrow/g, "→"], [/\\Rightarrow/g, "⇒"], [/\\infty/g, "∞"],
+  [/\\pi/g, "π"], [/\\theta/g, "θ"], [/\\alpha/g, "α"], [/\\beta/g, "β"], [/\\gamma/g, "γ"], [/\\Gamma/g, "Γ"],
+  [/\\[Dd]elta/g, "Δ"], [/\\lambda/g, "λ"], [/\\mu/g, "μ"], [/\\sigma/g, "σ"], [/\\phi/g, "φ"], [/\\omega/g, "ω"],
+  [/\\sum/g, "Σ"], [/\\prod/g, "Π"], [/\\int/g, "∫"], [/\\forall/g, "∀"], [/\\exists/g, "∃"],
+  [/\\in/g, "∈"], [/\\notin/g, "∉"], [/\\subset/g, "⊂"], [/\\cup/g, "∪"], [/\\cap/g, "∩"], [/\\emptyset/g, "∅"],
+  [/\\(left|right|,|!|;|:|quad|qquad)/g, ""],
+];
+function formatMath(text: string): string {
+  if (!text.includes("\\") && !text.includes("$")) return text; // fast path — the overwhelming majority of turns have no math at all
+  let s = text
+    // Strip the delimiter wrappers — \( \) \[ \] $ $ $$ $$ — the content inside is what actually gets
+    // converted; the delimiters themselves are LaTeX plumbing a reader has no use for.
+    .replace(/\\\[|\\\]|\\\(|\\\)/g, "")
+    .replace(/\$\$?/g, "")
+    .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)")
+    .replace(/\\sqrt\{([^{}]*)\}/g, "√($1)")
+    .replace(/\\binom\{([^{}]*)\}\{([^{}]*)\}/g, "C($1,$2)")
+    .replace(/\\text\{([^{}]*)\}/g, "$1");
+  for (const [re, rep] of LATEX_SYMBOLS) s = s.replace(re, rep);
+  // ^{...}/_{...} (braced, so multi-char) then ^x/_x (single char) — braced form must run first or the
+  // single-char pattern would fire on just the `{`.
+  s = s.replace(/\^\{([^{}]*)\}/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));
+  s = s.replace(/_\{([^{}]*)\}/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
+  s = s.replace(/\^(\S)/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));
+  s = s.replace(/_(\S)/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
+  return s.replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
+}
+
 /** Light markdown → JSX for an in-app note (CREATE_NOTE's body): headings, **bold**, and bullet/numbered
  *  lists. Never sent anywhere — this only ever renders inside the popup, so a small hand-rolled pass is
  *  enough (no need for a full markdown library just for this). */
@@ -192,7 +234,7 @@ const splitRow = (line: string): string[] =>
 const isTableSep = (line: string): boolean => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/.test(line);
 
 export function renderNoteBody(md: string): ReactNode {
-  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const lines = formatMath(md).replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let list: string[] | null = null;
   const flushList = () => {
@@ -264,7 +306,7 @@ function withInlineLinksAndBold(text: string): ReactNode {
  *  conversation, not a document). User messages are never run through this — a student pasting `**` from
  *  their own notes shouldn't get it silently eaten. */
 export function renderChatText(text: string): ReactNode {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const lines = formatMath(text).replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let list: string[] | null = null;
   const flushList = () => {
@@ -411,11 +453,11 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
         <div className="deck-card-inner">
           <div className="deck-card-face deck-card-front">
             <span className="deck-face-label">{L("Question", "Front")}</span>
-            <div className="deck-face-text">{card!.front}</div>
+            <div className="deck-face-text">{formatMath(card!.front)}</div>
           </div>
           <div className="deck-card-face deck-card-back">
             <span className="deck-face-label">{L("Réponse", "Back")}</span>
-            <div className="deck-face-text">{card!.back}</div>
+            <div className="deck-face-text">{formatMath(card!.back)}</div>
           </div>
         </div>
       </div>
@@ -474,6 +516,14 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
     const id = setTimeout(next, 1600);
     return () => clearTimeout(id);
   }, [picked]);
+  // Persist the score the moment the pass finishes — best-effort (a failed write just means this one
+  // attempt isn't referenceable later, not a broken quiz) and fires again on every restart-then-finish,
+  // same as flashcards' onReview firing on every card.
+  useEffect(() => {
+    if (!done || !taskId) return;
+    void api.recordQuizAttempt(taskId, quiz.id, right.length, seq.length, wrongIdx).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done || !q) return;
@@ -505,14 +555,14 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
       <h3 className="note-popup-title">{quiz.title}</h3>
       <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / seq.length) * 100}%` }} /></div>
       <div className="deck-progress">{i + 1} / {seq.length}</div>
-      <div className="quiz-q">{q!.q}</div>
+      <div className="quiz-q">{formatMath(q!.q)}</div>
       <div className="quiz-opts">
         {q!.options.map((opt, oi) => {
           const state = picked === null ? "" : oi === q!.correct ? "correct" : oi === picked ? "wrong" : "";
           return (
             <button key={oi} type="button" className={`quiz-opt ${state}`} disabled={picked !== null} onClick={() => pick(oi)}>
               <span className="quiz-opt-key">{oi + 1}</span>
-              <span className="quiz-opt-text">{opt}</span>
+              <span className="quiz-opt-text">{formatMath(opt)}</span>
               {/* Was border/background-only (deliberately not red/green — see the one-accent rule) but with
                   no text/icon and no aria-live announcement, a screen-reader student got zero signal about
                   which answer was right after picking. */}
@@ -527,7 +577,7 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
           <p className="sr-only" role="status" aria-live="polite">
             {picked === q!.correct ? L("Correct.", "Correct.") : L(`Incorrect. La bonne réponse était : ${q!.options[q!.correct]}.`, `Incorrect. The correct answer was: ${q!.options[q!.correct]}.`)}
           </p>
-          {q!.why && <p className="quiz-why">{q!.why}</p>}
+          {q!.why && <p className="quiz-why">{formatMath(q!.why)}</p>}
           <div className="deck-acts">
             <button className="btn primary" onClick={next}>{L("Suivant", "Next")} →</button>
           </div>

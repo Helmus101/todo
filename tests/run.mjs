@@ -815,8 +815,8 @@ check("an out-of-range `correct` drops that question", "error" in makeQuiz({ tit
 // pointed at the wrong answer.
 const remapped = makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["la bonne", "fausse", "la bonne", "fausse2"], correct: 0 }] });
 check("duplicate options collapse and `correct` still points at the RIGHT TEXT after the shift", "quiz" in remapped && remapped.quiz.questions[0].options[remapped.quiz.questions[0].correct] === "la bonne");
-const manyQuestions = Array.from({ length: 20 }, (_, i) => ({ q: `q${i}`, options: ["a", "b"], correct: 0 }));
-check("questions capped at 15", makeQuiz({ title: "Q", questions: manyQuestions }).quiz.questions.length === 15);
+const manyQuestions = Array.from({ length: 60 }, (_, i) => ({ q: `q${i}`, options: ["a", "b"], correct: 0 }));
+check("questions capped at 50 (sanity backstop, matches CREATE_QUIZ's 50-per-call ceiling)", makeQuiz({ title: "Q", questions: manyQuestions }).quiz.questions.length === 50);
 check("all-invalid questions produce an error, no artifact", "error" in makeQuiz({ title: "Q", questions: [{ q: "", options: [], correct: 0 }] }));
 check("a question left with only 1 surviving option (after dedupe) is dropped", "error" in makeQuiz({ title: "Q", questions: [{ q: "x?", options: ["a", "a", "a"], correct: 0 }] }));
 

@@ -849,7 +849,7 @@ const CREATE_QUIZ_TOOL = {
     title: { type: "string", description: "short label shown on the button, e.g. 'Quiz — Mécanique du point'" },
     questions: {
       type: "array",
-      description: "5-12 questions on the task's real subject matter — never placeholders, never the student's own assigned exercise reworded. WRITE THESE LIKE THE REAL THING, not generic trivia: match the phrasing, question types, and rigor of an actual contrôle/bac/IB paper for this subject and level (see VOCABULARY/track above for which) — a maths question should require the same steps a real exam question would, a history question should ask for analysis/argument the way a real dissertation prompt does, not just a fact lookup, unless the notion genuinely IS a fact lookup. Calibrate difficulty to THIS student: if their profile shows a grade for this subject, weak (well below the class/scale norm) means start with more foundational/scaffolded questions before harder ones; strong means skip the easy ones and go straight to exam-level rigor. No signal either way → assume mid-level exam difficulty, not a beginner quiz.",
+      description: "Around 8-12 by default when the student didn't name a number, adapted to the actual task (a single short notion needs fewer, a whole chapter needs more) and to the student (more if they're stress-testing understanding before a contrôle, fewer for a quick check). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller quiz with no explanation. On subject matter: never placeholders, never the student's own assigned exercise reworded. WRITE THESE LIKE THE REAL THING, not generic trivia: match the phrasing, question types, and rigor of an actual contrôle/bac/IB paper for this subject and level (see VOCABULARY/track above for which) — a maths question should require the same steps a real exam question would, a history question should ask for analysis/argument the way a real dissertation prompt does, not just a fact lookup, unless the notion genuinely IS a fact lookup. Calibrate difficulty to THIS student: if their profile shows a grade for this subject, weak (well below the class/scale norm) means start with more foundational/scaffolded questions before harder ones; strong means skip the easy ones and go straight to exam-level rigor. No signal either way → assume mid-level exam difficulty, not a beginner quiz.",
       items: { type: "object", properties: {
         q: { type: "string", description: "the question — one clear sentence" },
         options: { type: "array", description: "3-4 answer options. EXACTLY ONE is correct; the wrong ones must be genuinely plausible (a common misconception, an off-by-one, the right idea applied to the wrong case). An obviously-silly option teaches nothing.", items: { type: "string" } },
@@ -917,7 +917,10 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
       return { q, options: kept.map((o) => o.text), correct, ...(why ? { why } : {}) };
     })
     .filter(Boolean)
-    .slice(0, 15) as TaskQuiz["questions"];
+    // No real product cap — mirrors makeDeck's own reasoning above: a student who names a specific count
+    // should get it, not an arbitrary product-level ceiling. This is a sanity backstop only, matching the
+    // tool description's own 50-per-call technical ceiling.
+    .slice(0, 50) as TaskQuiz["questions"];
   if (!questions.length) return { error: "ERROR: no valid questions (each needs a question, 2-4 distinct options, and a `correct` index pointing at one of them)." };
   return { quiz: { id: randomUUID(), title, questions, createdAt: new Date().toISOString() } };
 }
@@ -2938,7 +2941,7 @@ const CHAT_TOKEN_CEILING = 40_000;
  * must not be able to touch the student's connected accounts.
  */
 export async function chatAboutTask(
-  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean; substeps?: { text: string; done: boolean }[] }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string },
+  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean; substeps?: { text: string; done: boolean }[] }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string; flashcards?: TaskFlashcards[]; quizzes?: TaskQuiz[] },
   history: { role: "user" | "assistant"; text: string }[],
   message: string,
   profile?: Profile,
@@ -2959,6 +2962,25 @@ export async function chatAboutTask(
   const stepHint = (opts?.stepIndex != null && steps[opts.stepIndex])
     ? `\nThey just asked for help specifically on "${steps[opts.stepIndex].text}" (marked above) — start FROM THERE, don't re-open the whole task or restate the step back at them. Still diagnose before explaining (rule 1).\n`
     : "";
+  // Flashcard/quiz results already recorded on this task (flashcard review counts written by FlashcardDeck's
+  // per-card review, quiz attempts written by /quiz/:quizId/attempt) — lets the tutor actually reference how
+  // the drilling went ("you missed 3 of these last time") instead of only ever seeing the artifact exists.
+  const artifactsBlock = (() => {
+    const lines: string[] = [];
+    for (const d of task.flashcards || []) {
+      const reviewed = d.cards.filter((c) => c.review && c.review.seen);
+      if (!reviewed.length) continue;
+      const correct = reviewed.reduce((s, c) => s + (c.review!.correct || 0), 0);
+      const seen = reviewed.reduce((s, c) => s + (c.review!.seen || 0), 0);
+      lines.push(`- Flashcards "${d.title}": ${correct}/${seen} correct across reviews so far (${reviewed.length}/${d.cards.length} cards attempted)`);
+    }
+    for (const q of task.quizzes || []) {
+      const last = q.attempts?.[q.attempts.length - 1];
+      if (!last) continue;
+      lines.push(`- Quiz "${q.title}": last attempt ${last.score}/${last.total}${q.attempts!.length > 1 ? ` (${q.attempts!.length} attempts total)` : ""}`);
+    }
+    return lines.length ? `\nSTUDY RESULTS ON THIS TASK SO FAR (use these to spot what's still shaky — don't just recite the numbers back):\n${lines.join("\n")}\n` : "";
+  })();
   const fr = profile?.language !== "en";
   const sys = languageLine(profile) + trackLine(profile) + learningStyleLine(profile) + MISSION +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
@@ -3081,7 +3103,7 @@ export async function chatAboutTask(
     `back-and-forth, not one clever question followed by the full explanation next turn. Keep checking in, ` +
     `keep adjusting to what they just said, keep it going turn by turn until it's actually landed — don't treat ` +
     `the second reply as the moment to unload everything you held back from the first.` +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}` +
     assignmentBlock(task) + profileBlock(profile) + academicBlock(academic);
   const messages: any[] = [
     { role: "system", content: sys },

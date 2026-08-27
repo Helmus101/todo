@@ -110,6 +110,10 @@ export const api = {
   setGrade: (subject: string, grade: number, scale?: number): Promise<Profile> => post("/api/profile/grade", { subject, grade, scale }).then(normalizeProfile),
   deleteGrade: (subject: string): Promise<Profile> => req(`/api/profile/grade/${encodeURIComponent(subject)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   reviewFlashcard: (taskId: string, deckId: string, cardIndex: number, correct: boolean): Promise<WebTask[]> => post(`/api/tasks/${taskId}/flashcard/${deckId}/${cardIndex}/review`, { correct }),
+  // One call per completed quiz pass (not per question) — persists the score so it survives closing the
+  // popup and so the tutor chat can reference it later (see chatAboutTask's artifactsBlock).
+  recordQuizAttempt: (taskId: string, quizId: string, score: number, total: number, wrong?: number[]): Promise<WebTask[]> =>
+    post(`/api/tasks/${taskId}/quiz/${quizId}/attempt`, { score, total, wrong }),
   reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] }> => req("/api/reviews/due").then(j),
   addExam: (subject: string, deadline: string): Promise<Profile> => post("/api/profile/exam", { subject, deadline }).then(normalizeProfile),
   deleteExam: (id: string): Promise<Profile> => req(`/api/profile/exam/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
