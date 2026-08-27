@@ -110,6 +110,13 @@ export interface Profile {
   // Which track this student is on — drives AI vocabulary (isBigIbProject/trackLine in claude.ts) and
   // unlocks the milestone/big-project breakdown for IB (EE/IA/TOK/CAS). Set from Settings.
   track?: "ib" | "bac" | "other";
+  /** The student's actual school year/grade — e.g. "Terminale", "Grade 10", "DP1", "Year 12". Free text,
+   *  not an enum: year-level names aren't standardized across the systems Otto supports, and forcing one
+   *  system's labels onto another would be wrong for half the audience. This is what lets Otto tell a
+   *  Seconde-level "quadratics" question apart from a Terminale one — see trackLine in server/claude.ts,
+   *  which is the one place this actually gets used to calibrate content difficulty. Set at onboarding,
+   *  editable in Settings; NOT a source of truth for scoring/priority (same boundary as `track` itself). */
+  yearLevel?: string;
   /** VARK learning style, student-selectable in Settings. PRESENTATION ONLY — this must NEVER influence
    *  difficulty, depth, or what gets taught (the evidence for matching TEACHING to a "learning style" is
    *  weak; the evidence for retrieval practice + spacing, which Otto already does regardless of this field,
@@ -181,6 +188,7 @@ export function normalizeProfile(p: any): Profile {
         })).filter((e: { subject: string; deadline: string }) => e.subject && e.deadline).slice(0, 100)
       : undefined,
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
+    yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
     streak: p?.streak && typeof p.streak === "object" ? {
       current: Math.max(0, Number(p.streak.current) || 0),

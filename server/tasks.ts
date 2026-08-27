@@ -328,8 +328,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
-    // genPerDay/timezone/responseStyle/autoApprove/highPriorityPeople/autoArchivePatterns/track: all set
-    // through the ONE POST /api/profile/preference route (server/index.ts), all stamped together via
+    // genPerDay/timezone/responseStyle/autoApprove/highPriorityPeople/autoArchivePatterns/track/yearLevel:
+    // all set through the ONE POST /api/profile/preference route (server/index.ts), all stamped together via
     // preferencesUpdatedAt. A plain `p2 ?? p1` here used to mean "whichever session touched ANYTHING
     // most recently wins for ALL of these," not "whichever session actually changed this setting" — a
     // stale tab on device B doing something unrelated (confirming a task) would silently revert a
@@ -349,6 +349,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         highPriorityPeople: side.highPriorityPeople ?? fallback.highPriorityPeople,
         autoArchivePatterns: side.autoArchivePatterns ?? fallback.autoArchivePatterns,
         track: side.track ?? fallback.track,
+        yearLevel: side.yearLevel ?? fallback.yearLevel,
         preferencesUpdatedAt: side.preferencesUpdatedAt ?? fallback.preferencesUpdatedAt,
       };
     })(),

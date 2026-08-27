@@ -220,10 +220,11 @@ async function notifyNewTasks(email: string, found: WebTask[], profile: Profile,
     ? (found.length === 1 ? `Otto — new task: ${found[0].title}` : `Otto — ${found.length} new tasks`)
     : (found.length === 1 ? `Otto — nouvelle tâche : ${found[0].title}` : `Otto — ${found.length} nouvelles tâches`);
   const items = found.slice(0, 10).map((t) => `<li><b>${escapeHtml(t.title)}</b>${t.why ? ` — ${escapeHtml(t.why)}` : ""}</li>`).join("");
+  // Second person, like Otto's actually telling you — not a system log announcing what it "found."
   const intro = en
-    ? `<p>Otto found ${found.length === 1 ? "a new task" : `${found.length} new tasks`}:</p>`
-    : `<p>Otto a trouvé ${found.length === 1 ? "une nouvelle tâche" : `${found.length} nouvelles tâches`} :</p>`;
-  const openLine = en ? `<p><a href="${appUrl}/tasks">Open Otto →</a></p>` : `<p><a href="${appUrl}/tasks">Ouvrir Otto →</a></p>`;
+    ? `<p>Hey — ${found.length === 1 ? "you've got a new one" : `you've got ${found.length} new ones`}:</p>`
+    : `<p>Salut — ${found.length === 1 ? "tu as une nouvelle tâche" : `tu as ${found.length} nouvelles tâches`} :</p>`;
+  const openLine = en ? `<p><a href="${appUrl}/tasks">Take a look →</a></p>` : `<p><a href="${appUrl}/tasks">Jette un œil →</a></p>`;
   const body = `${intro}<ul>${items}</ul>${pileUpLine}${openLine}`;
   const result = await integrations.sendSystemEmail(email, { to: email, subject, body, primaryAccounts: profile.primaryAccounts });
   void store.recordEvent(email, "task_alert_sent", { message: result.ok ? `Emailed ${found.length} new task${found.length === 1 ? "" : "s"}` : `Skipped: ${result.error || "send failed"}` });

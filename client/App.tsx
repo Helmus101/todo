@@ -1268,6 +1268,27 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
       notify(e?.message || L("Impossible d'enregistrer la langue.", "Couldn't save the language."), "error");
     }
   };
+  // Track: onboarding's copy has always claimed this is "changeable any time in Settings" — it wasn't
+  // actually wired up here, so that claim was false for anyone past onboarding. Same optimistic-save
+  // pattern as language above.
+  const [track, setTrackState] = useState<"ib" | "bac" | "other" | undefined>(profile?.track);
+  useEffect(() => { setTrackState(profile?.track); }, [profile?.track]);
+  const saveTrack = async (v: "ib" | "bac" | "other") => {
+    const prev = track;
+    setTrackState(v);
+    try { onChanged?.(await api.setProfilePreference("track", v)); }
+    catch (e: any) { setTrackState(prev); notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
+  };
+  // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
+  // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
+  const [yearLevel, setYearLevelState] = useState(profile?.yearLevel || "");
+  useEffect(() => { setYearLevelState(profile?.yearLevel || ""); }, [profile?.yearLevel]);
+  const saveYearLevel = async () => {
+    const v = yearLevel.trim();
+    if (v === (profile?.yearLevel || "")) return;
+    try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
+    catch (e: any) { notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
+  };
   return (
     <>
       <div className="set-row">
@@ -1277,6 +1298,21 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} aria-pressed={lang === "en"} onClick={() => void saveLang("en")}>English</button>
         </div>
       </div>
+      <div className="set-row">
+        <span className="set-text"><b>{L("Ton parcours", "Your track")}</b><span className="settings-hint">{L("Vocabulaire et intégrations proposées.", "Vocabulary and integrations offered.")}</span></span>
+        <div className="lang-toggle">
+          <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{L("Bac", "Bac")}</button>
+          <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
+          <button type="button" className={`btn xs ${track === "other" ? "" : "ghost"}`} aria-pressed={track === "other"} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
+        </div>
+      </div>
+      <label className="set-row">
+        <span className="set-text"><b>{L("Ta classe / ton année", "Your year/grade")}</b><span className="settings-hint">{L("Aide Otto à caler la difficulté des fiches et exercices sur ton niveau exact.", "Helps Otto match revision sheets and exercises to your exact level.")}</span></span>
+        <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
+          placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : L("ex. Terminale", "e.g. Terminale")}
+          value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
+          onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+      </label>
     </>
   );
 }
@@ -1785,6 +1821,15 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   // several. Previously never asked anywhere, so every account silently defaulted to unset/"bac"-shaped
   // assumptions regardless of what the student actually needed.
   const [track, setTrack] = useState<"ib" | "bac" | "other" | null>(null);
+  // Free text, not a dropdown — see Profile.yearLevel's doc comment: year/grade naming isn't standardized
+  // across the Bac/IB/"other" tracks this asks about, and forcing one system's labels onto another would
+  // just be wrong for whichever track didn't match. Saved on blur (no separate "confirm" step) since it's
+  // optional context, not a gate — skipping it just means Otto calibrates content less precisely.
+  const [yearLevel, setYearLevelState] = useState("");
+  const saveYearLevel = async () => {
+    const v = yearLevel.trim();
+    if (v) { try { await api.setProfilePreference("yearLevel", v); await onStatus(); } catch { /* non-blocking */ } }
+  };
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { /* non-blocking */ } }
@@ -1793,7 +1838,9 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   const saveTrack = async (t: "ib" | "bac" | "other") => {
     setTrack(t);
     try { await api.setProfilePreference("track", t); await onStatus(); } catch { /* non-blocking */ }
-    setStep(2);
+    // Used to jump straight to step 2 here — but the year-level field below lives on this SAME step, so
+    // auto-advancing the instant a track button is clicked never gave the student a chance to see or fill
+    // it in. Stay put; "Continue" (added alongside the field) is what actually moves on now.
   };
   const checkPronote = useCallback(async () => { try { const s = await api.pronoteStatus(); setPronoteConnected(s.connected); onStatus(); } catch { /* keep last */ } }, [onStatus]);
   useEffect(() => { void checkPronote(); }, [checkPronote]);
@@ -1834,9 +1881,20 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>{L("IB", "IB")}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
             </div>
+            {/* Same topic name can mean a different depth at a different year ("quadratics" in Seconde vs.
+                Terminale) — without this, Otto has to guess the level and either bores or loses the student. */}
+            <label className="field onboard-name">
+              <span>{L("Ta classe / ton année (facultatif)", "Your year/grade (optional)")}</span>
+              <input className="addinput" maxLength={40}
+                placeholder={track === "ib" ? L("ex. DP1, Year 12", "e.g. DP1, Year 12") : track === "other" ? L("ex. Grade 10, Year 11", "e.g. Grade 10, Year 11") : L("ex. Terminale, Première", "e.g. Terminale, Première")}
+                value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
+                onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") void saveYearLevel(); }} />
+            </label>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
-              <button className="btn ghost" onClick={() => setStep(2)}>{L("Passer", "Skip")}</button>
+              {track
+                ? <button className="btn primary" onClick={() => { void saveYearLevel(); setStep(2); }}>{L("Continuer", "Continue")}</button>
+                : <button className="btn ghost" onClick={() => { void saveYearLevel(); setStep(2); }}>{L("Passer", "Skip")}</button>}
             </div>
           </div>
         )}
@@ -2120,6 +2178,48 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
         </div>
       </main>
 
+      {/* Full-bleed showcase grid, mirroring a common "product proof" pattern — three concrete mini-previews
+          instead of a screenshot dump. Each card is a REAL small render of the actual feature (same
+          .demo-window language as the hero), never a stock photo or a fabricated screenshot. */}
+      <section className="showcase-sec">
+        <h2 className="reveal">{L("Otto en action", "Otto in action")}</h2>
+        <div className="showcase-grid">
+          <a className="showcase-card reveal" style={{ ["--d" as any]: "0.0s" }} href="/signup" aria-label={L("Créer un compte — Cette semaine", "Create an account — This week")}>
+            <div className="showcase-preview">
+              <div className="showcase-week">
+                {[3, 6, 2, 8, 4, 1, 0].map((v, i) => <span key={i} className="showcase-bar" style={{ height: `${8 + v * 9}px` }} />)}
+              </div>
+              <div className="showcase-week-labels"><span>{L("L", "M")}</span><span>{L("M", "T")}</span><span>{L("M", "W")}</span><span className="peak">{L("J", "T")}</span><span>{L("V", "F")}</span><span>{L("S", "S")}</span><span>{L("D", "S")}</span></div>
+            </div>
+            <h3>{L("Vue de la semaine", "This week, at a glance")}</h3>
+            <p>{L("Repère le jour surchargé avant qu'il n'arrive.", "Spot the heavy day before it hits.")}</p>
+            <span className="showcase-arrow" aria-hidden="true">→</span>
+          </a>
+          <a className="showcase-card reveal" style={{ ["--d" as any]: "0.1s" }} href="/signup" aria-label={L("Créer un compte — Cartes de révision", "Create an account — Flashcards")}>
+            <div className="showcase-preview showcase-card-flip">
+              <div className="showcase-flashcard"><span>{L("Dérivée de sin(x) ?", "Derivative of sin(x)?")}</span></div>
+              <div className="showcase-boxes">{[1, 2, 3, 4, 5].map((b) => <span key={b} className={`showcase-box ${b <= 2 ? "on" : ""}`}>{b}</span>)}</div>
+            </div>
+            <h3>{L("Répétition espacée", "Spaced repetition")}</h3>
+            <p>{L("Les cartes reviennent pile quand tu commences à oublier.", "Cards resurface right as you start to forget.")}</p>
+            <span className="showcase-arrow" aria-hidden="true">→</span>
+          </a>
+          <a className="showcase-card reveal" style={{ ["--d" as any]: "0.2s" }} href="/signup" aria-label={L("Créer un compte — Brouillons", "Create an account — Drafts")}>
+            <div className="showcase-preview">
+              <div className="showcase-draft">
+                <div className="showcase-draft-line long" />
+                <div className="showcase-draft-line" />
+                <div className="showcase-draft-line short" />
+                <span className="showcase-draft-btn">{L("Envoyer ↗", "Send ↗")}</span>
+              </div>
+            </div>
+            <h3>{L("Brouillons prêts à relire", "Drafts ready to review")}</h3>
+            <p>{L("Otto prépare le message — un clic pour l'envoyer, jamais automatique.", "Otto prepares the message — one click to send, never automatic.")}</p>
+            <span className="showcase-arrow" aria-hidden="true">→</span>
+          </a>
+        </div>
+      </section>
+
       <section className="landing-sec">
         <h2 className="reveal">{L("Ce qu'Otto prépare pour toi", "What Otto preps for you")}</h2>
         <div className="outcomes">
@@ -2220,10 +2320,28 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
         <div className="cta-fine">{L("Sans carte bancaire · Otto ne fait jamais tes devoirs à ta place", "No credit card · Otto never does your homework for you")}</div>
       </section>
 
-      <div className="landing-foot">
-        <div>{L("Chaque dimanche soir, Otto a déjà lu Pronote pour toi.", "Every Sunday night, Otto has already read your homework for you.")}</div>
-        <nav className="foot-links"><a href="/privacy">{L("Confidentialité", "Privacy")}</a><a href="/terms">{L("CGU", "Terms")}</a><span className="foot-mit">{L("MIT — open source", "MIT — open source")}</span></nav>
-      </div>
+      <footer className="landing-foot-rich">
+        <div className="foot-top">
+          <div className="foot-brand">
+            <span className="brand"><Logo size={20} /> Otto</span>
+            <p>{L("Chaque dimanche soir, Otto a déjà lu Pronote pour toi.", "Every Sunday night, Otto has already read your homework for you.")}</p>
+          </div>
+          <nav className="foot-group" aria-label={L("Produit", "Product")}>
+            <h4>{L("Produit", "Product")}</h4>
+            <a href="/signup">{L("Créer un compte", "Create account")}</a>
+            <a href="/login">{L("Se connecter", "Log in")}</a>
+          </nav>
+          <nav className="foot-group" aria-label={L("Légal", "Legal")}>
+            <h4>{L("Légal", "Legal")}</h4>
+            <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
+            <a href="/terms">{L("CGU", "Terms")}</a>
+          </nav>
+        </div>
+        <div className="foot-bottom">
+          <span className="foot-mit">{L("MIT — open source", "MIT — open source")}</span>
+          <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -2528,7 +2646,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
       // Defensive: a 401 (session expired) resolves instead of throwing (see api.ts's j()), returning the
       // error BODY where an array was expected. Setting `tasks` state to that non-array object crashed the
       // whole app on the next render — which, from the outside, looked exactly like the new task vanishing.
-      if (!Array.isArray(fresh)) throw new Error(L("Session expirée — recharge la page.", "Session expired — reload the page."));
+      if (!Array.isArray(fresh)) throw new Error(L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
       onAdded(fresh);
     } catch (e: any) {
       onAdded((prev) => prev.filter((t) => t.id !== stubId));

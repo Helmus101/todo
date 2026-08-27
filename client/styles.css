@@ -1160,7 +1160,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @media (hover: hover) {
   .step-mark.tickable:hover { border-color: var(--accent); transform: scale(1.08); }
 }
-.step.done .step-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
+.step.done .step-mark { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms var(--ease-bounce); }
 .step-mark.busy {
   border-color: var(--line);
   border-top-color: var(--accent);
@@ -1207,7 +1207,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   display: inline-flex; align-items: center; justify-content: center;
   transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
 }
-.substep.done .substep-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
+.substep.done .substep-mark { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms var(--ease-bounce); }
 
 /* Sendables — review-then-send */
 .sendables { display: flex; flex-direction: column; gap: 10px; margin-top: var(--space-3); }
@@ -1678,12 +1678,52 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .cta-band-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .cta-fine { margin-top: var(--space-4); font-size: 12px; color: var(--ink-3); }
 
-.landing-foot { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; font-size: var(--text-sm); color: var(--ink-3); padding: 24px 20px 32px; border-top: 1px solid var(--line-soft); }
-.foot-links { display: flex; align-items: center; gap: 18px; }
-.foot-links a { color: var(--ink-3); font-weight: var(--weight-medium); }
-.foot-links a:hover { color: var(--ink-2); }
-.foot-mit { color: var(--ink-3); font-size: 12px; }
 .demo-badge { float: right; font-family: var(--mono); font-size: var(--text-xs); color: var(--accent); }
+
+/* ── Showcase grid — three real mini-previews of actual features, never stock photos. ── */
+.showcase-sec { width: 100%; padding: 64px 20px; background: var(--bg-2); border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.showcase-sec h2 { max-width: 900px; margin: 0 auto 28px; font-size: clamp(1.5rem, 3vw, 1.9rem); font-weight: 700; letter-spacing: -0.03em; text-align: center; }
+.showcase-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; max-width: 900px; margin: 0 auto; }
+.showcase-card {
+  display: flex; flex-direction: column; gap: 4px; padding: 18px; border-radius: var(--radius); background: var(--surface);
+  border: 1px solid var(--line); text-decoration: none; color: inherit; position: relative;
+  transition: transform var(--duration-base) var(--ease), box-shadow var(--duration-base) var(--ease);
+}
+.showcase-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-pop); }
+.showcase-card h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); letter-spacing: -0.01em; margin-top: 14px; }
+.showcase-card p { font-size: 13px; color: var(--ink-2); line-height: 1.55; padding-right: 20px; }
+.showcase-arrow { position: absolute; top: 16px; right: 16px; color: var(--ink-3); font-size: 16px; }
+.showcase-preview { height: 96px; border-radius: var(--radius-sm); background: var(--bg-2); border: 1px solid var(--line-soft); display: flex; align-items: flex-end; justify-content: center; overflow: hidden; padding: 10px; }
+.showcase-week { display: flex; align-items: flex-end; gap: 5px; height: 100%; }
+.showcase-bar { width: 8px; border-radius: 3px 3px 0 0; background: var(--accent); opacity: 0.55; }
+.showcase-week-labels { display: none; } /* labels are decorative-only context; the bars carry the visual */
+.showcase-card-flip { flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+.showcase-flashcard { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 11px; font-weight: var(--weight-medium); box-shadow: 0 2px 8px rgba(16, 19, 23, 0.08); }
+.showcase-boxes { display: flex; gap: 4px; }
+.showcase-box { width: 16px; height: 16px; border-radius: 4px; background: var(--line-soft); color: var(--ink-3); font-size: 9px; display: flex; align-items: center; justify-content: center; }
+.showcase-box.on { background: var(--accent); color: #fff; }
+.showcase-draft { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.showcase-draft-line { height: 5px; border-radius: 3px; background: var(--line); width: 100%; }
+.showcase-draft-line.long { width: 90%; }
+.showcase-draft-line.short { width: 55%; }
+.showcase-draft-btn { align-self: flex-end; margin-top: 4px; font-size: 10px; font-weight: var(--weight-semibold); color: var(--accent); }
+
+/* ── Rich multi-column footer ── */
+.landing-foot-rich { width: 100%; padding: 48px 20px 28px; border-top: 1px solid var(--line-soft); }
+.foot-top { display: flex; flex-wrap: wrap; gap: 40px; max-width: 900px; margin: 0 auto; padding-bottom: 28px; }
+.foot-brand { flex: 1 1 220px; display: flex; flex-direction: column; gap: 10px; }
+.foot-brand .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: -0.01em; }
+.foot-brand p { font-size: 13px; color: var(--ink-3); line-height: 1.5; max-width: 260px; }
+.foot-group { display: flex; flex-direction: column; gap: 9px; min-width: 120px; }
+.foot-group h4 { font-size: 12px; font-weight: var(--weight-semibold); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+.foot-group a { font-size: 13.5px; color: var(--ink-2); }
+.foot-group a:hover { color: var(--ink); }
+.foot-bottom { display: flex; align-items: center; justify-content: space-between; max-width: 900px; margin: 0 auto; padding-top: 20px; border-top: 1px solid var(--line-soft); }
+.foot-mit { color: var(--ink-3); font-size: 12px; }
+@media (max-width: 640px) {
+  .foot-top { gap: 28px; }
+  .foot-bottom { flex-direction: column-reverse; gap: 14px; align-items: flex-start; }
+}
 
 /* ─── Legal pages ──────────────────────────────────────────────────────────── */
 .legal { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(40px, 7vh, 72px) 24px 96px; }

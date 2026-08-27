@@ -133,8 +133,8 @@ export function languageLine(p?: Profile): string {
  *  gets labeled correctly instead of silently falling back to generic "assignment"/"test". Vocabulary
  *  only: this does NOT change scoring/priority — see server/workload.ts and classifyCandidates, which
  *  stay track-agnostic. */
-export function trackLine(_p?: Profile): string {
-  return `\n\nVOCABULARY: use the RIGHT term for what you're actually looking at, never a generic ` +
+export function trackLine(p?: Profile): string {
+  const vocab = `\n\nVOCABULARY: use the RIGHT term for what you're actually looking at, never a generic ` +
     `"assignment"/"test" when a more specific one applies — infer which from the subject/content itself, ` +
     `not from any track the student picked (there isn't one). IB Diploma deliverables, if you see them: ` +
     `HL/SL (Higher/Standard Level), CAS (Creativity, Activity, Service — logged hours, not an "assignment"), ` +
@@ -145,6 +145,28 @@ export function trackLine(_p?: Profile): string {
     `spécialités, contrôle continu, a Grand Oral in Terminale, plus the international component's dedicated ` +
     `written + oral épreuves. Use whichever vocabulary the evidence actually points to — never force IB terms ` +
     `onto plain bac homework or vice versa, and default to plain language when neither clearly applies.\n`;
+  // A topic name alone doesn't fix a difficulty level — "quadratics", "cell division", "the Cold War" are
+  // each taught at multiple points across multiple systems, at genuinely different depth each time (a
+  // Seconde intro to quadratics is not a Terminale spé-maths treatment of the same word). Without knowing
+  // the student's actual year, Otto has to guess, and a wrong guess is exactly what produces content that's
+  // either condescendingly basic or silently over their head — both read as "Otto doesn't know me." Free
+  // text (not a fixed enum) because school-year names aren't standardized across systems ("Seconde",
+  // "Grade 10", "DP1", "Year 11" all mean roughly the same rung on different ladders) — see Profile.yearLevel.
+  const yearLine = p?.yearLevel
+    ? `\n\nSTUDENT'S YEAR/GRADE LEVEL: "${p.yearLevel}". Calibrate every explanation, revision sheet, flashcard, ` +
+      `and quiz question to genuinely match THIS level — the same topic name can mean a different depth at a ` +
+      `different year, so don't default to a generic/average difficulty. Never explain something clearly below ` +
+      `this level as if it were new, and never assume methods/vocabulary only taught in a LATER year.\n`
+    : "";
+  // Bundled here (not its own function) because trackLine is already the one line paired with languageLine
+  // at essentially every call site in this file — the cheapest way to make a rule genuinely universal
+  // without touching 8 separate call sites. Content-quality, not track-specific: don't pad a revision sheet,
+  // step, or answer with a sentence the student already obviously knows just to sound thorough.
+  const noObvious = `\n\nDON'T STATE THE OBVIOUS: never spend a sentence on something the student at this ` +
+    `level plainly already knows (restating the question, defining a term two years below their level, ` +
+    `"remember to read the instructions carefully"). Every line should teach, remind of something genuinely ` +
+    `easy to forget, or move the work forward — cut anything that's just filler restating what's already known.\n`;
+  return vocab + yearLine + noObvious;
 }
 
 /** VARK, presentation only — NEVER difficulty, depth, or what gets taught (see Profile.learningStyle doc
@@ -1683,8 +1705,8 @@ const RUN_TOOLS = [
     title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (≤9 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
     isBigProject: { type: "boolean", description: "true ONLY if this is a genuinely BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/mémoire, an IB Extended Essay/TOK/CAS/Internal Assessment, a group project, a major report — where progress happens over weeks/months with real intermediate milestones, not a task doable in one sitting or a few short steps. Judge this from what the task ACTUALLY is, not from whether its title happens to name an acronym. Omit or false for anything ordinary." },
     context: { type: "string", description: "the SURROUNDING FACTS about this task — real, specific, substantive: who's involved, what they actually said/asked, what the doc/event/thread contains, dates, numbers, links. NEVER a meta-description of the task or your own process — 'User requested information about X', 'Performed searches across multiple services', 'Looked into Y' are WORTHLESS filler, not context, and will be rejected. If you truly found nothing useful after a real attempt, say the SPECIFIC thing that's missing ('No upcoming meetings with Gabrielle on the calendar; her last email was 3 weeks ago about the budget') — never a vague description of the search itself. 2-4 bullets, each starting with '- '." },
-    synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' NO caveats, NO explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
-    did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, each ≤15 words, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. NEVER plans, reads-only, or things you didn't do." },
+    synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' Write it like you're telling a friend what you just did, not filing a system log — plain, specific, a little warm — but that NEVER means padding it: no caveats, no explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
+    did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, each ≤15 words, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. Plain, specific wording — what a person would actually say happened, not a system log entry. NEVER plans, reads-only, or things you didn't do." },
     steps: {
       type: "array",
       description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). NEVER narrate one real action as a chain of its own sub-parts — 'draft the reply', 'create the Gmail draft', 'send it' is the SAME single action (draft it now with your tools, then it's one 'send'-type step, not three); don't manufacture a lookup/research step for something you could and should have just found yourself this run. Often empty.",
@@ -2533,9 +2555,14 @@ export async function expandStep(
         role: "user",
         content: `TASK: "${task.title}" (${task.why})\nSTEP TO BREAK DOWN: "${step.text}"${linksBlock}\n\n` +
           languageLine(profile) +
-          `Break this ONE step into 3 to 6 small, concrete sub-actions the student can tick off one at a time — ` +
+          `Break this ONE step into 1 to 6 small, concrete sub-actions the student can tick off one at a time — ` +
           `each a SHORT imperative (≤10 words), specific enough to just start doing, no vague categories like ` +
-          `"plan it out". This is for a STUDENT: every sub-step is something THEY do — never phrase the graded/` +
+          `"plan it out". Use as FEW as the step genuinely needs: if it's really just one thing, return ONE ` +
+          `sub-action, don't pad to hit a higher count. Never split a single real action into several ` +
+          `sub-actions that just restate or narrate each other's sub-parts ("identify X", "replace X", ` +
+          `"update X", "test X", "remove old X" for what's really one swap/migration) — merge those into ` +
+          `however few genuinely distinct sub-actions the step actually has. This is for a STUDENT: every ` +
+          `sub-step is something THEY do — never phrase the graded/` +
           `learning work itself (writing, arguing, solving) as if it were already done or as Otto's job. Stay ` +
           `strictly inside the scope of "${step.text}" — do not re-plan the whole task, only this one step.\n\n` +
           `If one of RESOURCES ALREADY ON THIS TASK above is exactly the page a sub-action needs, give that ` +

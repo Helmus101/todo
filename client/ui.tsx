@@ -355,7 +355,7 @@ export function FlashcardDeck({ deck, onReview }: { deck: TaskFlashcards; onRevi
           </div>
         </div>
       </div>
-      <p className="deck-hint">{L("Espace pour retourner · ← faux · → correct", "Space to flip · ← wrong · → correct")}</p>
+      <p className="deck-hint">{L("Pense à ta réponse, puis retourne · ← faux · → correct", "Think of your answer, then flip · ← wrong · → correct")}</p>
       <div className="deck-acts">
         <button className="btn ghost deck-btn-wrong" onClick={() => mark(false)}>← {L("Faux", "Wrong")}</button>
         <button className="btn ghost" onClick={() => setFlipped((v) => !v)}>{L("Retourner", "Flip")}</button>

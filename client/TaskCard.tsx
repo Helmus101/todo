@@ -33,6 +33,7 @@ function useTaskLeave(
     onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; onConfirmed?: (id: string) => void; onLeft?: (id: string) => void;
   },
 ) {
+  const L = useLang();
   const notify = useNotify();
   const [leaving, setLeaving] = useState(false);
   const [leaveKind, setLeaveKind] = useState<"confirm" | "dismiss">("dismiss");
@@ -63,14 +64,14 @@ function useTaskLeave(
       // api.ts's j() RESOLVES (doesn't throw) on a 401 — an expired session lands here as `{error: "..."}`,
       // not a WebTask[]. Without this guard that object would flow straight into onChange and corrupt the
       // task list state. Treat it the same as a thrown failure.
-      if (!Array.isArray(list)) throw new Error((list as any)?.error || "Session expirée — recharge la page.");
+      if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
     } catch (e: any) {
       // A failed confirm/dismiss used to leave the button/animation stuck forever with no feedback and no
       // way to retry — this is the actual live-reported "Looks good doesn't close the task" bug. Reset the
       // leave state so the button works again, and say what happened instead of failing silently.
       setLeaving(false);
       if (task) onTask?.(task); // roll back the optimistic flip to the real prior state
-      notify(e?.message || "Une erreur est survenue — réessaie.", "error");
+      notify(e?.message || L("Un imprévu est survenu — réessaie.", "Something went wrong on our end — try again."), "error");
       return;
     }
     if (kind === "confirm") onConfirmed?.(taskId); // flags the row it lands on in "Completed" for a beat, so
@@ -299,7 +300,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
       setStepDoneLocal(i, true, result);
       try {
         const list = await api.stepDone(currentTask.id, i, true, result);
-        if (!Array.isArray(list)) throw new Error((list as any)?.error || L("Session expirée — recharge la page.", "Session expired — reload the page."));
+        if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
         onChange(list);
       } catch (e: any) {
         onTask(currentTask); // revert the optimistic tick — onTask merges by id, onChange([...]) would nuke the whole list
@@ -318,7 +319,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
       setStepDoneLocal(i, false);
       try {
         const list = await api.stepDone(currentTask.id, i, false);
-        if (!Array.isArray(list)) throw new Error((list as any)?.error || L("Session expirée — recharge la page.", "Session expired — reload the page."));
+        if (!Array.isArray(list)) throw new Error((list as any)?.error || L("On dirait que tu as été déconnecté — recharge la page.", "Looks like you got logged out — reload the page."));
         onChange(list);
       } catch (e: any) {
         onTask(currentTask); // revert the optimistic un-tick — onTask merges by id, onChange([...]) would nuke the whole list

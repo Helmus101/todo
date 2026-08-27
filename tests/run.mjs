@@ -695,6 +695,9 @@ section("trackLine vocabulary");
 check("mentions CAS/IA vocabulary regardless of profile", /CAS/.test(trackLine({ track: "ib" })) && /IA/.test(trackLine(undefined)));
 check("mentions Grand Oral / BFI vocabulary regardless of profile", /Grand Oral/.test(trackLine({})) && /BFI/.test(trackLine(undefined)));
 check("same output no matter what's in the (now-unused) track field", trackLine({ track: "ib" }) === trackLine(undefined) && trackLine({ track: "bac" }) === trackLine({}));
+check("no yearLevel line when profile has none", !/YEAR\/GRADE LEVEL/.test(trackLine(undefined)) && !/YEAR\/GRADE LEVEL/.test(trackLine({})));
+check("yearLevel, when set, is injected verbatim for content calibration", trackLine({ yearLevel: "Terminale" }).includes("Terminale") && /YEAR\/GRADE LEVEL/.test(trackLine({ yearLevel: "Terminale" })));
+check("always tells the model not to state the obvious", /DON'T STATE THE OBVIOUS/.test(trackLine(undefined)));
 
 // ── VARK presentation-only line ─────────────────────────────────────────────
 section("learningStyleLine");
