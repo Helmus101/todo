@@ -2626,6 +2626,57 @@ export async function runSubstep(
   return answer;
 }
 
+// Small, bounded — this is a "nudge me in the right direction" sidebar next to a card/question, not a
+// full tutoring thread (that's chatAboutTask). No tool loop, no artifacts: giving THIS panel the power to
+// hand over a fresh deck/quiz mid-drill would defeat the point of drilling the one already open.
+const STUDY_HELP_HISTORY_CAP = 8;
+
+/**
+ * Guidance chat scoped to ONE flashcard/quiz question currently on screen. The single hard rule: never
+ * reveal the front/back or the correct option — the whole feature exists so a student stuck mid-drill can
+ * get unstuck without the drill turning into "just tell me the answer." Stateless on the server (the
+ * client keeps its own short local history for this one card, same as it keeps score) — persisting a
+ * blow-by-blow of every card's hints would bloat the task for no benefit once the card's been answered.
+ */
+export async function studyHelp(
+  card: { kind: "flashcard"; front: string; back: string } | { kind: "quiz"; question: string; options: string[]; correct: number },
+  history: { role: "user" | "assistant"; text: string }[],
+  message: string,
+  profile?: Profile,
+): Promise<{ reply: string; tokens: { in: number; out: number; cachedIn: number } }> {
+  const client = deepseekClient();
+  const answer = card.kind === "flashcard" ? card.back : card.options[card.correct];
+  const cardBlock = card.kind === "flashcard"
+    ? `FLASHCARD FRONT (what the student sees): "${card.front}"\nFLASHCARD BACK / ANSWER (NEVER reveal this, not even paraphrased): "${answer}"`
+    : `QUIZ QUESTION: "${card.question}"\nOPTIONS: ${card.options.map((o, i) => `${i + 1}) ${o}`).join(" ")}\nCORRECT OPTION (NEVER reveal which one, not even by elimination down to one): "${answer}"`;
+  const sys = languageLine(profile) +
+    `You are Otto, sitting next to a student while they drill ${card.kind === "flashcard" ? "flashcards" : "a quiz"}. They're stuck on ` +
+    `ONE specific card/question and want a nudge, not the answer.\n\n${cardBlock}\n\n` +
+    `RULES:\n` +
+    `1. NEVER state, confirm, or rule out the answer — not the exact text, not a paraphrase, not by process ` +
+    `of elimination down to a single remaining option, not even if they ask directly or claim they "already ` +
+    `know" it. If they explicitly beg for the answer, gently decline and offer another angle of hint instead.\n` +
+    `2. Guide with questions, a relevant fact, an analogy, or by pointing at what part of the question actually ` +
+    `matters — the same first-principles style as Otto's regular tutoring, just compressed to 1-3 short ` +
+    `sentences (this is a sidebar next to a drill, not a lecture).\n` +
+    `3. If they seem to genuinely understand it now, encourage them to flip the card / pick an option ` +
+    `themselves rather than telling them they're right.\n` +
+    `4. Stay on this one card. If they ask something unrelated to it, answer briefly but steer back.`;
+  const res: any = await retryRequest(() => client.chat.completions.create({
+    model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
+    max_tokens: 300,
+    temperature: 0.4,
+    messages: [
+      { role: "system", content: sys },
+      ...history.slice(-STUDY_HELP_HISTORY_CAP).map((h) => ({ role: h.role, content: h.text.slice(0, 1000) })),
+      { role: "user", content: message.slice(0, 1000) },
+    ],
+  }));
+  const reply = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 800) ||
+    (profile?.language === "en" ? "I'm here — what part of this is tripping you up?" : "Je suis là — qu'est-ce qui te bloque exactement ?");
+  return { reply, tokens: usageOf(res) };
+}
+
 /**
  * Reconcile a run's NARRATIVE with the artifacts that actually SURVIVED. A claim that a reply/email/message
  * was drafted is only truthful if there is a "sendable" to review + send it — Otto never sends, so the
@@ -3158,8 +3209,11 @@ export async function chatAboutTask(
   // fact: round 0 finished with real content just after this raced fallback had already been returned).
   // The client's own `chat` call has no timeout of its own (plain `post`, not `postTimed`) and Vercel's
   // function ceiling is 300s (vercel.json), so there's ample room to raise this without creating a
-  // mismatch — 45s covers a genuinely large batch while still bailing well before anything else times out.
-  const CHAT_DEADLINE_MS = 45_000;
+  // mismatch. Was 45s, raised to a flat 2-minute buffer per explicit instruction — do not lower this
+  // again even if a fix elsewhere makes replies fast again; a slow-but-real reply beating the generic
+  // fallback is always the better outcome, and DeepSeek v4's hidden reasoning tokens make "slow" hard to
+  // bound tightly (see the 28s→45s history right above).
+  const CHAT_DEADLINE_MS = 120_000;
   return Promise.race([
     runRounds(),
     new Promise<ChatResult>((resolve) => setTimeout(() => resolve(finish("")), CHAT_DEADLINE_MS)),

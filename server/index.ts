@@ -9,7 +9,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -718,6 +718,41 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     res.status(500).json({ error: e?.message || "chat failed" });
   }
 });
+
+// A tiny nudge-me sidebar next to a flashcard/quiz question — NOT the per-task chat above: no task lookup
+// beyond auth (the card content comes straight from the client, since it's already showing it), no
+// artifacts, no persisted history. Rate-limited higher than the main chat since a student can burn through
+// several hints per card while drilling a deck.
+app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  const message = String(req.body?.message || "").trim().slice(0, 1000);
+  if (!message) { res.status(400).json({ error: "Say something first." }); return; }
+  const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
+  const history = rawHistory
+    .filter((h: any) => h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
+    .map((h: any) => ({ role: h.role as "user" | "assistant", text: String(h.text).slice(0, 1000) }))
+    .slice(-8);
+  const kind = req.body?.card?.kind;
+  let card: Parameters<typeof studyHelp>[0];
+  if (kind === "flashcard") {
+    const front = String(req.body?.card?.front || "").slice(0, 500);
+    const back = String(req.body?.card?.back || "").slice(0, 500);
+    if (!front || !back) { res.status(400).json({ error: "Missing card." }); return; }
+    card = { kind: "flashcard", front, back };
+  } else if (kind === "quiz") {
+    const question = String(req.body?.card?.question || "").slice(0, 500);
+    const options = Array.isArray(req.body?.card?.options) ? req.body.card.options.map((o: any) => String(o).slice(0, 300)).slice(0, 10) : [];
+    const correct = Number(req.body?.card?.correct);
+    if (!question || !options.length || !Number.isInteger(correct) || correct < 0 || correct >= options.length) { res.status(400).json({ error: "Missing question." }); return; }
+    card = { kind: "quiz", question, options, correct };
+  } else { res.status(400).json({ error: "Missing card." }); return; }
+  const out = await studyHelp(card, history, message, req.session.profile);
+  addUsage(req.session.profile ||= emptyProfile(), out.tokens);
+  await commit(req);
+  res.json({ reply: out.reply });
+}));
 
 // Execution flows through the durable job queue: enqueue + drain inline (synchronous response for the
 // client), with job idempotency as the cross-instance lock — one ACTIVE job per task, held in the DB.

@@ -10,6 +10,7 @@ import { useEffect, useState, useCallback, useRef, useContext, createContext, ty
 import { createPortal } from "react-dom";
 import type { WebTask, TaskFlashcards, TaskQuiz } from "../shared/types.ts";
 import { canonStatus } from "../shared/types.ts";
+import { api } from "./api.ts";
 
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
 // Profile). `L(fr, en)` picks the right string for whichever language is active — used everywhere instead of
@@ -284,10 +285,73 @@ export function renderChatText(text: string): ReactNode {
   return blocks;
 }
 
+type StudyHelpCard =
+  | { kind: "flashcard"; front: string; back: string }
+  | { kind: "quiz"; question: string; options: string[]; correct: number };
+
+/** "Need a hint?" sidebar shown next to the flashcard/quiz currently on screen — a short, scoped chat with
+ *  Otto that guides toward the answer without ever stating it (see studyHelp on the server, which enforces
+ *  that rule). Deliberately per-card, stateless, and local-only: the thread resets the moment the card
+ *  underneath changes, so a hint about card 3 can never leak into card 4. `taskId` is optional only
+ *  because TypeScript can't see that every real caller always has one; renders nothing without it. */
+function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard }) {
+  const L = useLang();
+  const [open, setOpen] = useState(false);
+  const [history, setHistory] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const cardKey = card.kind === "flashcard" ? card.front : card.question;
+  useEffect(() => { setHistory([]); setInput(""); setOpen(false); }, [cardKey]);
+  const send = () => {
+    const message = input.trim();
+    if (!message || busy || !taskId) return;
+    setInput("");
+    setBusy(true);
+    const prior = history;
+    setHistory((h) => [...h, { role: "user", text: message }]);
+    api.studyHelp(taskId, card, prior, message)
+      .then((r) => setHistory((h) => [...h, { role: "assistant", text: r.reply }]))
+      .catch((e: any) => setHistory((h) => [...h, { role: "assistant", text: e?.message || L("Erreur — réessaie.", "Error — try again.") }]))
+      .finally(() => setBusy(false));
+  };
+  if (!taskId) return null;
+  return (
+    <div className="study-help">
+      <button type="button" className="btn xs ghost study-help-toggle" onClick={() => setOpen((v) => !v)}>
+        {open ? L("Fermer l'aide", "Close hint") : L("💡 Un indice ?", "💡 Need a hint?")}
+      </button>
+      {open && (
+        <div className="study-help-panel">
+          <div className="study-help-log">
+            {history.length === 0 && (
+              <p className="study-help-empty">
+                {L("Otto peut t'aider à réfléchir — il ne te donnera jamais la réponse.", "Otto can help you think it through — he'll never just give you the answer.")}
+              </p>
+            )}
+            {history.map((h, i) => <p key={i} className={`study-help-msg ${h.role}`}>{h.text}</p>)}
+            {busy && <p className="study-help-msg assistant study-help-thinking">…</p>}
+          </div>
+          <div className="study-help-input">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") send(); }}
+              placeholder={L("Demande un indice…", "Ask for a hint…")}
+              disabled={busy}
+            />
+            <button type="button" className="btn xs primary" onClick={send} disabled={busy || !input.trim()}>{L("Envoyer", "Send")}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Drillable flashcard viewer (CREATE_FLASHCARDS): space/click flips the card, → marks it right and
  *  advances, ← marks it wrong and advances. Ends on a score summary with a restart. Keyboard-first so a
  *  student can drill an entire deck without touching the mouse. */
-export function FlashcardDeck({ deck, onReview }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void }) {
+export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; taskId?: string }) {
   const L = useLang();
   const [i, setI] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -364,6 +428,7 @@ export function FlashcardDeck({ deck, onReview }: { deck: TaskFlashcards; onRevi
       {i > 0 ? (
         <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Carte précédente", "‹ Previous card")}</button>
       ) : null}
+      <StudyHelpPanel taskId={taskId} card={{ kind: "flashcard", front: card!.front, back: card!.back }} />
     </div>
   );
 }
@@ -372,7 +437,7 @@ export function FlashcardDeck({ deck, onReview }: { deck: TaskFlashcards; onRevi
  *  screen at the end reuses FlashcardDeck's exact done-state markup (.deck-done/.deck-score-ring) so scoring
  *  reads identically across artifact types. Deliberately its own component (not a FlashcardDeck variant):
  *  the interaction — lock on pick, reveal the right answer, explain why — has nothing in common with a flip. */
-export function QuizPlayer({ quiz }: { quiz: TaskQuiz }) {
+export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }) {
   const L = useLang();
   const [i, setI] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
@@ -387,10 +452,16 @@ export function QuizPlayer({ quiz }: { quiz: TaskQuiz }) {
   const pick = (optIdx: number) => {
     if (picked !== null || !q) return;
     setPicked(optIdx);
-    if (optIdx === q.correct) setRight((prev) => [...prev, qIdx]);
-    else setWrongIdx((prev) => [...prev, qIdx]);
+    // Dedupe by question index, same reasoning as FlashcardDeck's `mark`: going back to a question (see
+    // `back` below) and re-answering it must REPLACE its earlier verdict, never leave a stale AND a fresh
+    // one both counted for the same question at once.
+    (optIdx === q.correct ? setRight : setWrongIdx)((prev) => [...prev.filter((x) => x !== qIdx), qIdx]);
+    (optIdx === q.correct ? setWrongIdx : setRight)((prev) => prev.filter((x) => x !== qIdx));
   };
   const next = () => { setPicked(null); setI((v) => v + 1); };
+  // Revisit an earlier question — to double-check the explanation or retry one gotten wrong. Always lands
+  // unanswered (never replays the old picked-state) so re-picking through `pick` above works cleanly.
+  const back = () => { if (i === 0) return; setPicked(null); setI((v) => v - 1); };
   const restart = (reviewOnly?: boolean) => {
     setOrder(reviewOnly && wrongIdx.length ? [...wrongIdx] : null);
     setI(0); setPicked(null); setRight([]); setWrongIdx([]);
@@ -463,6 +534,10 @@ export function QuizPlayer({ quiz }: { quiz: TaskQuiz }) {
         </>
       )}
       {picked === null && <p className="deck-hint">{L("1-4 pour répondre", "1-4 to answer")}</p>}
+      {i > 0 ? (
+        <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Question précédente", "‹ Previous question")}</button>
+      ) : null}
+      <StudyHelpPanel taskId={taskId} card={{ kind: "quiz", question: q!.q, options: q!.options, correct: q!.correct }} />
     </div>
   );
 }

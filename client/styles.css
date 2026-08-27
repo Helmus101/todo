@@ -744,6 +744,17 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-hint { font-size: 12px; color: var(--ink-3); margin: 12px 0; }
 .deck-acts { display: flex; gap: var(--space-2); justify-content: center; margin-top: var(--space-1); }
 .deck-btn-back { display: block; margin: var(--space-2) auto 0; }
+.study-help { margin-top: var(--space-3); border-top: 1px solid var(--line-soft); padding-top: var(--space-2); }
+.study-help-toggle { display: block; margin: 0 auto; }
+.study-help-panel { margin-top: var(--space-2); background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: 10px; padding: var(--space-2); }
+.study-help-log { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
+.study-help-empty { font-size: 12px; color: var(--ink-3); margin: 0; }
+.study-help-msg { font-size: 13px; line-height: 1.4; margin: 0; padding: 6px 10px; border-radius: 8px; max-width: 92%; }
+.study-help-msg.user { align-self: flex-end; background: var(--accent-soft); }
+.study-help-msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--line-soft); }
+.study-help-thinking { opacity: 0.6; }
+.study-help-input { display: flex; gap: 6px; }
+.study-help-input input { flex: 1; min-width: 0; }
 .deck-btn-wrong:hover { background: var(--bg-2); border-color: var(--ink-2); }
 .deck-btn-right { background: var(--accent); border-color: var(--accent); }
 .deck-done { padding: 12px 2px; }

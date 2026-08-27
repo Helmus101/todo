@@ -163,6 +163,15 @@ export const api = {
   // Returns the WHOLE updated task, not just `chat` — a tutor turn can now create notes/decks/quizzes,
   // and the chat entries reference them by id, so the client needs task.notes/flashcards/quizzes too.
   chat: (id: string, message: string, stepIndex?: number): Promise<{ chat: WebTask["chat"]; task: WebTask }> => post(`/api/tasks/${id}/chat`, { message, stepIndex }),
+  // The flashcard/quiz "ask for a hint" sidebar — stateless server-side, so the client passes its own
+  // short local history each turn. No client-side timeout (matches `chat`): the server's own 2-minute
+  // deadline is the real backstop, and a hint arriving late still beats a hard-cut error mid-drill.
+  studyHelp: (
+    taskId: string,
+    card: { kind: "flashcard"; front: string; back: string } | { kind: "quiz"; question: string; options: string[]; correct: number },
+    history: { role: "user" | "assistant"; text: string }[],
+    message: string,
+  ): Promise<{ reply: string }> => post(`/api/tasks/${taskId}/study-help`, { card, history, message }),
   // Drain one queued job server-side and return the fresh task list + how many jobs remain active.
   kick: (): Promise<{ processed: number; failed: number; active: number; activeTaskIds?: string[]; tasks: WebTask[] }> => post("/api/jobs/kick"),
 };
