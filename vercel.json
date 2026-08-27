@@ -22,6 +22,10 @@
     { "source": "/manifest.json", "destination": "/manifest.json" },
     { "source": "/sw.js", "destination": "/sw.js" },
     { "source": "/self-heal.js", "destination": "/self-heal.js" },
+    { "source": "/robots.txt", "destination": "/robots.txt" },
+    { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
+    { "source": "/llms.txt", "destination": "/llms.txt" },
+    { "source": "/og-image.png", "destination": "/og-image.png" },
     { "source": "/:path*", "destination": "/index.html" }
   ],
   "headers": [

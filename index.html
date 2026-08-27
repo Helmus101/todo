@@ -4,7 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Otto — Le prolongement de Pronote qui te guide, jamais qui fait à ta place</title>
-    <meta name="description" content="Otto se branche sur ton Pronote et transforme tes devoirs et contrôles en un plan clair pour aujourd'hui — il te guide pas à pas, jamais l'exercice à ta place." />
+    <!-- Broadened from a Pronote-only description to also name the Bac/IB study-companion positioning —
+         the landing page itself now covers both audiences (see the onboarding "track" question), but the
+         static <head> can't localize per visitor, so this single description has to read honestly for
+         both the French Bac crowd (Pronote-first) and the international/IB crowd (Pronote optional). -->
+    <meta name="description" content="Otto is a study companion for French Bac and IB students: it reads your Pronote, Gmail/Calendar, or exams you log yourself, and turns a wall of homework into a clear plan for today — guiding you step by step, never doing the graded work for you." />
     <meta name="theme-color" content="#EDEEE9" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0B0D10" media="(prefers-color-scheme: dark)" />
     <!-- iOS ignores the web manifest for "add to home screen" — without these, a saved Otto opens inside
@@ -17,8 +21,11 @@
     <link rel="canonical" href="https://hiotto.vercel.app/" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Otto — Le prolongement de Pronote qui te guide, jamais qui fait à ta place" />
-    <meta property="og:description" content="Otto se branche sur ton Pronote et transforme tes devoirs et contrôles en un plan clair pour aujourd'hui — il te guide pas à pas, jamais l'exercice à ta place." />
+    <meta property="og:description" content="Otto is a study companion for French Bac and IB students: it reads your Pronote, Gmail/Calendar, or exams you log yourself, and turns a wall of homework into a clear plan for today — guiding you step by step, never doing the graded work for you." />
     <meta property="og:url" content="https://hiotto.vercel.app/" />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:locale:alternate" content="en_US" />
+    <meta property="og:site_name" content="Otto" />
     <!-- Must be an ABSOLUTE url and a real raster image — Twitter/X, LinkedIn, and iMessage link previews
          don't reliably render an SVG for a social card the way a browser tab icon does. -->
     <meta property="og:image" content="https://hiotto.vercel.app/og-image.png" />
@@ -26,12 +33,29 @@
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Otto — Le prolongement de Pronote qui te guide, jamais qui fait à ta place" />
-    <meta name="twitter:description" content="Otto se branche sur ton Pronote et transforme tes devoirs et contrôles en un plan clair pour aujourd'hui — il te guide pas à pas, jamais l'exercice à ta place." />
+    <meta name="twitter:description" content="Otto is a study companion for French Bac and IB students: it reads your Pronote, Gmail/Calendar, or exams you log yourself, and turns a wall of homework into a clear plan for today — guiding you step by step, never doing the graded work for you." />
     <meta name="twitter:image" content="https://hiotto.vercel.app/og-image.png" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3" />
     <link rel="manifest" href="/manifest.json" />
     <!-- Must be a real PNG — iOS renders an SVG apple-touch-icon as a blank/white home-screen tile. -->
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- Structured data (schema.org SoftwareApplication) — every field here must stay factually true to
+         the actual product (see DATA_PROTECTION.md's "state what's true today" standard): no fake rating,
+         no fake review count, no "free forever" claim beyond what Settings actually enforces (a capped,
+         visible monthly AI budget, not literally unlimited free use). -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Otto",
+      "applicationCategory": "EducationalApplication",
+      "operatingSystem": "Web",
+      "url": "https://hiotto.vercel.app/",
+      "description": "A study companion for French Bac and IB students that reads Pronote, Gmail/Calendar, or manually logged exams and turns homework into a clear, guided plan — never doing the graded work for the student.",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+      "audience": { "@type": "EducationalAudience", "educationalRole": "student" }
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>

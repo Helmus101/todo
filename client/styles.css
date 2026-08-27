@@ -1559,6 +1559,11 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .hero-cta { display: flex; align-items: center; gap: 14px; margin-top: 32px; }
 .fineprint { margin-top: 26px; font-size: var(--text-sm); color: var(--ink-3); }
+.hero-trust {
+  display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 22px 0 0; padding: 0; list-style: none;
+  font-size: 12.5px; font-weight: var(--weight-medium); color: var(--ink-2);
+}
+.hero-trust li { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 
 .hero-demo { width: min(560px, 100%); margin-top: 56px; text-align: left; }
 /* Subtle continuous float once it's on screen — alive, not distracting. */
@@ -1642,6 +1647,29 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .outcome-mark { flex: none; width: 22px; height: 22px; margin-top: 1px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .outcome h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); letter-spacing: -0.01em; margin-bottom: 3px; }
 .outcome p { font-size: var(--text-base); color: var(--ink-2); line-height: 1.6; }
+
+/* Otto-vs-alternatives comparison — a real product table, not a marketing graphic, so it has to scroll in
+   its own container on narrow screens rather than force the whole landing page wide (see the system-wide
+   "wide content scrolls in its own container" rule). */
+.compare-wrap { overflow-x: auto; margin-top: var(--space-5); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
+.compare-table { width: 100%; min-width: 480px; border-collapse: collapse; font-size: 13.5px; }
+.compare-table th, .compare-table td { padding: 11px 14px; text-align: center; border-top: 1px solid var(--line-soft); }
+.compare-table thead th { border-top: none; font-weight: var(--weight-semibold); color: var(--ink-2); padding-bottom: 10px; }
+.compare-table th[scope="row"] { text-align: left; font-weight: var(--weight-medium); color: var(--ink); max-width: 220px; }
+.compare-table td { color: var(--ink-3); }
+.compare-table .compare-yes { color: var(--accent); font-weight: 700; }
+.compare-otto { color: var(--accent); }
+.compare-table tbody tr:nth-child(odd) { background: var(--bg-2); }
+
+.faq-list { display: flex; flex-direction: column; margin-top: var(--space-1); }
+.faq-item { padding: 16px 0; border-top: 1px solid var(--line-soft); }
+.faq-item:first-child { border-top: none; }
+.faq-item summary { cursor: pointer; font-size: var(--text-md); font-weight: var(--weight-semibold); letter-spacing: -0.01em; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-item summary::after { content: "+"; font-size: 20px; font-weight: 400; color: var(--ink-3); flex-shrink: 0; transition: transform var(--duration-base) var(--ease); }
+.faq-item[open] summary::after { content: "–"; }
+.faq-item p { margin-top: 10px; font-size: var(--text-base); color: var(--ink-2); line-height: 1.6; }
+.faq-item p a { color: var(--accent); }
 
 .cta-band { text-align: center; padding: 72px 20px 80px; }
 .cta-band h2 { font-size: clamp(1.7rem, 3.6vw, 2.3rem); font-weight: 700; letter-spacing: -0.03em; }

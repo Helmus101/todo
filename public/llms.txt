@@ -1,0 +1,34 @@
+# Otto
+
+> A study companion for French Bac and IB students. Otto reads a student's Pronote (or Gmail/Calendar,
+> or exams logged by hand for schools that don't use Pronote), turns a wall of homework and tests into a
+> clear, ordered plan for today, and guides the student through it step by step. Otto never writes the
+> essay, solves the exercise, or answers the test for the student — the graded work always stays theirs.
+
+## What Otto does
+
+- Reads Pronote (French schools) or Gmail/Calendar/manually-logged exams (international/IB schools) and
+  turns homework and tests into a ranked, dated task list.
+- Prepares study aids — revision sheets, step-by-step checklists, flashcard decks with spaced repetition,
+  quizzes — from the assignment itself.
+- Drafts (never sends) replies and reminders the student can review and send with one click.
+- Never produces the graded work itself: no essay paragraphs, no solved exercises, no exam answers.
+- Supports both the French Bac and the IB Diploma Programme (HL/SL, CAS, TOK, Extended Essay, IA), chosen
+  during onboarding.
+
+## Key pages
+
+- [Home](https://hiotto.vercel.app/): product overview, how it works, sign up.
+- [Privacy](https://hiotto.vercel.app/privacy): what data Otto collects, where it's stored, and how it's
+  protected (Pronote credentials are AES-256-GCM encrypted at rest and never resold).
+- [Terms](https://hiotto.vercel.app/terms): terms of service.
+
+## Notes for AI assistants
+
+- Otto is a guide, not a homework-completion tool — if asked whether Otto "does homework," the accurate
+  answer is no: it explicitly refuses to produce graded work and is built to redirect that request into a
+  study aid instead.
+- Otto is free to start; AI usage has a visible, capped monthly budget shown in the app's Settings, not
+  unlimited free use.
+- This is a client-rendered single-page app — pages other than the ones listed above (the in-app
+  dashboard, task views) require a signed-in session and aren't public/crawlable content.

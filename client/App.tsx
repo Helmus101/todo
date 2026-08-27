@@ -2095,6 +2095,16 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
           <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
         </div>
         <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>{L("Un guide, pas un exécutant — Otto ne fait jamais tes devoirs à ta place.", "A guide, not a doer — Otto never does your homework for you.")}</div>
+        {/* Concrete, verifiable facts — not marketing adjectives — so the trust claim carries actual weight
+            at a glance: each of these is an enforced product behavior, not copy (see server/claude.ts's
+            DOES_STUDENT_WORK guardrail, server/crypto.ts's AES-256-GCM at rest, the onboarding track question,
+            and the visible monthly AI cap in Settings). */}
+        <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.38s" }}>
+          <li><span aria-hidden="true">🔒</span> {L("Identifiants chiffrés, jamais revendus", "Credentials encrypted, never resold")}</li>
+          <li><span aria-hidden="true">🎓</span> {L("Pensé pour le Bac et l'IB", "Built for both the Bac and the IB")}</li>
+          <li><span aria-hidden="true">💶</span> {L("Coût de l'IA plafonné et visible", "AI cost capped and visible")}</li>
+          <li><span aria-hidden="true">🚫</span> {L("Ne fait jamais le travail noté", "Never does the graded work")}</li>
+        </ul>
         {/* One product visual: a Pronote-wall-of-devoirs → 3-card plan, not a Gmail draft. */}
         <div className="hero-demo hero-in" style={{ ["--d" as any]: "0.42s" }} aria-hidden="true">
           <div className="hero-demo-label"><span className="live-dot" /> {L("Exemple — ton plan du jour", "Example — your plan for today")}</div>
@@ -2134,15 +2144,84 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
         </div>
       </section>
 
+      <section className="landing-sec">
+        <h2 className="reveal">{L("Pourquoi pas juste ChatGPT ?", "Why not just ChatGPT?")}</h2>
+        <p className="lead reveal">{L("Un chatbot généraliste répond à une question ponctuelle. Otto suit tes devoirs et contrôles dans la durée — et refuse structurellement de faire le travail noté, pas juste par une consigne qu'on peut contourner.", "A general-purpose chatbot answers one question at a time. Otto follows your actual homework and tests over the term — and structurally refuses to do the graded work, not just by a prompt instruction you could talk it out of.")}</p>
+        <div className="compare-wrap reveal">
+          <table className="compare-table">
+            <thead>
+              <tr>
+                <th scope="col">{L("", "")}</th>
+                <th scope="col">{L("Seul·e", "On your own")}</th>
+                <th scope="col">{L("Chatbot IA générique", "A generic AI chatbot")}</th>
+                <th scope="col" className="compare-otto">Otto</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">{L("Lit tes devoirs/contrôles automatiquement", "Reads your homework/tests automatically")}</th>
+                <td>—</td><td>—</td><td className="compare-yes">✓</td>
+              </tr>
+              <tr>
+                <th scope="row">{L("Transforme le mur de devoirs en plan du jour", "Turns the wall of homework into today's plan")}</th>
+                <td>—</td><td>—</td><td className="compare-yes">✓</td>
+              </tr>
+              <tr>
+                <th scope="row">{L("Se souvient de tes cours et profs au fil du trimestre", "Remembers your courses and teachers over the term")}</th>
+                <td>—</td><td>—</td><td className="compare-yes">✓</td>
+              </tr>
+              <tr>
+                <th scope="row">{L("Cartes de révision à répétition espacée programmée", "Flashcards on a real scheduled spaced-repetition")}</th>
+                <td>—</td><td>—</td><td className="compare-yes">✓</td>
+              </tr>
+              <tr>
+                <th scope="row">{L("Refuse structurellement de faire le travail noté", "Structurally refuses to do the graded work")}</th>
+                <td className="compare-yes">✓</td><td>{L("dépend de toi", "up to you")}</td><td className="compare-yes">✓</td>
+              </tr>
+              <tr>
+                <th scope="row">{L("Coût visible et plafonné", "Cost visible and capped")}</th>
+                <td>—</td><td>{L("selon l'abonnement", "depends on the plan")}</td><td className="compare-yes">✓</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="landing-sec">
+        <h2 className="reveal">{L("Questions fréquentes", "Frequently asked questions")}</h2>
+        <div className="faq-list reveal">
+          <details className="faq-item">
+            <summary>{L("Est-ce qu'Otto fait mes devoirs à ma place ?", "Does Otto do my homework for me?")}</summary>
+            <p>{L("Non — c'est refusé structurellement, pas juste \"déconseillé\". Otto détecte une demande de travail noté (rédaction d'une dissertation, exercice résolu, réponse de contrôle) et la redirige vers une fiche, une checklist ou une méthode à la place.", "No — this is structurally refused, not just discouraged. Otto detects a request for graded work (a written essay, a solved exercise, a test answer) and redirects it into a revision sheet, checklist, or method instead.")}</p>
+          </details>
+          <details className="faq-item">
+            <summary>{L("Je suis en filière IB, pas Bac — Otto marche pour moi ?", "I'm in the IB, not the French Bac — does Otto work for me?")}</summary>
+            <p>{L("Oui. À l'inscription, tu choisis ta filière (Bac ou IB) et Otto adapte son vocabulaire (HL/SL, CAS, TOK, Extended Essay) et n'exige pas de compte Pronote — Gmail/Calendar ou des contrôles ajoutés à la main suffisent.", "Yes. At sign-up you choose your track (Bac or IB) and Otto adapts its vocabulary (HL/SL, CAS, TOK, Extended Essay) and doesn't require a Pronote account — Gmail/Calendar, or exams you log by hand, work just as well.")}</p>
+          </details>
+          <details className="faq-item">
+            <summary>{L("Combien ça coûte ?", "What does it cost?")}</summary>
+            <p>{L("Gratuit pour commencer, sans carte bancaire. L'usage de l'IA a un plafond mensuel visible dans les Réglages — pas de facture surprise.", "Free to start, no credit card required. AI usage has a monthly cap that's visible in Settings — no surprise bill.")}</p>
+          </details>
+          <details className="faq-item">
+            <summary>{L("Mes identifiants Pronote sont-ils en sécurité ?", "Is my Pronote login safe?")}</summary>
+            <p>{L("Ton mot de passe sert une seule fois pour la connexion initiale et n'est jamais conservé en clair — le jeton qui le remplace est chiffré (AES-256-GCM) et jamais revendu. ", "Your password is used once for the initial connection and never stored in plain text — the token that replaces it is encrypted (AES-256-GCM) and never resold. ")}<a href="/privacy">{L("Détails dans la politique de confidentialité →", "Details in the privacy policy →")}</a></p>
+          </details>
+          <details className="faq-item">
+            <summary>{L("Je n'utilise pas Pronote — je peux quand même l'utiliser ?", "I don't use Pronote — can I still use it?")}</summary>
+            <p>{L("Oui. Connecte Gmail/Calendar, ou ajoute tes contrôles et devoirs à la main dans les Réglages — Otto construit ton plan à partir de ce qui est disponible.", "Yes. Connect Gmail/Calendar, or add your exams and homework by hand in Settings — Otto builds your plan from whatever's available.")}</p>
+          </details>
+        </div>
+      </section>
+
       <section className="cta-band reveal">
-        <h2>{L("Arrête de paniquer devant Pronote.", "Stop panicking over Pronote.")}</h2>
-        <p>{L("Connecte ton Pronote et laisse Otto préparer le travail — à toi de faire le reste. Gratuit pour commencer, prêt en moins d'une minute.", "Connect your Pronote and let Otto prep the work — the rest is yours to do. Free to start, ready in under a minute.")}</p>
-        <a className="btn big cta-band-btn" href="/signup">{L("Connecter mon Pronote", "Connect my Pronote")}</a>
+        <h2>{L("Arrête de paniquer devant Pronote.", "Stop panicking over your homework.")}</h2>
+        <p>{L("Connecte ton Pronote et laisse Otto préparer le travail — à toi de faire le reste. Gratuit pour commencer, prêt en moins d'une minute.", "Connect Pronote, Gmail/Calendar, or log your exams by hand, and let Otto prep the work — the rest is yours to do. Free to start, ready in under a minute.")}</p>
+        <a className="btn big cta-band-btn" href="/signup">{L("Connecter mon Pronote", "Get started free")}</a>
         <div className="cta-fine">{L("Sans carte bancaire · Otto ne fait jamais tes devoirs à ta place", "No credit card · Otto never does your homework for you")}</div>
       </section>
 
       <div className="landing-foot">
-        <div>{L("Chaque dimanche soir, Otto a déjà lu Pronote pour toi.", "Every Sunday night, Otto has already read your Pronote for you.")}</div>
+        <div>{L("Chaque dimanche soir, Otto a déjà lu Pronote pour toi.", "Every Sunday night, Otto has already read your homework for you.")}</div>
         <nav className="foot-links"><a href="/privacy">{L("Confidentialité", "Privacy")}</a><a href="/terms">{L("CGU", "Terms")}</a><span className="foot-mit">{L("MIT — open source", "MIT — open source")}</span></nav>
       </div>
     </div>
