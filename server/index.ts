@@ -609,6 +609,13 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
 app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   const title = String(req.body?.title || "").trim();
   if (!title) { res.status(400).json({ error: "title required" }); return; }
+  // Idempotency key — the client sends its own local stub id. Without this, a retried request (the client's
+  // own retry-on-dropped-response logic in api.ts's `req()`, or a plain double-click before the button
+  // disabled) created a SECOND task for the same submission — reported live as "manual tasks are sometimes
+  // generated twice". A replay of an already-applied clientId is a no-op: return the current list as-is,
+  // no refine call, no enqueue, no duplicate.
+  const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.slice(0, 80) : undefined;
+  if (clientId && (req.session.tasks || []).some((t) => t.clientId === clientId)) { res.json(req.session.tasks || []); return; }
   // Optional explicit date (personal commitments — a job shift, a club meeting, an appointment) from a
   // native <input type="date">: only accept a real calendar date, never arbitrary free text here (that's
   // what the title/AI-refinement path is for) — a bad value silently becomes "no date" rather than a 500.
@@ -622,7 +629,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
   const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
   try {
-    req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen);
+    req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen, clientId);
     const added = req.session.tasks[0];
     if (ready) added.status = "queued";
     // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from

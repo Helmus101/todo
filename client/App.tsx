@@ -2642,7 +2642,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
     };
     onAdded((prev) => [stub, ...prev]);
     try {
-      const fresh = await api.add(v, whenToSend || undefined);
+      const fresh = await api.add(v, whenToSend || undefined, stubId);
       // Defensive: a 401 (session expired) resolves instead of throwing (see api.ts's j()), returning the
       // error BODY where an array was expected. Setting `tasks` state to that non-array object crashed the
       // whole app on the next render — which, from the outside, looked exactly like the new task vanishing.

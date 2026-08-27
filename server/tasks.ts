@@ -700,7 +700,7 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
  *  "Ring 2" personal-commitment capture path: a real date attached at add-time, not left for the AI to try
  *  to infer from vague phrasing). It always wins over whatever the AI refinement guessed, since a date the
  *  person deliberately picked is strictly more trustworthy than an inference from text. */
-export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, markUnrefined = false, explicitWhen?: string): WebTask[] {
+export function addManual(list: WebTask[], title: string, refined?: RefinedTask | null, markUnrefined = false, explicitWhen?: string, clientId?: string): WebTask[] {
   const urgency = refined ? refined.urgency : 0.6;
   const importance = refined ? refined.importance : 0.75;
   const e = eisenhower(urgency, importance);
@@ -715,6 +715,7 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
     source: "manual", risk: "low", urgency, importance, quadrant: e.quadrant, score: e.score,
     status: "ready", createdAt: now,
     ...(markUnrefined ? { unrefined: true } : {}), // AI paused/unavailable — raw text in, background sweep cleans it up
+    ...(clientId ? { clientId } : {}),
   };
   list.unshift(task);
   return list;

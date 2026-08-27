@@ -124,7 +124,9 @@ export const api = {
     const out: any = await post("/api/tasks/generate", force ? { force: true } : undefined);
     return Array.isArray(out) ? { tasks: out, note: "" } : { tasks: out?.tasks || [], note: String(out?.note || "") };
   },
-  add: (title: string, when?: string): Promise<WebTask[]> => post("/api/tasks", when ? { title, when } : { title }),
+  // `clientId` — an idempotency key (see server/index.ts): pass the caller's own local stub id so a
+  // retried/double-fired request is recognized as a replay instead of creating a second task.
+  add: (title: string, when?: string, clientId?: string): Promise<WebTask[]> => post("/api/tasks", { title, ...(when ? { when } : {}), ...(clientId ? { clientId } : {}) }),
   refine: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/refine`),
   run: (id: string, reset?: boolean): Promise<WebTask> => post(`/api/tasks/${id}/run`, reset ? { reset: true } : undefined),
   revise: (id: string, note: string): Promise<WebTask> => post(`/api/tasks/${id}/revise`, { note }),

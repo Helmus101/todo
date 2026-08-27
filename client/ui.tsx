@@ -400,12 +400,22 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
 /** Drillable flashcard viewer (CREATE_FLASHCARDS): space/click flips the card, → marks it right and
  *  advances, ← marks it wrong and advances. Ends on a score summary with a restart. Keyboard-first so a
  *  student can drill an entire deck without touching the mouse. */
+function loadDeckProgress(deckId: string): { i: number; right: number[]; wrong: number[] } | null {
+  try {
+    const raw = localStorage.getItem(`otto-deck:${deckId}`);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (!Number.isInteger(p?.i) || !Array.isArray(p?.right) || !Array.isArray(p?.wrong)) return null;
+    return { i: p.i, right: p.right, wrong: p.wrong };
+  } catch { return null; }
+}
 export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; taskId?: string }) {
   const L = useLang();
-  const [i, setI] = useState(0);
+  const saved = useRef(loadDeckProgress(deck.id)).current;
+  const [i, setI] = useState(saved?.i ?? 0);
   const [flipped, setFlipped] = useState(false);
-  const [right, setRight] = useState<number[]>([]);
-  const [wrong, setWrong] = useState<number[]>([]);
+  const [right, setRight] = useState<number[]>(saved?.right ?? []);
+  const [wrong, setWrong] = useState<number[]>(saved?.wrong ?? []);
   const done = i >= deck.cards.length;
   const card = !done ? deck.cards[i] : null;
   const mark = (ok: boolean) => {
@@ -426,6 +436,16 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
   // verdict on its own; re-marking it (see `mark` above) is what actually changes the score.
   const back = () => { if (i === 0) return; setFlipped(false); setI((v) => v - 1); };
   const restart = () => { setI(0); setFlipped(false); setRight([]); setWrong([]); };
+  // Local progress save — same reasoning as QuizPlayer's: closing the popup mid-deck (or a reload)
+  // shouldn't throw away where you were. Per-card review outcomes are ALREADY durable server-side
+  // (onReview writes them via /flashcard/.../review) — this only saves the local "which card am I on"
+  // position, which had nowhere else to live.
+  useEffect(() => {
+    try {
+      if (done) { localStorage.removeItem(`otto-deck:${deck.id}`); return; }
+      localStorage.setItem(`otto-deck:${deck.id}`, JSON.stringify({ i, right, wrong }));
+    } catch { /* private browsing / storage full — progress just won't survive a reload, not fatal */ }
+  }, [deck.id, i, right, wrong, done]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done) return;
@@ -486,14 +506,26 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
  *  screen at the end reuses FlashcardDeck's exact done-state markup (.deck-done/.deck-score-ring) so scoring
  *  reads identically across artifact types. Deliberately its own component (not a FlashcardDeck variant):
  *  the interaction — lock on pick, reveal the right answer, explain why — has nothing in common with a flip. */
+// Read once at mount time (lazy initializer) — never re-read after, so a later edit to this quiz's own
+// progress by THIS component doesn't loop back through localStorage on its own writes.
+function loadQuizProgress(quizId: string): { i: number; right: number[]; wrongIdx: number[]; order: number[] | null } | null {
+  try {
+    const raw = localStorage.getItem(`otto-quiz:${quizId}`);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (!Number.isInteger(p?.i) || !Array.isArray(p?.right) || !Array.isArray(p?.wrongIdx)) return null;
+    return { i: p.i, right: p.right, wrongIdx: p.wrongIdx, order: Array.isArray(p.order) ? p.order : null };
+  } catch { return null; }
+}
 export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }) {
   const L = useLang();
-  const [i, setI] = useState(0);
+  const saved = useRef(loadQuizProgress(quiz.id)).current;
+  const [i, setI] = useState(saved?.i ?? 0);
   const [picked, setPicked] = useState<number | null>(null);
-  const [right, setRight] = useState<number[]>([]);
+  const [right, setRight] = useState<number[]>(saved?.right ?? []);
   // Indices the student got wrong, in order — drives "review my mistakes" without re-deriving anything.
-  const [wrongIdx, setWrongIdx] = useState<number[]>([]);
-  const [order, setOrder] = useState<number[] | null>(null); // null = full quiz, in original order
+  const [wrongIdx, setWrongIdx] = useState<number[]>(saved?.wrongIdx ?? []);
+  const [order, setOrder] = useState<number[] | null>(saved?.order ?? null); // null = full quiz, in original order
   const seq = order ?? quiz.questions.map((_, idx) => idx);
   const done = i >= seq.length;
   const qIdx = seq[i];
@@ -515,14 +547,8 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
     setOrder(reviewOnly && wrongIdx.length ? [...wrongIdx] : null);
     setI(0); setPicked(null); setRight([]); setWrongIdx([]);
   };
-  // Picking an answer saves it and moves on by itself — no extra click needed. Still pauses long enough to
-  // actually see the right/wrong highlight and read the one-line "why" before advancing; the "Next" button
-  // and 1-4/Enter shortcuts stay as a manual override for anyone who wants to move faster or slower.
-  useEffect(() => {
-    if (picked === null) return;
-    const id = setTimeout(next, 1600);
-    return () => clearTimeout(id);
-  }, [picked]);
+  // No more auto-advance timer — picking an answer used to move on by itself after 1.6s, which cut off
+  // anyone still reading the explanation. "Suivant"/Enter/→ are now the ONLY way to advance.
   // Persist the score the moment the pass finishes — best-effort (a failed write just means this one
   // attempt isn't referenceable later, not a broken quiz) and fires again on every restart-then-finish,
   // same as flashcards' onReview firing on every card.
@@ -531,6 +557,15 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
     void api.recordQuizAttempt(taskId, quiz.id, right.length, seq.length, wrongIdx).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done]);
+  // Local progress save — closing the popup mid-quiz (or an accidental reload) used to lose the whole
+  // attempt with no way back. Not answer-level (re-opening lands on the same question unanswered, not
+  // mid-pick) — just enough that "I got interrupted" doesn't mean starting the whole quiz over.
+  useEffect(() => {
+    try {
+      if (done) { localStorage.removeItem(`otto-quiz:${quiz.id}`); return; }
+      localStorage.setItem(`otto-quiz:${quiz.id}`, JSON.stringify({ i, right, wrongIdx, order }));
+    } catch { /* private browsing / storage full — progress just won't survive a reload, not fatal */ }
+  }, [quiz.id, i, right, wrongIdx, order, done]);
   // Only the "advance past a picked answer" shortcut remains — no number-key shortcut to PICK an answer:
   // that let a student cycle 1/2/3/4 blind without reading the options, defeating the point of a
   // discrimination check (see the tool's own doc comment above CREATE_QUIZ_TOOL).

@@ -493,6 +493,11 @@ export interface WebTask {
   id: string;
   title: string;
   why: string;
+  /** Client-generated idempotency key for a manually-added task — the client passes it (its own local
+   *  stub id) on POST /api/tasks so a retried/duplicated request (a double-click, a proxy retry after a
+   *  dropped response — see api.ts's `req()`) can be recognized as "already added" instead of creating a
+   *  second task. Never shown in the UI, never set for any other source. */
+  clientId?: string;
   when?: string;       // concise timeline / deadline, e.g. "today", "by Fri 5pm", "this week"
   /** True when `when` was NOT stated/implied by the source (the AI left it '') and was instead assigned
    *  deterministically from the task's own urgency/importance (see estimateWhen in server/tasks.ts) so
