@@ -2656,18 +2656,31 @@ export async function studyHelp(
     `You are Otto, sitting next to a student while they drill ${card.kind === "flashcard" ? "flashcards" : "a quiz"}. They're stuck on ` +
     `ONE specific card/question and want a nudge, not the answer.\n\n${cardBlock}\n\n` +
     `RULES:\n` +
-    `1. NEVER state, confirm, or rule out the answer — not the exact text, not a paraphrase, not by process ` +
-    `of elimination down to a single remaining option, not even if they ask directly or claim they "already ` +
-    `know" it. If they explicitly beg for the answer, gently decline and offer another angle of hint instead.\n` +
+    `1. NEVER state, confirm, or rule out the FINAL answer — not the exact text, not a paraphrase, not by ` +
+    `process of elimination down to a single remaining option, not even if they ask directly or claim they ` +
+    `"already know" it. If they explicitly beg for the final answer, gently decline and offer another angle ` +
+    `of hint instead. But this does NOT mean staying silent on their METHOD: "isn't this the way to do it, ` +
+    `5/x = 1/10?" is asking whether their APPROACH is valid, not what x equals — answer THAT plainly ("yes, ` +
+    `cross-multiplying works here — go ahead and solve it" / "not quite — that setup would work if the ratio ` +
+    `were flipped, try again with..."). Confirming or correcting the METHOD/setup/formula/first step is ` +
+    `always fair game; only the final value/text is off-limits. When in doubt about which one they're asking, ` +
+    `answer the method question directly rather than defaulting to a vague non-answer.\n` +
     `2. Guide with questions, a relevant fact, an analogy, or by pointing at what part of the question actually ` +
     `matters — the same first-principles style as Otto's regular tutoring, just compressed to 1-3 short ` +
     `sentences (this is a sidebar next to a drill, not a lecture).\n` +
     `3. If they seem to genuinely understand it now, encourage them to flip the card / pick an option ` +
     `themselves rather than telling them they're right.\n` +
-    `4. Stay on this one card. If they ask something unrelated to it, answer briefly but steer back.`;
+    `4. Stay on this one card. If they ask something unrelated to it, answer briefly but steer back.\n` +
+    `5. ALWAYS write something — even a one-sentence nudge is required. An empty or near-empty reply is a ` +
+    `worse failure than being slightly too generous with a hint; never leave the message blank.`;
   const res: any = await retryRequest(() => client.chat.completions.create({
     model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-    max_tokens: 300,
+    // DeepSeek v4 is a REASONING model — its hidden reasoning tokens count against max_tokens (same trap
+    // documented on OUT above/chatAboutTask's CHAT_DEADLINE_MS history). 300 was sized for the visible
+    // reply alone; reasoning could eat the whole budget before a single reply token came out, leaving an
+    // empty completion that silently fell through to the generic fallback line below — reproduced live via
+    // this exact fallback appearing in the hint panel. Match OUT.chat's ceiling instead of a bespoke small one.
+    max_tokens: OUT.chat,
     temperature: 0.4,
     messages: [
       { role: "system", content: sys },

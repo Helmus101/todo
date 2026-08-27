@@ -195,6 +195,10 @@ const LATEX_SYMBOLS: [RegExp, string][] = [
   [/\\[Dd]elta/g, "Δ"], [/\\lambda/g, "λ"], [/\\mu/g, "μ"], [/\\sigma/g, "σ"], [/\\phi/g, "φ"], [/\\omega/g, "ω"],
   [/\\sum/g, "Σ"], [/\\prod/g, "Π"], [/\\int/g, "∫"], [/\\forall/g, "∀"], [/\\exists/g, "∃"],
   [/\\in/g, "∈"], [/\\notin/g, "∉"], [/\\subset/g, "⊂"], [/\\cup/g, "∪"], [/\\cap/g, "∩"], [/\\emptyset/g, "∅"],
+  // Geometry — perpendicular/parallel/angle marks are exactly the notation a "is my method right?" hint
+  // reply needs (congruent triangles, parallel lines, right angles) and had no coverage at all before.
+  [/\\nparallel/g, "∦"], [/\\parallel/g, "∥"], [/\\perp/g, "⊥"], [/\\angle/g, "∠"], [/\\measuredangle/g, "∡"],
+  [/\\cong/g, "≅"], [/\\sim(?!eq)/g, "∼"], [/\\simeq/g, "≃"], [/\\triangle/g, "△"], [/\\degree/g, "°"],
   [/\\(left|right|,|!|;|:|quad|qquad)/g, ""],
 ];
 function formatMath(text: string): string {
@@ -207,7 +211,10 @@ function formatMath(text: string): string {
     .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)")
     .replace(/\\sqrt\{([^{}]*)\}/g, "√($1)")
     .replace(/\\binom\{([^{}]*)\}\{([^{}]*)\}/g, "C($1,$2)")
-    .replace(/\\text\{([^{}]*)\}/g, "$1");
+    .replace(/\\text\{([^{}]*)\}/g, "$1")
+    // \overline{AB} — segment notation (e.g. "prove AB ≅ CD"). No LaTeX renderer, so approximate the bar
+    // with a combining overline (U+0305) on each character rather than dropping the segment marker entirely.
+    .replace(/\\overline\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̅`).join(""));
   for (const [re, rep] of LATEX_SYMBOLS) s = s.replace(re, rep);
   // ^{...}/_{...} (braced, so multi-char) then ^x/_x (single char) — braced form must run first or the
   // single-char pattern would fire on just the `{`.
