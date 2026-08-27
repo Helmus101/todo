@@ -524,11 +524,13 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
     void api.recordQuizAttempt(taskId, quiz.id, right.length, seq.length, wrongIdx).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done]);
+  // Only the "advance past a picked answer" shortcut remains — no number-key shortcut to PICK an answer:
+  // that let a student cycle 1/2/3/4 blind without reading the options, defeating the point of a
+  // discrimination check (see the tool's own doc comment above CREATE_QUIZ_TOOL).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done || !q) return;
-      if (picked === null && /^[1-4]$/.test(e.key)) { const n = Number(e.key) - 1; if (n < q.options.length) { e.preventDefault(); pick(n); } }
-      else if (picked !== null && (e.key === "Enter" || e.key === "ArrowRight")) { e.preventDefault(); next(); }
+      if (picked !== null && (e.key === "Enter" || e.key === "ArrowRight")) { e.preventDefault(); next(); }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -561,7 +563,6 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
           const state = picked === null ? "" : oi === q!.correct ? "correct" : oi === picked ? "wrong" : "";
           return (
             <button key={oi} type="button" className={`quiz-opt ${state}`} disabled={picked !== null} onClick={() => pick(oi)}>
-              <span className="quiz-opt-key">{oi + 1}</span>
               <span className="quiz-opt-text">{formatMath(opt)}</span>
               {/* Was border/background-only (deliberately not red/green — see the one-accent rule) but with
                   no text/icon and no aria-live announcement, a screen-reader student got zero signal about
@@ -583,7 +584,7 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
           </div>
         </>
       )}
-      {picked === null && <p className="deck-hint">{L("1-4 pour répondre", "1-4 to answer")}</p>}
+      {picked === null && <p className="deck-hint">{L("Clique sur une réponse", "Click an answer")}</p>}
       {i > 0 ? (
         <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Question précédente", "‹ Previous question")}</button>
       ) : null}

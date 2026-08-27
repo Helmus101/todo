@@ -780,19 +780,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 .quiz-opt:hover:not(:disabled) { border-color: var(--ink-3); background: var(--bg-2); }
 .quiz-opt:disabled { cursor: default; }
-.quiz-opt-key {
-  flex: none; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-family: var(--mono, ui-monospace, monospace); font-size: var(--text-xs); font-weight: 700; color: var(--ink-3);
-  border: 1px solid var(--line);
-}
 .quiz-opt-text { flex: 1; }
 /* Right/wrong feedback deliberately stays within the app's one-accent system (see .chip-bad/.milestone-
    segment.late) — the CORRECT option gets the accent (it's the one thing worth pointing at), a wrong PICK
    gets ink/bg-2 emphasis instead of a red, since red never appears anywhere else in this app. */
 .quiz-opt.correct { border-color: var(--accent); background: var(--accent-soft); }
-.quiz-opt.correct .quiz-opt-key { border-color: var(--accent); color: var(--accent); background: var(--surface); }
 .quiz-opt.wrong { border-color: var(--ink); background: var(--bg-2); }
-.quiz-opt.wrong .quiz-opt-key { border-color: var(--ink); color: var(--ink); }
 /* Text/icon backup for the color-coded state above — a color-only signal has no non-visual equivalent. */
 .quiz-opt-mark { flex: none; font-size: var(--text-xs); font-weight: var(--weight-medium); margin-left: 8px; }
 .quiz-opt.correct .quiz-opt-mark { color: var(--accent); }
