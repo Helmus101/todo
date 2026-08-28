@@ -189,17 +189,30 @@ const scriptify = (s: string, map: Record<string, string>, marker: string): stri
   [...s].every((c) => map[c]) ? [...s].map((c) => map[c]).join("") : `${marker}${s.length > 1 ? `(${s})` : s}`;
 const LATEX_SYMBOLS: [RegExp, string][] = [
   [/\\times/g, "×"], [/\\cdot/g, "·"], [/\\div/g, "÷"], [/\\pm/g, "±"], [/\\mp/g, "∓"],
-  [/\\leq?/g, "≤"], [/\\geq?/g, "≥"], [/\\neq/g, "≠"], [/\\approx/g, "≈"], [/\\equiv/g, "≡"],
-  [/\\(right|left)?arrow/g, "→"], [/\\Rightarrow/g, "⇒"], [/\\infty/g, "∞"],
+  [/\\leq?/g, "≤"], [/\\geq?/g, "≥"], [/\\neq/g, "≠"], [/\\approx/g, "≈"], [/\\equiv/g, "≡"], [/\\propto/g, "∝"],
+  [/\\Longrightarrow/g, "⟹"], [/\\longrightarrow/g, "⟶"], [/\\Rightarrow/g, "⇒"], [/\\Leftarrow/g, "⇐"],
+  [/\\(right|left)?arrow|\\to(?![a-zA-Z])/g, "→"], [/\\Leftrightarrow|\\iff(?![a-zA-Z])/g, "⇔"], [/\\leftrightarrow/g, "↔"], [/\\infty/g, "∞"],
   [/\\pi/g, "π"], [/\\theta/g, "θ"], [/\\alpha/g, "α"], [/\\beta/g, "β"], [/\\gamma/g, "γ"], [/\\Gamma/g, "Γ"],
   [/\\[Dd]elta/g, "Δ"], [/\\lambda/g, "λ"], [/\\mu/g, "μ"], [/\\sigma/g, "σ"], [/\\phi/g, "φ"], [/\\omega/g, "ω"],
-  [/\\sum/g, "Σ"], [/\\prod/g, "Π"], [/\\int/g, "∫"], [/\\forall/g, "∀"], [/\\exists/g, "∃"],
-  [/\\in/g, "∈"], [/\\notin/g, "∉"], [/\\subset/g, "⊂"], [/\\cup/g, "∪"], [/\\cap/g, "∩"], [/\\emptyset/g, "∅"],
+  [/\\Omega/g, "Ω"], [/\\eta/g, "η"], [/\\rho/g, "ρ"], [/\\tau/g, "τ"], [/\\chi/g, "χ"], [/\\psi/g, "ψ"], [/\\nu/g, "ν"], [/\\xi/g, "ξ"], [/\\zeta/g, "ζ"], [/\\kappa/g, "κ"],
+  [/\\sum/g, "Σ"], [/\\prod/g, "Π"], [/\\int/g, "∫"], [/\\oint/g, "∮"], [/\\forall/g, "∀"], [/\\exists/g, "∃"],
+  [/\\in/g, "∈"], [/\\notin/g, "∉"], [/\\subseteq/g, "⊆"], [/\\subset/g, "⊂"], [/\\cup/g, "∪"], [/\\cap/g, "∩"], [/\\emptyset|\\varnothing/g, "∅"],
+  [/\\partial/g, "∂"], [/\\nabla/g, "∇"], [/\\mid/g, "|"], [/\\setminus/g, "\\"],
+  [/\\cdots/g, "⋯"], [/\\ldots|\\dots/g, "…"], [/\\vdots/g, "⋮"], [/\\ddots/g, "⋱"],
+  // Function names — roman (upright), never treated as adjacent-variable multiplication like a bare "sin".
+  // `(?![a-zA-Z])` rather than `\b`: `_`/digits count as word chars in JS regex, so `\b` fails to end the
+  // match right where it matters most — immediately before a subscript/limit, e.g. `\lim_{x \to 0}` — and
+  // `\lim` was silently left unconverted (reproduced live on exactly that expression).
+  [/\\(sin|cos|tan|cot|sec|csc|log|ln|exp|lim|det|gcd|min|max|arg|sup|inf|mod)(?![a-zA-Z])/g, "$1"],
+  [/\\bmod(?![a-zA-Z])/g, "mod"], [/\\pmod\{([^{}]*)\}/g, "(mod $1)"],
   // Geometry — perpendicular/parallel/angle marks are exactly the notation a "is my method right?" hint
   // reply needs (congruent triangles, parallel lines, right angles) and had no coverage at all before.
   [/\\nparallel/g, "∦"], [/\\parallel/g, "∥"], [/\\perp/g, "⊥"], [/\\angle/g, "∠"], [/\\measuredangle/g, "∡"],
   [/\\cong/g, "≅"], [/\\sim(?!eq)/g, "∼"], [/\\simeq/g, "≃"], [/\\triangle/g, "△"], [/\\degree/g, "°"],
-  [/\\(left|right|,|!|;|:|quad|qquad)/g, ""],
+  // \begin{env}/\end{env} wrappers (align, cases, matrix…) have no real plain-text layout — drop the
+  // wrapper and let the content fall through rather than leak raw "\begin{align}" into a chat bubble.
+  [/\\(begin|end)\{[a-zA-Z*]+\}/g, ""], [/&/g, ""], [/\\\\/g, "\n"],
+  [/\\(left|right|,|!|;|:|quad|qquad|displaystyle|textstyle)\b/g, ""],
 ];
 function formatMath(text: string): string {
   if (!text.includes("\\") && !text.includes("$")) return text; // fast path — the overwhelming majority of turns have no math at all
@@ -208,20 +221,33 @@ function formatMath(text: string): string {
     // converted; the delimiters themselves are LaTeX plumbing a reader has no use for.
     .replace(/\\\[|\\\]|\\\(|\\\)/g, "")
     .replace(/\$\$?/g, "")
-    .replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)")
+    .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)") // \frac AND \dfrac/\tfrac
+    // \sqrt[n]{x} (nth root) before the plain \sqrt{x} case, or the `[n]` would be left dangling.
+    .replace(/\\sqrt\[([^\]]*)\]\{([^{}]*)\}/g, (_, n, g) => `${scriptify(n, SUPERSCRIPT, "^")}√(${g})`)
     .replace(/\\sqrt\{([^{}]*)\}/g, "√($1)")
     .replace(/\\binom\{([^{}]*)\}\{([^{}]*)\}/g, "C($1,$2)")
-    .replace(/\\text\{([^{}]*)\}/g, "$1")
-    // \overline{AB} — segment notation (e.g. "prove AB ≅ CD"). No LaTeX renderer, so approximate the bar
-    // with a combining overline (U+0305) on each character rather than dropping the segment marker entirely.
-    .replace(/\\overline\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̅`).join(""));
+    .replace(/\\(text|mathrm|mathbf|operatorname)\{([^{}]*)\}/g, "$2")
+    // \overline{AB} / \vec{v} / \hat{x} / \bar{x} / \dot{x} — combining marks per character rather than
+    // dropping the annotation entirely (a segment bar, a vector arrow, and a derivative dot all change
+    // the MEANING of the expression, not just its styling).
+    .replace(/\\overline\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̅`).join(""))
+    .replace(/\\vec\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}⃗`).join(""))
+    .replace(/\\hat\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̂`).join(""))
+    .replace(/\\bar\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̄`).join(""))
+    .replace(/\\dot\{([^{}]*)\}/g, (_, g) => [...g].map((c: string) => `${c}̇`).join(""));
   for (const [re, rep] of LATEX_SYMBOLS) s = s.replace(re, rep);
   // ^{...}/_{...} (braced, so multi-char) then ^x/_x (single char) — braced form must run first or the
   // single-char pattern would fire on just the `{`.
+  // Single-char form FIRST (with a lookahead that skips a `{` so it never eats the opening brace of the
+  // braced form below), braced form LAST. Braced form must run last, not just after: scriptify's own
+  // fallback output for an unmappable group ("_(x → 0)") is plain text containing a literal "_(" — if the
+  // single-char pass ran again afterward, it would match THAT literal underscore+paren and mangle it into
+  // "₍x → 0)" (reproduced live on `\lim_{x \to 0}`). Running single-char only once, before, avoids ever
+  // reprocessing text this function itself produced.
+  s = s.replace(/\^(?!\{)(\S)/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));
+  s = s.replace(/_(?!\{)(\S)/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
   s = s.replace(/\^\{([^{}]*)\}/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));
   s = s.replace(/_\{([^{}]*)\}/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
-  s = s.replace(/\^(\S)/g, (_, g) => scriptify(g, SUPERSCRIPT, "^"));
-  s = s.replace(/_(\S)/g, (_, g) => scriptify(g, SUBSCRIPT, "_"));
   return s.replace(/[{}]/g, "").replace(/ {2,}/g, " ").trim();
 }
 

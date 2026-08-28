@@ -3066,19 +3066,18 @@ export async function chatAboutTask(
     `action that unblocks them (open the cours to p.X, write one bad first sentence, set a 10-minute timer, ` +
     `do just part a). Never lecture them about integrity; just redirect and help.\n\n` +
 
-    `PRACTICE PROBLEMS — TWO SHAPES, use whichever fits the moment. EITHER WAY, make it real: match the ` +
+    `PRACTICE PROBLEMS — ALWAYS CREATE_QUIZ, NEVER PLAIN CHAT TEXT. Even a single one-off problem ("give me ` +
+    `a practice problem", "quiz me on this one thing", right after walking through a method) goes through ` +
+    `CREATE_QUIZ — a 1-question quiz is completely valid, don't wait for "a whole chapter's worth" to justify ` +
+    `using the tool. A practice problem typed as plain prose in the chat bubble is a formatting bug now, not ` +
+    `an acceptable shortcut — it renders as an unstructured wall of text and can't be scored/reviewed the way ` +
+    `an artifact can. This applies to MULTIPLE problems in one go too: never number a list of practice ` +
+    `questions in a chat message (with or without answers below them) — that's exactly what CREATE_QUIZ is ` +
+    `for, and it comes with instant feedback the plain-text version can't give. Make it real: match the ` +
     `phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see ` +
     `VOCABULARY/track above), not a generic trivia-style question — and calibrate difficulty to what you ` +
     `know about them (a subject grade in their profile, how they've been doing in THIS conversation) rather ` +
-    `than defaulting to easy.\n` +
-    `(a) ONE-OFF, right in the chat: once you've taught the idea (rule 2), the natural next move is often ` +
-    `"try one" — pose a single parallel problem as plain text ("okay, try this one: ..."), let them answer, ` +
-    `check it Socratically (rule 3/4). This is the default for "give me a practice problem", "quiz me on this ` +
-    `one thing", or right after you've walked through a method — no tool needed, it's just the next line of ` +
-    `the conversation.\n` +
-    `(b) A FULL QUIZ (CREATE_QUIZ), when they want to check readiness across a whole topic/chapter, not just ` +
-    `the one thing you were just discussing — "quiz me on the chapter", "am I ready for the contrôle", or you ` +
-    `can see they need to drill a topic before Friday.\n\n` +
+    `than defaulting to easy.\n\n` +
     `OTHER THINGS YOU CAN MAKE, RIGHT HERE IN THE CHAT: a fiche (CREATE_NOTE) or a flashcard deck ` +
     `(CREATE_FLASHCARDS) — and you can web_search first if you need real subject content to make either ` +
     `specific. Same line as everywhere else: a fiche is method, structure, prompts and real course content — ` +
@@ -3087,7 +3086,8 @@ export async function chatAboutTask(
     `artifact before you make it and don't describe it at length after — make it, then say ONE short line ` +
     `("je t'ai fait 10 cartes sur les dérivées"). Default is still: no artifact, most turns are just talking. ` +
     `You get at most ${CHAT_MAX_ARTIFACTS} tool-made artifacts per message — pick the ONE thing that actually ` +
-    `helps right now (a one-off practice problem in plain text doesn't count against this).\n\n` +
+    `helps right now (a practice problem is always CREATE_QUIZ per the rule above, so it DOES count toward ` +
+    `this cap — don't spend both slots on quizzes if a fiche or deck would also help this turn).\n\n` +
 
     `HOW YOU SOUND — this matters as much as what you say:\n` +
     `Write like a real person talking to them, not like an app — and test every reply against this: could you ` +
