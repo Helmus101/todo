@@ -52,6 +52,16 @@ check("same-person different-action tasks do NOT merge", dedupeTasks([callSmith,
 check("same anchor still merges", dedupeTasks([doneOld, { ...newEmail, anchorKey: "GMAIL_OLD1" }]).length === 1);
 // …and anchorless title dups still merge (agent-sweep fallback, non-manual source).
 check("anchorless title dup still merges", dedupeTasks([{ ...doneOld, anchorKey: undefined }, { ...newEmail, anchorKey: undefined }]).length === 1);
+// Same real-world reminder, phrased in two DIFFERENT languages across sweeps (the account's language
+// setting changed, or the AI just reworded it) — plain word-overlap sees almost nothing in common, but a
+// shared acronym (SAT here) is a strong same-topic signal that survives translation. (Live report: "SAT
+// results" showing up twice, once in English once in French, never deduped.)
+const satEn = { ...base, id: "sat1", title: "Set reminder to check SAT results Sep 4-6", why: "scores release window", source: "chat", status: "ready" };
+const satFr = { ...base, id: "sat2", title: "Vérifie tes résultats SAT mi-septembre", why: "fenêtre de publication des notes", source: "chat", status: "ready" };
+check("same reminder in two languages (shared acronym) still merges", dedupeTasks([satEn, satFr]).length === 1);
+// …but two tasks that merely share an unrelated acronym with otherwise nothing in common should be rare
+// enough in practice that this permissive rule is worth it — not asserted here since it's a deliberate,
+// documented tradeoff (see sharedAcronym's comment in server/tasks.ts), not a bug to pin.
 // MANUAL tasks are a deliberate user action — fuzzy title similarity must NEVER swallow a fresh manual add
 // into an old dismissed/done one just because the wording is similar (regression: "add task, it instantly
 // disappears" when retesting with a similarly-worded title after an earlier dismissed/done attempt).

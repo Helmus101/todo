@@ -372,9 +372,35 @@ function isReconnectNeeded(e: any): boolean {
   return /invalid_grant|invalid_client|token.*(expired|revoked)|unauthorized_client/i.test(msg) || Number(e?.status) === 401;
 }
 
+// The agent picks its OWN call args for a live read (GMAIL_FETCH_EMAILS, GMAIL_LIST_THREADS,
+// GOOGLECALENDAR_EVENTS_LIST, GOOGLEDRIVE_LIST_FILES, ...) — nothing upstream constrained how many items
+// it could ask Composio for in one call before this. The only backstop was the RESULT getting sliced to
+// 4000/6000 chars after the fact, which still means Composio/Google actually fetch+return the full
+// (possibly huge) payload first, and an arbitrary char-cut of a big JSON blob shows whatever happened to
+// survive the cut, not a deliberately curated set. Clamp whichever "how many" parameter is present —
+// Composio's own actions don't agree on a name for it (`max_results` for Gmail, `maxResults` for Calendar,
+// `pageSize` for Drive, ...). 50 comfortably covers every value Otto's OWN code already asks for
+// deliberately (drafts reconciliation uses 50 — see readAction's GMAIL_LIST_DRAFTS call below; discover.ts's
+// sweep reads are all ≤20) while still cutting off what an unconstrained model call could otherwise request.
+// Only clamps DOWN an oversized value the model set; never injects one where the model set none, so an
+// action with no such parameter is untouched.
+const LIST_SIZE_KEYS = ["max_results", "maxResults", "pageSize", "page_size", "limit", "maxResultCount"];
+const MAX_LIST_SIZE = 50;
+function clampListSize(args: Record<string, unknown>): Record<string, unknown> {
+  let out = args;
+  for (const k of LIST_SIZE_KEYS) {
+    if (k in out) {
+      const n = Number((out as any)[k]);
+      if (Number.isFinite(n) && n > MAX_LIST_SIZE) out = { ...out, [k]: MAX_LIST_SIZE };
+    }
+  }
+  return out;
+}
+
 /** Run a Composio action for a user. `connectedAccountId` disambiguates WHICH connected account to use —
  *  required for Gmail once the user has more than one (otherwise Composio can't tell which inbox). */
 async function execute(action: string, userId: string, args: Record<string, unknown>, connectedAccountId?: string): Promise<string> {
+  args = clampListSize(args);
   const callArgs = { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) };
   let result: any;
   try { result = await executeWithRetry(action, callArgs); }
@@ -649,6 +675,7 @@ export async function readAction(userId: string, action: string, args: Record<st
   if (!integrationsReady() || !userId) throw new Error("integrations not configured");
   const policy = ACTION_POLICIES[action.toUpperCase()];
   if (policy !== "auto" || !isRead(action.toUpperCase())) throw new Error(`not an allowed read action: ${action}`);
+  args = clampListSize(args);
   const callArgs = { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) };
   const r: any = await executeWithRetry(action, callArgs);
   if (r && r.successful === false) {

@@ -601,7 +601,9 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     const note = job.status === "succeeded" ? String(job.output?.note || "") : `sweep ${job.status}: ${job.last_error || "still running"}`;
     res.json({ tasks: req.session.tasks, note });
   } catch (e: any) {
-    console.error("[tasks] generate error:", e);
+    // e?.message only, not the raw error object — some SDK errors attach the full request payload (e.g. an
+    // Axios-style `.response.data`) to the error, which could echo back email/doc content we sent upstream.
+    console.error("[tasks] generate error:", e?.message || e);
     res.status(500).json({ error: e?.message || "generate failed" });
   }
 });
@@ -798,7 +800,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     if (skipNote) { res.status(403).json({ error: skipNote.includes("budget") ? BUDGET_MSG : "AI is paused — resume it in Settings to run this." }); return; }
     res.json(t);
   } catch (e: any) {
-    console.error(`[tasks] ${type} error for task`, id, ":", e);
+    console.error(`[tasks] ${type} error for task`, id, ":", e?.message || e);
     res.status(500).json({ error: e?.message || "run failed" });
   }
 };
