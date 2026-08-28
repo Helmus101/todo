@@ -1876,12 +1876,14 @@ async function planResearch(task: { title: string; why: string; sourceSubject?: 
   } catch { return []; } // planning failure just means the loop falls back to its own general algorithm
 }
 
+type RunTaskInput = { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string };
+
 /**
  * Run a task as a bounded tool-using agent over the user's CONNECTED apps (Composio): it gathers facts and
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
-export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
+async function runTaskInner(task: RunTaskInput, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
   // The audit trail (logAudit below) is shown to the student/parent verbatim (client/TaskCard.tsx's
   // Activity log) — it must follow the account's own language like everything else, not default to
   // French regardless (see the identical `fr` flag in chatAboutTask).
@@ -2435,6 +2437,25 @@ export async function runTask(task: { title: string; why: string; source?: strin
   } finally {
     console.log(`${new Date().toISOString()} [ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
+}
+
+/** Hard SLA on the whole run, same reasoning/pattern as chatAboutTask's CHAT_DEADLINE_MS: without this, a
+ *  degraded/hanging upstream provider (each retryRequest() call already has its own 90s timeout × 3
+ *  retries — nearly 300s from ONE stuck call alone, before even counting multiple rounds) let the whole
+ *  request run right up against Vercel's 300s function ceiling and get killed by the PLATFORM as a bare 504
+ *  — reproduced live: `/api/tasks/:id/run` timed out at 300s, then the job-queue retry (jobs.ts's kick)
+ *  timed out the SAME way, over and over, with the task never reaching a real failed/lastError state the
+ *  user could see or Retry out of — just a silent, repeating dead end. REJECTING (not resolving empty, like
+ *  chat does) is deliberate: index.ts's /run route and jobs.ts's execute_task both already catch a thrown
+ *  error, revert the task's status, and stamp a real lastError — exactly the visible "failed, here's why,
+ *  Retry" state that was missing. 250s leaves real margin under the 300s ceiling for that cleanup + the
+ *  response itself to still complete inside the function's own budget. */
+const RUN_DEADLINE_MS = 250_000;
+export async function runTask(task: RunTaskInput, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
+  return Promise.race([
+    runTaskInner(task, profile, focus, extras, academic),
+    new Promise<RunOutput>((_, reject) => setTimeout(() => reject(new Error("Otto's AI provider is taking too long to respond — try again shortly.")), RUN_DEADLINE_MS)),
+  ]);
 }
 
 /**
