@@ -88,12 +88,6 @@ export interface Profile {
   // Otto Lycée defaults to French; a student can switch the whole app (UI + AI-generated content) to
   // English in Settings. Undefined/anything else is treated as "fr".
   language?: "fr" | "en";
-  // Which model provider THIS account's AI calls go through. Undefined/"deepseek" (default) keeps existing
-  // behavior unchanged. "mistral" routes EVERY AI call for this account to Mistral instead — deliberately
-  // no automatic fallback to DeepSeek if Mistral errors/is unconfigured (see aiClient in server/claude.ts):
-  // the account explicitly chose Mistral, so a silent cross-provider fallback would be surprising and
-  // would defeat the point of picking one (e.g. wanting all activity to show up on the Mistral account/bill).
-  aiProvider?: "deepseek" | "mistral";
   languageSetAt?: string; // ISO stamp of the last language toggle — see pausedAt above, same reason:
                           // `normalizeProfile` always defaults `language` to "fr" (never leaves it
                           // undefined), so a plain `??` merge could never tell "never set" apart from
@@ -174,7 +168,6 @@ export function normalizeProfile(p: any): Profile {
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
       : undefined,
     language: p?.language === "en" ? "en" : "fr",
-    aiProvider: p?.aiProvider === "mistral" ? "mistral" : undefined,
     languageSetAt: typeof p?.languageSetAt === "string" ? p.languageSetAt : undefined,
     preferencesUpdatedAt: typeof p?.preferencesUpdatedAt === "string" ? p.preferencesUpdatedAt : undefined,
     grades: Array.isArray(p?.grades)

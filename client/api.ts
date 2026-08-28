@@ -27,9 +27,6 @@ function translateServerError(msg: string): string {
   if (/monthly AI budget/i.test(msg)) return en
     ? "Otto's reached its monthly AI budget — it resets on the 1st."
     : "Otto a atteint son plafond mensuel d'IA — ça se renouvelle le 1er.";
-  if (msg === "RATE_LIMITED_NO_BODY") return en
-    ? "Too many requests right now — wait a moment and try again."
-    : "Trop de requêtes en ce moment — attends un instant et réessaie.";
   return msg;
 }
 
@@ -63,14 +60,9 @@ async function req(url: string, init?: RequestInit, retries = 6): Promise<Respon
   }
 }
 
-const timeoutMsg = () => currentLang() === "en"
-  ? "Otto is taking a while to respond — try again in a moment."
-  : "Otto met du temps à répondre — réessaie dans un instant.";
 /** post() with a hard client-side timeout — for interactive actions (answering a step, running one step)
  *  where the button click needs to resolve into SOMETHING within a bounded time, success or a clear error,
- *  rather than waiting indefinitely on a slow AI/tool call and reading as "the click didn't do anything."
- *  Was hardcoded French regardless of the account's language — same class of bug as the paused/budget
- *  gate messages this file already localizes; nothing special about this one string exempted it. */
+ *  rather than waiting indefinitely on a slow AI/tool call and reading as "the click didn't do anything." */
 const postTimed = (url: string, timeoutMs: number, body?: unknown) =>
   req(url, {
     method: "POST",
@@ -78,43 +70,21 @@ const postTimed = (url: string, timeoutMs: number, body?: unknown) =>
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(timeoutMs),
   }).then(j).catch((e: any) => {
-    if (e?.name === "AbortError") throw new Error(timeoutMsg());
+    if (e?.name === "AbortError") throw new Error("Otto met du temps à répondre — réessaie dans un instant.");
     throw e;
   });
 
 const j = async (r: Response) => {
   if (!r.ok && r.status !== 401) {
-    // A 429 with NO parseable JSON body (falls straight to the generic "HTTP 429" below) never came from
-    // this app's own rate limiter — server/index.ts's rateLimit() always sends a real {error} message. A
-    // body-less 429 is the platform/edge layer itself (Vercel's function-concurrency limit) or an upstream
-    // API (Composio/DeepSeek/Mistral) rejecting the request before it reached our own JSON error path —
-    // still means "too many requests, right now," so give a real message instead of raw "HTTP 429".
-    const body = await r.json().catch(() => ({}));
-    const raw = body.error || (r.status === 429 ? "RATE_LIMITED_NO_BODY" : `HTTP ${r.status}`);
+    const raw = (await r.json().catch(() => ({}))).error || `HTTP ${r.status}`;
     const err: any = new Error(translateServerError(raw));
     err.status = r.status; // callers need this to tell "already running elsewhere" (409) from a real failure
     throw err;
   }
   return r.json();
 };
-// Every OTHER mutation (run/confirm/dismiss/generate/…) used to have NO client-side timeout at all — only
-// the two single-step calls below (postTimed, 25s) did. A genuinely hung server request (an AI call that
-// never returns, a stuck serverless invocation short of its own 300s cap) left the button disabled with a
-// spinner and NO error, forever — indistinguishable from "the click did nothing," and reported as exactly
-// that live ("I retried and nothing happened, and everything else stopped working too" — every other
-// button was ALSO silently hanging on its own never-resolving request). 90s is generous enough for a real
-// multi-round task run to finish normally, but bounds every mutation to eventually surface SOMETHING.
-const DEFAULT_TIMEOUT_MS = 90_000;
 const post = (url: string, body?: unknown) =>
-  req(url, {
-    method: "POST",
-    headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
-  }).then(j).catch((e: any) => {
-    if (e?.name === "AbortError") throw new Error(timeoutMsg());
-    throw e;
-  });
+  req(url, { method: "POST", headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).then(j);
 // Auth posts surface the server's error message instead of throwing, so the form can show it.
 const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: string }> =>
   req(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })

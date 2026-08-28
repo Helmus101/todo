@@ -109,24 +109,9 @@ function tokenOverlap(a: string, b: string): { jaccard: number; containment: num
   let inter = 0; for (const w of A) if (tokenMatches(w, B)) inter++;
   return { jaccard: inter / (A.size + B.size - inter), containment: inter / Math.min(A.size, B.size), inter };
 }
-// Cross-language duplicate signal: tokenOverlap above is pure WORD matching, which misses the SAME
-// real-world reminder when it got phrased in two different languages across sweeps (the account's language
-// setting was switched mid-use, or a manual add was typed in another language than the AI's current one) —
-// e.g. "Set reminder to check SAT results Sep 4-6" vs "Vérifie tes résultats SAT mi-septembre" share almost
-// no common WORDS but are obviously the same task. An acronym (SAT, IB, TOK, EE, CAS...) barely changes
-// across languages, unlike ordinary words, so a shared one — checked against the ORIGINAL casing, before
-// normTitle lowercases everything — is a strong same-topic signal plain word-overlap can't see. Deliberately
-// permissive (a false-positive merge of two genuinely different same-acronym tasks is rarer and less
-// visible than the reported bug: the same reminder duplicating itself every sweep in a different language).
-function sharedAcronym(a: string, b: string): boolean {
-  const acr = (s: string) => new Set((s.match(/\b[A-Z]{2,}\b/g) || []).map((x) => x.toLowerCase()));
-  const A = acr(a), B = acr(b);
-  for (const x of A) if (B.has(x)) return true;
-  return false;
-}
 function nearDup(a: string, b: string): boolean {
   const { jaccard, containment, inter } = tokenOverlap(a, b);
-  return jaccard >= 0.55 || (inter >= 3 && containment >= 0.75) || (inter >= 2 && containment >= 0.9) || sharedAcronym(a, b);
+  return jaccard >= 0.55 || (inter >= 3 && containment >= 0.75) || (inter >= 2 && containment >= 0.9);
 }
 /** LOOSER similarity, used ONLY to suppress new tasks that resemble a DISMISSED one — a dismissal is a
  *  signal ("I don't want this kind of task"), so we'd rather over-suppress near a dismissed item than
@@ -365,7 +350,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         autoArchivePatterns: side.autoArchivePatterns ?? fallback.autoArchivePatterns,
         track: side.track ?? fallback.track,
         yearLevel: side.yearLevel ?? fallback.yearLevel,
-        aiProvider: side.aiProvider ?? fallback.aiProvider,
         preferencesUpdatedAt: side.preferencesUpdatedAt ?? fallback.preferencesUpdatedAt,
       };
     })(),

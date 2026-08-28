@@ -1289,17 +1289,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
     catch (e: any) { notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
   };
-  // AI provider — DeepSeek (default) or Mistral, per account. No fallback between them server-side by
-  // design (server/claude.ts's aiClient): picking Mistral here routes EVERY AI call for this account to
-  // Mistral, full stop, so switching is a real, visible choice rather than a silent hedge.
-  const [aiProvider, setAiProviderState] = useState<"deepseek" | "mistral">(profile?.aiProvider === "mistral" ? "mistral" : "deepseek");
-  useEffect(() => { setAiProviderState(profile?.aiProvider === "mistral" ? "mistral" : "deepseek"); }, [profile?.aiProvider]);
-  const saveAiProvider = async (v: "deepseek" | "mistral") => {
-    const prev = aiProvider;
-    setAiProviderState(v);
-    try { onChanged?.(await api.setProfilePreference("aiProvider", v)); }
-    catch (e: any) { setAiProviderState(prev); notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
-  };
   return (
     <>
       <div className="set-row">
@@ -1324,13 +1313,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
-      <div className="set-row">
-        <span className="set-text"><b>{L("Modèle d'IA", "AI model")}</b><span className="settings-hint">{L("DeepSeek par défaut. Passer sur Mistral bascule TOUT sur ce compte — pas de repli automatique sur DeepSeek.", "DeepSeek by default. Switching to Mistral routes EVERYTHING on this account through it — no automatic fallback to DeepSeek.")}</span></span>
-        <div className="lang-toggle">
-          <button type="button" className={`btn xs ${aiProvider === "deepseek" ? "" : "ghost"}`} aria-pressed={aiProvider === "deepseek"} onClick={() => void saveAiProvider("deepseek")}>DeepSeek</button>
-          <button type="button" className={`btn xs ${aiProvider === "mistral" ? "" : "ghost"}`} aria-pressed={aiProvider === "mistral"} onClick={() => void saveAiProvider("mistral")}>Mistral</button>
-        </div>
-      </div>
     </>
   );
 }
@@ -2256,10 +2238,9 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
       <section className="landing-sec">
         <h2 className="reveal">{L("Un guide, pas un exécutant", "A guide, not a doer")}</h2>
         <div className="features">
-          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>{L("Pas ta boîte mail entière balancée à une IA", "Not your whole inbox dumped to an AI")}</h3><p>{L("Otto n'envoie jamais ta messagerie ou ton Drive en bloc. Chaque appel IA ne reçoit qu'un extrait court et ciblé du strict nécessaire pour cette tâche précise, avec des limites strictes sur ce qu'il peut même demander de lire — ", "Otto never hands your inbox or Drive over in bulk. Every AI call gets only a short, targeted extract of exactly what that one task needs, with hard limits on how much it can even ask to read — ")}<a href="/privacy">{L("détail exact dans notre politique de confidentialité", "the exact detail in our privacy policy")}</a>.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>{L("Jamais ton travail à ta place", "Never your work done for you")}</h3><p>{L("Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle. La compréhension reste la tienne, pas celle d'une IA.", "Otto preps sheets, checklists and drafts — never the essay, the exercise, or the test answer. Understanding stays yours, not an AI's.")}</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>{L("Identifiants chiffrés, jamais revendus", "Credentials encrypted, never resold")}</h3><p>{L("Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé. Données jamais revendues — ", "Your Pronote password is used once and never stored. Data is never resold — ")}<a href="/privacy">{L("détail du traitement dans notre politique de confidentialité", "details in our privacy policy")}</a>.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.3s" }}><div><h3>{L("Plafond de coût visible", "Visible cost cap")}</h3><p>{L("Coût de l'IA plafonné et affiché dans les Réglages — pas de surprise.", "AI cost is capped and shown in Settings — no surprises.")}</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>{L("Jamais ton travail à ta place", "Never your work done for you")}</h3><p>{L("Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle. La compréhension reste la tienne, pas celle d'une IA.", "Otto preps sheets, checklists and drafts — never the essay, the exercise, or the test answer. Understanding stays yours, not an AI's.")}</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>{L("Identifiants chiffrés, jamais revendus", "Credentials encrypted, never resold")}</h3><p>{L("Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé. Données jamais revendues — ", "Your Pronote password is used once and never stored. Data is never resold — ")}<a href="/privacy">{L("détail du traitement dans notre politique de confidentialité", "details in our privacy policy")}</a>.</p></div></div>
+          <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>{L("Plafond de coût visible", "Visible cost cap")}</h3><p>{L("Coût de l'IA plafonné et affiché dans les Réglages — pas de surprise.", "AI cost is capped and shown in Settings — no surprises.")}</p></div></div>
         </div>
       </section>
 
@@ -2452,14 +2433,6 @@ function PrivacyBody() {
       </ul>
       <p>{L("Otto effectue de manière autonome le travail ", "Otto performs autonomously the work that is ")}<b>{L("réversible", "reversible")}</b>{L(" (brouillons, documents, recherche). Tout ce qui est irréversible — envoyer un mail, publier, inviter, supprimer, ou payer — n'est ", " (drafts, documents, research). Anything irreversible — sending an email, posting, inviting, deleting, or paying — is ")}<b>{L("jamais", "never")}</b>{L(" fait sans ta confirmation explicite. Il ne modifie jamais non plus un document, une feuille ou une présentation qu'il n'a pas créé — seulement tes propres fichiers, jamais ceux d'Otto.", " done without your explicit confirmation. It also never edits a document, sheet, or slide deck that it didn't create — only your own files, never Otto's.")}</p>
 
-      <h2>{L("Combien de données atteignent vraiment l'IA", "How much of your data actually reaches the AI")}</h2>
-      <p>{L("La crainte la plus courante : \"est-ce qu'Otto envoie toute ma boîte mail à une IA ?\" Non. C'est une contrainte technique, pas une simple promesse :", "The most common worry: \"does Otto send my whole inbox to an AI?\" It doesn't — this is a technical constraint, not just a promise:")}</p>
-      <ul>
-        <li>{L("La vérification quotidienne ne lit qu'un petit lot récent et daté par app (par ex. les 20 derniers mails de la semaine) — jamais l'historique complet.", "The daily check only reads a small, recent, date-windowed batch per app (e.g. the last 20 emails from this week) — never your full history.")}</li>
-        <li>{L("Chaque mail/événement est réduit à un court extrait (quelques centaines de caractères) avant même d'être une tâche potentielle — jamais le contenu intégral.", "Each email/event is cut down to a short snippet (a few hundred characters) before it's even considered as a possible task — never the full content.")}</li>
-        <li>{L("Otto n'a aucun outil \"exporter tout\" ou \"lister tout\" — chaque lecture est une recherche ciblée avec sa propre limite stricte, plafonnée côté serveur quoi que l'IA lui-même demande.", "Otto has no \"export everything\" or \"list everything\" tool — every read is a targeted search with its own hard cap, enforced server-side no matter what the AI itself asks for.")}</li>
-        <li>{L("Seul le contenu du fil/document/devoir réellement lié à LA tâche en cours est envoyé pour ce travail précis — jamais tes autres mails ou fichiers sans rapport.", "Only the thread/document/assignment actually tied to the ONE task at hand is sent for that specific piece of work — never your other, unrelated emails or files.")}</li>
-      </ul>
       <h2>{L("Ce que nous stockons", "What we store")}</h2>
       <ul>
         <li>{L("Ton email de compte et un mot de passe haché de manière sécurisée (nous ne stockons jamais ton mot de passe en clair).", "Your account email and a securely hashed password (we never store your password in plain text).")}</li>

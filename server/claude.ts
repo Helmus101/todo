@@ -566,23 +566,8 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // silently truncate at 2000. CHAT_MAX_ROUNDS/CHAT_TOKEN_CEILING (near chatAboutTask) bound the real cost.
 const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000 } as const;
 
-// Mistral's OpenAI-compatible chat completions endpoint — no reasoning-token quirk like DeepSeek v4, so
-// no LEGACY_*_MODEL_MAP/light-vs-heavy split needed for it; one model name covers every call.
-const MISTRAL_MODEL = process.env.MISTRAL_MODEL || "mistral-large-latest";
-
-/** Which provider THIS account's AI calls go through — Profile.aiProvider, defaulting to "deepseek" so
- *  every existing account (which has never set it) is completely unaffected. */
-function provider(profile?: Profile): "deepseek" | "mistral" {
-  return profile?.aiProvider === "mistral" ? "mistral" : "deepseek";
-}
-
-/** Is AI usable for THIS profile specifically? (No profile → "is anything configured at all", for the
- *  couple of call sites — /api/status's global flag — that check before a profile is even loaded.)
- *  Deliberately per-provider, not "either key exists": an account that chose Mistral but whose server has
- *  no MISTRAL_API_KEY configured is NOT ready — it must not silently fall back to DeepSeek (see aiClient). */
-export function aiReady(profile?: Profile): boolean {
-  if (!profile) return !!process.env.DEEPSEEK_API_KEY || !!process.env.MISTRAL_API_KEY;
-  return provider(profile) === "mistral" ? !!process.env.MISTRAL_API_KEY : !!process.env.DEEPSEEK_API_KEY;
+export function aiReady(): boolean {
+  return !!process.env.DEEPSEEK_API_KEY;
 }
 
 /** Pull token usage from a DeepSeek response, INCLUDING the cache-hit portion of the prompt tokens
@@ -605,31 +590,6 @@ function deepseekClient(): OpenAI {
     timeout: 90_000,
     maxRetries: 0,
   });
-}
-
-function mistralClient(): OpenAI {
-  const apiKey = process.env.MISTRAL_API_KEY;
-  if (!apiKey) throw new Error("Set MISTRAL_API_KEY in web/.env to use Mistral (Settings → AI provider).");
-  // Mistral exposes an OpenAI-compatible chat completions API, so the same SDK/call sites work unchanged —
-  // only the base URL/key/model differ.
-  return new OpenAI({ apiKey, baseURL: "https://api.mistral.ai/v1", timeout: 90_000, maxRetries: 0 });
-}
-
-/** The model client for THIS account's chosen provider. Deliberately NO fallback between providers: if an
- *  account picked Mistral and MISTRAL_API_KEY isn't configured, this throws rather than silently routing
- *  to DeepSeek — the whole point of the setting is "everything for this account goes through Mistral,
- *  full stop," so a silent fallback would be a surprise, not a convenience. */
-function aiClient(profile?: Profile): OpenAI {
-  return provider(profile) === "mistral" ? mistralClient() : deepseekClient();
-}
-
-/** The model NAME for this account's provider/call. `forceLight` mirrors the existing DeepSeek-only
- *  "always use the cheaper/faster model for this call regardless of what's configured" pattern (was
- *  inlined as `DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL` at every call
- *  site) — Mistral has no equivalent pro/flash split, so it's a no-op for that provider. */
-function modelFor(profile?: Profile, forceLight = false): string {
-  if (provider(profile) === "mistral") return MISTRAL_MODEL;
-  return forceLight && DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
 }
 
 /** Is this a TRANSIENT failure worth retrying (connection dropped / gateway / rate limit)? Checks the
@@ -1040,7 +1000,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
       `ends on my projects/people above — then call submit_tasks with the NEW actionable items. Respect my ` +
       `stated preferences above when choosing, ranking, and phrasing tasks.`,
   }];
-  const actualModel = modelFor(profile, true);
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.
   // The prompt tells the agent to BATCH searches as parallel calls in one round, so 6 is plenty; the forced
   // final round below is the safety net for a straggler.
@@ -1051,7 +1011,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   let lazyRejected = false;   // reject an unread empty submit only ONCE, then take whatever comes
   try {
   for (let i = 0; i < MAX; i++) {
-    const client = aiClient(profile);
+    const client = deepseekClient();
     const lastRoundHint = i === MAX - 1 ? "You must call submit_tasks now with the full actionable list. Do not answer with prose." : "";
     const base = trimOldToolResults(messages);
     const apiMessages = lastRoundHint ? [...base, { role: "user" as const, content: lastRoundHint }] : base;
@@ -1103,7 +1063,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   // Round budget exhausted without a submit — a sweep that read everything but never reported is why
   // "Refresh finds nothing". Force ONE final call where the model MUST call submit_tasks with what it has.
   try {
-    const client = aiClient(profile);
+    const client = deepseekClient();
     const res = await retryRequest(() => client.chat.completions.create({
       model: actualModel,
       max_tokens: OUT.generate,
@@ -1226,8 +1186,8 @@ export async function classifyCandidates(
     `Use "course" for a class-specific pattern worth compounding over the term (a professor's grading style, ` +
     `how far ahead of THIS course's deadlines they actually start work) — this is what makes Otto visibly ` +
     `smarter about a student's classes over a degree, not just their tone. Empty arrays are fine.`;
-  const client = aiClient(profile);
-  const actualModel = modelFor(profile, true);
+  const client = deepseekClient();
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   let tokIn = 0, tokOut = 0, tokCached = 0, calls = 0;
   const ask = async (extra?: string) => {
     calls++;
@@ -1340,8 +1300,8 @@ export async function pickOneTask(
     `Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words","why":"one clause ` +
     `naming the concrete trigger, ≤12 words","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,` +
     `"risk":"low"|"high"}`;
-  const client = aiClient(profile);
-  const actualModel = modelFor(profile, true);
+  const client = deepseekClient();
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   try {
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: actualModel, max_tokens: OUT.pick, temperature: 0.2, response_format: { type: "json_object" },
@@ -1387,8 +1347,8 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
   const raw = String(text || "").trim();
   if (!raw) return null;
   try {
-    const client = aiClient(profile);
-    const model = modelFor(profile, true);
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const res = await retryRequest(() => client.chat.completions.create({
       model,
       max_tokens: OUT.refine,
@@ -1836,12 +1796,12 @@ const RUN_TOOLS = [
  * single call trying to plan-and-research-and-write all at once. Falls back to an empty plan (the loop's own
  * algorithmic instructions still apply) on any failure — this is an enhancement, never a blocker.
  */
-async function planResearch(task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string }, connectedApps: string[], profile?: Profile): Promise<string[]> {
+async function planResearch(task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string }, connectedApps: string[]): Promise<string[]> {
   try {
-    const client = aiClient(profile);
+    const client = deepseekClient();
     const appsLine = connectedApps.length ? connectedApps.join(", ") : "none connected";
     const res: any = await retryRequest(() => client.chat.completions.create({
-      model: modelFor(profile, true),
+      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.plan,
       temperature: 0.2,
       response_format: { type: "json_object" },
@@ -1876,14 +1836,12 @@ async function planResearch(task: { title: string; why: string; sourceSubject?: 
   } catch { return []; } // planning failure just means the loop falls back to its own general algorithm
 }
 
-type RunTaskInput = { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string };
-
 /**
  * Run a task as a bounded tool-using agent over the user's CONNECTED apps (Composio): it gathers facts and
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
-async function runTaskInner(task: RunTaskInput, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
+export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
   // The audit trail (logAudit below) is shown to the student/parent verbatim (client/TaskCard.tsx's
   // Activity log) — it must follow the account's own language like everything else, not default to
   // French regardless (see the identical `fr` flag in chatAboutTask).
@@ -1923,7 +1881,7 @@ async function runTaskInner(task: RunTaskInput, profile?: Profile, focus?: strin
     : "";
   // FIRST PASS: plan the research before doing it (see planResearch) — skipped for a focused single-step
   // re-run, which already knows exactly what it's doing and doesn't need a fresh research plan.
-  const researchPlan = (!EXECUTION_ENABLED && !focus) ? await planResearch({ title: task.title, why: task.why, sourceSubject: task.sourceSubject, sourceDetail: task.sourceDetail }, extras?.connected || [], profile) : [];
+  const researchPlan = (!EXECUTION_ENABLED && !focus) ? await planResearch({ title: task.title, why: task.why, sourceSubject: task.sourceSubject, sourceDetail: task.sourceDetail }, extras?.connected || []) : [];
   const researchPlanBlock = researchPlan.length
     ? `\nRESEARCH PLAN — run these searches, in order, before writing "context":\n${researchPlan.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n(This plan is a starting point, not a ceiling — follow up on anything it turns up, per the GATHER CONTEXT algorithm below.)\n`
     : "";
@@ -1941,7 +1899,7 @@ async function runTaskInner(task: RunTaskInput, profile?: Profile, focus?: strin
       : head + deadlineHint + manualHint + `\nGather what you need and record the key facts in submit's "context" (who sent what, what the ask/event/doc detail is). Then ACTUALLY DO the reversible work now with your tools (draft/create/update) — don't just plan it. Only once you've done everything you can, call submit; list as steps only what truly needs the user.`,
   }];
 
-  const actualModel = modelFor(profile, true);
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   // Plan-only mode never spends rounds on writes (there are none), so its budget goes entirely to research —
   // give it a bit more room than execution mode to actually check every relevant connected app.
   const MAX = EXECUTION_ENABLED ? 8 : 10; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
@@ -2083,7 +2041,7 @@ async function runTaskInner(task: RunTaskInput, profile?: Profile, focus?: strin
         : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. If this is academic prep or genuinely needs a document/draft, your NEXT tool call MUST be a create/write tool (CREATE_NOTE for a short brief, CREATE_FLASHCARDS for a drillable deck, GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. But if this is a logistics/admin task (booking, confirming, buying, scheduling) with nothing worth preserving beyond the steps list, do NOT force a note just to have one — call submit now with steps only.`;
       messages.push({ role: "user", content: nudge });
     }
-    const client = aiClient(profile);
+    const client = deepseekClient();
     const lastRoundHint = i === MAX - 1 ? "You must call submit now with the final result. Do not answer with prose." : "";
     const base = trimOldToolResults(messages);
     const apiMessages = lastRoundHint ? [...base, { role: "user" as const, content: lastRoundHint }] : base;
@@ -2386,7 +2344,7 @@ async function runTaskInner(task: RunTaskInput, profile?: Profile, focus?: strin
   }
   // Rescue path: if the model never called submit, ask it once (without tools) to produce a final JSON result.
   try {
-    const client = aiClient(profile);
+    const client = deepseekClient();
     const transcript = messages.map((m) => {
       const role = String(m?.role || "assistant");
       const content = typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? "");
@@ -2439,25 +2397,6 @@ async function runTaskInner(task: RunTaskInput, profile?: Profile, focus?: strin
   }
 }
 
-/** Hard SLA on the whole run, same reasoning/pattern as chatAboutTask's CHAT_DEADLINE_MS: without this, a
- *  degraded/hanging upstream provider (each retryRequest() call already has its own 90s timeout × 3
- *  retries — nearly 300s from ONE stuck call alone, before even counting multiple rounds) let the whole
- *  request run right up against Vercel's 300s function ceiling and get killed by the PLATFORM as a bare 504
- *  — reproduced live: `/api/tasks/:id/run` timed out at 300s, then the job-queue retry (jobs.ts's kick)
- *  timed out the SAME way, over and over, with the task never reaching a real failed/lastError state the
- *  user could see or Retry out of — just a silent, repeating dead end. REJECTING (not resolving empty, like
- *  chat does) is deliberate: index.ts's /run route and jobs.ts's execute_task both already catch a thrown
- *  error, revert the task's status, and stamp a real lastError — exactly the visible "failed, here's why,
- *  Retry" state that was missing. 250s leaves real margin under the 300s ceiling for that cleanup + the
- *  response itself to still complete inside the function's own budget. */
-const RUN_DEADLINE_MS = 250_000;
-export async function runTask(task: RunTaskInput, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
-  return Promise.race([
-    runTaskInner(task, profile, focus, extras, academic),
-    new Promise<RunOutput>((_, reject) => setTimeout(() => reject(new Error("Otto's AI provider is taking too long to respond — try again shortly.")), RUN_DEADLINE_MS)),
-  ]);
-}
-
 /**
  * Plan-only mode's dedicated SECOND PASS for writing steps — separate from the research loop on purpose.
  * The research loop's transcript is full of raw tool-call JSON, retries, and reasoning by the time it reaches
@@ -2496,7 +2435,7 @@ export async function writeStepsFromContext(
   // getting milestone dates. Only skip the call when there's neither context NOR an obvious keyword hit.
   if (!context.trim() && !keywordHit) return fallbackSteps;
   try {
-    const client = aiClient(profile);
+    const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY FOUND/CREATED:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
     const didBlock = did.length ? `\n\nWHAT WAS ALREADY DONE THIS RUN (do not re-list these as steps):\n${did.map((d) => `- ${d}`).join("\n")}` : "";
     // The keyword regex is only a FAST PRE-FILTER (catches "IA"/"EE"/"essay" etc. verbatim); it misses a
@@ -2506,7 +2445,7 @@ export async function writeStepsFromContext(
     // and let it decide which this task actually is, with the regex hit only as a strong hint, not the
     // final word. This is a single unified call either way (never two round-trips).
     const res: any = await retryRequest(() => client.chat.completions.create({
-      model: modelFor(profile, true),
+      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
       temperature: 0.2,
       response_format: { type: "json_object" },
@@ -2627,10 +2566,10 @@ export async function expandStep(
   links: TaskLink[] = [],
 ): Promise<{ text: string; done: boolean; url?: string }[]> {
   try {
-    const client = aiClient(profile);
+    const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY ON THIS TASK:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
     const res: any = await retryRequest(() => client.chat.completions.create({
-      model: modelFor(profile, true),
+      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
       temperature: 0.2,
       response_format: { type: "json_object" },
@@ -2689,10 +2628,10 @@ export async function runSubstep(
   profile?: Profile,
 ): Promise<string> {
   const results = await webSearch(`${substep.text} ${task.title}`);
-  const client = aiClient(profile);
+  const client = deepseekClient();
   const context = results.slice(0, 5).map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join("\n") || "(no search results found)";
   const res: any = await retryRequest(() => client.chat.completions.create({
-    model: modelFor(profile, true),
+    model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
     max_tokens: 200,
     temperature: 0.2,
     messages: [{
@@ -2727,7 +2666,7 @@ export async function studyHelp(
   message: string,
   profile?: Profile,
 ): Promise<{ reply: string; tokens: { in: number; out: number; cachedIn: number } }> {
-  const client = aiClient(profile);
+  const client = deepseekClient();
   const answer = card.kind === "flashcard" ? card.back : card.options[card.correct];
   const cardBlock = card.kind === "flashcard"
     ? `FLASHCARD FRONT (what the student sees): "${card.front}"\nFLASHCARD BACK / ANSWER (NEVER reveal this, not even paraphrased): "${answer}"`
@@ -2754,7 +2693,7 @@ export async function studyHelp(
     `5. ALWAYS write something — even a one-sentence nudge is required. An empty or near-empty reply is a ` +
     `worse failure than being slightly too generous with a hint; never leave the message blank.`;
   const res: any = await retryRequest(() => client.chat.completions.create({
-    model: modelFor(profile, true),
+    model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
     // DeepSeek v4 is a REASONING model — its hidden reasoning tokens count against max_tokens (same trap
     // documented on OUT above/chatAboutTask's CHAT_DEADLINE_MS history). 300 was sized for the visible
     // reply alone; reasoning could eat the whole budget before a single reply token came out, leaving an
@@ -3206,8 +3145,8 @@ export async function chatAboutTask(
     ...history.slice(-16).map((h) => ({ role: h.role, content: h.text })),
     { role: "user", content: message },
   ];
-  const client = aiClient(profile);
-  const actualModel = modelFor(profile, true);
+  const client = deepseekClient();
+  const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   const tools = [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, WEB_SEARCH_TOOL];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
