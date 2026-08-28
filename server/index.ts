@@ -495,7 +495,7 @@ app.get("/api/status", ah(async (req, res) => {
     googleConnected,
     pronoteConnected: pronoteStatus.connected,
     ...(pronoteStatus.needsReconnect ? { pronoteNeedsReconnect: true } : {}),
-    aiReady: aiReady(),
+    aiReady: aiReady(req.session.profile),
     googleConfigured: integrations.integrationsReady(), // Composio is what powers Google + every integration now
     cloud: cloudEnabled(),
     paused: !!req.session.profile?.paused,
@@ -626,7 +626,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   // side effect, but that isn't reliable (the run can defer, fail, or not return a title), so a vague raw
   // title stuck around on the card. The execution run can still further sharpen it. When AI is
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
-  const ready = aiReady() && !isPaused(req) && !overBudget(req);
+  const ready = aiReady(req.session.profile) && !isPaused(req) && !overBudget(req);
   const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
   try {
     req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen, clientId);
@@ -654,7 +654,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to refine." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (!aiReady(req.session.profile)) { res.status(503).json({ error: "AI isn't configured." }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: "not found" }); return; }
   try {
@@ -672,7 +672,7 @@ const CHAT_CAP = 60;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (!aiReady(req.session.profile)) { res.status(503).json({ error: "AI isn't configured." }); return; }
   const message = String(req.body?.message || "").trim().slice(0, 2000);
   if (!message) { res.status(400).json({ error: "Say something first." }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
@@ -733,7 +733,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
 app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (!aiReady(req.session.profile)) { res.status(503).json({ error: "AI isn't configured." }); return; }
   const message = String(req.body?.message || "").trim().slice(0, 1000);
   if (!message) { res.status(400).json({ error: "Say something first." }); return; }
   const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
@@ -967,7 +967,7 @@ app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
 app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to use this." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
+  if (!aiReady(req.session.profile)) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
   const id = String(req.params.id);
   const index = Number(req.params.index);
   const task = (req.session.tasks || []).find((t) => t.id === id);
@@ -1009,7 +1009,7 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
 app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to use this." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
+  if (!aiReady(req.session.profile)) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
   const id = String(req.params.id);
   const index = Number(req.params.index);
   const subIndex = Number(req.params.subIndex);
@@ -1246,6 +1246,11 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
       p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "yearLevel" && typeof value === "string" && value.trim()) {
       p.yearLevel = value.trim().slice(0, 40); p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "aiProvider" && (value === "deepseek" || value === "mistral" || value === null)) {
+      // null clears back to the default (deepseek) — see aiClient in server/claude.ts for the "no
+      // fallback between providers" enforcement this setting drives.
+      p.aiProvider = value === "mistral" ? "mistral" : undefined;
+      p.preferencesUpdatedAt = new Date().toISOString();
     } else {
       // Every recognized key/value combo is handled above — anything else used to fall through to a
       // silent no-op 200 (profile committed unchanged, client reads back success). A typo'd key or an

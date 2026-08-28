@@ -1289,6 +1289,17 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
     catch (e: any) { notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
   };
+  // AI provider — DeepSeek (default) or Mistral, per account. No fallback between them server-side by
+  // design (server/claude.ts's aiClient): picking Mistral here routes EVERY AI call for this account to
+  // Mistral, full stop, so switching is a real, visible choice rather than a silent hedge.
+  const [aiProvider, setAiProviderState] = useState<"deepseek" | "mistral">(profile?.aiProvider === "mistral" ? "mistral" : "deepseek");
+  useEffect(() => { setAiProviderState(profile?.aiProvider === "mistral" ? "mistral" : "deepseek"); }, [profile?.aiProvider]);
+  const saveAiProvider = async (v: "deepseek" | "mistral") => {
+    const prev = aiProvider;
+    setAiProviderState(v);
+    try { onChanged?.(await api.setProfilePreference("aiProvider", v)); }
+    catch (e: any) { setAiProviderState(prev); notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
+  };
   return (
     <>
       <div className="set-row">
@@ -1313,6 +1324,13 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
+      <div className="set-row">
+        <span className="set-text"><b>{L("Modèle d'IA", "AI model")}</b><span className="settings-hint">{L("DeepSeek par défaut. Passer sur Mistral bascule TOUT sur ce compte — pas de repli automatique sur DeepSeek.", "DeepSeek by default. Switching to Mistral routes EVERYTHING on this account through it — no automatic fallback to DeepSeek.")}</span></span>
+        <div className="lang-toggle">
+          <button type="button" className={`btn xs ${aiProvider === "deepseek" ? "" : "ghost"}`} aria-pressed={aiProvider === "deepseek"} onClick={() => void saveAiProvider("deepseek")}>DeepSeek</button>
+          <button type="button" className={`btn xs ${aiProvider === "mistral" ? "" : "ghost"}`} aria-pressed={aiProvider === "mistral"} onClick={() => void saveAiProvider("mistral")}>Mistral</button>
+        </div>
+      </div>
     </>
   );
 }

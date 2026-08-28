@@ -350,6 +350,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         autoArchivePatterns: side.autoArchivePatterns ?? fallback.autoArchivePatterns,
         track: side.track ?? fallback.track,
         yearLevel: side.yearLevel ?? fallback.yearLevel,
+        aiProvider: side.aiProvider ?? fallback.aiProvider,
         preferencesUpdatedAt: side.preferencesUpdatedAt ?? fallback.preferencesUpdatedAt,
       };
     })(),
