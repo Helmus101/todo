@@ -635,14 +635,32 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from
     // the cloud (jobs.ts loadUser); enqueuing first opened a race where a concurrent drainer (another tab's
     // kick, or a cron tick) could claim the job before the commit landed and get "task not found" — which
-    // marks the job succeeded and strands the task at "queued". Commit-then-enqueue closes that window.
-    await commit(req);
+    // marks the job succeeded and strands the task at "queued". Commit-then-enqueue closes that window —
+    // but ONLY if the cloud write is actually awaited: commit()'s own cloud sync is deliberately
+    // backgrounded (fire-and-forget, see its comment) for the OTHER ~20 call sites that don't immediately
+    // hand off to the job runner. Awaiting the session save alone left this route with the exact race the
+    // comment above claims is closed — the drain would read stale cloud state, miss the brand-new task, and
+    // strand it at "queued" forever (reported live: "when i create task it just keep on queued with no
+    // progress"). So this route needs its own awaited cloud write, not the shared backgrounded one.
+    await saveSession(req);
+    if (req.session.user) {
+      const email = req.session.user;
+      try {
+        const current = await loadState(email);
+        const mergedTasks = mergeTasks(current.tasks || [], req.session.tasks || []);
+        const mergedProfile = mergeProfiles(current.profile || emptyProfile(), req.session.profile || emptyProfile());
+        await saveState(email, { profile: mergedProfile, tasks: mergedTasks });
+      } catch { /* best-effort — enqueueAndDrain below still has its own commitUser merge-on-write */ }
+    }
     if (ready) {
-      // enqueueJob("execute_task") is the SINGLE planning pass: runTask() reads every connected integration
+      // enqueueAndDrain("execute_task") is the SINGLE planning pass: runTask() reads every connected integration
       // (Gmail/Calendar/Drive/Slack/GitHub/Notion) + web_search and fills in task.context/task.steps. Plan-only
       // mode (EXECUTION_ENABLED=false in claude.ts) already withholds every write tool, so this only gathers
       // knowledge and produces a plan — it never sends/creates/deletes anything.
-      try { await enqueueJob(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
+      // Draining inline (not just enqueueJob) matters here: without it the task sat at "queued" until the
+      // next cron tick or manual Kick — on Vercel Hobby cron that's once a day — which is exactly the "stuck
+      // on Queued with no progress" bug reported live from a fresh manual task.
+      try { await jobs.enqueueAndDrain(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
     }
     res.json(req.session.tasks);
   } catch (e: any) {
