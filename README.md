@@ -25,6 +25,10 @@ Notion est supporté côté serveur mais volontairement caché de l'interface po
 
 **Et il te rend : Aujourd'hui — 3 cartes, pas 20.** Le reste attend son tour dans "Plus tard" et "Peut attendre".
 
+## Mode Étude
+
+Un bureau de travail plein écran, sans navigateur ni onglets à jongler : clique "Étudier" sur une tâche et tout ce qu'il faut pour l'avancer arrive sur un seul bureau — matériaux (PDF, liens, fiches/decks/quiz qu'Otto a déjà préparés), notes, brouillon libre, minuteur (dont Pomodoro auto), fond d'écran perso, et une petite sélection d'outils ouverts à la demande (calculatrice, Desmos, dictionnaire bilingue, tableau blanc, post-it, générateur de citations APA/MLA/Chicago). "Demander à Otto" y fonctionne exactement comme sur la carte de tâche — même tuteur, mêmes garde-fous ("il explique, il ne donne pas la réponse"). Tout est sauvegardé en local (IndexedDB) par tâche, donc tu retrouves ton bureau exactement comme tu l'as laissé.
+
 ## Ce qu'Otto fait / ne fait PAS
 
 C'est la question qu'on nous pose partout : "creepy", "ça va faire mes devoirs à ma place ?"
@@ -131,12 +135,13 @@ Les étapes du type "ouvrir une page" peuvent ouvrir des onglets automatiquement
 ## Structure du projet
 
 ```
-client/     App React (Vite)
-server/     API Express, job queue, agent IA, intégrations
-shared/     Types + fonctions pures partagées client & serveur
-extension/  Extension Chrome Otto Tabs (MV3)
-tests/      Suite de tests de fonctions pures (npm test)
-supabase.sql  Schéma Postgres + RLS
+client/          App React (Vite)
+client/study/    Mode Étude — bureau plein écran, outils, artefacts (local-first, IndexedDB)
+server/          API Express, job queue, agent IA, intégrations
+shared/          Types + fonctions pures partagées client & serveur
+extension/       Extension Chrome Otto Tabs (MV3)
+tests/           Suite de tests de fonctions pures (npm test)
+supabase.sql     Schéma Postgres + RLS
 ```
 
 ## Développement
