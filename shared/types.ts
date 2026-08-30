@@ -236,8 +236,15 @@ export function tzOf(profile?: Profile | null): string {
 /** DeepSeek's peak-pricing windows (UTC): 01:00-04:00 and 06:00-10:00 — every billing item costs 2x during
  *  these hours. Background work that isn't blocking a user (an unattended sweep, an offline auto-run) should
  *  prefer to run outside them; anything the user is actively waiting on must still run immediately regardless
- *  of price — only the deferrable, autonomous paths consult this. */
+ *  of price — only the deferrable, autonomous paths consult this.
+ *  Effective 2026-08-23 00:00 Beijing time, DeepSeek made weekends (Sat/Sun, Beijing time) off-peak ALL DAY —
+ *  the hourly windows below no longer apply on those two days. Beijing has no DST (fixed UTC+8), so this is
+ *  a plain day-of-week check in that zone, not a UTC-hour range like the weekday windows. */
 export function isPeakHourUtc(now: Date = new Date()): boolean {
+  let beijingDay: number;
+  try { beijingDay = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Shanghai" })).getDay(); }
+  catch { beijingDay = now.getUTCDay(); }
+  if (beijingDay === 0 || beijingDay === 6) return false; // Sunday/Saturday in Beijing — off-peak all day
   const h = now.getUTCHours();
   return (h >= 1 && h < 4) || (h >= 6 && h < 10);
 }
@@ -678,6 +685,130 @@ export interface ConnectionStatus {
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
   streak?: { current: number; longest: number; lastDayIso?: string }; // see Profile.streak — bumped on task confirm
 }
+
+// Study Mode types for the focused study environment feature
+
+/** The current state of an active study session */
+export type StudyModeState = "idle" | "active" | "paused" | "break" | "completed";
+
+/** Timer display style preference */
+export type TimerStyle = "minimal" | "progress" | "hidden";
+
+/** Focus level for distraction control */
+export type FocusLevel = "strict" | "balanced" | "open";
+
+/** A single study session record */
+export interface StudySession {
+  id: string;
+  taskId: string;
+  userId: string;
+  startTime: string;        // ISO timestamp when session started
+  endTime?: string;         // ISO timestamp when session ended
+  plannedDuration: number;  // planned duration in minutes
+  actualDuration?: number;  // actual duration in minutes
+  state: StudyModeState;
+  reflection?: "good" | "okay" | "difficult"; // end-of-session reflection
+  interruptionCount?: number; // how many times the user exited/interrupted
+  notes?: string;           // session notes taken by user
+  completedSteps?: string[]; // IDs of steps completed during session
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Adaptive study profile that learns from user behavior */
+export interface StudyProfile {
+  userId: string;
+  // Session preferences (learned from behavior)
+  preferredSessionLength?: number; // default session duration in minutes
+  preferredBreakLength?: number;    // default break duration in minutes
+  prefersPomodoro?: boolean;        // whether user likes pomodoro-style breaks
+  uninterruptedSessions?: boolean; // whether user prefers long uninterrupted sessions
+  preferredStartTimes?: number[];   // preferred start hours (0-23)
+  
+  // Visual preferences
+  theme?: "light" | "dark" | "auto";
+  timerStyle?: TimerStyle;
+  showTimer?: boolean;
+  showSidebar?: boolean;
+  animationLevel?: "none" | "minimal" | "full";
+  
+  // Audio preferences
+  audioType?: "silence" | "brown" | "rain" | "cafe" | "classical" | "lofi";
+  audioBySubject?: Record<string, string>; // subject → audio type mapping
+  volume?: number; // 0-100
+  
+  // Workspace preferences
+  notesPosition?: "left" | "right" | "bottom";
+  materialsPosition?: "left" | "right" | "bottom";
+  aiVisibility?: "always" | "on_request" | "hidden";
+  
+  // Focus preferences
+  focusLevel?: FocusLevel;
+  
+  // Learning data (for adaptive recommendations)
+  sessionHistory?: {
+    date: string;
+    duration: number;
+    completed: boolean;
+    interruptionCount: number;
+    reflection?: "good" | "okay" | "difficult";
+  }[];
+  
+  updatedAt: string;
+}
+
+/** Material item for the study session materials drawer */
+export interface StudyMaterial {
+  id: string;
+  label: string;
+  url?: string;
+  type: "doc" | "pdf" | "link" | "note" | "email" | "calendar";
+  source?: string; // integration source (gmail, drive, etc.)
+  relevance?: "high" | "medium" | "low";
+}
+
+/** Session note taken during study mode */
+export type StudyNote = {
+  id: string;
+  content: string;
+  timestamp: string;
+};
+
+export type StudyEnvironmentState = {
+  task: string; // task ID
+  layout: "writing" | "research" | "math" | "reading" | "standard";
+  workspaceType: "browser" | "document" | "pdf" | "video" | "empty";
+  openResources: StudyMaterial[];
+  openTabs: Array<{ id: string; title: string; url: string; active: boolean }>;
+  activeResource: string | null; // resource ID
+  activeTab?: string | null; // active tab ID
+  notes: string;
+  audio: {
+    type: string;
+    volume: number;
+    playing: boolean;
+  };
+  focusLevel: "strict" | "balanced" | "open";
+  timer: {
+    state: StudyModeState;
+    remaining: number;
+    plannedDuration: number;
+  };
+  aiVisibility: "hidden" | "available" | "always";
+  browserPermissions: {
+    allowedDomains: string[];
+    restrictedDomains: string[];
+  };
+  userPreferences: {
+    preferredLayout: string;
+    preferredAudio: string;
+    preferredFocusLevel: string;
+    showTimer: boolean;
+    showNotes: boolean;
+  };
+  panes?: Record<string, number>; // e.g. { browser: 70, notes: 30 }
+  lastSaved: string;
+};
 
 export interface RunResult {
   ok: boolean;

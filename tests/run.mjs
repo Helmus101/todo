@@ -522,6 +522,11 @@ check("10:00 UTC boundary is OFF-peak (exclusive end)", !isPeakHourUtc(new Date(
 check("12:00 UTC (the cron slot) is off-peak", !isPeakHourUtc(new Date("2026-07-20T12:00:00Z")));
 check("00:00 UTC is off-peak", !isPeakHourUtc(new Date("2026-07-20T00:00:00Z")));
 check("23:00 UTC is off-peak", !isPeakHourUtc(new Date("2026-07-20T23:00:00Z")));
+// DeepSeek made weekends (Beijing time) off-peak all day, effective 2026-08-23 — these would be peak by the
+// hourly windows alone, but the Beijing calendar day is Saturday/Sunday, so the whole day is off-peak.
+check("peak UTC hour on a Beijing SATURDAY is off-peak (weekend override)", !isPeakHourUtc(new Date("2026-07-25T02:00:00Z")));
+check("peak UTC hour on a Beijing SUNDAY is off-peak (weekend override)", !isPeakHourUtc(new Date("2026-07-26T08:00:00Z")));
+check("same peak UTC hour on a Beijing WEEKDAY is still peak", isPeakHourUtc(new Date("2026-07-20T08:00:00Z")));
 
 // ── Timezone resolution ───────────────────────────────────────────────────────
 section("timezone");

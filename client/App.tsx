@@ -4,6 +4,7 @@ import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWith
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
+import { StudyMode } from "./study/StudyMode.tsx";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
  *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
@@ -249,6 +250,8 @@ export function App() {
   const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
+  // Study Mode state
+  const [studyModeTask, setStudyModeTask] = useState<WebTask | null>(null);
   // Briefly highlights the row a just-confirmed task lands on in "Completed" — gives finishing something a
   // visible destination instead of the card just vanishing from the active list with nothing to show for it.
   const [justDoneId, setJustDoneId] = useState<string | null>(null);
@@ -601,6 +604,24 @@ export function App() {
   }
   if (route === "unlimited") return <UnlimitedPage status={status} onDone={loadStatus} />;
 
+  if (route.startsWith("study/")) {
+    const taskId = route.split("/")[1];
+    const task = tasks.find(t => t.id === taskId);
+    if (task) {
+      return (
+        <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
+          <NotifyContext.Provider value={notify}>
+            <StudyMode
+              task={task}
+              onExit={() => navigate("tasks")}
+              userId={status?.user}
+            />
+          </NotifyContext.Provider>
+        </LangContext.Provider>
+      );
+    }
+  }
+
   // Eisenhower ranking with deadline/VIP/freshness tie-breaks — same bands/cards, just a better order.
   const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed"), status?.highPriorityPeople || []);
   const completed = tasks.filter((t) => t.status === "done").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -791,6 +812,7 @@ export function App() {
                             onChange={setTasks}
                             onTask={patchTask}
                             onConfirmed={flagJustDone}
+                            onEnterStudyMode={() => navigate(`study/${t.id}`)}
                           />
                         ))}
                       </div>
@@ -822,6 +844,7 @@ export function App() {
                             onChange={setTasks}
                             onTask={patchTask}
                             onConfirmed={flagJustDone}
+                            onEnterStudyMode={() => navigate(`study/${t.id}`)}
                           />
                         ))}
                       </div>
@@ -851,6 +874,7 @@ export function App() {
                                 onChange={setTasks}
                                 onTask={patchTask}
                                 onConfirmed={flagJustDone}
+                                onEnterStudyMode={() => navigate(`study/${t.id}`)}
                               />
                             ))}
                           </div>
@@ -2682,4 +2706,3 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
     </div>
   );
 }
-

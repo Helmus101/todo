@@ -6,7 +6,7 @@ import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
-import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp } from "./claude.ts";
@@ -24,6 +24,8 @@ declare module "express-session" {
     integrations?: Record<string, string>; // app key → Composio connectionId hint (status is live from Composio)
     lastGenDay?: string;  // "YYYY-MM-DD" of the last full generate sweep — the once-a-day floor (survives serverless cold starts)
     lastGenTime?: string; // ISO timestamp of the last generation (for continuous monitoring)
+    studySessions?: StudySession[]; // study session history
+    studyProfile?: StudyProfile; // adaptive study profile
   }
 }
 
@@ -1356,6 +1358,109 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't delete that — try again." }); }
+});
+
+// ── Study Mode ─────────────────────────────────────────────────────────────
+// Get study session history
+app.get("/api/study/sessions", requireAuth, async (req, res) => {
+  try {
+    if (req.session.user && cloudEnabled()) {
+      const cloud = await loadState(req.session.user);
+      req.session.studySessions = cloud.studySessions || [];
+    }
+    res.json(req.session.studySessions || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't load study sessions." }); }
+});
+
+// Create/save a study session
+app.post("/api/study/session", requireAuth, async (req, res) => {
+  try {
+    const sessionData = req.body as Partial<StudySession>;
+    if (!sessionData.taskId || !sessionData.userId) {
+      res.status(400).json({ error: "taskId and userId are required" });
+      return;
+    }
+    
+    const sessions = (req.session.studySessions ||= []);
+    const existingIndex = sessions.findIndex((s) => s.id === sessionData.id);
+    
+    const session: StudySession = {
+      id: sessionData.id || randomUUID(),
+      taskId: sessionData.taskId,
+      userId: sessionData.userId,
+      startTime: sessionData.startTime || new Date().toISOString(),
+      endTime: sessionData.endTime,
+      plannedDuration: sessionData.plannedDuration || 45,
+      actualDuration: sessionData.actualDuration,
+      state: sessionData.state || "idle",
+      reflection: sessionData.reflection,
+      interruptionCount: sessionData.interruptionCount || 0,
+      notes: sessionData.notes,
+      completedSteps: sessionData.completedSteps,
+      createdAt: sessionData.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    
+    if (existingIndex >= 0) {
+      sessions[existingIndex] = session;
+    } else {
+      sessions.push(session);
+    }
+    
+    // Keep only last 100 sessions
+    if (sessions.length > 100) {
+      req.session.studySessions = sessions.slice(-100);
+    }
+    
+    await commit(req);
+    res.json(session);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save study session." }); }
+});
+
+// Get study profile
+app.get("/api/study/profile", requireAuth, async (req, res) => {
+  try {
+    if (req.session.user && cloudEnabled()) {
+      const cloud = await loadState(req.session.user);
+      req.session.studyProfile = cloud.studyProfile;
+    }
+    res.json(req.session.studyProfile || { userId: req.session.user, updatedAt: new Date().toISOString() });
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't load study profile." }); }
+});
+
+// Update study profile
+app.post("/api/study/profile", requireAuth, async (req, res) => {
+  try {
+    const profileData = req.body as Partial<StudyProfile>;
+    const current = req.session.studyProfile || { userId: req.session.user, updatedAt: new Date().toISOString() };
+    
+    const updated: StudyProfile = {
+      userId: current.userId || req.session.user || "",
+      preferredSessionLength: profileData.preferredSessionLength,
+      preferredBreakLength: profileData.preferredBreakLength,
+      prefersPomodoro: profileData.prefersPomodoro,
+      uninterruptedSessions: profileData.uninterruptedSessions,
+      preferredStartTimes: profileData.preferredStartTimes,
+      theme: profileData.theme,
+      timerStyle: profileData.timerStyle,
+      showTimer: profileData.showTimer,
+      showSidebar: profileData.showSidebar,
+      animationLevel: profileData.animationLevel,
+      audioType: profileData.audioType,
+      audioBySubject: profileData.audioBySubject,
+      volume: profileData.volume,
+      notesPosition: profileData.notesPosition,
+      materialsPosition: profileData.materialsPosition,
+      aiVisibility: profileData.aiVisibility,
+      focusLevel: profileData.focusLevel,
+      sessionHistory: profileData.sessionHistory,
+      updatedAt: new Date().toISOString(),
+    };
+    
+    req.session.studyProfile = updated;
+    await commit(req);
+    res.json(updated);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save study profile." }); }
 });
 
 // ── Static (production) ─────────────────────────────────────────────────────

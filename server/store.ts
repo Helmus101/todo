@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import session from "express-session";
 import type { Credentials } from "google-auth-library";
-import type { WebTask, Profile } from "../shared/types.ts";
+import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../shared/types.ts";
 import { encryptSecret, decryptSecret } from "./crypto.ts";
 
@@ -141,7 +141,7 @@ export async function deleteAuthUser(email: string): Promise<void> {
   } catch (e) { console.warn("[store] deleteAuthUser threw:", (e as any)?.message || e); }
 }
 
-export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; }
+export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
 
 // A transient network drop (undici "terminated"/"fetch failed", a reset socket) is NOT the same as "no
 // data" — but Supabase surfaces it both as a thrown error AND, sometimes, as a returned {error}. Treating

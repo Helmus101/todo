@@ -1902,12 +1902,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   // Plan-only mode never spends rounds on writes (there are none), so its budget goes entirely to research —
   // give it a bit more room than execution mode to actually check every relevant connected app.
-  const MAX = EXECUTION_ENABLED ? 8 : 10; // tight round budget: transcripts grow quadratically, so rounds are the real cost driver
+  // Tight round budget: transcripts grow quadratically, so rounds are the real cost driver. Cut from 8/10
+  // after a live report of heavy DeepSeek spend with nothing to show for it — a stuck/pathological task
+  // (tool errors, a huge thread, retries) was burning most of its cost in the LAST few rounds, the most
+  // expensive ones since the transcript is largest by then, often without ever reaching submit.
+  const MAX = EXECUTION_ENABLED ? 6 : 7;
   let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
   // Circuit breaker: round count alone doesn't bound cost — a pathological task (a huge thread, tool errors
   // burning rounds, retries) can cost 10-20× a normal run. Cap the TOTAL tokens a single run may spend; once
   // crossed, stop looping and let the rescue pass turn whatever was gathered into an honest result.
-  const RUN_TOKEN_CEILING = 220_000;
+  // Cut from 220k — that ceiling let one chronically-failing task burn ~660k tokens across its 3 retries
+  // (jobs.ts's max_attempts) before ever giving up, with the student seeing nothing move. 130k is still well
+  // above what a normal run needs (the ceiling only ever bites a run that's already gone pathological — see
+  // the round-6/8 cut above for the same fix from the other direction) and stops that runaway sooner, per-attempt.
+  const RUN_TOKEN_CEILING = 130_000;
   const overTokenCeiling = () => tokIn + tokOut > RUN_TOKEN_CEILING;
   // Has the agent performed ANY write/create yet? Drives the deterministic act-now enforcement below.
   const WRITE_NAME = /(CREATE|UPDATE|APPEND|PATCH|MODIFY|BATCH|DRAFT|INSERT|WRITE|REPLACE|QUICK_ADD|MOVE|COPY|ADD_)/i;

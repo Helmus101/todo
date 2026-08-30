@@ -1,4 +1,4 @@
-import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { normalizeProfile } from "../shared/types.ts";
 
 export interface IntegrationItem { key: string; name: string; blurb: string; category: string; logo: string; connected: boolean; accounts?: ConnectedAccount[]; }
@@ -180,4 +180,9 @@ export const api = {
   ): Promise<{ reply: string }> => post(`/api/tasks/${taskId}/study-help`, { card, history, message }),
   // Drain one queued job server-side and return the fresh task list + how many jobs remain active.
   kick: (): Promise<{ processed: number; failed: number; active: number; activeTaskIds?: string[]; tasks: WebTask[] }> => post("/api/jobs/kick"),
+  // Study Mode API
+  studySessions: (): Promise<StudySession[]> => req("/api/study/sessions").then(j),
+  saveStudySession: (session: Partial<StudySession>): Promise<StudySession> => post("/api/study/session", session),
+  studyProfile: (): Promise<StudyProfile> => req("/api/study/profile").then(j),
+  saveStudyProfile: (profile: Partial<StudyProfile>): Promise<StudyProfile> => post("/api/study/profile", profile),
 };

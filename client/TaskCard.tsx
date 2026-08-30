@@ -131,9 +131,9 @@ function Disclosure({ label, count, open, onToggle, children }: { label: string;
 
 /* ─────────────────────────────── collapsed row ─────────────────────────────── */
 
-export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen }: {
+export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen, onEnterStudyMode }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask?: (t: WebTask) => void; retrying?: boolean; onConfirmed?: (id: string) => void;
-  isNew?: boolean; index?: number; onOpen: () => void;
+  isNew?: boolean; index?: number; onOpen: () => void; onEnterStudyMode?: () => void;
 }) {
   const L = useLang();
   const cardEn = useContext(LangContext) === "en";
@@ -190,6 +190,12 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           <span aria-hidden="true">{leaving && leaveKind === "confirm" ? "✓" : ""}</span>
         </button>
       ) : null}
+      {/* Study Mode button - only for active tasks with steps */}
+      {!isDone && (task.steps || []).length > 0 && onEnterStudyMode && (
+        <button type="button" className="card-study" title={L("Mode étude", "Study Mode")} aria-label={L(`Mode étude pour : ${task.title}`, `Study Mode for: ${task.title}`)} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
+          <span aria-hidden="true">📚</span>
+        </button>
+      )}
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
           <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{task.title}</span>
