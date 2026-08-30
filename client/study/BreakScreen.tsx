@@ -1,3 +1,14 @@
+import { useEffect, useState } from "react";
+
+function WallClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+  return <p className="sm-break-clock">{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>;
+}
+
 interface BreakScreenProps {
   elapsed: number;
   formatTime: (s: number) => string;
@@ -11,6 +22,7 @@ export function BreakScreen({ elapsed, formatTime, onResume, onEnd, countdownRem
   return (
     <div className="sm-break-screen">
       <div className="sm-break-inner">
+        <WallClock />
         <p className="sm-break-label">BREAK</p>
         <div className="sm-break-timer">{formatTime(elapsed)}</div>
         {countdownRemaining !== undefined && (

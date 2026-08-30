@@ -614,6 +614,7 @@ export function App() {
             <StudyMode
               task={task}
               onExit={() => navigate("tasks")}
+              onTaskUpdate={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
               userId={status?.user}
               language={status?.language === "en" ? "en" : "fr"}
             />

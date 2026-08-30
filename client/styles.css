@@ -752,6 +752,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .study-help-msg { font-size: 13px; line-height: 1.4; margin: 0; padding: 6px 10px; border-radius: 8px; max-width: 92%; }
 .study-help-msg.user { align-self: flex-end; background: var(--accent-soft); }
 .study-help-msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--line-soft); }
+.study-help-sender { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 2px; }
 .study-help-thinking { opacity: 0.6; }
 .study-help-input { display: flex; gap: 6px; }
 .study-help-input input { flex: 1; min-width: 0; }
@@ -1035,12 +1036,21 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
      composer sits flush under it on a notched phone in the full-bleed mobile modal. */
   padding: var(--space-2) 0 calc(2px + env(safe-area-inset-bottom));
 }
-.chat-msg { font-size: var(--text-base); line-height: 1.4; padding: 9px 13px; border-radius: 16px; max-width: 88%; white-space: pre-line; box-shadow: 0 1px 1px rgba(16,19,23,0.04); }
-/* renderChatText emits <p>/<ul> blocks for assistant replies — tighten their default block margins to fit
-   a chat bubble (they're sized for the note popup, which has room to breathe). */
+.chat-msg { font-size: var(--text-base); line-height: 1.48; padding: 10px 14px; border-radius: 16px; max-width: 88%; white-space: pre-line; box-shadow: 0 1px 1px rgba(16,19,23,0.04); }
+/* renderChatText emits <p>/<ul> blocks for assistant replies — a longer multi-paragraph reply used to read
+   as one dense blob (6px between paragraphs, no visible sender) — reported live. More breathing room
+   between blocks, plus a real sender label (was screen-reader-only) so a bubble reads as a structured
+   message, not a wall of text. */
 .chat-msg p { margin: 0; }
-.chat-msg p + p { margin-top: 6px; }
-.chat-msg .note-list { margin: 4px 0; padding-left: 18px; }
+.chat-msg p + p { margin-top: 10px; }
+.chat-msg .note-list { margin: 8px 0; padding-left: 18px; }
+.chat-msg .note-list li + li { margin-top: 4px; }
+/* Visible "You" / "Otto" label above the bubble text — was sr-only (screen readers already get the
+   sender from role="log" region context); a bare bubble with no label made two consecutive replies from
+   different senders visually indistinguishable at a glance. */
+.chat-sender { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
+.chat-sender-user { color: rgba(255,255,255,0.7); }
+.chat-sender-assistant { color: var(--ink-3); }
 .chat-user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
 .chat-assistant { align-self: flex-start; background: var(--surface); color: var(--ink); border: 1px solid var(--line-soft); border-bottom-left-radius: 4px; }
 .chat-assistant .inline-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
@@ -3249,6 +3259,17 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   font-size: var(--text-md);
   color: var(--ink-2);
 }
+.sm-clock {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+.sm-break-clock {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  margin: 0 0 var(--space-2);
+}
 .sm-pomodoro-badge {
   font-family: var(--mono);
   font-size: var(--text-sm);
@@ -3377,7 +3398,12 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
   box-shadow: var(--shadow-card);
+  transition: box-shadow 0.15s var(--ease);
+  animation: smArtifactIn 0.18s var(--ease);
 }
+.sm-artifact:hover { box-shadow: var(--shadow-pop); }
+@keyframes smArtifactIn { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .sm-artifact { animation: none; } }
 .sm-artifact-titlebar {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -3508,7 +3534,10 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
   box-shadow: var(--shadow-pop);
+  animation: smDrawerIn 0.16s var(--ease);
 }
+@keyframes smDrawerIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .sm-drawer { animation: none; } }
 .sm-drawer-ai { width: min(520px, calc(100vw - 36px)); }
 .sm-drawer-header {
   display: flex;
@@ -3618,6 +3647,23 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   border-top: 1px solid var(--line-soft);
 }
 .sm-ai-input { height: 40px; min-width: 0; }
+.sm-ai-step-tag { display: block; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,0.75); margin-bottom: 3px; letter-spacing: 0.02em; }
+.sm-ai-sender { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
+.sm-ai-sender-user { color: rgba(255,255,255,0.7); }
+.sm-ai-sender-assistant { color: var(--ink-3); }
+.sm-ai-msg p { margin: 0; white-space: pre-wrap; }
+.sm-ai-msg p + p { margin-top: 10px; }
+.sm-ai-artifact-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.sm-ai-guardrail-tag { display: block; font-size: 10.5px; font-weight: 600; color: var(--ink-3); margin-top: 6px; letter-spacing: 0.02em; }
+.sm-ai-msg-pending { opacity: 0.6; }
+.sm-ai-typing { display: flex; align-items: center; gap: var(--space-2); padding: 11px 12px; }
+.sm-typing-dots { display: inline-flex; align-items: center; gap: var(--space-1); }
+.sm-typing-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); animation: typingBounce 1.2s var(--ease) infinite; }
+.sm-typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.sm-typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+.sm-typing-slow { font-size: 12px; color: var(--ink-3); animation: fadeIn 0.3s var(--ease); }
+@media (prefers-reduced-motion: reduce) { .sm-typing-dots i { animation: none !important; opacity: 0.5; } }
+.sm-ai-error { margin: 0 var(--space-3); font-size: var(--text-sm); color: var(--ink); background: var(--bg-2); border-radius: var(--radius-sm); padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .sm-audio-tracks { display: grid; gap: var(--space-2); }
 .sm-audio-track {
   min-height: 42px;
@@ -3781,6 +3827,13 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   width: 100%;
   height: 100%;
   border: 0;
+}
+.sm-pdf-fallback-link {
+  display: block;
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  padding: var(--space-2);
 }
 .sm-artifact-toolbar label {
   display: inline-flex;

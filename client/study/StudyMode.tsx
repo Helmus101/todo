@@ -26,6 +26,10 @@ import { NoisePlayer, type NoiseType } from "./noise.ts";
 interface StudyModeProps {
   task: WebTask;
   onExit: () => void;
+  /** Merges the server's returned task back into the shared task list — a tutor turn can create notes/
+   *  decks/quizzes and updates task.chat itself, so App.tsx's list must reflect it (same "the whole app
+   *  sees this" merge TaskCard.tsx's own onTask callback does), not just a chat bubble in a local echo. */
+  onTaskUpdate: (t: WebTask) => void;
   userId?: string;
   language?: "fr" | "en";
 }
@@ -184,7 +188,7 @@ export const AUDIO_OPTIONS: { id: NoiseType; label: string }[] = [
 ];
 
 // ── Main StudyMode component ───────────────────────────────────────────────────
-export function StudyMode({ task, onExit, userId, language = "fr" }: StudyModeProps) {
+export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" }: StudyModeProps) {
   const [phase, setPhase] = useState<"setup" | "session">("setup");
   const [env, setEnv] = useState<StudyEnvironment | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
@@ -204,7 +208,23 @@ export function StudyMode({ task, onExit, userId, language = "fr" }: StudyModePr
     completedSubtasks: [],
     submittedWork: [],
   });
-  const [aiChat, setAiChat] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
+  // Ask Otto — mirrors TaskCard.tsx's TaskChat exactly (same server endpoint, same pending/slow/typing/
+  // error-retry state machine) so a student gets the identical tutoring experience whether they're on the
+  // main task card or inside Study Mode. task.chat itself (via onTaskUpdate) is the source of truth, not a
+  // separate local echo — a tutor turn can create notes/decks/quizzes, and those need to reach the rest of
+  // the app (Materials drawer, the main task card) the same way TaskChat's onTask merge does.
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [pendingMsg, setPendingMsg] = useState<string | null>(null);
+  const [chatSlow, setChatSlow] = useState(false);
+  const [chatVerySlow, setChatVerySlow] = useState(false);
+  useEffect(() => {
+    if (!chatSending) { setChatSlow(false); setChatVerySlow(false); return; }
+    const id1 = setTimeout(() => setChatSlow(true), 6000);
+    const id2 = setTimeout(() => setChatVerySlow(true), 15000);
+    return () => { clearTimeout(id1); clearTimeout(id2); };
+  }, [chatSending]);
   const [saveIndicator, setSaveIndicator] = useState<"saved" | "saving" | "">("");
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -516,6 +536,22 @@ export function StudyMode({ task, onExit, userId, language = "fr" }: StudyModePr
     });
   }, [persistEnv]);
 
+  // A tutor turn can create a note/deck/quiz and reference it as a chip in the chat thread (same as
+  // TaskCard.tsx's chat) — clicking one opens it as a real artifact on the desk, same code path as opening
+  // a material from the Materials drawer.
+  const openArtifactByKind = useCallback((kind: "note" | "deck" | "quiz", id: string, title: string) => {
+    if (!env) return;
+    const type = kind === "note" ? "sticky" : kind === "deck" ? "flashcard" : "quiz";
+    const contentState = kind === "note" ? { text: task.notes?.find(n => n.id === id)?.body || "" }
+      : kind === "deck" ? { deckId: id } : { quizId: id };
+    addArtifact({
+      id: crypto.randomUUID(), type, title, x: 15, y: 15, width: 60, height: 75, zIndex: 100,
+      minimized: false, maximized: false, dockSide: "none", contentState,
+      taskId: task.id, environmentId: env.id,
+    });
+    setOpenPanel(null);
+  }, [env, task, addArtifact]);
+
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
       if (!prev) return prev;
@@ -525,21 +561,23 @@ export function StudyMode({ task, onExit, userId, language = "fr" }: StudyModePr
     });
   }, [persistEnv]);
 
-  // ── AI ────────────────────────────────────────────────────────────────────
-  const sendAiMessage = useCallback(async (text: string) => {
-    if (!text.trim() || !env) return;
-    const userMsg = { role: "user" as const, text };
-    setAiChat(prev => [...prev, userMsg]);
+  // ── Ask Otto ──────────────────────────────────────────────────────────────
+  const sendChat = useCallback(async () => {
+    const message = chatInput.trim();
+    if (!message || chatSending || !env) return;
+    const stepIndex = env.currentSubtaskIndex;
+    setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try {
-      const resp = await api.chat(task.id, text, env.currentSubtaskIndex);
-      const reply = resp.chat?.[resp.chat.length - 1]?.role === "assistant"
-        ? resp.chat[resp.chat.length - 1].text
-        : "I couldn't generate a response.";
-      setAiChat(prev => [...prev, { role: "assistant", text: reply }]);
-    } catch {
-      setAiChat(prev => [...prev, { role: "assistant", text: "I'm having trouble connecting. Please check your internet connection." }]);
+      const { task: updated } = await api.chat(task.id, message, stepIndex);
+      onTaskUpdate({ ...task, ...updated });
+    } catch (e: any) {
+      setChatError(e?.message || "Couldn't send that — try again.");
+      setChatInput(message);
+    } finally {
+      setChatSending(false);
+      setPendingMsg(null);
     }
-  }, [task, env]);
+  }, [chatInput, chatSending, env, task, onTaskUpdate]);
 
   // ── Format elapsed time ───────────────────────────────────────────────────
   const formatTime = (seconds: number) => {
@@ -724,11 +762,20 @@ export function StudyMode({ task, onExit, userId, language = "fr" }: StudyModePr
 
       {openPanel === "ai" && (
         <AskOttoPanel
-          chat={aiChat}
-          onSend={sendAiMessage}
-          onClose={() => setOpenPanel(null)}
           task={task}
           currentStep={currentStep}
+          input={chatInput}
+          setInput={setChatInput}
+          sending={chatSending}
+          error={chatError}
+          pendingMsg={pendingMsg}
+          slow={chatSlow}
+          verySlow={chatVerySlow}
+          onSend={sendChat}
+          onClose={() => setOpenPanel(null)}
+          onOpenNote={(id, title) => openArtifactByKind("note", id, title)}
+          onOpenDeck={(id, title) => openArtifactByKind("deck", id, title)}
+          onOpenQuiz={(id, title) => openArtifactByKind("quiz", id, title)}
         />
       )}
 

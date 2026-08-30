@@ -66,10 +66,14 @@ const CSP = [
   // DictionaryArtifact.tsx) — a strict 'self' here silently blocked every lookup with "Failed to fetch"
   // (CSP violations don't reach the app's own try/catch as an HTTP error; the browser just refuses the fetch).
   "connect-src 'self' https://freedictionaryapi.com",
-  // Study Mode's audio panel can embed a Spotify playlist/album/track via Spotify's own official public
-  // embed widget (client/study/spotify.ts) — no OAuth, no API key. Without this, default-src 'self' blocks
-  // the iframe outright (frame-src has no separate fallback other than default-src).
-  "frame-src https://open.spotify.com",
+  // Study Mode embeds several things in iframes: a Spotify playlist/album/track widget (client/study/
+  // spotify.ts, no OAuth needed), a Google Doc, a YouTube video, and — critically — the student's own
+  // uploaded PDFs, which load from a same-page blob: URL (StudySetup's upload flow). Once frame-src is set
+  // AT ALL it replaces the default-src 'self' fallback entirely rather than adding to it — setting it to
+  // just the Spotify origin (as this first did) silently broke every other embed, including the student's
+  // own files, with Chrome's generic "This content is blocked" — so 'self' and blob: must be listed here
+  // explicitly, not assumed to still apply.
+  "frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://www.youtube-nocookie.com",
   "font-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",

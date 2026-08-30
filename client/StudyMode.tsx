@@ -678,7 +678,7 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
   return (
     <div className="study-mode-v2" style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
       {/* Top Bar (Layer 3) */}
-      <div style={{ height: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 16px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+      <div style={{ height: '48px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 24px', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <button onClick={() => exitSession()} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>←</button>
           <span style={{ fontWeight: 500, fontSize: '14px' }}>{task.title}</span>
@@ -716,7 +716,7 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
       </div>
 
       {/* Bottom Bar Tools (Layer 3) */}
-      <div style={{ height: '50px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '24px', borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
+      <div style={{ height: '56px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '28px', borderTop: '1px solid var(--border)', backgroundColor: 'var(--bg-card)' }}>
         <button className="btn btn-ghost" onClick={() => setMaterialsOpen(!materialsOpen)}>Materials</button>
         <button className="btn btn-ghost" onClick={() => setNotesOpen(!notesOpen)}>Notes</button>
         <button className="btn btn-ghost" onClick={() => setShowSearch(!showSearch)}>Search</button>

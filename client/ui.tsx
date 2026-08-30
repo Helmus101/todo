@@ -158,11 +158,27 @@ export function autoOpenTaskDocs(links?: { url: string }[]): void {
   openTabs(toOpen, TAB_GROUP);
 }
 
+// Fields meant to render as plain, single-line text (title, "why", did/step bullets — everything EXCEPT
+// note bodies and chat replies, which have their own real markdown renderers below) are still free-form
+// model output, and DeepSeek occasionally reaches for `**bold**`, a leading `# heading`, or a `* bullet`
+// marker out of habit even though nothing there ever gets parsed as markdown — reported live as literal
+// asterisks/hashes showing up in task titles and step text. Strip the delimiters (keep the wrapped text)
+// rather than the whole match, and only at the START of a line for heading/bullet markers so a genuine
+// "3 * 4" or a mid-sentence "#2" survives untouched.
+export function stripStrayMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(?<![\w*])\*([^*\n]+)\*(?![\w*])/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[*-]\s+/gm, "");
+}
+
 // Otto is instructed to write inline markdown links ([label](url)) into "did"/"steps" text when it names a
 // specific resource — render those as real clickable buttons instead of leaving the raw "[text](url)" syntax
 // visible. Anything not matching the pattern passes through as plain text.
 const MD_LINK = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
-export function withInlineLinks(text: string): ReactNode {
+export function withInlineLinks(rawText: string): ReactNode {
+  const text = stripStrayMarkdown(rawText);
   const parts: ReactNode[] = [];
   let last = 0, m: RegExpExecArray | null;
   MD_LINK.lastIndex = 0;
@@ -403,7 +419,12 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
                 {L("Otto peut t'aider à réfléchir — il ne te donnera jamais la réponse.", "Otto can help you think it through — he'll never just give you the answer.")}
               </p>
             )}
-            {history.map((h, i) => <p key={i} className={`study-help-msg ${h.role}`}>{h.text}</p>)}
+            {history.map((h, i) => (
+              <p key={i} className={`study-help-msg ${h.role}`}>
+                <span className="study-help-sender">{h.role === "user" ? L("Toi", "You") : "Otto"}</span>
+                {h.text}
+              </p>
+            ))}
             {busy && <p className="study-help-msg assistant study-help-thinking">…</p>}
           </div>
           <div className="study-help-input">
@@ -486,7 +507,7 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
     const pct = deck.cards.length ? Math.round((right.length / deck.cards.length) * 100) : 0;
     return (
       <div className="deck-popup deck-done">
-        <h3 className="note-popup-title">{deck.title}</h3>
+        <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
         <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
           <span className="deck-score-pct">{pct}%</span>
         </div>
@@ -499,18 +520,18 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
   }
   return (
     <div className="deck-popup">
-      <h3 className="note-popup-title">{deck.title}</h3>
+      <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
       <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / deck.cards.length) * 100}%` }} /></div>
       <div className="deck-progress">{i + 1} / {deck.cards.length}</div>
       <div className={`deck-card-3d ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
         <div className="deck-card-inner">
           <div className="deck-card-face deck-card-front">
             <span className="deck-face-label">{L("Question", "Front")}</span>
-            <div className="deck-face-text">{formatMath(card!.front)}</div>
+            <div className="deck-face-text">{formatMath(stripStrayMarkdown(card!.front))}</div>
           </div>
           <div className="deck-card-face deck-card-back">
             <span className="deck-face-label">{L("Réponse", "Back")}</span>
-            <div className="deck-face-text">{formatMath(card!.back)}</div>
+            <div className="deck-face-text">{formatMath(stripStrayMarkdown(card!.back))}</div>
           </div>
         </div>
       </div>
@@ -608,7 +629,7 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
     const pct = total ? Math.round((right.length / total) * 100) : 0;
     return (
       <div className="deck-popup deck-done">
-        <h3 className="note-popup-title">{quiz.title}</h3>
+        <h3 className="note-popup-title">{stripStrayMarkdown(quiz.title)}</h3>
         <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
           <span className="deck-score-pct">{pct}%</span>
         </div>
@@ -622,16 +643,16 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
   }
   return (
     <div className="deck-popup quiz-popup">
-      <h3 className="note-popup-title">{quiz.title}</h3>
+      <h3 className="note-popup-title">{stripStrayMarkdown(quiz.title)}</h3>
       <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / seq.length) * 100}%` }} /></div>
       <div className="deck-progress">{i + 1} / {seq.length}</div>
-      <div className="quiz-q">{formatMath(q!.q)}</div>
+      <div className="quiz-q">{formatMath(stripStrayMarkdown(q!.q))}</div>
       <div className="quiz-opts">
         {q!.options.map((opt, oi) => {
           const state = picked === null ? "" : oi === q!.correct ? "correct" : oi === picked ? "wrong" : "";
           return (
             <button key={oi} type="button" className={`quiz-opt ${state}`} disabled={picked !== null} onClick={() => pick(oi)}>
-              <span className="quiz-opt-text">{formatMath(opt)}</span>
+              <span className="quiz-opt-text">{formatMath(stripStrayMarkdown(opt))}</span>
               {/* Was border/background-only (deliberately not red/green — see the one-accent rule) but with
                   no text/icon and no aria-live announcement, a screen-reader student got zero signal about
                   which answer was right after picking. */}
@@ -646,7 +667,7 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
           <p className="sr-only" role="status" aria-live="polite">
             {picked === q!.correct ? L("Correct.", "Correct.") : L(`Incorrect. La bonne réponse était : ${q!.options[q!.correct]}.`, `Incorrect. The correct answer was: ${q!.options[q!.correct]}.`)}
           </p>
-          {q!.why && <p className="quiz-why">{formatMath(q!.why)}</p>}
+          {q!.why && <p className="quiz-why">{formatMath(stripStrayMarkdown(q!.why))}</p>}
           <div className="deck-acts">
             <button className="btn primary" onClick={next}>{L("Suivant", "Next")} →</button>
           </div>

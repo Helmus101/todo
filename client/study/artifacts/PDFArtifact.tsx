@@ -39,7 +39,15 @@ export function PDFArtifact({ artifact, onChange }: PDFArtifactProps) {
         <span className="sm-toolbar-value">{zoom}%</span>
       </div>
       {url ? (
-        <iframe className="sm-embed" src={src} title={artifact.title} />
+        <>
+          <iframe className="sm-embed" src={src} title={artifact.title} />
+          {/* Our own CSP allows this (server/index.ts's frame-src), but a THIRD-PARTY PDF host can still
+              refuse to be framed via its own X-Frame-Options/CSP — invisible to JS (no onError fires), so
+              the student would otherwise be stuck looking at a blank/blocked pane with no way out. */}
+          <a className="sm-pdf-fallback-link" href={url} target="_blank" rel="noopener noreferrer">
+            Not loading? Open in a new tab ↗
+          </a>
+        </>
       ) : (
         <div className="sm-artifact-empty">No PDF attached.</div>
       )}

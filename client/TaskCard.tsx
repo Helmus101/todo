@@ -16,7 +16,7 @@ import { api } from "./api.ts";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
-  withInlineLinks, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal, useNotify,
+  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal, useNotify,
 } from "./ui.tsx";
 
 /**
@@ -198,7 +198,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       )}
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
-          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{task.title}</span>
+          <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{stripStrayMarkdown(task.title)}</span>
           {(task.sourceSubject || w || secondary) ? (
             <span className="card-sub">
               {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
@@ -236,8 +236,8 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
   return (
     <div className="dash-hero">
       <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
-      <h2 className="dash-hero-title">{task.title}</h2>
-      {task.why ? <p className="dash-hero-why">{task.why}</p> : null}
+      <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
+      {task.why ? <p className="dash-hero-why">{stripStrayMarkdown(task.why)}</p> : null}
       {(task.sourceSubject || w || showChip) ? (
         <div className="dash-hero-meta">
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
@@ -434,12 +434,12 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
       {/* (A) header — title and deadline only. Everything else that used to crowd this line moved into the
           hero (in-flight state) or was dropped (priority chip). */}
       <div className="tf-head">
-        <h2 className="tf-title">{task.title}</h2>
+        <h2 className="tf-title">{stripStrayMarkdown(task.title)}</h2>
         {/* A title alone can be opaque when it references something not named IN the title itself
             ("the 5 places", "the program") — the antecedent lives in `why`, which used to be shown only
             inside the collapsed Contexte panel. Surface it here unconditionally so the student never has
             to go hunting for what a vague-sounding task is actually about. */}
-        {task.why ? <p className="tf-why">{task.why}</p> : null}
+        {task.why ? <p className="tf-why">{stripStrayMarkdown(task.why)}</p> : null}
         <div className="tf-meta">
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
@@ -650,7 +650,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
   if (steps.length === 0) {
     return (
       <div className="step-hero hero-empty">
-        <p className="hero-line">{subtitle(task) || task.why}</p>
+        <p className="hero-line">{stripStrayMarkdown(subtitle(task) || task.why || "")}</p>
         <div className="hero-acts">
           <button className="btn primary" disabled={running} onClick={() => onRun()}>{running ? L("En cours…", "Working…") : L("Lancer", "Start")}</button>
           {/* Without this, a task Otto hasn't planned yet (or never needed a plan — already handled
@@ -1036,8 +1036,10 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
           <p className="muted small">{L("Dis-lui ce qui bloque. Il explique, il ne donne pas la réponse.", "Say what's blocking you. It'll explain — not hand you the answer.")}</p>
         ) : task.chat?.map((m, i) => (
           <div key={i} className={`chat-msg chat-${m.role}`}>
-            {/* Who said it, for anyone not seeing the bubble alignment/colour. */}
-            <span className="sr-only">{m.role === "user" ? L("Toi :", "You:") : L("Otto :", "Otto:")}</span>
+            {/* Who said it — was sr-only (screen readers already get this from the region's own role="log"
+                context); a bare bubble with no visible label made a longer reply read as an undifferentiated
+                blob of text rather than a structured message. */}
+            <span className={`chat-sender chat-sender-${m.role}`}>{m.role === "user" ? L("Toi", "You") : "Otto"}</span>
             {/* Which step this USER message was about — stepText, not a live lookup by index: steps are
                 regenerated on every rerun, so a bare index could point at the wrong step by now. */}
             {m.role === "user" && m.stepText ? <span className="chat-step-tag">{L("Étape", "Step")} {(m.stepIndex ?? 0) + 1} · {m.stepText}</span> : null}

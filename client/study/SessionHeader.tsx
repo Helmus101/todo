@@ -1,5 +1,18 @@
+import { useEffect, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import type { SessionStatus } from "./StudyTypes.ts";
+
+// Fullscreen hides the OS clock/menu bar — genuinely full-screen (see StudyMode's requestFullscreen) means
+// there's no other way to see the wall-clock time while studying. Self-contained (ticks on its own) so no
+// prop plumbing is needed from StudyMode's own per-second timer, which drives the elapsed/pomodoro counters.
+function WallClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 15_000); // clock display only needs minute-granularity
+    return () => clearInterval(id);
+  }, []);
+  return <span className="sm-clock">{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>;
+}
 
 interface SessionHeaderProps {
   taskTitle: string;
@@ -30,6 +43,7 @@ export function SessionHeader({
         <button className="sm-back-btn" onClick={onBack} title="Exit study mode">←</button>
         <span className="sm-task-title">{taskTitle}</span>
         <div className="sm-header-right">
+          <WallClock />
           {sessionStatus === "paused" && <span className="sm-paused-badge">PAUSED</span>}
           {pomodoroRemaining !== undefined && (
             <span className="sm-pomodoro-badge" title={`Cycle ${(pomodoroCycle || 0) + 1}`}>

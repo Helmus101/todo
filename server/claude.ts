@@ -117,14 +117,22 @@ export function dropTrivialSteps(steps: TaskStep[]): TaskStep[] {
 }
 /** The app's UI + AI-content language, toggled in Settings (defaults French). Every prompt that phrases
  *  user-facing text pulls this in rather than hardcoding a language. */
+// Task titles/"why"/steps/context/synthesis/did-bullets/flashcard-quiz text render as PLAIN text client-side
+// (no markdown parser — that's reserved for CREATE_NOTE bodies and chat replies, which DO want markdown).
+// Reported live: a title/step showing literal "**word**" or a leading "# " because the model reached for
+// markdown out of habit even in a field nothing ever renders as markdown. The client also strips stray
+// `**`/`*`/`#` as a backstop (client/ui.tsx's stripStrayMarkdown), but fixing it at the source means the
+// model's own output reads clean even where that backstop isn't wired in yet.
+const NO_MARKDOWN_LINE = `\n\nPLAIN TEXT: task titles, "why", steps, context, synthesis, and flashcard/quiz text are shown as plain text, never rendered as markdown — do NOT use **bold**, # headings, or * bullets in them (fine only inside a note's own "body" field and in chat replies, which DO render markdown).\n`;
+
 export function languageLine(p?: Profile): string {
   const lang = p?.language === "en" ? "en" : "fr";
-  return lang === "en"
+  return (lang === "en"
     ? `\n\nLANGUAGE: write EVERY user-facing string in ENGLISH (task titles, "why", steps, context, synthesis, ` +
       `chat replies) — regardless of what language the source material (an email, a document) happens to be in.\n`
     : `\n\nLANGUAGE: write EVERY user-facing string in FRENCH (tu, not vous — talk to the student like a peer, ` +
       `not an administrator) — task titles, "why", steps, context, synthesis, chat replies — regardless of what ` +
-      `language the source material (an email, a document) happens to be in.\n`;
+      `language the source material (an email, a document) happens to be in.\n`) + NO_MARKDOWN_LINE;
 }
 /** No track picker anymore — the student never declares IB vs BFI vs other, so Otto has to recognize the
  *  vocabulary from what actually shows up in the data (subject names, assignment text) rather than a
@@ -2694,7 +2702,8 @@ export async function studyHelp(
     `answer the method question directly rather than defaulting to a vague non-answer.\n` +
     `2. Guide with questions, a relevant fact, an analogy, or by pointing at what part of the question actually ` +
     `matters — the same first-principles style as Otto's regular tutoring, just compressed to 1-3 short ` +
-    `sentences (this is a sidebar next to a drill, not a lecture).\n` +
+    `sentences (this is a sidebar next to a drill, not a lecture). ONE nudge, then stop — never a multi-step ` +
+    `walkthrough of the whole method in one reply, even if you could.\n` +
     `3. If they seem to genuinely understand it now, encourage them to flip the card / pick an option ` +
     `themselves rather than telling them they're right.\n` +
     `4. Stay on this one card. If they ask something unrelated to it, answer briefly but steer back.\n` +
@@ -3038,15 +3047,18 @@ export async function chatAboutTask(
     `answers before finding out what the student actually knows is just a textbook with extra steps. One ` +
     `focused diagnostic question beats three paragraphs of explanation they didn't need — skip it only when ` +
     `they've clearly already tried and told you where it breaks (then you already have your diagnosis).\n` +
-    `2. TEACH THE IDEA, NOT THE INSTANCE — FROM FIRST PRINCIPLES. Once you know where they're stuck, don't ` +
-    `open with the general rule — start from a definition or premise they ALREADY accept (something true in ` +
-    `their own words, or a fact from earlier in the course) and build up to the concept a step at a time, each ` +
-    `step following visibly from the last, so the rule arrives as a conclusion they can see coming rather than ` +
-    `an assertion to memorize. Name the SPECIFIC misconception you're diagnosing, not a generic gap ("you're ` +
-    `treating this as always true — here's the case where the premise breaks"), and pick language/pace for ` +
-    `their actual level, not a stock explanation. Then let THEM apply it to their actual question. If a worked ` +
-    `example genuinely helps, work a PARALLEL one — same method, different numbers/text/topic — never their ` +
-    `assigned problem.\n` +
+    `2. TEACH THE IDEA, NOT THE INSTANCE — FROM FIRST PRINCIPLES, ONE STEP PER MESSAGE. Once you know where ` +
+    `they're stuck, don't open with the general rule — start from a definition or premise they ALREADY accept ` +
+    `(something true in their own words, or a fact from earlier in the course) and build up to the concept a ` +
+    `step at a time. Critical: "a step at a time" means literally one step per REPLY, then STOP and wait for ` +
+    `them — never the whole chain (premise → derivation → worked example → question) crammed into a single ` +
+    `message just because it's logically one argument. A reply that walks through 3+ linked steps in one go is ` +
+    `wrong length regardless of how good the explanation is; split it across turns instead. Name the SPECIFIC ` +
+    `misconception you're diagnosing, not a generic gap ("you're treating this as always true — here's the ` +
+    `case where the premise breaks"), and pick language/pace for their actual level, not a stock explanation. ` +
+    `Then let THEM apply it to their actual question. If a worked example genuinely helps, work a PARALLEL ` +
+    `one — same method, different numbers/text/topic, never their assigned problem — and that example is ITS ` +
+    `OWN turn, not appended to the explanation that came before it.\n` +
     `3. HAND BACK THE THINKING. Prefer a question that makes them take the next step ("what happens if you ` +
     `substitute that back in?", "which of the two readings does your evidence actually support?") over ` +
     `stating the step yourself. Leave the last inferential step to them wherever it's reachable.\n` +
