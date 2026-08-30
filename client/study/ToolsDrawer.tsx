@@ -18,6 +18,7 @@ const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: W
   { type: "dictionary", label: "Dictionary", icon: "Aa", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "whiteboard", label: "Whiteboard", icon: "◻", templates: ["PROBLEM_SOLVING", "WRITING", "PROJECT", "STANDARD", "RESEARCH"] },
   { type: "sticky", label: "Sticky Note", icon: "❏", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD", "PROBLEM_SOLVING"] },
+  { type: "citation", label: "Citation", icon: "❞", templates: ["WRITING", "RESEARCH", "PROJECT"] },
 ];
 
 export function ToolsDrawer({ template, onClose, onAddTool, backgroundImageName, onSetBackground, onClearBackground }: ToolsDrawerProps) {

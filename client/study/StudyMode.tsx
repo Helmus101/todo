@@ -543,7 +543,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   }, [updateEnv]);
 
   // ── End session ───────────────────────────────────────────────────────────
-  const endSession = useCallback(async () => {
+  const endSession = useCallback(async (review?: { finished?: string; confusing?: string; nextStep?: string }) => {
     if (timerRef.current) clearInterval(timerRef.current);
     noiseRef.current?.stop();
     stopCustomAudio();
@@ -555,6 +555,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         endedAt: new Date().toISOString(),
         elapsedSeconds,
         breakSeconds,
+        review,
       };
       await saveSession(finalLog);
     }
@@ -725,6 +726,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         isFullscreen={isFullscreen}
         onToggleFullscreen={() => (isFullscreen ? exitFullscreen() : enterFullscreen())}
         pomodoroRemaining={env.pomodoroEnabled ? Math.max(0, (env.pomodoroWorkMinutes || 25) * 60 - phaseSeconds) : undefined}
+        pomodoroPhaseTotal={env.pomodoroEnabled ? (env.pomodoroWorkMinutes || 25) * 60 : undefined}
         pomodoroCycle={env.pomodoroCycles}
       />
 
@@ -792,10 +794,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
               const newArtifact: ArtifactState = {
                 id: crypto.randomUUID(),
                 type,
-                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : "Notes",
+                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : type === "citation" ? "Citation" : "Notes",
                 x: 20, y: 15,
-                width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : 40,
-                height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : 50,
+                width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : type === "citation" ? 40 : 40,
+                height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : type === "citation" ? 65 : 50,
                 zIndex: 100,
                 minimized: false,
                 maximized: false,

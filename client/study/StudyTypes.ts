@@ -14,7 +14,8 @@ export type ArtifactType =
   | "video"        // YouTube / embeddable video
   | "document"     // Google Doc / generic document
   | "flashcard"
-  | "quiz";
+  | "quiz"
+  | "citation";
 
 export type DockSide = "none" | "left" | "right" | "fullscreen";
 
@@ -109,6 +110,11 @@ export interface SessionLog {
     note: string;
     at: string;
   }>;
+  /** End-of-session review (~60s reflection) — what got finished, what was confusing, and the next
+   *  smallest step. All optional (a student can just end the session), but capturing them is what lets a
+   *  future "what should I do next" screen or the tutor's pattern detection actually use this session
+   *  instead of just its raw time/step numbers. */
+  review?: { finished?: string; confusing?: string; nextStep?: string };
 }
 
 export type SessionStatus = "idle" | "active" | "paused" | "break" | "completed" | "ended";

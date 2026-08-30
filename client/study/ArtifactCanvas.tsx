@@ -14,6 +14,7 @@ import { PDFArtifact } from "./artifacts/PDFArtifact.tsx";
 import { VideoArtifact } from "./artifacts/VideoArtifact.tsx";
 import { DocumentArtifact } from "./artifacts/DocumentArtifact.tsx";
 import { ImageArtifact } from "./artifacts/ImageArtifact.tsx";
+import { CitationArtifact } from "./artifacts/CitationArtifact.tsx";
 
 interface ArtifactCanvasProps {
   artifacts: ArtifactState[];
@@ -138,6 +139,8 @@ export function ArtifactCanvas({
         return <FlashcardArtifact task={task} deckId={String(art.contentState?.deckId || "")} />;
       case "quiz":
         return <QuizArtifact task={task} quizId={String(art.contentState?.quizId || "")} />;
+      case "citation":
+        return <CitationArtifact {...contentProps} />;
       default:
         return null;
     }

@@ -27,15 +27,30 @@ interface SessionHeaderProps {
   sessionStatus: SessionStatus;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
-  /** Pomodoro: seconds remaining in the current work interval, and which cycle this is — both omitted
-   *  when pomodoro isn't enabled for this session. */
+  /** Pomodoro: seconds remaining in the current work interval, the interval's total length (for the
+   *  progress ring), and which cycle this is — all omitted when pomodoro isn't enabled for this session. */
   pomodoroRemaining?: number;
+  pomodoroPhaseTotal?: number;
   pomodoroCycle?: number;
+}
+
+// A subtle ring around the pomodoro badge — fills as the work interval elapses. Pure decoration (the
+// number is what actually matters) but a glance at the ring answers "how much of this interval is left"
+// faster than reading digits, and it's cheap: one SVG circle with a dashoffset.
+function ProgressRing({ fraction }: { fraction: number }) {
+  const r = 9, c = 2 * Math.PI * r;
+  const offset = c * (1 - Math.max(0, Math.min(1, fraction)));
+  return (
+    <svg className="sm-progress-ring" width="22" height="22" viewBox="0 0 22 22">
+      <circle cx="11" cy="11" r={r} className="sm-progress-ring-bg" />
+      <circle cx="11" cy="11" r={r} className="sm-progress-ring-fg" strokeDasharray={c} strokeDashoffset={offset} />
+    </svg>
+  );
 }
 
 export function SessionHeader({
   taskTitle, currentStep, stepIndex, totalSteps, progress, elapsed, formatTime, onBack, onSubmitStep, sessionStatus,
-  isFullscreen, onToggleFullscreen, pomodoroRemaining, pomodoroCycle,
+  isFullscreen, onToggleFullscreen, pomodoroRemaining, pomodoroPhaseTotal, pomodoroCycle,
 }: SessionHeaderProps) {
   return (
     <header className="sm-header">
@@ -47,6 +62,7 @@ export function SessionHeader({
           {sessionStatus === "paused" && <span className="sm-paused-badge">PAUSED</span>}
           {pomodoroRemaining !== undefined && (
             <span className="sm-pomodoro-badge" title={`Cycle ${(pomodoroCycle || 0) + 1}`}>
+              {pomodoroPhaseTotal ? <ProgressRing fraction={1 - pomodoroRemaining / pomodoroPhaseTotal} /> : null}
               🍅 {formatTime(pomodoroRemaining)}
             </span>
           )}
