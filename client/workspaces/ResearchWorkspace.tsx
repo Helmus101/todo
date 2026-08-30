@@ -26,7 +26,7 @@ export function ResearchWorkspace({ browserUrl, notes, onBrowserUrlChange, onNot
             type="text"
             value={browserUrl}
             onChange={(e) => onBrowserUrlChange(e.target.value)}
-            placeholder="🔍 Search or enter URL"
+            placeholder="Search or enter URL"
             style={{ flex: 1, margin: "0 12px", padding: "6px 12px", borderRadius: "16px", border: "1px solid var(--border)", outline: "none" }}
           />
         </div>

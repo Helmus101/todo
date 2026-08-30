@@ -67,7 +67,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
               className={`sm-audio-track ${audioType === "spotify" ? "active" : ""}`}
               onClick={() => onChange("spotify", volume, true)}
             >
-              🎵 Spotify
+              Spotify
             </button>
           )}
         </div>

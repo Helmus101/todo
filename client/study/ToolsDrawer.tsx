@@ -7,13 +7,13 @@ interface ToolsDrawerProps {
 }
 
 const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: WorkspaceTemplate[] }[] = [
-  { type: "notes", label: "Notes", icon: "🗒", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "scratchpad", label: "Scratchpad", icon: "✏", templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },
-  { type: "calculator", label: "Calculator", icon: "🔢", templates: ["PROBLEM_SOLVING", "STANDARD"] },
-  { type: "desmos", label: "Desmos Graph", icon: "📈", templates: ["PROBLEM_SOLVING", "STANDARD"] },
+  { type: "notes", label: "Notes", icon: "▤", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "scratchpad", label: "Scratchpad", icon: "✎", templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },
+  { type: "calculator", label: "Calculator", icon: "123", templates: ["PROBLEM_SOLVING", "STANDARD"] },
+  { type: "desmos", label: "Desmos Graph", icon: "f(x)", templates: ["PROBLEM_SOLVING", "STANDARD"] },
   { type: "dictionary", label: "Dictionary", icon: "Aa", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "whiteboard", label: "Whiteboard", icon: "◻", templates: ["PROBLEM_SOLVING", "WRITING", "PROJECT", "STANDARD", "RESEARCH"] },
-  { type: "sticky", label: "Sticky Note", icon: "📌", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD", "PROBLEM_SOLVING"] },
+  { type: "sticky", label: "Sticky Note", icon: "❏", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD", "PROBLEM_SOLVING"] },
 ];
 
 export function ToolsDrawer({ template, onClose, onAddTool }: ToolsDrawerProps) {

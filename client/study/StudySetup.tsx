@@ -167,14 +167,14 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
   };
 
   const typeIcon = (type: StudyMaterial["type"]) => {
-    if (type === "pdf") return "📄";
+    if (type === "pdf") return "PDF";
     if (type === "video") return "▶";
-    if (type === "image") return "🖼";
-    if (type === "document") return "📝";
-    if (type === "note") return "🗒";
-    if (type === "flashcard") return "🗂";
-    if (type === "quiz") return "❓";
-    return "🔗";
+    if (type === "image") return "▨";
+    if (type === "document") return "▤";
+    if (type === "note") return "▤";
+    if (type === "flashcard") return "❏";
+    if (type === "quiz") return "?";
+    return "Link";
   };
 
   return (
@@ -236,7 +236,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             onDragOver={e => e.preventDefault()}
             onDrop={e => { e.preventDefault(); handleFiles(e.dataTransfer.files); }}
           >
-            <span>📁 Upload files — PDF, images, documents</span>
+            <span>Upload files — PDF, images, documents</span>
             <span className="sm-setup-dropzone-hint">Click or drag & drop</span>
           </div>
           <input

@@ -30,7 +30,7 @@ export function BottomBar({ openPanel, onPanelToggle, onBreak, onEnd, audioPlayi
           className={`sm-bar-btn ${openPanel === "audio" ? "active" : ""}`}
           onClick={() => onPanelToggle("audio")}
         >
-          {audioPlaying ? "♪ Audio" : "Audio"}
+          Audio{audioPlaying ? " · playing" : ""}
         </button>
         <button
           className={`sm-bar-btn ${openPanel === "ai" ? "active" : ""}`}

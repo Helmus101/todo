@@ -3208,7 +3208,16 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   background: rgba(247, 247, 244, 0.94);
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(14px);
+  transition: opacity 0.4s var(--ease);
 }
+/* Chrome fades to near-invisible after a few seconds of no input while actively studying — reported live
+   as "feels crowded" with the header/bottom bar always fully visible on top of the actual work. Snaps back
+   instantly (see StudyMode's resetIdle) on any movement, so nothing is ever actually hidden, just quieted. */
+.sm-chrome-idle .sm-header { opacity: 0.22; }
+.sm-chrome-idle .sm-header:hover { opacity: 1; }
+.sm-chrome-idle .sm-bottombar { opacity: 0.28; }
+.sm-chrome-idle .sm-bottombar:hover { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .sm-header, .sm-bottombar { transition: none; } }
 .sm-header-top {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -3396,7 +3405,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   box-shadow: var(--shadow-card);
   transition: box-shadow 0.15s var(--ease);
   animation: smArtifactIn 0.18s var(--ease);
@@ -3477,6 +3486,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   background: rgba(247, 247, 244, 0.94);
   border-top: 1px solid var(--line);
   backdrop-filter: blur(14px);
+  transition: opacity 0.4s var(--ease);
 }
 .sm-bottombar-left,
 .sm-bottombar-right {
@@ -3491,10 +3501,10 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 36px;
+  min-height: 38px;
   padding: 0 var(--space-3);
   border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
   font-size: var(--text-sm);
@@ -3521,29 +3531,29 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .sm-btn-sm { min-height: 34px; }
 .sm-btn-lg { min-height: 46px; padding: 0 var(--space-5); font-size: var(--text-md); }
 .sm-drawer {
-  position: fixed;
-  right: 18px;
-  bottom: 72px;
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  height: 100%;
   z-index: 1040;
   display: grid;
   grid-template-rows: auto 1fr;
-  width: min(390px, calc(100vw - 36px));
-  max-height: min(620px, calc(100vh - 170px));
+  width: min(390px, 100%);
   overflow: hidden;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
+  border-left: 1px solid var(--line);
   box-shadow: var(--shadow-pop);
-  animation: smDrawerIn 0.16s var(--ease);
+  animation: smDrawerSlideIn 0.22s var(--ease);
 }
-@keyframes smDrawerIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes smDrawerSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @media (prefers-reduced-motion: reduce) { .sm-drawer { animation: none; } }
-.sm-drawer-ai { width: min(520px, calc(100vw - 36px)); }
+.sm-drawer-ai { width: min(520px, 100%); }
 .sm-drawer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 44px;
+  min-height: 48px;
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--line-soft);
 }
@@ -3551,10 +3561,10 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .sm-mat-remove {
   width: 30px;
   height: 30px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   font-size: 18px;
 }
-.sm-drawer-body { overflow: auto; padding: var(--space-4); }
+.sm-drawer-body { overflow: auto; padding: var(--space-5); }
 .sm-drawer-empty,
 .sm-artifact-empty {
   color: var(--ink-3);
@@ -3571,11 +3581,11 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: var(--space-2);
-  min-height: 42px;
-  padding: 0 var(--space-2);
+  gap: var(--space-3);
+  min-height: 48px;
+  padding: 0 var(--space-3);
   border: 1px solid var(--line-soft);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
 }
 .sm-mat-label {
   min-width: 0;
@@ -3592,17 +3602,17 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .sm-tools-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2);
+  gap: var(--space-3);
 }
 .sm-tool-btn {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
-  gap: var(--space-2);
-  min-height: 44px;
+  gap: var(--space-3);
+  min-height: 48px;
   padding: 0 var(--space-3);
   border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
   text-align: left;
@@ -4012,7 +4022,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .sm-setup-input {
   width: 100%;
-  height: 42px;
+  height: 46px;
 }
 .sm-setup-error {
   margin-top: var(--space-2);
@@ -4022,14 +4032,16 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   display: grid;
   gap: var(--space-1);
   place-items: center;
-  min-height: 112px;
+  min-height: 128px;
   margin-top: var(--space-4);
   border: 1px dashed var(--line);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink-2);
   cursor: pointer;
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease);
 }
+.sm-setup-dropzone:hover { background: var(--bg-2); border-color: var(--accent); }
 .sm-setup-dropzone-hint {
   color: var(--ink-3);
   font-size: var(--text-sm);
@@ -4049,23 +4061,27 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   display: grid;
   place-items: center;
   padding: var(--space-5);
-  background: rgba(16, 19, 23, 0.26);
+  background: rgba(16, 19, 23, 0.36);
+  backdrop-filter: blur(2px);
 }
 .sm-modal {
   width: min(520px, 100%);
-  padding: var(--space-5);
+  padding: var(--space-6);
   border: 1px solid var(--line);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   box-shadow: var(--shadow-pop);
+  animation: smModalIn 0.18s var(--ease);
 }
+@keyframes smModalIn { from { opacity: 0; transform: scale(0.97) translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sm-modal { animation: none; } }
 .sm-modal h2 {
   margin-top: var(--space-2);
   font-size: var(--text-xl);
   line-height: 1.25;
 }
 .sm-modal-sub {
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
   color: var(--ink-2);
 }
 .sm-submit-options {
@@ -4111,6 +4127,39 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   place-items: center;
   background: var(--bg);
   color: var(--ink);
+}
+.sm-break-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-3);
+  max-width: 360px;
+  padding: var(--space-5);
+}
+.sm-break-label {
+  font-family: var(--display);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.15em;
+  color: var(--ink-3);
+  margin: 0;
+}
+.sm-break-timer {
+  font-family: var(--mono);
+  font-size: clamp(64px, 14vw, 88px);
+  font-weight: var(--weight-medium);
+  color: var(--ink);
+  line-height: 1;
+  margin: var(--space-2) 0;
+}
+.sm-break-hint {
+  font-size: var(--text-base);
+  color: var(--ink-2);
+  margin-bottom: var(--space-4);
+}
+.sm-break-inner .btn {
+  width: 100%;
 }
 
 @media (prefers-color-scheme: dark) {

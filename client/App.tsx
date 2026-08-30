@@ -1625,7 +1625,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
         return guardrailCount > 0 ? (
           <section className="settings-sec reveal" style={{ ["--d" as any]: "0.14s" }}>
             <p className="settings-hint guardrail-stat">
-              <span aria-hidden="true">🛡</span> {L(
+              <span aria-hidden="true">✦</span> {L(
                 `Otto a refusé de faire ton travail à ta place ${guardrailCount} fois — et a fait un guide à la place.`,
                 `Otto has declined to do your graded work ${guardrailCount} times — and made a guide instead.`,
               )}
@@ -2184,10 +2184,10 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
             DOES_STUDENT_WORK guardrail, server/crypto.ts's AES-256-GCM at rest, the onboarding track question,
             and the visible monthly AI cap in Settings). */}
         <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.38s" }}>
-          <li><span aria-hidden="true">🔒</span> {L("Identifiants chiffrés, jamais revendus", "Credentials encrypted, never resold")}</li>
-          <li><span aria-hidden="true">🎓</span> {L("Pensé pour le Bac et l'IB", "Built for both the Bac and the IB")}</li>
-          <li><span aria-hidden="true">💶</span> {L("Coût de l'IA plafonné et visible", "AI cost capped and visible")}</li>
-          <li><span aria-hidden="true">🚫</span> {L("Ne fait jamais le travail noté", "Never does the graded work")}</li>
+          <li><span aria-hidden="true">—</span> {L("Identifiants chiffrés, jamais revendus", "Credentials encrypted, never resold")}</li>
+          <li><span aria-hidden="true">—</span> {L("Pensé pour le Bac et l'IB", "Built for both the Bac and the IB")}</li>
+          <li><span aria-hidden="true">—</span> {L("Coût de l'IA plafonné et visible", "AI cost capped and visible")}</li>
+          <li><span aria-hidden="true">—</span> {L("Ne fait jamais le travail noté", "Never does the graded work")}</li>
         </ul>
         {/* One product visual: a Pronote-wall-of-devoirs → 3-card plan, not a Gmail draft. */}
         <div className="hero-demo hero-in" style={{ ["--d" as any]: "0.42s" }} aria-hidden="true">
@@ -2195,7 +2195,7 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
           <div className="demo-window">
             <div className="demo-titlebar"><span /><span /><span /></div>
             <div className="demo-body">
-              <p className="demo-line"><b>{L("Maths", "Math")}</b> — {L("Contrôle vendredi", "Test on Friday")} <span className="demo-badge">⏱ 35 {L("min", "min")}</span></p>
+              <p className="demo-line"><b>{L("Maths", "Math")}</b> — {L("Contrôle vendredi", "Test on Friday")} <span className="demo-badge">35 {L("min", "min")}</span></p>
               <p className="demo-line gap">{typed}<span className="demo-caret" /></p>
               <p className="demo-line"><b>{L("Physique", "Physics")}</b> — {L("DM à rendre lundi", "Homework due Monday")}</p>
               <p className="demo-line"><b>{L("Philo", "Philosophy")}</b> — {L("Fiche de révision prête", "Revision sheet ready")}</p>

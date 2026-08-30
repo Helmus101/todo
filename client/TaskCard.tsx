@@ -193,7 +193,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       {/* Study Mode button - only for active tasks with steps */}
       {!isDone && (task.steps || []).length > 0 && onEnterStudyMode && (
         <button type="button" className="card-study" title={L("Mode étude", "Study Mode")} aria-label={L(`Mode étude pour : ${task.title}`, `Study Mode for: ${task.title}`)} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
-          <span aria-hidden="true">📚</span>
+          Study
         </button>
       )}
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
@@ -208,7 +208,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           ) : null}
         </span>
         {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
-        {guardrailHeld ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">🛡</span> : null}
+        {guardrailHeld ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
         {cStatus === "executing" ? <span className="card-spin" title={L("En cours…", "Working…")} /> : null}
         <span className="caret" aria-hidden="true">›</span>
       </button>
@@ -444,7 +444,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
-          {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">🛡</span> : null}
+          {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
         </div>
       </div>
 
@@ -971,19 +971,19 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
           <div className="note-chips prepared-chips">
             {task.notes?.map((n) => (
               <button key={n.id} type="button" className="note-chip" onClick={() => onOpenNote(n.id)}>
-                <span className="note-chip-icon" aria-hidden="true">📄</span>
+        <span className="note-chip-icon" aria-hidden="true">▤</span>
                 <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
               </button>
             ))}
             {task.flashcards?.map((f) => (
               <button key={f.id} type="button" className="note-chip" onClick={() => onOpenDeck(f.id)}>
-                <span className="note-chip-icon" aria-hidden="true">🗂</span>
+                <span className="note-chip-icon" aria-hidden="true">❏</span>
                 <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
               </button>
             ))}
             {task.quizzes?.map((qz) => (
               <button key={qz.id} type="button" className="note-chip" onClick={() => onOpenQuiz(qz.id)}>
-                <span className="note-chip-icon" aria-hidden="true">❓</span>
+                <span className="note-chip-icon" aria-hidden="true">?</span>
                 <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions`, `${qz.questions.length} questions`)}</span></span>
               </button>
             ))}
@@ -998,13 +998,13 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
       {task.audit?.length ? (
         <div className="audit-log">
           <button type="button" className="btn xs ghost audit-toggle" aria-expanded={showAudit} onClick={() => setShowAudit((v) => !v)}>
-            <span aria-hidden="true">🔍</span> {L("Journal d'activité", "Activity log")} ({task.audit.length})
+            {L("Journal d'activité", "Activity log")} ({task.audit.length})
           </button>
           {showAudit ? (
             <ul className="audit-list">
               {task.audit.slice().reverse().map((e, i) => (
                 <li key={i} className={`audit-${e.kind}`}>
-                  <span className="audit-icon" aria-hidden="true">{e.kind === "guardrail" ? "🛡" : e.kind === "artifact" ? "✅" : "🔎"}</span>
+                  <span className="audit-icon" aria-hidden="true">{e.kind === "guardrail" ? "✦" : e.kind === "artifact" ? "✓" : "•"}</span>
                   <span className="audit-label">{e.label}</span>
                   <span className="audit-at">{new Date(e.at).toLocaleString(cardEn ? "en-GB" : "fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
                 </li>
@@ -1053,7 +1053,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
                     : a.kind === "deck" ? task.flashcards?.some((f) => f.id === a.id)
                     : task.quizzes?.some((q) => q.id === a.id);
                   if (!exists) return null; // evicted by ARTIFACT_CAP — render nothing rather than crash
-                  const icon = a.kind === "note" ? "📄" : a.kind === "deck" ? "🗂" : "❓";
+                  const icon = a.kind === "note" ? "▤" : a.kind === "deck" ? "❏" : "?";
                   const open = a.kind === "note" ? onOpenNote : a.kind === "deck" ? onOpenDeck : onOpenQuiz;
                   return <button key={a.id} type="button" className="btn xs ghost note-chip" onClick={() => open(a.id)}><span aria-hidden="true">{icon}</span> {a.title}</button>;
                 })}
@@ -1062,7 +1062,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
             {/* The exact moment the "won't do your graded work" boundary held, right where it happened —
                 not just a line buried in the Activity log. */}
             {m.role === "assistant" && m.guardrail ? (
-              <span className="chat-guardrail-tag"><span aria-hidden="true">🛡</span> {L("Otto guide, ne fait pas à ta place", "Otto guides, doesn't do it for you")}</span>
+              <span className="chat-guardrail-tag"><span aria-hidden="true">✦</span> {L("Otto guide, ne fait pas à ta place", "Otto guides, doesn't do it for you")}</span>
             ) : null}
           </div>
         ))}

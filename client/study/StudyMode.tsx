@@ -227,6 +227,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   }, [chatSending]);
   const [saveIndicator, setSaveIndicator] = useState<"saved" | "saving" | "">("");
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Chrome fades to reduce clutter while the student is actually working (reported live: "feels crowded")
+  // — the header/bottom bar dim to near-invisible after a few seconds of no input, and snap back instantly
+  // on any movement/keypress. Never fades while a panel is open (nothing to hide behind, and it'd be
+  // jarring for the toolbar to dim right under an open drawer) or during a break/setup screen.
+  const [chromeIdle, setChromeIdle] = useState(false);
 
   const timerRef = useRef<number | null>(null);
   const noiseRef = useRef<NoisePlayer | null>(null);
@@ -251,6 +256,26 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
+
+  useEffect(() => {
+    if (phase !== "session" || sessionStatus !== "active" || openPanel) { setChromeIdle(false); return; }
+    let idleTimer: number;
+    const resetIdle = () => {
+      setChromeIdle(false);
+      clearTimeout(idleTimer);
+      idleTimer = window.setTimeout(() => setChromeIdle(true), 4000);
+    };
+    resetIdle();
+    window.addEventListener("mousemove", resetIdle);
+    window.addEventListener("keydown", resetIdle);
+    window.addEventListener("pointerdown", resetIdle);
+    return () => {
+      clearTimeout(idleTimer);
+      window.removeEventListener("mousemove", resetIdle);
+      window.removeEventListener("keydown", resetIdle);
+      window.removeEventListener("pointerdown", resetIdle);
+    };
+  }, [phase, sessionStatus, openPanel]);
 
   const doneSteps = task.steps?.filter(s => s.done).length ?? 0;
   const totalSteps = task.steps?.length ?? 0;
@@ -590,7 +615,6 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   if (isPhone) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", padding: "32px", textAlign: "center", backgroundColor: "#0f0f0f", color: "#e0e0e0" }}>
-        <div style={{ fontSize: "32px", marginBottom: "16px" }}>📱</div>
         <h2 style={{ marginBottom: "12px", fontWeight: 600 }}>Study Mode requires a larger screen</h2>
         <p style={{ color: "#888", lineHeight: 1.6, maxWidth: "300px" }}>Study Mode is designed for laptop and iPad. Continue using Otto on this device, and switch to a larger screen to start a study session.</p>
         <button onClick={onExit} style={{ marginTop: "24px", padding: "12px 24px", borderRadius: "8px", border: "1px solid #333", background: "none", color: "#e0e0e0", cursor: "pointer" }}>← Back to tasks</button>
@@ -631,7 +655,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   }
 
   return (
-    <div className="sm-shell" data-status={sessionStatus} ref={rootRef}>
+    <div className={`sm-shell ${chromeIdle ? "sm-chrome-idle" : ""}`} data-status={sessionStatus} ref={rootRef}>
       {/* ── Save indicator ── */}
       {saveIndicator && (
         <div className="sm-save-indicator">{saveIndicator === "saving" ? "Saving…" : "Saved"}</div>
@@ -655,21 +679,116 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         pomodoroCycle={env.pomodoroCycles}
       />
 
-      {/* ── Main artifact canvas ── */}
-      <ArtifactCanvas
-        artifacts={env.artifacts}
-        notes={env.notes}
-        scratchpad={env.scratchpad}
-        task={task}
-        taskId={task.id}
-        environmentId={env.id}
-        onUpdateArtifact={updateArtifact}
-        onAddArtifact={addArtifact}
-        onRemoveArtifact={removeArtifact}
-        onNotesChange={(notes) => updateEnv({ notes })}
-        onScratchpadChange={(scratchpad) => updateEnv({ scratchpad })}
-        language={language}
-      />
+      {/* ── Main middle section ── */}
+      <div className="sm-main-container" style={{ position: "relative", gridRow: 2, minHeight: 0 }}>
+        <ArtifactCanvas
+          artifacts={env.artifacts}
+          notes={env.notes}
+          scratchpad={env.scratchpad}
+          task={task}
+          taskId={task.id}
+          environmentId={env.id}
+          onUpdateArtifact={updateArtifact}
+          onAddArtifact={addArtifact}
+          onRemoveArtifact={removeArtifact}
+          onNotesChange={(notes) => updateEnv({ notes })}
+          onScratchpadChange={(scratchpad) => updateEnv({ scratchpad })}
+          language={language}
+        />
+
+        {/* ── Panels (Layer 2) ── */}
+        {openPanel === "materials" && (
+          <MaterialsDrawer
+            materials={env.materials}
+            onClose={() => setOpenPanel(null)}
+            onOpenArtifact={(mat) => {
+              const type = mat.type === "pdf" ? "pdf" : mat.type === "video" ? "video" : mat.type === "image" ? "image"
+                : mat.type === "note" ? "sticky" : mat.type === "flashcard" ? "flashcard" : mat.type === "quiz" ? "quiz" : "document";
+              // For flashcard/quiz materials, buildTaskMaterials (StudySetup.tsx) stashed the deck/quiz id in
+              // `text` (there's no file/url for these — they live on the task itself) — thread it through as
+              // the id the artifact looks the real deck/quiz up by, not literal note text.
+              const contentState = mat.type === "flashcard" ? { deckId: mat.text } : mat.type === "quiz" ? { quizId: mat.text } : mat.text ? { text: mat.text } : {};
+              const newArtifact: ArtifactState = {
+                id: crypto.randomUUID(),
+                type,
+                title: mat.label,
+                x: 15, y: 15,
+                width: 60, height: 75,
+                zIndex: 100,
+                minimized: false,
+                maximized: false,
+                dockSide: "none",
+                contentState,
+                source: mat.objectUrl || mat.url,
+                sourceLabel: mat.label,
+                taskId: task.id,
+                environmentId: env.id,
+              };
+              addArtifact(newArtifact);
+              setOpenPanel(null);
+            }}
+          />
+        )}
+
+        {openPanel === "tools" && (
+          <ToolsDrawer
+            template={env.template}
+            onClose={() => setOpenPanel(null)}
+            onAddTool={(type) => {
+              const newArtifact: ArtifactState = {
+                id: crypto.randomUUID(),
+                type,
+                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : "Notes",
+                x: 20, y: 15,
+                width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : 40,
+                height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : 50,
+                zIndex: 100,
+                minimized: false,
+                maximized: false,
+                dockSide: "none",
+                contentState: {},
+                taskId: task.id,
+                environmentId: env.id,
+              };
+              addArtifact(newArtifact);
+              setOpenPanel(null);
+            }}
+          />
+        )}
+
+        {openPanel === "audio" && (
+          <AudioPanel
+            audioType={env.audioType}
+            volume={env.audioVolume}
+            playing={env.audioPlaying}
+            customAudioName={env.customAudioName}
+            spotifyEmbedUrl={env.spotifyEmbedUrl}
+            onClose={() => setOpenPanel(null)}
+            onChange={setAudio}
+            onUploadAudio={(file) => void uploadAudio(file)}
+            onSetSpotify={setSpotify}
+          />
+        )}
+
+        {openPanel === "ai" && (
+          <AskOttoPanel
+            task={task}
+            currentStep={currentStep}
+            input={chatInput}
+            setInput={setChatInput}
+            sending={chatSending}
+            error={chatError}
+            pendingMsg={pendingMsg}
+            slow={chatSlow}
+            verySlow={chatVerySlow}
+            onSend={sendChat}
+            onClose={() => setOpenPanel(null)}
+            onOpenNote={(id, title) => openArtifactByKind("note", id, title)}
+            onOpenDeck={(id, title) => openArtifactByKind("deck", id, title)}
+            onOpenQuiz={(id, title) => openArtifactByKind("quiz", id, title)}
+          />
+        )}
+      </div>
 
       {/* ── Bottom bar ── */}
       <BottomBar
@@ -685,99 +804,6 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
           updateEnv({ sessionStatus: next });
         }}
       />
-
-      {/* ── Panels (Layer 2) ── */}
-      {openPanel === "materials" && (
-        <MaterialsDrawer
-          materials={env.materials}
-          onClose={() => setOpenPanel(null)}
-          onOpenArtifact={(mat) => {
-            const type = mat.type === "pdf" ? "pdf" : mat.type === "video" ? "video" : mat.type === "image" ? "image"
-              : mat.type === "note" ? "sticky" : mat.type === "flashcard" ? "flashcard" : mat.type === "quiz" ? "quiz" : "document";
-            // For flashcard/quiz materials, buildTaskMaterials (StudySetup.tsx) stashed the deck/quiz id in
-            // `text` (there's no file/url for these — they live on the task itself) — thread it through as
-            // the id the artifact looks the real deck/quiz up by, not literal note text.
-            const contentState = mat.type === "flashcard" ? { deckId: mat.text } : mat.type === "quiz" ? { quizId: mat.text } : mat.text ? { text: mat.text } : {};
-            const newArtifact: ArtifactState = {
-              id: crypto.randomUUID(),
-              type,
-              title: mat.label,
-              x: 15, y: 15,
-              width: 60, height: 75,
-              zIndex: 100,
-              minimized: false,
-              maximized: false,
-              dockSide: "none",
-              contentState,
-              source: mat.objectUrl || mat.url,
-              sourceLabel: mat.label,
-              taskId: task.id,
-              environmentId: env.id,
-            };
-            addArtifact(newArtifact);
-            setOpenPanel(null);
-          }}
-        />
-      )}
-
-      {openPanel === "tools" && (
-        <ToolsDrawer
-          template={env.template}
-          onClose={() => setOpenPanel(null)}
-          onAddTool={(type) => {
-            const newArtifact: ArtifactState = {
-              id: crypto.randomUUID(),
-              type,
-              title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : "Notes",
-              x: 20, y: 15,
-              width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : 40,
-              height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : 50,
-              zIndex: 100,
-              minimized: false,
-              maximized: false,
-              dockSide: "none",
-              contentState: {},
-              taskId: task.id,
-              environmentId: env.id,
-            };
-            addArtifact(newArtifact);
-            setOpenPanel(null);
-          }}
-        />
-      )}
-
-      {openPanel === "audio" && (
-        <AudioPanel
-          audioType={env.audioType}
-          volume={env.audioVolume}
-          playing={env.audioPlaying}
-          customAudioName={env.customAudioName}
-          spotifyEmbedUrl={env.spotifyEmbedUrl}
-          onClose={() => setOpenPanel(null)}
-          onChange={setAudio}
-          onUploadAudio={(file) => void uploadAudio(file)}
-          onSetSpotify={setSpotify}
-        />
-      )}
-
-      {openPanel === "ai" && (
-        <AskOttoPanel
-          task={task}
-          currentStep={currentStep}
-          input={chatInput}
-          setInput={setChatInput}
-          sending={chatSending}
-          error={chatError}
-          pendingMsg={pendingMsg}
-          slow={chatSlow}
-          verySlow={chatVerySlow}
-          onSend={sendChat}
-          onClose={() => setOpenPanel(null)}
-          onOpenNote={(id, title) => openArtifactByKind("note", id, title)}
-          onOpenDeck={(id, title) => openArtifactByKind("deck", id, title)}
-          onOpenQuiz={(id, title) => openArtifactByKind("quiz", id, title)}
-        />
-      )}
 
       {/* ── Subtask submit modal ── */}
       {showSubtaskSubmit && currentStep && (

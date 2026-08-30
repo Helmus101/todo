@@ -59,14 +59,13 @@ export function AskOttoPanel({
                     : a.kind === "deck" ? task.flashcards?.some((f) => f.id === a.id)
                     : task.quizzes?.some((q) => q.id === a.id);
                   if (!exists) return null;
-                  const icon = a.kind === "note" ? "📄" : a.kind === "deck" ? "🗂" : "❓";
                   const open = a.kind === "note" ? onOpenNote : a.kind === "deck" ? onOpenDeck : onOpenQuiz;
-                  return <button key={a.id} type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => open(a.id, a.title)}>{icon} {a.title}</button>;
+                  return <button key={a.id} type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => open(a.id, a.title)}>{a.title}</button>;
                 })}
               </div>
             ) : null}
             {m.role === "assistant" && m.guardrail ? (
-              <span className="sm-ai-guardrail-tag">🛡 Otto guides, doesn't do it for you</span>
+              <span className="sm-ai-guardrail-tag">Otto guides, doesn't do it for you</span>
             ) : null}
           </div>
         ))}

@@ -409,7 +409,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
   return (
     <div className="study-help">
       <button type="button" className="btn xs ghost study-help-toggle" onClick={() => setOpen((v) => !v)}>
-        {open ? L("Fermer l'aide", "Close hint") : L("💡 Un indice ?", "💡 Need a hint?")}
+        {open ? L("Fermer l'aide", "Close hint") : L("Un indice ?", "Need a hint?")}
       </button>
       {open && (
         <div className="study-help-panel">

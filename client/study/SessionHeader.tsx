@@ -47,7 +47,7 @@ export function SessionHeader({
           {sessionStatus === "paused" && <span className="sm-paused-badge">PAUSED</span>}
           {pomodoroRemaining !== undefined && (
             <span className="sm-pomodoro-badge" title={`Cycle ${(pomodoroCycle || 0) + 1}`}>
-              🍅 {formatTime(pomodoroRemaining)}
+              Pomodoro {formatTime(pomodoroRemaining)}
             </span>
           )}
           <span className="sm-timer">{formatTime(elapsed)}</span>
