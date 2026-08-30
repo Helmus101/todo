@@ -1,5 +1,8 @@
 import { useRef, useCallback } from "react";
+import type { WebTask } from "../../shared/types.ts";
 import type { ArtifactState } from "./StudyTypes.ts";
+import { FlashcardArtifact } from "./artifacts/FlashcardArtifact.tsx";
+import { QuizArtifact } from "./artifacts/QuizArtifact.tsx";
 import { NotesArtifact } from "./artifacts/NotesArtifact.tsx";
 import { ScratchpadArtifact } from "./artifacts/ScratchpadArtifact.tsx";
 import { WhiteboardArtifact } from "./artifacts/WhiteboardArtifact.tsx";
@@ -16,6 +19,7 @@ interface ArtifactCanvasProps {
   artifacts: ArtifactState[];
   notes: string;
   scratchpad: string;
+  task: WebTask;
   taskId: string;
   environmentId: string;
   onUpdateArtifact: (id: string, patch: Partial<ArtifactState>) => void;
@@ -23,12 +27,13 @@ interface ArtifactCanvasProps {
   onRemoveArtifact: (id: string) => void;
   onNotesChange: (notes: string) => void;
   onScratchpadChange: (s: string) => void;
+  language?: "fr" | "en";
 }
 
 export function ArtifactCanvas({
-  artifacts, notes, scratchpad, taskId, environmentId,
+  artifacts, notes, scratchpad, task, taskId, environmentId,
   onUpdateArtifact, onAddArtifact, onRemoveArtifact,
-  onNotesChange, onScratchpadChange,
+  onNotesChange, onScratchpadChange, language = "en",
 }: ArtifactCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
@@ -117,7 +122,7 @@ export function ArtifactCanvas({
       case "desmos":
         return <DesmosArtifact {...contentProps} />;
       case "dictionary":
-        return <DictionaryArtifact {...contentProps} />;
+        return <DictionaryArtifact {...contentProps} language={language} />;
       case "sticky":
         return <StickyNoteArtifact {...contentProps} />;
       case "pdf":
@@ -129,7 +134,9 @@ export function ArtifactCanvas({
       case "document":
         return <DocumentArtifact url={art.source} title={art.title} />;
       case "flashcard":
-        return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)" }}>Flashcards coming soon</div>;
+        return <FlashcardArtifact task={task} deckId={String(art.contentState?.deckId || "")} />;
+      case "quiz":
+        return <QuizArtifact task={task} quizId={String(art.contentState?.quizId || "")} />;
       default:
         return null;
     }

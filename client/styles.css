@@ -3249,6 +3249,59 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   font-size: var(--text-md);
   color: var(--ink-2);
 }
+.sm-pomodoro-badge {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+.sm-fullscreen-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: var(--text-lg);
+  line-height: 1;
+  color: var(--ink-2);
+  padding: 0;
+}
+.sm-fullscreen-btn:hover { color: var(--ink); }
+.sm-break-countdown {
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  margin-top: calc(-1 * var(--space-2));
+}
+.sm-setup-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+.sm-pomodoro-config {
+  display: flex;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+.sm-pomodoro-config label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+.sm-pomodoro-config input[type="number"] {
+  width: 56px;
+  padding: var(--space-1) var(--space-2);
+}
+.sm-audio-spotify { margin-top: var(--space-4); }
+.sm-audio-spotify label {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  margin-bottom: var(--space-2);
+}
+.sm-audio-spotify-row { display: flex; gap: var(--space-2); }
+.sm-audio-spotify-row input { flex: 1; }
 .sm-header-step { padding: 0 var(--space-5) var(--space-4); }
 .sm-step-row {
   display: grid;

@@ -12,10 +12,17 @@ interface SessionHeaderProps {
   onBack: () => void;
   onSubmitStep: () => void;
   sessionStatus: SessionStatus;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
+  /** Pomodoro: seconds remaining in the current work interval, and which cycle this is — both omitted
+   *  when pomodoro isn't enabled for this session. */
+  pomodoroRemaining?: number;
+  pomodoroCycle?: number;
 }
 
 export function SessionHeader({
   taskTitle, currentStep, stepIndex, totalSteps, progress, elapsed, formatTime, onBack, onSubmitStep, sessionStatus,
+  isFullscreen, onToggleFullscreen, pomodoroRemaining, pomodoroCycle,
 }: SessionHeaderProps) {
   return (
     <header className="sm-header">
@@ -24,7 +31,17 @@ export function SessionHeader({
         <span className="sm-task-title">{taskTitle}</span>
         <div className="sm-header-right">
           {sessionStatus === "paused" && <span className="sm-paused-badge">PAUSED</span>}
+          {pomodoroRemaining !== undefined && (
+            <span className="sm-pomodoro-badge" title={`Cycle ${(pomodoroCycle || 0) + 1}`}>
+              🍅 {formatTime(pomodoroRemaining)}
+            </span>
+          )}
           <span className="sm-timer">{formatTime(elapsed)}</span>
+          {onToggleFullscreen && (
+            <button className="sm-fullscreen-btn" onClick={onToggleFullscreen} title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}>
+              {isFullscreen ? "⤡" : "⤢"}
+            </button>
+          )}
         </div>
       </div>
 

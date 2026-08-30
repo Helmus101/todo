@@ -4,7 +4,7 @@
 import type { StudyEnvironment, ArtifactState, SessionLog } from "./StudyTypes.ts";
 
 const DB_NAME = "otto-study";
-const DB_VERSION = 1;
+const DB_VERSION = 2; // bumped to add the "files" store (uploaded audio) — existing users' v1 DBs upgrade in place
 
 let _db: IDBDatabase | null = null;
 
@@ -24,6 +24,9 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains("sessions")) {
         const s = db.createObjectStore("sessions", { keyPath: "id" });
         s.createIndex("by_task", "taskId", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("files")) {
+        db.createObjectStore("files"); // out-of-line keys — value is a raw Blob (uploaded audio, etc.)
       }
     };
     req.onsuccess = () => {
@@ -89,6 +92,20 @@ export async function getEnvironmentByTask(taskId: string): Promise<StudyEnviron
 
 export async function saveSession(session: SessionLog): Promise<void> {
   await tx("sessions", "readwrite", (s) => s.put(session));
+}
+
+// ── Files (uploaded audio, etc.) ───────────────────────────────────────────────
+
+export async function saveFile(id: string, blob: Blob): Promise<void> {
+  await tx("files", "readwrite", (s) => s.put(blob, id));
+}
+
+export async function getFile(id: string): Promise<Blob | undefined> {
+  return tx("files", "readonly", (s) => s.get(id)) as Promise<Blob | undefined>;
+}
+
+export async function deleteFile(id: string): Promise<void> {
+  await tx("files", "readwrite", (s) => s.delete(id));
 }
 
 export async function getSessionsByTask(taskId: string): Promise<SessionLog[]> {

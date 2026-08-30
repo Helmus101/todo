@@ -13,7 +13,8 @@ export type ArtifactType =
   | "image"
   | "video"        // YouTube / embeddable video
   | "document"     // Google Doc / generic document
-  | "flashcard";
+  | "flashcard"
+  | "quiz";
 
 export type DockSide = "none" | "left" | "right" | "fullscreen";
 
@@ -48,7 +49,7 @@ export type WorkspaceTemplate =
 export interface StudyMaterial {
   id: string;
   label: string;
-  type: "pdf" | "video" | "document" | "link" | "image" | "note";
+  type: "pdf" | "video" | "document" | "link" | "image" | "note" | "flashcard" | "quiz";
   url?: string;
   file?: File;           // not persisted in IndexedDB, use objectUrl
   objectUrl?: string;    // blob URL after upload
@@ -64,9 +65,23 @@ export interface StudyEnvironment {
   artifacts: ArtifactState[];
   notes: string;
   scratchpad: string;
-  audioType: string;
+  audioType: string; // "silence" | "brown" | "pink" | "white" | "custom"
   audioVolume: number;
   audioPlaying: boolean;
+  /** Set when audioType is "custom" — the student's own uploaded track, stored as a Blob in IndexedDB
+   *  (StudyDB.ts's "files" store) and rebuilt into a fresh object URL each load. */
+  customAudioFileId?: string;
+  customAudioName?: string;
+  /** Set when audioType is "spotify" — a pasted playlist/album/track link, embedded via Spotify's own
+   *  official iframe widget (open.spotify.com/embed/...). Spotify controls playback itself (including its
+   *  own play/pause and volume) — our audioVolume/audioPlaying don't apply to this track. */
+  spotifyEmbedUrl?: string;
+  /** Pomodoro cycling — when enabled, work/break alternate automatically instead of the student having to
+   *  remember to hit Break. Chosen once at Start (StudySetup) and persisted so it survives a reload. */
+  pomodoroEnabled?: boolean;
+  pomodoroWorkMinutes?: number;  // default 25
+  pomodoroBreakMinutes?: number; // default 5
+  pomodoroCycles?: number;       // completed work→break cycles this session, for the "Cycle N" display
   currentSubtaskIndex: number;
   timerElapsed: number;   // seconds elapsed
   sessionStatus: "idle" | "active" | "paused" | "break" | "completed" | "ended";

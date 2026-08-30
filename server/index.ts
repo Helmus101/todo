@@ -62,7 +62,14 @@ const CSP = [
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https://logos.composio.dev",
-  "connect-src 'self'",
+  // Study Mode's in-app dictionary artifact fetches these directly from the browser (client/study/artifacts/
+  // DictionaryArtifact.tsx) — a strict 'self' here silently blocked every lookup with "Failed to fetch"
+  // (CSP violations don't reach the app's own try/catch as an HTTP error; the browser just refuses the fetch).
+  "connect-src 'self' https://freedictionaryapi.com",
+  // Study Mode's audio panel can embed a Spotify playlist/album/track via Spotify's own official public
+  // embed widget (client/study/spotify.ts) — no OAuth, no API key. Without this, default-src 'self' blocks
+  // the iframe outright (frame-src has no separate fallback other than default-src).
+  "frame-src https://open.spotify.com",
   "font-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",

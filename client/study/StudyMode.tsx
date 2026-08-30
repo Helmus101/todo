@@ -8,8 +8,8 @@ import type {
   ArtifactState,
   SessionStatus,
 } from "./StudyTypes.ts";
-import { getEnvironmentByTask, saveEnvironment, saveSession } from "./StudyDB.ts";
-import { StudySetup } from "./StudySetup.tsx";
+import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
+import { StudySetup, type PomodoroChoice } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
 import { ArtifactCanvas } from "./ArtifactCanvas.tsx";
 import { BottomBar } from "./BottomBar.tsx";
@@ -21,11 +21,13 @@ import { BreakScreen } from "./BreakScreen.tsx";
 import { EndSessionModal } from "./EndSessionModal.tsx";
 import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
 import { api } from "../api.ts";
+import { NoisePlayer, type NoiseType } from "./noise.ts";
 
 interface StudyModeProps {
   task: WebTask;
   onExit: () => void;
   userId?: string;
+  language?: "fr" | "en";
 }
 
 // ── Detect task type from task title/description ──────────────────────────────
@@ -171,22 +173,24 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
   }
 }
 
-// ── Audio URLs ────────────────────────────────────────────────────────────────
-export const AUDIO_OPTIONS: { id: string; label: string; url: string }[] = [
-  { id: "brown", label: "Brown noise", url: "https://cdn.pixabay.com/audio/2022/01/18/audio_d0a13f69d2.mp3" },
-  { id: "rain", label: "Rain", url: "https://cdn.pixabay.com/audio/2021/08/09/audio_0124f52e0c.mp3" },
-  { id: "cafe", label: "Café", url: "https://cdn.pixabay.com/audio/2022/03/10/audio_c8c8a73467.mp3" },
-  { id: "classical", label: "Classical", url: "https://cdn.pixabay.com/audio/2022/05/27/audio_1808fbf07a.mp3" },
-  { id: "white", label: "White noise", url: "https://cdn.pixabay.com/audio/2022/01/18/audio_d0a13f69d2.mp3" },
+// ── Audio ─────────────────────────────────────────────────────────────────────
+// Synthesized in-browser (see noise.ts) instead of streaming third-party MP3s — the previous pixabay CDN
+// hotlinks were observed live returning 403 (expired/hotlink-blocked) for at least one track, so "audio"
+// silently failed depending on which one was picked. A generated waveform can never fail to load.
+export const AUDIO_OPTIONS: { id: NoiseType; label: string }[] = [
+  { id: "brown", label: "Brown noise" },
+  { id: "pink", label: "Pink noise" },
+  { id: "white", label: "White noise" },
 ];
 
 // ── Main StudyMode component ───────────────────────────────────────────────────
-export function StudyMode({ task, onExit, userId }: StudyModeProps) {
+export function StudyMode({ task, onExit, userId, language = "fr" }: StudyModeProps) {
   const [phase, setPhase] = useState<"setup" | "session">("setup");
   const [env, setEnv] = useState<StudyEnvironment | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [breakSeconds, setBreakSeconds] = useState(0);
+  const [phaseSeconds, setPhaseSeconds] = useState(0); // seconds within the current pomodoro work/break phase
   const [openPanel, setOpenPanel] = useState<"materials" | "tools" | "audio" | "ai" | "notes" | "scratchpad" | null>(null);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showSubtaskSubmit, setShowSubtaskSubmit] = useState(false);
@@ -202,10 +206,31 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
   });
   const [aiChat, setAiChat] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
   const [saveIndicator, setSaveIndicator] = useState<"saved" | "saving" | "">("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const timerRef = useRef<number | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const noiseRef = useRef<NoisePlayer | null>(null);
+  const customAudioRef = useRef<HTMLAudioElement | null>(null);
+  const customAudioUrlRef = useRef<string | null>(null); // revoke on replace/unmount
+  const rootRef = useRef<HTMLDivElement>(null);
   const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Fullscreen: "genuinely full-screen" means the OS chrome/browser tabs disappear too, not just our
+  // own layout filling the viewport — requestFullscreen is what actually does that. Best-effort: some
+  // browsers/contexts (iOS Safari on non-video elements, a denied permission) reject the request, so this
+  // never blocks entering Study Mode itself — it degrades to the plain full-viewport layout underneath.
+  const enterFullscreen = useCallback(() => {
+    const el = rootRef.current;
+    if (el && !document.fullscreenElement) void el.requestFullscreen?.().catch(() => {});
+  }, []);
+  const exitFullscreen = useCallback(() => {
+    if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => {});
+  }, []);
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
 
   const doneSteps = task.steps?.filter(s => s.done).length ?? 0;
   const totalSteps = task.steps?.length ?? 0;
@@ -228,28 +253,6 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
     });
   }, [task.id]);
 
-  // ── Timer ─────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (sessionStatus === "active") {
-      timerRef.current = window.setInterval(() => {
-        setElapsedSeconds(s => s + 1);
-      }, 1000);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-      if (sessionStatus === "break") {
-        timerRef.current = window.setInterval(() => {
-          setBreakSeconds(s => s + 1);
-        }, 1000);
-      }
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [sessionStatus]);
-
   // ── Autosave ──────────────────────────────────────────────────────────────
   const persistEnv = useCallback((updated: StudyEnvironment) => {
     setSaveIndicator("saving");
@@ -270,27 +273,124 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
     });
   }, [persistEnv]);
 
-  // ── Audio control ─────────────────────────────────────────────────────────
-  const setAudio = useCallback((type: string, volume: number, playing: boolean) => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
+  // ── Timer ─────────────────────────────────────────────────────────────────
+  // Pomodoro (when enabled) auto-alternates active↔break by watching `phaseSeconds` — a counter reset on
+  // every phase change, kept separate from elapsedSeconds/breakSeconds (which track SESSION totals and
+  // must keep counting across cycles, not reset each time a break starts).
+  useEffect(() => {
+    if (sessionStatus === "active") {
+      timerRef.current = window.setInterval(() => {
+        setElapsedSeconds(s => s + 1);
+        setPhaseSeconds(s => {
+          const next = s + 1;
+          if (env?.pomodoroEnabled && next >= (env.pomodoroWorkMinutes || 25) * 60) {
+            setSessionStatus("break");
+            setBreakSeconds(0);
+            updateEnv({ sessionStatus: "break", pomodoroCycles: (env.pomodoroCycles || 0) + 1 });
+            return 0;
+          }
+          return next;
+        });
+      }, 1000);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (sessionStatus === "break") {
+        timerRef.current = window.setInterval(() => {
+          setBreakSeconds(s => s + 1);
+          setPhaseSeconds(s => {
+            const next = s + 1;
+            if (env?.pomodoroEnabled && next >= (env.pomodoroBreakMinutes || 5) * 60) {
+              setSessionStatus("active");
+              updateEnv({ sessionStatus: "active" });
+              return 0;
+            }
+            return next;
+          });
+        }, 1000);
+      }
     }
-    if (playing && type !== "silence") {
-      const opt = AUDIO_OPTIONS.find(o => o.id === type);
-      if (opt) {
-        const audio = new Audio(opt.url);
-        audio.loop = true;
-        audio.volume = volume / 100;
-        audio.play().catch(() => {});
-        audioRef.current = audio;
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [sessionStatus, env?.pomodoroEnabled, env?.pomodoroWorkMinutes, env?.pomodoroBreakMinutes, updateEnv]);
+
+  // ── Audio control ─────────────────────────────────────────────────────────
+  // Uploaded audio plays through a plain HTMLAudioElement from a local Blob (never re-fetched over the
+  // network, so it can't hit the CSP/CORS issues an external stream would) — separate from NoisePlayer's
+  // Web Audio synthesis, which only knows how to generate noise, not decode a music file.
+  const stopCustomAudio = useCallback(() => {
+    if (customAudioRef.current) { customAudioRef.current.pause(); customAudioRef.current.src = ""; }
+    if (customAudioUrlRef.current) { URL.revokeObjectURL(customAudioUrlRef.current); customAudioUrlRef.current = null; }
+  }, []);
+
+  const playCustomBlob = useCallback((blob: Blob, volume: number) => {
+    stopCustomAudio();
+    const url = URL.createObjectURL(blob);
+    customAudioUrlRef.current = url;
+    const audio = (customAudioRef.current ||= new Audio());
+    audio.src = url;
+    audio.loop = true;
+    audio.volume = Math.max(0, Math.min(1, volume / 100));
+    void audio.play().catch(() => {});
+  }, [stopCustomAudio]);
+
+  const setAudio = useCallback((type: string, volume: number, playing: boolean) => {
+    const noise = (noiseRef.current ||= new NoisePlayer());
+    if (!playing || type === "silence") {
+      noise.stop();
+      stopCustomAudio();
+      updateEnv({ audioType: type, audioVolume: volume, audioPlaying: playing });
+      return;
+    }
+    const sameTrackAlreadyPlaying = env?.audioPlaying && env?.audioType === type;
+    if (type === "spotify") {
+      // Spotify's own embed widget owns playback (its own play/pause/volume) — we just stop our other
+      // sources and let the iframe render; there's nothing for us to programmatically start.
+      noise.stop();
+      stopCustomAudio();
+    } else if (type === "custom") {
+      if (sameTrackAlreadyPlaying && customAudioRef.current) {
+        customAudioRef.current.volume = Math.max(0, Math.min(1, volume / 100));
+      } else if (env?.customAudioFileId) {
+        noise.stop();
+        void getFile(env.customAudioFileId).then((blob) => { if (blob) playCustomBlob(blob, volume); });
+      }
+    } else if (AUDIO_OPTIONS.some(o => o.id === type)) {
+      if (sameTrackAlreadyPlaying) {
+        noise.setVolume(volume); // volume-only change (slider drag) — don't restart the noise loop
+      } else {
+        stopCustomAudio();
+        noise.play(type as NoiseType, volume);
       }
     }
     updateEnv({ audioType: type, audioVolume: volume, audioPlaying: playing });
-  }, [updateEnv]);
+  }, [updateEnv, env?.audioPlaying, env?.audioType, env?.customAudioFileId, stopCustomAudio, playCustomBlob]);
+
+  // A fresh upload replaces whatever track was previously stored for this task (one custom track at a
+  // time keeps this simple, and avoids silently accumulating orphaned blobs in IndexedDB).
+  const uploadAudio = useCallback(async (file: File) => {
+    const oldId = env?.customAudioFileId;
+    const id = crypto.randomUUID();
+    await saveFile(id, file);
+    if (oldId) void deleteFile(oldId).catch(() => {});
+    noiseRef.current?.stop();
+    playCustomBlob(file, env?.audioVolume ?? 50);
+    updateEnv({ audioType: "custom", customAudioFileId: id, customAudioName: file.name, audioPlaying: true });
+  }, [env?.customAudioFileId, env?.audioVolume, updateEnv, playCustomBlob]);
+
+  const setSpotify = useCallback((embedUrl: string) => {
+    noiseRef.current?.stop();
+    stopCustomAudio();
+    updateEnv({ audioType: "spotify", spotifyEmbedUrl: embedUrl, audioPlaying: true });
+  }, [updateEnv, stopCustomAudio]);
+
+  useEffect(() => () => { noiseRef.current?.stop(); stopCustomAudio(); }, [stopCustomAudio]);
 
   // ── Start session (from setup screen) ────────────────────────────────────
-  const startSession = useCallback((materials: StudyMaterial[]) => {
+  const startSession = useCallback((materials: StudyMaterial[], pomodoro: PomodoroChoice) => {
     const envId = crypto.randomUUID();
     const template = detectTemplate(task);
     const artifacts = buildInitialArtifacts(template, envId, task.id, materials);
@@ -309,10 +409,17 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
       sessionStatus: "active",
       lastSavedAt: new Date().toISOString(),
       materials,
+      pomodoroEnabled: pomodoro.enabled,
+      pomodoroWorkMinutes: pomodoro.workMinutes,
+      pomodoroBreakMinutes: pomodoro.breakMinutes,
+      pomodoroCycles: 0,
     };
     setEnv(newEnv);
     setSessionStatus("active");
+    setElapsedSeconds(0);
+    setPhaseSeconds(0);
     setPhase("session");
+    enterFullscreen(); // called synchronously from the Start button's click, so the browser's user-gesture requirement is satisfied
     const logId = crypto.randomUUID();
     setSessionLog({
       id: logId,
@@ -325,30 +432,38 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
       submittedWork: [],
     });
     persistEnv(newEnv);
-  }, [task, doneSteps, persistEnv]);
+  }, [task, doneSteps, persistEnv, enterFullscreen]);
 
   // ── Resume saved session ──────────────────────────────────────────────────
   const resumeSession = useCallback(() => {
     if (!env) return;
     setSessionStatus("active");
+    setPhaseSeconds(0);
+    setPhase("session"); // was missing — clicking "Resume" flipped status but left the setup screen on-screen
     updateEnv({ sessionStatus: "active" });
-  }, [env, updateEnv]);
+    enterFullscreen(); // called synchronously from the Resume button's click
+  }, [env, updateEnv, enterFullscreen]);
 
   // ── Break ─────────────────────────────────────────────────────────────────
   const startBreak = useCallback(() => {
     setSessionStatus("break");
+    setBreakSeconds(0);
+    setPhaseSeconds(0); // manual break — don't let a stale pomodoro phase count trigger another transition right away
     updateEnv({ sessionStatus: "break", timerElapsed: elapsedSeconds });
   }, [elapsedSeconds, updateEnv]);
 
   const endBreak = useCallback(() => {
     setSessionStatus("active");
+    setPhaseSeconds(0);
     updateEnv({ sessionStatus: "active" });
   }, [updateEnv]);
 
   // ── End session ───────────────────────────────────────────────────────────
   const endSession = useCallback(async () => {
     if (timerRef.current) clearInterval(timerRef.current);
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    noiseRef.current?.stop();
+    stopCustomAudio();
+    exitFullscreen();
     if (env) {
       updateEnv({ sessionStatus: "ended", timerElapsed: elapsedSeconds });
       const finalLog: SessionLog = {
@@ -360,7 +475,7 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
       await saveSession(finalLog);
     }
     onExit();
-  }, [env, elapsedSeconds, breakSeconds, sessionLog, updateEnv, onExit]);
+  }, [env, elapsedSeconds, breakSeconds, sessionLog, updateEnv, onExit, exitFullscreen, stopCustomAudio]);
 
   // ── Subtask submit ────────────────────────────────────────────────────────
   const submitSubtask = useCallback((status: "completed" | "partial" | "stuck", note: string) => {
@@ -472,12 +587,13 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
         formatTime={formatTime}
         onResume={endBreak}
         onEnd={() => setShowEndModal(true)}
+        countdownRemaining={env?.pomodoroEnabled ? Math.max(0, (env.pomodoroBreakMinutes || 5) * 60 - phaseSeconds) : undefined}
       />
     );
   }
 
   return (
-    <div className="sm-shell" data-status={sessionStatus}>
+    <div className="sm-shell" data-status={sessionStatus} ref={rootRef}>
       {/* ── Save indicator ── */}
       {saveIndicator && (
         <div className="sm-save-indicator">{saveIndicator === "saving" ? "Saving…" : "Saved"}</div>
@@ -492,9 +608,13 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
         progress={progressPct}
         elapsed={elapsedSeconds}
         formatTime={formatTime}
-        onBack={onExit}
+        onBack={() => { exitFullscreen(); onExit(); }}
         onSubmitStep={() => setShowSubtaskSubmit(true)}
         sessionStatus={sessionStatus}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={() => (isFullscreen ? exitFullscreen() : enterFullscreen())}
+        pomodoroRemaining={env.pomodoroEnabled ? Math.max(0, (env.pomodoroWorkMinutes || 25) * 60 - phaseSeconds) : undefined}
+        pomodoroCycle={env.pomodoroCycles}
       />
 
       {/* ── Main artifact canvas ── */}
@@ -502,6 +622,7 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
         artifacts={env.artifacts}
         notes={env.notes}
         scratchpad={env.scratchpad}
+        task={task}
         taskId={task.id}
         environmentId={env.id}
         onUpdateArtifact={updateArtifact}
@@ -509,6 +630,7 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
         onRemoveArtifact={removeArtifact}
         onNotesChange={(notes) => updateEnv({ notes })}
         onScratchpadChange={(scratchpad) => updateEnv({ scratchpad })}
+        language={language}
       />
 
       {/* ── Bottom bar ── */}
@@ -532,9 +654,15 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
           materials={env.materials}
           onClose={() => setOpenPanel(null)}
           onOpenArtifact={(mat) => {
+            const type = mat.type === "pdf" ? "pdf" : mat.type === "video" ? "video" : mat.type === "image" ? "image"
+              : mat.type === "note" ? "sticky" : mat.type === "flashcard" ? "flashcard" : mat.type === "quiz" ? "quiz" : "document";
+            // For flashcard/quiz materials, buildTaskMaterials (StudySetup.tsx) stashed the deck/quiz id in
+            // `text` (there's no file/url for these — they live on the task itself) — thread it through as
+            // the id the artifact looks the real deck/quiz up by, not literal note text.
+            const contentState = mat.type === "flashcard" ? { deckId: mat.text } : mat.type === "quiz" ? { quizId: mat.text } : mat.text ? { text: mat.text } : {};
             const newArtifact: ArtifactState = {
               id: crypto.randomUUID(),
-              type: mat.type === "pdf" ? "pdf" : mat.type === "video" ? "video" : mat.type === "image" ? "image" : mat.type === "note" ? "sticky" : "document",
+              type,
               title: mat.label,
               x: 15, y: 15,
               width: 60, height: 75,
@@ -542,7 +670,7 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
               minimized: false,
               maximized: false,
               dockSide: "none",
-              contentState: mat.text ? { text: mat.text } : {},
+              contentState,
               source: mat.objectUrl || mat.url,
               sourceLabel: mat.label,
               taskId: task.id,
@@ -585,8 +713,12 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
           audioType={env.audioType}
           volume={env.audioVolume}
           playing={env.audioPlaying}
+          customAudioName={env.customAudioName}
+          spotifyEmbedUrl={env.spotifyEmbedUrl}
           onClose={() => setOpenPanel(null)}
           onChange={setAudio}
+          onUploadAudio={(file) => void uploadAudio(file)}
+          onSetSpotify={setSpotify}
         />
       )}
 

@@ -12,6 +12,8 @@ const typeIcon = (type: StudyMaterial["type"]) => {
   if (type === "image") return "🖼";
   if (type === "document") return "📝";
   if (type === "note") return "🗒";
+  if (type === "flashcard") return "🗂";
+  if (type === "quiz") return "❓";
   return "🔗";
 };
 

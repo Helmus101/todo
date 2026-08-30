@@ -615,6 +615,7 @@ export function App() {
               task={task}
               onExit={() => navigate("tasks")}
               userId={status?.user}
+              language={status?.language === "en" ? "en" : "fr"}
             />
           </NotifyContext.Provider>
         </LangContext.Provider>

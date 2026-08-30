@@ -2,10 +2,12 @@ import { useMemo, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import type { StudyEnvironment, StudyMaterial } from "./StudyTypes.ts";
 
+export interface PomodoroChoice { enabled: boolean; workMinutes: number; breakMinutes: number }
+
 interface StudySetupProps {
   task: WebTask;
   existingEnv: StudyEnvironment | null;
-  onStart: (materials: StudyMaterial[]) => void;
+  onStart: (materials: StudyMaterial[], pomodoro: PomodoroChoice) => void;
   onResume?: () => void;
   onExit: () => void;
 }
@@ -83,6 +85,19 @@ function buildTaskMaterials(task: WebTask): StudyMaterial[] {
     });
   }
 
+  // Otto's own generated study artifacts (briefs/decks/quizzes made during the run — see runTask's
+  // CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ tools in server/claude.ts) belong on the desk alongside the
+  // task's source materials — a student shouldn't have to leave Study Mode to find work Otto already did.
+  task.notes?.forEach((n) => {
+    add(materials, { id: `note-${n.id}`, label: n.title, type: "note", source: "otto", text: n.body });
+  });
+  task.flashcards?.forEach((f) => {
+    add(materials, { id: `flashcards-${f.id}`, label: f.title, type: "flashcard", source: "otto", text: f.id });
+  });
+  task.quizzes?.forEach((q) => {
+    add(materials, { id: `quiz-${q.id}`, label: q.title, type: "quiz", source: "otto", text: q.id });
+  });
+
   return materials;
 }
 
@@ -93,6 +108,9 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
   const [linkLabel, setLinkLabel] = useState("");
   const [linkError, setLinkError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pomodoroEnabled, setPomodoroEnabled] = useState(existingEnv?.pomodoroEnabled ?? false);
+  const [workMinutes, setWorkMinutes] = useState(existingEnv?.pomodoroWorkMinutes ?? 25);
+  const [breakMinutes, setBreakMinutes] = useState(existingEnv?.pomodoroBreakMinutes ?? 5);
 
   const steps = task.steps || [];
   const currentStep = steps.find(s => !s.done);
@@ -153,6 +171,9 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
     if (type === "video") return "▶";
     if (type === "image") return "🖼";
     if (type === "document") return "📝";
+    if (type === "note") return "🗒";
+    if (type === "flashcard") return "🗂";
+    if (type === "quiz") return "❓";
     return "🔗";
   };
 
@@ -242,9 +263,29 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
           )}
         </div>
 
+        {/* Pomodoro */}
+        <div className="sm-setup-section">
+          <label className="sm-setup-toggle-row">
+            <input type="checkbox" checked={pomodoroEnabled} onChange={(e) => setPomodoroEnabled(e.target.checked)} />
+            <span>Use Pomodoro — auto-alternate work and break</span>
+          </label>
+          {pomodoroEnabled && (
+            <div className="sm-pomodoro-config">
+              <label>
+                Work
+                <input type="number" min={5} max={90} value={workMinutes} onChange={(e) => setWorkMinutes(Math.max(5, Math.min(90, Number(e.target.value) || 25)))} /> min
+              </label>
+              <label>
+                Break
+                <input type="number" min={1} max={30} value={breakMinutes} onChange={(e) => setBreakMinutes(Math.max(1, Math.min(30, Number(e.target.value) || 5)))} /> min
+              </label>
+            </div>
+          )}
+        </div>
+
         {/* Start button */}
         <div className="sm-setup-footer">
-          <button className="sm-btn sm-btn-primary sm-btn-lg" onClick={() => onStart(materials)}>
+          <button className="sm-btn sm-btn-primary sm-btn-lg" onClick={() => onStart(materials, { enabled: pomodoroEnabled, workMinutes, breakMinutes })}>
             {existingEnv ? "Start new session" : "Start studying"}
           </button>
           <p className="sm-setup-footer-hint">
