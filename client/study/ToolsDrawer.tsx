@@ -1,9 +1,13 @@
+import { useRef } from "react";
 import type { ArtifactType, WorkspaceTemplate } from "./StudyTypes.ts";
 
 interface ToolsDrawerProps {
   template: WorkspaceTemplate;
   onClose: () => void;
   onAddTool: (type: ArtifactType) => void;
+  backgroundImageName?: string;
+  onSetBackground: (file: File) => void;
+  onClearBackground: () => void;
 }
 
 const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: WorkspaceTemplate[] }[] = [
@@ -16,9 +20,10 @@ const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: W
   { type: "sticky", label: "Sticky Note", icon: "❏", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD", "PROBLEM_SOLVING"] },
 ];
 
-export function ToolsDrawer({ template, onClose, onAddTool }: ToolsDrawerProps) {
+export function ToolsDrawer({ template, onClose, onAddTool, backgroundImageName, onSetBackground, onClearBackground }: ToolsDrawerProps) {
   const recommended = ALL_TOOLS.filter(t => t.templates.includes(template));
   const others = ALL_TOOLS.filter(t => !t.templates.includes(template));
+  const bgInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="sm-drawer">
@@ -54,6 +59,24 @@ export function ToolsDrawer({ template, onClose, onAddTool }: ToolsDrawerProps) 
             </>
           )}
         </div>
+
+        <div className="sm-tools-divider">Desk background</div>
+        <div className="sm-bg-row">
+          <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => bgInputRef.current?.click()}>
+            {backgroundImageName ? "Replace image" : "Upload image"}
+          </button>
+          {backgroundImageName && (
+            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onClearBackground}>Reset to default</button>
+          )}
+        </div>
+        {backgroundImageName && <p className="sm-bg-filename">{backgroundImageName}</p>}
+        <input
+          ref={bgInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onSetBackground(f); e.target.value = ""; }}
+        />
       </div>
     </div>
   );

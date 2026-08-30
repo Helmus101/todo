@@ -9,7 +9,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateWeeklyStudyDeck } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -993,6 +993,123 @@ app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
   }
   res.json({ due: due.slice(0, 60) });
 }));
+
+// ── Study log: daily "what I learned today" → auto flashcards, + a week-end summary deck ──────────────
+// Each entry is modeled as a WebTask with source:"studylog" — reuses the existing flashcard-deck type,
+// the FlashcardDeck review UI, and (crucially) the Leitner spaced-repetition schedule + the cross-task
+// /api/reviews/due view above, entirely for free. These tasks are excluded from the normal dashboard
+// client-side (see App.tsx) — they're not to-dos. A real anchorKey (date-keyed) is essential here: without
+// one, dedupeTasks' anchorless title-similarity fallback (see server/tasks.ts) could merge two DIFFERENT
+// days' entries just for having similar-sounding titles — the anchor is what tells it these are distinct
+// real-world items, the same guarantee a real Gmail/Calendar anchor gives an ordinary task.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Monday (YYYY-MM-DD) of the week containing `dateStr` — a simple, year-boundary-safe week key (avoids
+// ISO week-numbering edge cases entirely) rather than a formal "2026-W35" string.
+function mondayOf(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  const day = d.getUTCDay(); // 0=Sun..6=Sat
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return d.toISOString().slice(0, 10);
+}
+function weekdayDates(monday: string): string[] {
+  const d = new Date(`${monday}T00:00:00Z`);
+  return Array.from({ length: 5 }, (_, i) => new Date(d.getTime() + i * 86_400_000).toISOString().slice(0, 10));
+}
+app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
+  const date = String(req.body?.date || "");
+  const text = String(req.body?.text || "").trim().slice(0, 4000);
+  if (!DATE_RE.test(date)) { res.status(400).json({ error: "Invalid date." }); return; }
+  const list = req.session.tasks || [];
+  const anchorKey = `studylog:${date}`;
+  let t = list.find((x) => x.source === "studylog" && x.logDate === date);
+  if (!text) {
+    // Clearing an entry — keep the (now-empty) task shell rather than deleting, so re-typing later just
+    // upserts the same anchor again instead of minting a fresh id.
+    if (t) { t.logText = ""; t.flashcards = []; t.updatedAt = new Date().toISOString(); await commit(req); }
+    res.json(req.session.tasks || []);
+    return;
+  }
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate flashcards." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  const now = new Date().toISOString();
+  if (!t) {
+    const e = tasks.eisenhower(0, 0);
+    t = {
+      id: randomUUID(), title: date, why: "Daily study log", source: "studylog", risk: "low",
+      // status "needs_review" (never "done"/"dismissed"): GET /api/reviews/due (above) explicitly SKIPS
+      // handled tasks (`if (isHandled(t.status)) continue`) — "done" would silently hide these decks from
+      // the exact cross-task due-for-review view this feature was built to reuse. Not "ready" either: the
+      // cron catch-all (tasksToEnqueue in jobs.ts) auto-enqueues plain "ready" tasks through the normal AI
+      // agent run pipeline, which makes no sense for a studylog entry.
+      urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
+      createdAt: now, anchorKey, logDate: date,
+    };
+    list.push(t);
+    req.session.tasks = list;
+  }
+  t.logText = text;
+  try {
+    const deck = await generateDailyStudyCards(text, req.session.profile);
+    t.flashcards = deck ? [deck] : [];
+    t.title = deck?.title || date;
+    t.updatedAt = new Date().toISOString();
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't make flashcards from that — try again." }); }
+}));
+app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
+  const start = String(req.query.start || "");
+  if (!DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
+  const monday = mondayOf(start);
+  const dates = weekdayDates(monday);
+  const list = req.session.tasks || [];
+  const days = dates.map((d) => list.find((x) => x.source === "studylog" && x.logDate === d) || null);
+  const summary = list.find((x) => x.source === "studylog" && x.logDate === `week:${monday}`) || null;
+  res.json({ monday, days, summary });
+}));
+app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate the summary." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  const weekStart = String(req.body?.weekStart || "");
+  if (!DATE_RE.test(weekStart)) { res.status(400).json({ error: "Invalid date." }); return; }
+  const monday = mondayOf(weekStart);
+  const dates = weekdayDates(monday);
+  const list = req.session.tasks || [];
+  const dayTasks = dates.map((d) => list.find((x) => x.source === "studylog" && x.logDate === d)).filter((x): x is WebTask => !!x?.logText?.trim());
+  if (!dayTasks.length) { res.status(400).json({ error: "No entries logged this week yet." }); return; }
+  const weakFronts = tasks.weakCardFronts(dayTasks);
+  try {
+    const deck = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), weakFronts, req.session.profile);
+    if (!deck) { res.status(500).json({ error: "Couldn't build the week summary — try again." }); return; }
+    const anchorKey = `studylog:week:${monday}`;
+    const logDate = `week:${monday}`;
+    let t = list.find((x) => x.source === "studylog" && x.logDate === logDate);
+    const now = new Date().toISOString();
+    if (!t) {
+      const e = tasks.eisenhower(0, 0);
+      t = {
+        id: randomUUID(), title: deck.title, why: "Weekly study summary", source: "studylog", risk: "low",
+        // status "needs_review" (never "done"/"dismissed"): GET /api/reviews/due (above) explicitly SKIPS
+      // handled tasks (`if (isHandled(t.status)) continue`) — "done" would silently hide these decks from
+      // the exact cross-task due-for-review view this feature was built to reuse. Not "ready" either: the
+      // cron catch-all (tasksToEnqueue in jobs.ts) auto-enqueues plain "ready" tasks through the normal AI
+      // agent run pipeline, which makes no sense for a studylog entry.
+      urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
+        createdAt: now, anchorKey, logDate,
+      };
+      list.push(t);
+      req.session.tasks = list;
+    }
+    t.title = deck.title;
+    t.flashcards = [deck];
+    t.updatedAt = now;
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the week summary — try again." }); }
+}));
+
 // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.
 // Costs one AI call, so it's gated the same as any other interactive AI action (paused/budget).
 app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {

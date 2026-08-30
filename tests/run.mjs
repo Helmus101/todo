@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
@@ -1078,6 +1078,20 @@ section("estimateWhen / whenApprox — every task gets a real deadline, none are
   const approxTask = { when: estimateWhen("schedule", now), urgency: 0.4, importance: 0.6, quadrant: "schedule", score: 2, status: "ready" };
   applyDeadlineUrgency([approxTask], new Date(now.getTime() + 5 * 86_400_000));
   check("estimated deadlines still feed the anti-procrastination urgency curve as the estimate nears", approxTask.urgency > 0.4);
+}
+
+section("weakCardFronts — the study-journal week summary's 'what did I get wrong' signal");
+{
+  const deckWith = (cards) => ({ id: "d1", title: "Day deck", cards, createdAt: new Date().toISOString() });
+  const dayA = { id: "a", title: "Mon", why: "", source: "studylog", risk: "low", urgency: 0, importance: 0, quadrant: "later", score: 0, status: "needs_review", createdAt: new Date().toISOString(),
+    flashcards: [deckWith([{ front: "Photosynthesis equation", back: "...", review: { seen: 2, correct: 0, box: 1 } }, { front: "Mitochondria role", back: "...", review: { seen: 3, correct: 3, box: 3 } }])] };
+  const dayB = { ...dayA, id: "b", flashcards: [deckWith([{ front: "1789 causes", back: "...", review: { seen: 1, correct: 0, box: 1 } }, { front: "No review yet", back: "..." }])] };
+  const fronts = weakCardFronts([dayA, dayB]);
+  check("collects box-1 (wrong/reset) cards across multiple days", fronts.includes("Photosynthesis equation") && fronts.includes("1789 causes"));
+  check("excludes advanced (box > 1) cards", !fronts.includes("Mitochondria role"));
+  check("excludes never-reviewed cards (no review field at all)", !fronts.includes("No review yet"));
+  check("empty input yields empty output", weakCardFronts([]).length === 0);
+  check("a day with no flashcards at all is handled without throwing", weakCardFronts([{ ...dayA, id: "c", flashcards: undefined }]).length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

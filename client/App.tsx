@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateA
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify } from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 
@@ -625,8 +625,11 @@ export function App() {
   }
 
   // Eisenhower ranking with deadline/VIP/freshness tie-breaks — same bands/cards, just a better order.
-  const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed"), status?.highPriorityPeople || []);
-  const completed = tasks.filter((t) => t.status === "done").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  // studylog entries (the Journal tab) are WebTasks under the hood (reusing the flashcard/spaced-repetition
+  // machinery — see server/index.ts's /api/studylog/*) but they're not to-dos, so they never appear in the
+  // normal Tasks dashboard — same exclusion in both `live` and `completed` below.
+  const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed" && t.source !== "studylog"), status?.highPriorityPeople || []);
+  const completed = tasks.filter((t) => t.status === "done" && t.source !== "studylog").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const en = status?.language === "en";
@@ -661,6 +664,7 @@ export function App() {
         <div className="brand"><Logo size={20} /> Otto</div>
         <nav className="tabs">
           <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} aria-current={(route === "" || route === "tasks" || route.startsWith("task/")) ? "page" : undefined} href="/tasks">{status?.language === "en" ? "Tasks" : "Tâches"}{live.length > 0 ? <span className="tab-badge">{live.length}</span> : null}</a>
+          <a className={`tab ${route === "log" ? "active" : ""}`} aria-current={route === "log" ? "page" : undefined} href="/log">{status?.language === "en" ? "Journal" : "Journal"}</a>
           <a className={`tab ${route === "settings" ? "active" : ""}`} aria-current={route === "settings" ? "page" : undefined} href="/settings">{status?.language === "en" ? "Settings" : "Réglages"}</a>
         </nav>
         <div className="spacer" />
@@ -683,6 +687,8 @@ export function App() {
 
       {route === "settings" ? (
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} />
+      ) : route === "log" ? (
+        <StudyLogPage lang={status?.language} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -1498,6 +1504,141 @@ function ExamsEditor({ profile, onChanged }: { profile: Profile | null; onChange
         <button className="btn" disabled={!subject.trim() || !deadline} onClick={() => void add()}>{L("Ajouter", "Add")}</button>
       </div>
     </div>
+  );
+}
+
+// Monday (YYYY-MM-DD) of the week containing `dateStr` — mirrors mondayOf in server/index.ts exactly
+// (same simple, year-boundary-safe scheme, not a formal ISO week number).
+const mondayOf = (dateStr: string): string => {
+  const d = new Date(`${dateStr}T00:00:00`);
+  const day = d.getDay();
+  d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+  return d.toISOString().slice(0, 10);
+};
+const addDays = (dateStr: string, n: number): string => {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/** The Journal tab (route /log): Monday-Friday, a free-text "what did I learn today" box per day, auto-
+ *  generating flashcards on save (server/index.ts's /api/studylog/day → generateDailyStudyCards). End of
+ *  week, an on-demand summary deck weighted toward whatever got marked wrong that week (generateWeeklyStudyDeck).
+ *  Both decks reuse the exact same FlashcardDeck review UI + Leitner spaced-repetition schedule as any other
+ *  task's deck — reviewing a card here shows up in the normal cross-task "due for review" view for free. */
+function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
+  const L = useLang();
+  const notify = useNotify();
+  const en = lang === "en";
+  const [monday, setMonday] = useState(() => mondayOf(todayIso()));
+  const [days, setDays] = useState<(WebTask | null)[]>([null, null, null, null, null]);
+  const [summary, setSummary] = useState<WebTask | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const todayIdx = (() => { const d = new Date(`${todayIso()}T00:00:00`).getDay(); return d >= 1 && d <= 5 ? d - 1 : 0; })();
+  const [selected, setSelected] = useState(mondayOf(todayIso()) === monday ? todayIdx : 0);
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
+  const [openDeckFor, setOpenDeckFor] = useState<"day" | "summary" | null>(null);
+
+  const load = useCallback((m: string) => {
+    setLoaded(false);
+    void api.studyLogWeek(m).then((r) => { setDays(r.days); setSummary(r.summary); setLoaded(true); })
+      .catch(() => { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); });
+  }, [en, notify]);
+  useEffect(() => { load(monday); }, [monday, load]);
+  useEffect(() => { setText(days[selected]?.logText || ""); }, [selected, days]);
+
+  const dates = Array.from({ length: 5 }, (_, i) => addDays(monday, i));
+  const dayLabels = en ? ["Mon", "Tue", "Wed", "Thu", "Fri"] : ["Lun", "Mar", "Mer", "Jeu", "Ven"];
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const list = await api.studyLogDay(dates[selected], text);
+      const fresh = list.find((t) => t.logDate === dates[selected]) || null;
+      setDays((prev) => prev.map((d, i) => (i === selected ? fresh : d)));
+    } catch (e: any) { notify(e?.message || (en ? "Couldn't save — try again." : "Enregistrement impossible — réessaie."), "error"); }
+    finally { setSaving(false); }
+  };
+  const genSummary = async () => {
+    setGenBusy(true);
+    try {
+      const list = await api.studyLogWeekSummary(monday);
+      setSummary(list.find((t) => t.logDate === `week:${monday}`) || null);
+    } catch (e: any) { notify(e?.message || (en ? "Couldn't build the week summary — try again." : "Impossible de créer le résumé — réessaie."), "error"); }
+    finally { setGenBusy(false); }
+  };
+
+  const dayTask = days[selected];
+  const dayDeck = dayTask?.flashcards?.[0];
+  const summaryDeck = summary?.flashcards?.[0];
+  const anyEntryThisWeek = days.some((d) => d?.logText?.trim());
+  const onDayReview = dayTask && dayDeck ? (cardIndex: number, correct: boolean) => {
+    void api.reviewFlashcard(dayTask.id, dayDeck.id, cardIndex, correct).then((list) => {
+      const fresh = list.find((t) => t.id === dayTask.id);
+      if (fresh) setDays((prev) => prev.map((d) => (d?.id === dayTask.id ? fresh : d)));
+    }).catch(() => {});
+  } : undefined;
+  const onSummaryReview = summary && summaryDeck ? (cardIndex: number, correct: boolean) => {
+    void api.reviewFlashcard(summary.id, summaryDeck.id, cardIndex, correct).then((list) => {
+      const fresh = list.find((t) => t.id === summary.id);
+      if (fresh) setSummary(fresh);
+    }).catch(() => {});
+  } : undefined;
+
+  return (
+    <main className="list-wrap studylog-page">
+      <h1 className="list-head">{L("Journal d'apprentissage", "Study journal")}</h1>
+      <p className="dash-line">{L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
+
+      <div className="studylog-weeknav">
+        <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>
+        <span className="studylog-weeklabel">{fmtDate(monday)} – {fmtDate(addDays(monday, 4))}</span>
+        <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, 7))}>{L("Semaine suiv.", "Next week") + " →"}</button>
+      </div>
+
+      <div className="studylog-days">
+        {dayLabels.map((label, i) => (
+          <button key={i} type="button" className={`studylog-day-btn ${selected === i ? "active" : ""} ${days[i]?.logText ? "has-entry" : ""}`} onClick={() => setSelected(i)}>
+            <span>{label}</span><span className="studylog-day-date">{fmtDate(dates[i])}</span>
+          </button>
+        ))}
+      </div>
+
+      {!loaded ? <p className="muted small">{L("Chargement…", "Loading…")}</p> : (
+        <>
+          <textarea className="studylog-textarea" rows={8}
+            placeholder={L("Aujourd'hui, j'ai appris…", "Today I learned…")}
+            value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
+          <div className="studylog-actions">
+            <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>
+              {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer et créer les cartes", "Save & make flashcards")}
+            </button>
+            {dayDeck ? <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("day")}>{L("Voir les cartes", "View flashcards")} ({dayDeck.cards.length})</button> : null}
+          </div>
+
+          <div className="studylog-summary-sec">
+            <h3>{L("Résumé de la semaine", "Week summary")}</h3>
+            {summaryDeck ? (
+              <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("summary")}>{L("Voir le résumé", "View summary")} ({summaryDeck.cards.length})</button>
+            ) : (
+              <button type="button" className="btn ghost" disabled={genBusy || !anyEntryThisWeek} onClick={() => void genSummary()}>
+                {genBusy ? L("Création…", "Building…") : L("Créer le résumé de la semaine", "Generate week summary")}
+              </button>
+            )}
+            {!anyEntryThisWeek ? <p className="settings-hint">{L("Ajoute au moins une entrée cette semaine d'abord.", "Add at least one entry this week first.")}</p> : null}
+          </div>
+        </>
+      )}
+
+      {openDeckFor === "day" && dayDeck ? (
+        <TaskModal onClose={() => setOpenDeckFor(null)} title={dayDeck.title}><FlashcardDeck deck={dayDeck} onReview={onDayReview} taskId={dayTask?.id} /></TaskModal>
+      ) : null}
+      {openDeckFor === "summary" && summaryDeck ? (
+        <TaskModal onClose={() => setOpenDeckFor(null)} title={summaryDeck.title}><FlashcardDeck deck={summaryDeck} onReview={onSummaryReview} taskId={summary?.id} /></TaskModal>
+      ) : null}
+    </main>
   );
 }
 

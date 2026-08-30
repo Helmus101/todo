@@ -14,6 +14,7 @@ import { SessionHeader } from "./SessionHeader.tsx";
 import { ArtifactCanvas } from "./ArtifactCanvas.tsx";
 import { BottomBar } from "./BottomBar.tsx";
 import { MaterialsDrawer } from "./MaterialsDrawer.tsx";
+import { TaskDetailDrawer } from "./TaskDetailDrawer.tsx";
 import { ToolsDrawer } from "./ToolsDrawer.tsx";
 import { AudioPanel } from "./AudioPanel.tsx";
 import { AskOttoPanel } from "./AskOttoPanel.tsx";
@@ -195,7 +196,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [breakSeconds, setBreakSeconds] = useState(0);
   const [phaseSeconds, setPhaseSeconds] = useState(0); // seconds within the current pomodoro work/break phase
-  const [openPanel, setOpenPanel] = useState<"materials" | "tools" | "audio" | "ai" | "notes" | "scratchpad" | null>(null);
+  const [openPanel, setOpenPanel] = useState<"materials" | "tools" | "audio" | "ai" | "notes" | "scratchpad" | "task" | null>(null);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showSubtaskSubmit, setShowSubtaskSubmit] = useState(false);
   const [sessionLog, setSessionLog] = useState<SessionLog>({
@@ -232,6 +233,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   // on any movement/keypress. Never fades while a panel is open (nothing to hide behind, and it'd be
   // jarring for the toolbar to dim right under an open drawer) or during a break/setup screen.
   const [chromeIdle, setChromeIdle] = useState(false);
+  // Desk background image — resolved from IndexedDB into a fresh object URL each load (see the effect
+  // below); revoked on replace/unmount same as the custom-audio object URL.
+  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
+  const backgroundUrlRef = useRef<string | null>(null);
 
   const timerRef = useRef<number | null>(null);
   const noiseRef = useRef<NoisePlayer | null>(null);
@@ -297,6 +302,26 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
       }
     });
   }, [task.id]);
+
+  // Rebuild the background image's object URL whenever the stored file id changes (a fresh session load,
+  // an upload, or a reset) — object URLs don't survive a reload, only the underlying IndexedDB Blob does.
+  useEffect(() => {
+    const fileId = env?.backgroundImageFileId;
+    if (!fileId) {
+      if (backgroundUrlRef.current) { URL.revokeObjectURL(backgroundUrlRef.current); backgroundUrlRef.current = null; }
+      setBackgroundUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void getFile(fileId).then((blob) => {
+      if (cancelled || !blob) return;
+      if (backgroundUrlRef.current) URL.revokeObjectURL(backgroundUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      backgroundUrlRef.current = url;
+      setBackgroundUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [env?.backgroundImageFileId]);
 
   // ── Autosave ──────────────────────────────────────────────────────────────
   const persistEnv = useCallback((updated: StudyEnvironment) => {
@@ -426,6 +451,20 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     updateEnv({ audioType: "custom", customAudioFileId: id, customAudioName: file.name, audioPlaying: true });
   }, [env?.customAudioFileId, env?.audioVolume, updateEnv, playCustomBlob]);
 
+  const setBackgroundImage = useCallback(async (file: File) => {
+    const oldId = env?.backgroundImageFileId;
+    const id = crypto.randomUUID();
+    await saveFile(id, file);
+    if (oldId) void deleteFile(oldId).catch(() => {});
+    updateEnv({ backgroundImageFileId: id, backgroundImageName: file.name });
+  }, [env?.backgroundImageFileId, updateEnv]);
+
+  const clearBackgroundImage = useCallback(() => {
+    const oldId = env?.backgroundImageFileId;
+    if (oldId) void deleteFile(oldId).catch(() => {});
+    updateEnv({ backgroundImageFileId: undefined, backgroundImageName: undefined });
+  }, [env?.backgroundImageFileId, updateEnv]);
+
   const setSpotify = useCallback((embedUrl: string) => {
     noiseRef.current?.stop();
     stopCustomAudio();
@@ -552,14 +591,24 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     });
   }, [persistEnv]);
 
+  // Every "add a tool/material/chat-artifact" call site used to hardcode zIndex: 100 for the new artifact —
+  // but bringToFront (ArtifactCanvas, on any click/drag) bumps the clicked artifact to current-max + 1, so
+  // after a bit of normal interaction the existing artifacts' z-index climbs past 100. A freshly-added tool
+  // then rendered BEHIND whatever was already on top — reported live as "I click a tool and nothing
+  // happens" (it WAS added, just invisible under the artifact you'd been working in). Compute the real
+  // next z-index here, at the one choke point every caller already goes through, instead of trusting each
+  // call site's own guess.
+  // Rewritten off the functional-setEnv-with-a-side-effect-inside pattern (which the rest of this file still
+  // uses correctly for interval/effect callers that need it — see updateEnv) — addArtifact is ONLY ever
+  // called synchronously from a click handler, so reading `env` directly from the closure is safe here and
+  // removes a layer of indirection while chasing a "click a tool, it saves, nothing appears" report.
   const addArtifact = useCallback((artifact: ArtifactState) => {
-    setEnv(prev => {
-      if (!prev) return prev;
-      const updated = { ...prev, artifacts: [...prev.artifacts, artifact], lastSavedAt: new Date().toISOString() };
-      persistEnv(updated);
-      return updated;
-    });
-  }, [persistEnv]);
+    if (!env) return;
+    const nextZ = Math.max(0, ...env.artifacts.map(a => a.zIndex)) + 1;
+    const updated: StudyEnvironment = { ...env, artifacts: [...env.artifacts, { ...artifact, zIndex: nextZ }], lastSavedAt: new Date().toISOString() };
+    setEnv(updated);
+    persistEnv(updated);
+  }, [env, persistEnv]);
 
   // A tutor turn can create a note/deck/quiz and reference it as a chip in the chat thread (same as
   // TaskCard.tsx's chat) — clicking one opens it as a real artifact on the desk, same code path as opening
@@ -694,9 +743,14 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
           onNotesChange={(notes) => updateEnv({ notes })}
           onScratchpadChange={(scratchpad) => updateEnv({ scratchpad })}
           language={language}
+          backgroundImageUrl={backgroundUrl}
         />
 
         {/* ── Panels (Layer 2) ── */}
+        {openPanel === "task" && (
+          <TaskDetailDrawer task={task} onClose={() => setOpenPanel(null)} />
+        )}
+
         {openPanel === "materials" && (
           <MaterialsDrawer
             materials={env.materials}
@@ -753,6 +807,9 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
               addArtifact(newArtifact);
               setOpenPanel(null);
             }}
+            backgroundImageName={env.backgroundImageName}
+            onSetBackground={(file) => void setBackgroundImage(file)}
+            onClearBackground={clearBackgroundImage}
           />
         )}
 

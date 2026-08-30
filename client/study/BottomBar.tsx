@@ -2,7 +2,7 @@ import type { SessionStatus } from "./StudyTypes.ts";
 
 interface BottomBarProps {
   openPanel: string | null;
-  onPanelToggle: (panel: "materials" | "tools" | "audio" | "ai") => void;
+  onPanelToggle: (panel: "materials" | "tools" | "audio" | "ai" | "task") => void;
   onBreak: () => void;
   onEnd: () => void;
   audioPlaying: boolean;
@@ -14,6 +14,12 @@ export function BottomBar({ openPanel, onPanelToggle, onBreak, onEnd, audioPlayi
   return (
     <nav className="sm-bottombar">
       <div className="sm-bottombar-left">
+        <button
+          className={`sm-bar-btn ${openPanel === "task" ? "active" : ""}`}
+          onClick={() => onPanelToggle("task")}
+        >
+          Task
+        </button>
         <button
           className={`sm-bar-btn ${openPanel === "materials" ? "active" : ""}`}
           onClick={() => onPanelToggle("materials")}

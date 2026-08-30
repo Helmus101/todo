@@ -26,6 +26,16 @@ export function applyProfileUpdate(profile: Profile, u: ProfileUpdate): void {
 const URGENT_AT = 0.5, IMPORTANT_AT = 0.5;
 
 /** Eisenhower: two axes → quadrant + a ranking score (Do > Schedule > Delegate > Later). */
+/** Fronts of any flashcard sitting at Leitner box 1 (i.e. gotten wrong / never yet advanced) across a set
+ *  of study-log day tasks — the "what did I get wrong this week" signal fed into generateWeeklyStudyDeck
+ *  (server/claude.ts) so the week-summary deck re-tests those concepts instead of repeating everything
+ *  evenly. Pure so it's testable without a live AI call. */
+export function weakCardFronts(dayTasks: WebTask[]): string[] {
+  const fronts: string[] = [];
+  for (const dt of dayTasks) for (const deck of dt.flashcards || []) for (const c of deck.cards) if (c.review?.box === 1) fronts.push(c.front);
+  return fronts;
+}
+
 export function eisenhower(urgency: number, importance: number): { quadrant: Quadrant; score: number } {
   const urgent = urgency >= URGENT_AT, important = importance >= IMPORTANT_AT;
   const quadrant: Quadrant = important ? (urgent ? "do" : "schedule") : (urgent ? "delegate" : "later");

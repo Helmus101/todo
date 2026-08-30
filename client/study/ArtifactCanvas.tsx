@@ -28,12 +28,13 @@ interface ArtifactCanvasProps {
   onNotesChange: (notes: string) => void;
   onScratchpadChange: (s: string) => void;
   language?: "fr" | "en";
+  backgroundImageUrl?: string | null;
 }
 
 export function ArtifactCanvas({
   artifacts, notes, scratchpad, task, taskId, environmentId,
   onUpdateArtifact, onAddArtifact, onRemoveArtifact,
-  onNotesChange, onScratchpadChange, language = "en",
+  onNotesChange, onScratchpadChange, language = "en", backgroundImageUrl,
 }: ArtifactCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
@@ -143,7 +144,11 @@ export function ArtifactCanvas({
   };
 
   return (
-    <div ref={canvasRef} className="sm-canvas">
+    <div
+      ref={canvasRef}
+      className={`sm-canvas ${backgroundImageUrl ? "sm-canvas-custom-bg" : ""}`}
+      style={backgroundImageUrl ? { backgroundImage: `url(${backgroundImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
+    >
       {sortedArtifacts.map(art => {
         if (art.minimized) {
           return (

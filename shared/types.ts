@@ -549,6 +549,14 @@ export interface WebTask {
   sourceSubject?: string;
   /** The source item's own due date (ISO) — Pronote's, not the model's reading of it. */
   sourceDue?: string;
+  /** Daily study-log entry text (source:"studylog" only) — what the student typed for that day/week. Not
+   *  a to-do; these tasks are filtered out of the normal dashboard (see App.tsx) and only shown in the
+   *  Journal tab. Capped ~4000 chars. */
+  logText?: string;
+  /** Which day (or week) a studylog task is for — "2026-08-30" for a daily entry, "week:2026-08-24" (that
+   *  week's MONDAY, prefixed) for the week summary — a simple, year-boundary-safe week key rather than a
+   *  formal ISO "2026-W35" string. The lookup key for find-or-create, instead of parsing anchorKey. */
+  logDate?: string;
   createdAt: string;
   /** Bumped on every mutation (status change, step tick, run result) — breaks cross-device merge ties so a
    *  STALE copy can never overwrite a newer one. */

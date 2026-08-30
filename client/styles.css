@@ -3401,6 +3401,14 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   position: relative;
   overflow: hidden;
   min-height: 0;
+  /* .sm-canvas is nested inside .sm-main-container (a plain block div, not flex/grid) — with no explicit
+     height here, and every artifact inside being position:absolute (so none contribute to auto-height),
+     this collapsed to ~0px tall. Every artifact's percentage top/height then resolved against that zero
+     height, rendering them all invisible with zero visible error — this was the actual "click a tool,
+     it saves, nothing appears" bug, confirmed live via debug logging showing correct state/props the whole
+     time. .sm-main-container gets a definite height from .sm-shell's grid (gridRow: 2 in a 1fr track), so
+     100% here resolves correctly against it. */
+  height: 100%;
   background:
     linear-gradient(rgba(16, 19, 23, 0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(16, 19, 23, 0.025) 1px, transparent 1px),
@@ -3580,6 +3588,25 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   color: var(--ink-3);
   font-size: var(--text-base);
 }
+.sm-drawer-task { width: min(480px, calc(100vw - 36px)); }
+.sm-task-detail-title { font-size: var(--text-lg); font-weight: var(--weight-semibold); margin: 0 0 var(--space-2); }
+.sm-task-detail-why { color: var(--ink-2); margin: 0 0 var(--space-4); line-height: 1.45; }
+.sm-task-detail-section { margin-bottom: var(--space-4); }
+.sm-task-detail-section h4 { font-size: var(--text-xs); font-weight: var(--weight-bold); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 var(--space-2); }
+.sm-task-detail-section p { margin: 0; line-height: 1.5; }
+.sm-task-detail-links { list-style: none; display: grid; gap: var(--space-1); }
+.sm-task-detail-links a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.sm-task-detail-steps { list-style: none; display: grid; gap: var(--space-3); }
+.sm-task-detail-steps > li { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3); align-items: start; }
+.sm-task-detail-steps > li.done { color: var(--ink-3); text-decoration: line-through; }
+.sm-task-detail-step-mark {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line);
+  font-size: var(--text-xs); flex: none;
+}
+.sm-task-detail-steps > li.done .sm-task-detail-step-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sm-task-detail-substeps { list-style: none; margin-top: var(--space-2); padding-left: var(--space-3); display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--ink-2); }
+.sm-task-detail-substeps li.done { text-decoration: line-through; color: var(--ink-3); }
 .sm-material-list,
 .sm-setup-materials {
   list-style: none;
@@ -3636,6 +3663,8 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   font-weight: var(--weight-bold);
   letter-spacing: 0.08em;
 }
+.sm-bg-row { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+.sm-bg-filename { font-size: var(--text-xs); color: var(--ink-3); margin-top: var(--space-1); }
 .sm-ai-chat {
   min-height: 220px;
   max-height: 420px;
@@ -4199,3 +4228,27 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   .sm-setup-footer,
   .sm-setup-resume { align-items: stretch; flex-direction: column; }
 }
+
+/* ── Study journal tab (daily log → auto flashcards + week summary) ── */
+.studylog-page { display: flex; flex-direction: column; gap: var(--space-3); }
+.studylog-weeknav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-2); }
+.studylog-weeklabel { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-2); }
+.studylog-days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.studylog-day-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer;
+  font-size: 12.5px; font-weight: var(--weight-medium); color: var(--ink-2);
+  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+}
+.studylog-day-btn:hover { border-color: var(--ink-3); }
+.studylog-day-btn.active { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }
+.studylog-day-btn.has-entry span:first-child::after { content: " •"; color: var(--accent); }
+.studylog-day-date { color: var(--ink-3); font-size: 11px; }
+.studylog-textarea {
+  width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
+  padding: 12px 14px; font-size: 14.5px; line-height: 1.6; font-family: inherit; resize: vertical;
+}
+.studylog-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
+.studylog-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.studylog-summary-sec { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }
+.studylog-summary-sec h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); margin-bottom: 8px; }

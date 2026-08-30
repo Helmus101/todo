@@ -76,6 +76,11 @@ export interface StudyEnvironment {
    *  official iframe widget (open.spotify.com/embed/...). Spotify controls playback itself (including its
    *  own play/pause and volume) — our audioVolume/audioPlaying don't apply to this track. */
   spotifyEmbedUrl?: string;
+  /** The student's own desk background image — stored as a Blob in IndexedDB (StudyDB.ts's "files" store,
+   *  same one customAudioFileId uses) and rebuilt into a fresh object URL each load. Unset = the default
+   *  dot-grid desk background. */
+  backgroundImageFileId?: string;
+  backgroundImageName?: string;
   /** Pomodoro cycling — when enabled, work/break alternate automatically instead of the student having to
    *  remember to hit Break. Chosen once at Start (StudySetup) and persisted so it survives a reload. */
   pomodoroEnabled?: boolean;

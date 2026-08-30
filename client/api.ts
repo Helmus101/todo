@@ -115,6 +115,12 @@ export const api = {
   recordQuizAttempt: (taskId: string, quizId: string, score: number, total: number, wrong?: number[]): Promise<WebTask[]> =>
     post(`/api/tasks/${taskId}/quiz/${quizId}/attempt`, { score, total, wrong }),
   reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] }> => req("/api/reviews/due").then(j),
+  // Study log: daily "what I learned today" → auto flashcards (see server/index.ts's /api/studylog/*).
+  // Saving empty text clears that day's entry+deck; non-empty text (re)generates the deck server-side.
+  studyLogDay: (date: string, text: string): Promise<WebTask[]> => post("/api/studylog/day", { date, text }),
+  studyLogWeek: (start: string): Promise<{ monday: string; days: (WebTask | null)[]; summary: WebTask | null }> =>
+    req(`/api/studylog/week?start=${encodeURIComponent(start)}`).then(j),
+  studyLogWeekSummary: (weekStart: string): Promise<WebTask[]> => post("/api/studylog/week-summary", { weekStart }),
   addExam: (subject: string, deadline: string): Promise<Profile> => post("/api/profile/exam", { subject, deadline }).then(normalizeProfile),
   deleteExam: (id: string): Promise<Profile> => req(`/api/profile/exam/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
