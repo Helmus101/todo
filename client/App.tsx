@@ -924,6 +924,7 @@ export function App() {
                   onTask={patchTask}
                   onConfirmed={flagJustDone}
                   onLeft={() => navigate("")}
+                  onEnterStudyMode={() => navigate(`study/${openTask.id}`)}
                 />
               </TaskModal>
             );

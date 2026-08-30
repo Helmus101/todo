@@ -193,7 +193,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       {/* Study Mode button - only for active tasks with steps */}
       {!isDone && (task.steps || []).length > 0 && onEnterStudyMode && (
         <button type="button" className="card-study" title={L("Mode étude", "Study Mode")} aria-label={L(`Mode étude pour : ${task.title}`, `Study Mode for: ${task.title}`)} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
-          Study
+          <span aria-hidden="true">📖</span>
         </button>
       )}
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
@@ -254,9 +254,9 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
 
 /* ─────────────────────────────── the focused task view ─────────────────────────────── */
 
-export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft }: {
+export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean;
-  onConfirmed?: (id: string) => void; onLeft?: (id: string) => void;
+  onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onEnterStudyMode?: () => void;
 }) {
   const L = useLang();
   const notify = useNotify();
@@ -445,6 +445,14 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
           {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
+          {/* Study Mode entry point — the collapsed row already has one (.card-study); the expanded
+              detail view had none at all, so opening a task and wanting to study it meant closing the
+              modal and going back to find the row's tiny icon button. */}
+          {!isDone && steps.length > 0 && onEnterStudyMode && (
+            <button type="button" className="tf-study-btn" onClick={onEnterStudyMode}>
+              <span aria-hidden="true">📖</span> {L("Mode étude", "Study Mode")}
+            </button>
+          )}
         </div>
       </div>
 
