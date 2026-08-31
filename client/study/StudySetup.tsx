@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import type { StudyEnvironment, StudyMaterial } from "./StudyTypes.ts";
+import { extractPdfText } from "./pdfText.ts";
 
 export interface PomodoroChoice { enabled: boolean; workMinutes: number; breakMinutes: number }
 
@@ -155,6 +156,16 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
         size: file.size,
       };
       setMaterials(prev => [...prev, mat]);
+      // Best-effort, async, non-blocking: the material is already usable (viewable in PDFArtifact) the
+      // instant it's added above — this just fills in `text` a moment later so the chat can reference the
+      // PDF's actual content (see pdfText.ts). A scanned/image-only PDF or extraction failure just leaves
+      // `text` unset, same as before this existed.
+      if (type === "pdf") {
+        void extractPdfText(file).then((text) => {
+          if (!text) return;
+          setMaterials(prev => prev.map(m => m.id === mat.id ? { ...m, text } : m));
+        });
+      }
     });
   };
 

@@ -713,6 +713,13 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   // anywhere or nowhere).
   const stepIndexRaw = req.body?.stepIndex;
   const stepIndex = Number.isInteger(stepIndexRaw) && stepIndexRaw >= 0 && stepIndexRaw < (t.steps?.length || 0) ? stepIndexRaw : undefined;
+  // Study Mode materials (client-extracted PDF text, see client/study/pdfText.ts) — optional, capped here
+  // too (defense in depth; chatAboutTask's materialsBlock caps again) since this is client-controlled input.
+  const materialsRaw = Array.isArray(req.body?.materials) ? req.body.materials : [];
+  const materials = materialsRaw
+    .filter((m: any) => m && typeof m.label === "string" && typeof m.text === "string" && m.text.trim())
+    .slice(0, 8)
+    .map((m: any) => ({ label: String(m.label).trim().slice(0, 120), text: String(m.text).trim().slice(0, 6000) }));
   const history = t.chat || [];
   try {
     let academic: { homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>>; tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> } | undefined;
@@ -722,15 +729,19 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
         if (homework.length || tests.length) academic = { homework, tests };
       }
     } catch { /* best-effort */ }
+    // Ensure a profile object exists BEFORE the call (not after, as it used to be here) — chatAboutTask can
+    // now mutate it in place via the "remember" tool, so it needs a real object to write into for that to
+    // ever take effect, not just for the token-usage bump that used to be the only reason this existed.
+    const profile = req.session.profile ||= emptyProfile();
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
-      req.session.profile,
+      profile,
       academic,
-      { stepIndex },
+      { stepIndex, materials },
     );
-    addUsage(req.session.profile ||= emptyProfile(), out.tokens); // untracked before — a tool-calling turn can now cost like a small run
+    addUsage(profile, out.tokens); // untracked before — a tool-calling turn can now cost like a small run
     const now = new Date().toISOString();
     // Accumulate this turn's artifacts onto the task exactly like a run does (same ARTIFACT_CAP), and
     // reference them from the assistant's own message so the thread can render an inline chip — the

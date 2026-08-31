@@ -670,9 +670,12 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     const message = chatInput.trim();
     if (!message || chatSending || !env) return;
     const stepIndex = env.currentSubtaskIndex;
+    // Only materials that actually have extracted text (currently: uploaded PDFs, see pdfText.ts) are worth
+    // sending — a material with no `text` contributes nothing and would just be dead weight in the request.
+    const materials = env.materials.filter((m) => m.text?.trim()).map((m) => ({ label: m.label, text: m.text! }));
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try {
-      const { task: updated } = await api.chat(task.id, message, stepIndex);
+      const { task: updated } = await api.chat(task.id, message, stepIndex, materials.length ? materials : undefined);
       onTaskUpdate({ ...task, ...updated });
     } catch (e: any) {
       setChatError(e?.message || "Couldn't send that — try again.");

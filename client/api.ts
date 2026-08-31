@@ -175,7 +175,7 @@ export const api = {
   // stepIndex: set by the per-step "Aide" button (see F) — the server validates the range itself.
   // Returns the WHOLE updated task, not just `chat` — a tutor turn can now create notes/decks/quizzes,
   // and the chat entries reference them by id, so the client needs task.notes/flashcards/quizzes too.
-  chat: (id: string, message: string, stepIndex?: number): Promise<{ chat: WebTask["chat"]; task: WebTask }> => post(`/api/tasks/${id}/chat`, { message, stepIndex }),
+  chat: (id: string, message: string, stepIndex?: number, materials?: { label: string; text: string }[]): Promise<{ chat: WebTask["chat"]; task: WebTask }> => post(`/api/tasks/${id}/chat`, { message, stepIndex, materials }),
   // The flashcard/quiz "ask for a hint" sidebar — stateless server-side, so the client passes its own
   // short local history each turn. No client-side timeout (matches `chat`): the server's own 2-minute
   // deadline is the real backstop, and a hint arriving late still beats a hard-cut error mid-drill.
