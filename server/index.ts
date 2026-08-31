@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, bumpStreak, nextLeitnerReview } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateWeeklyStudyDeck } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
@@ -518,7 +518,6 @@ app.get("/api/status", ah(async (req, res) => {
     overBudget: overMonthlyBudget(req.session.profile),
     unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
-    streak: req.session.profile?.streak,
     voiceChat: !!req.session.profile?.voiceChat,
   };
   res.json(s);
@@ -866,8 +865,6 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
     if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
     task.status = "done";
     task.updatedAt = new Date().toISOString();
-    const profile = req.session.profile ||= emptyProfile();
-    bumpStreak(profile, tzOf(profile));
     await commit(req);
     void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
     res.json(req.session.tasks || []);

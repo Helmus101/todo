@@ -132,11 +132,6 @@ export interface Profile {
    *  is strong). It may only select the FORM an explanation takes — e.g. diagram-first vs. a worked example
    *  vs. reading-first — never the substance or the level. No consumer reads this yet (groundwork). */
   learningStyle?: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed";
-  /** Consecutive-days-with-at-least-one-completed-task counter, for a streak/progress view. `lastDayIso`
-   *  is the last LOCAL day (student's own timezone) a task was completed — the day boundary a future
-   *  updater must compare against to decide "still going" vs. "reset to 1". No writer populates this yet
-   *  (groundwork); merge is monotonic (tasks.ts's mergeProfileStates) the same way `usage` is. */
-  streak?: { current: number; longest: number; lastDayIso?: string };
 }
 // Shared client+server id generator (used for grade entries) — Web Crypto's randomUUID is available in
 // both a modern browser and Node, so this needs no server-only import to stay isomorphic.
@@ -199,11 +194,6 @@ export function normalizeProfile(p: any): Profile {
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
-    streak: p?.streak && typeof p.streak === "object" ? {
-      current: Math.max(0, Number(p.streak.current) || 0),
-      longest: Math.max(0, Number(p.streak.longest) || 0),
-      lastDayIso: typeof p.streak.lastDayIso === "string" ? p.streak.lastDayIso : undefined,
-    } : undefined,
   };
 }
 
@@ -262,24 +252,6 @@ export function isPeakHourUtc(now: Date = new Date()): boolean {
 export function monthKeyOf(tz?: string, now: Date = new Date()): string {
   try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit" }).format(now); }
   catch { return now.toISOString().slice(0, 7); }
-}
-
-/** The current LOCAL calendar day ("YYYY-MM-DD") in a given timezone — the streak's own day boundary,
- *  same en-CA trick as monthKeyOf (that locale's date format is already YYYY-MM-DD). */
-export function dayKeyOf(tz?: string, now: Date = new Date()): string {
-  try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(now); }
-  catch { return now.toISOString().slice(0, 10); }
-}
-
-/** Advance the streak on a completed task, at most once per local day (calling it twice the same day must
- *  not double-count). Consecutive local days → +1; a gap of 2+ days → reset to 1; same day → no-op. */
-export function bumpStreak(profile: Profile, tz?: string, now: Date = new Date()): void {
-  const today = dayKeyOf(tz, now);
-  const s = profile.streak || { current: 0, longest: 0 };
-  if (s.lastDayIso === today) { profile.streak = s; return; }
-  const yesterday = dayKeyOf(tz, new Date(now.getTime() - 24 * 60 * 60 * 1000));
-  const current = s.lastDayIso === yesterday ? s.current + 1 : 1;
-  profile.streak = { current, longest: Math.max(s.longest, current), lastDayIso: today };
 }
 
 // DeepSeek pricing in USD per 1M tokens. Cache-HIT input is dramatically cheaper than a miss, and we resend
@@ -700,7 +672,6 @@ export interface ConnectionStatus {
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
-  streak?: { current: number; longest: number; lastDayIso?: string }; // see Profile.streak — bumped on task confirm
   voiceChat?: boolean;         // see Profile.voiceChat — mic input + read-aloud in Study Mode's Ask Otto chat
 }
 

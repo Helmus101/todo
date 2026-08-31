@@ -560,13 +560,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   height: 100%; border-radius: 2px; background: var(--ink);
   transition: width 600ms var(--ease);
 }
-/* Quiet, not a badge — one earned fact stated plainly, same tone as dash-line itself (ink-2, no accent:
-   consistency is the reward here, not a gamified flourish that'd clash with the one-accent rule). */
-.dash-streak { margin-top: 6px; font-size: var(--text-sm); color: var(--ink-2); display: flex; align-items: center; gap: 8px; }
-.streak-dots { display: flex; gap: 3px; }
-.streak-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
-.streak-dot.on { background: var(--accent); }
-
 /* ─── TaskHero — the dashboard's one headline moment ─────────────────────────
    Deliberately the biggest, roomiest thing on the page (rule 11: give important content room) — its
    SIZE and position say "look here first," not a border. A quiet padded surface (no shadow, no hover

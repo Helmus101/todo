@@ -537,29 +537,6 @@ export function App() {
     if (tz && tz !== status.timezone) { tzSynced.current = true; void api.setProfilePreference("timezone", tz).then(loadStatus).catch(() => { tzSynced.current = false; }); }
   }, [status?.loggedIn, status?.timezone, loadStatus]);
 
-  // Streak was a pure passive readout — no loss-aversion framing at all. A single low-key evening mention
-  // (once per local day, via the existing toast — not a popup/push) when there's a real streak to lose and
-  // nothing's been finished yet today. Deliberately restrained: one line, dismisses like any other toast,
-  // no daily nagging before evening (a streak isn't actually "at risk" at 10am).
-  const streakNudgeShown = useRef(false);
-  useEffect(() => {
-    if (streakNudgeShown.current || !status?.loggedIn) return;
-    const current = status.streak?.current || 0;
-    if (current < 1 || status.streak?.lastDayIso === todayIso()) return;
-    if (new Date().getHours() < 20) return;
-    let shownToday = false;
-    try { shownToday = localStorage.getItem("otto-streak-nudge") === todayIso(); } catch { /* ignore */ }
-    if (shownToday) return;
-    streakNudgeShown.current = true;
-    try { localStorage.setItem("otto-streak-nudge", todayIso()); } catch { /* ignore */ }
-    notify(
-      status.language === "en"
-        ? `Your ${current}-day streak is still open — finish one thing today to keep it going.`
-        : `Ta série de ${current} jours n'est pas encore prolongée aujourd'hui — termine une chose pour la garder.`,
-      "info",
-    );
-  }, [status?.loggedIn, status?.streak?.current, status?.streak?.lastDayIso, status?.language, notify]);
-
   const openId = route.startsWith("task/") ? route.slice(5) : null; // the deep-linked task, if any
   // Mark a task "seen" the moment its route opens — this is the ONE place every path into the task
   // modal funnels through (four different onToggle call sites below all navigate here), so hooking it
@@ -790,23 +767,6 @@ export function App() {
               <div className="dash-progress" role="img" aria-label={en ? `${doneToday} of ${todayTotal} done today` : `${doneToday} sur ${todayTotal} faites aujourd'hui`}>
                 <div className="dash-progress-fill" style={{ width: `${Math.round((doneToday / todayTotal) * 100)}%` }} />
               </div>
-            )}
-            {/* Consecutive-day streak (server-side, bumped once per local day on a confirmed task — see
-                bumpStreak). Only shown once it's actually something (2+), so day one doesn't read as a
-                countdown to nothing. Was a bare number — no visual momentum, no loss-aversion framing.
-                A dot meter (filled up to the current streak, capped at 7 with a "+N" past that) gives the
-                same number an actual sense of a run building, without needing new day-by-day history data
-                the server doesn't track. */}
-            {(status.streak?.current || 0) >= 2 && (
-              <p className="dash-streak">
-                <span className="streak-dots" aria-hidden="true">
-                  {Array.from({ length: Math.min(status.streak!.current, 7) }).map((_, i) => <span key={i} className="streak-dot on" />)}
-                  {Array.from({ length: Math.max(0, 7 - status.streak!.current) }).map((_, i) => <span key={`o${i}`} className="streak-dot" />)}
-                </span>
-                {en
-                  ? `${status.streak!.current}-day streak${status.streak!.longest > status.streak!.current ? ` · best ${status.streak!.longest}` : ""}`
-                  : `${status.streak!.current} jours d'affilée${status.streak!.longest > status.streak!.current ? ` · record : ${status.streak!.longest}` : ""}`}
-              </p>
             )}
           </div>
           {status.paused && (
@@ -1774,6 +1734,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
+  const [showTrustLog, setShowTrustLog] = useState(false);
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
   const [deletingAccount, setDeletingAccount] = useState(false);
@@ -1885,8 +1846,12 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
         // Not a claimed number — counted straight from each task's own audit trail (kind: "guardrail"),
         // the same record a parent/teacher can open and verify per task. Only shown once it's actually
         // happened at least once: a brand-new account showing "0" would read as a hollow promise, not
-        // evidence.
-        const guardrailCount = tasks.reduce((n, t) => n + (t.audit?.filter((a) => a.kind === "guardrail").length || 0), 0);
+        // evidence. The expandable list below is the account-wide version of TaskCard.tsx's per-task
+        // "Activity log" — same data, same classes (.audit-log/.audit-list), just pooled across every task
+        // so "never does the work" is something a parent/teacher can actually verify in one place instead
+        // of having to open each task individually.
+        const allAudit = tasks.flatMap((t) => (t.audit || []).map((a) => ({ ...a, taskTitle: t.title })));
+        const guardrailCount = allAudit.filter((a) => a.kind === "guardrail").length;
         return guardrailCount > 0 ? (
           <section className="settings-sec reveal" style={{ ["--d" as any]: "0.14s" }}>
             <p className="settings-hint guardrail-stat">
@@ -1895,6 +1860,20 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                 `Otto has declined to do your graded work ${guardrailCount} times — and made a guide instead.`,
               )}
             </p>
+            <button type="button" className="btn xs ghost audit-toggle" aria-expanded={showTrustLog} onClick={() => setShowTrustLog((v) => !v)}>
+              {L("Journal complet", "Full activity log")} ({allAudit.length})
+            </button>
+            {showTrustLog ? (
+              <ul className="audit-list">
+                {allAudit.slice().reverse().slice(0, 200).map((e, i) => (
+                  <li key={i} className={`audit-${e.kind}`}>
+                    <span className="audit-icon" aria-hidden="true">{e.kind === "guardrail" ? "✦" : e.kind === "artifact" ? "✓" : "•"}</span>
+                    <span className="audit-label">{e.label}<span className="settings-hint" style={{ display: "block" }}>{e.taskTitle}</span></span>
+                    <span className="audit-at">{new Date(e.at).toLocaleString(status.language === "en" ? "en-GB" : "fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </section>
         ) : null;
       })()}

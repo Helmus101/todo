@@ -417,16 +417,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         monthCost: Math.max(monthOf(p1.usage, "monthCost"), monthOf(p2.usage, "monthCost")),
       };
     })() : undefined,
-    // Same monotonic reasoning as usage above: `current` follows whichever side has the LATER local day
-    // (a stale copy's smaller streak must never overwrite a newer one's larger count), `longest` is a MAX.
-    streak: (p1.streak || p2.streak) ? (() => {
-      const side = (p2.streak?.lastDayIso || "") >= (p1.streak?.lastDayIso || "") ? p2.streak : p1.streak;
-      return {
-        current: side?.current || 0,
-        longest: Math.max(p1.streak?.longest || 0, p2.streak?.longest || 0),
-        lastDayIso: side?.lastDayIso,
-      };
-    })() : undefined,
   };
 }
 
