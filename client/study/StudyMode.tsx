@@ -17,7 +17,6 @@ import { MaterialsDrawer } from "./MaterialsDrawer.tsx";
 import { TaskDetailDrawer } from "./TaskDetailDrawer.tsx";
 import { ToolsDrawer } from "./ToolsDrawer.tsx";
 import { AudioPanel } from "./AudioPanel.tsx";
-import { AskOttoPanel } from "./AskOttoPanel.tsx";
 import { BreakScreen } from "./BreakScreen.tsx";
 import { EndSessionModal } from "./EndSessionModal.tsx";
 import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
@@ -198,7 +197,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [breakSeconds, setBreakSeconds] = useState(0);
   const [phaseSeconds, setPhaseSeconds] = useState(0); // seconds within the current pomodoro work/break phase
-  const [openPanel, setOpenPanel] = useState<"materials" | "tools" | "audio" | "ai" | "notes" | "scratchpad" | "task" | null>(null);
+  const [openPanel, setOpenPanel] = useState<"materials" | "tools" | "audio" | "notes" | "scratchpad" | "task" | null>(null);
   const [showEndModal, setShowEndModal] = useState(false);
   const [showSubtaskSubmit, setShowSubtaskSubmit] = useState(false);
   const [sessionLog, setSessionLog] = useState<SessionLog>({
@@ -577,7 +576,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     updateEnv({ currentSubtaskIndex: nextIdx < totalSteps ? nextIdx : idx });
     setShowSubtaskSubmit(false);
 
-    if (status === "stuck") setOpenPanel("ai");
+    // openOrFocusChat is defined further below (it needs addArtifact/updateArtifact) but that's fine here:
+    // this closure only ever RUNS after a user submits a subtask, long after the render that defined both
+    // functions has finished — by then openOrFocusChat already has its value. Deliberately not in the deps
+    // array since it's recreated in lockstep with `env`, which already is.
+    if (status === "stuck") openOrFocusChat();
   }, [env, totalSteps, updateEnv]);
 
   // ── Update artifacts ──────────────────────────────────────────────────────
@@ -628,6 +631,30 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     });
     setOpenPanel(null);
   }, [env, task, addArtifact]);
+
+  // "Ask Otto" used to be a fixed drawer toggled by openPanel==="ai" — now it's a movable/resizable artifact
+  // like everything else on the desk (see ChatArtifact.tsx), so opening it means finding-or-creating the
+  // ONE chat artifact for this session rather than showing/hiding a panel. Clicking it again just brings the
+  // existing conversation back into view (restoring it if minimized) instead of spawning a second chat.
+  const openOrFocusChat = useCallback(() => {
+    if (!env) return;
+    const existing = env.artifacts.find(a => a.type === "chat");
+    if (existing) {
+      const nextZ = Math.max(0, ...env.artifacts.map(a => a.zIndex)) + 1;
+      updateArtifact(existing.id, { minimized: false, zIndex: nextZ });
+      return;
+    }
+    addArtifact({
+      id: crypto.randomUUID(), type: "chat", title: "Ask Otto",
+      x: 55, y: 10, width: 38, height: 78, zIndex: 100,
+      // dockSide "none" (not "right"): the whole point is that it's a freely draggable/resizable window
+      // like every other artifact, not a fixed side panel that just happens to render differently — the
+      // student can still dock it themselves via the artifact's own dock-left/dock-right buttons if they
+      // want that layout, same as any other tool.
+      minimized: false, maximized: false, dockSide: "none", contentState: {},
+      taskId: task.id, environmentId: env.id,
+    });
+  }, [env, task.id, addArtifact, updateArtifact]);
 
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
@@ -748,6 +775,14 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
           onScratchpadChange={(scratchpad) => updateEnv({ scratchpad })}
           language={language}
           backgroundImageUrl={backgroundUrl}
+          chat={{
+            currentStep, input: chatInput, setInput: setChatInput, sending: chatSending, error: chatError,
+            pendingMsg, slow: chatSlow, verySlow: chatVerySlow, onSend: sendChat,
+            onOpenNote: (id, title) => openArtifactByKind("note", id, title),
+            onOpenDeck: (id, title) => openArtifactByKind("deck", id, title),
+            onOpenQuiz: (id, title) => openArtifactByKind("quiz", id, title),
+            voiceChat,
+          }}
         />
 
         {/* ── Panels (Layer 2) ── */}
@@ -831,31 +866,14 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
           />
         )}
 
-        {openPanel === "ai" && (
-          <AskOttoPanel
-            task={task}
-            currentStep={currentStep}
-            input={chatInput}
-            setInput={setChatInput}
-            sending={chatSending}
-            error={chatError}
-            pendingMsg={pendingMsg}
-            slow={chatSlow}
-            verySlow={chatVerySlow}
-            onSend={sendChat}
-            onClose={() => setOpenPanel(null)}
-            onOpenNote={(id, title) => openArtifactByKind("note", id, title)}
-            onOpenDeck={(id, title) => openArtifactByKind("deck", id, title)}
-            onOpenQuiz={(id, title) => openArtifactByKind("quiz", id, title)}
-            voiceChat={voiceChat}
-          />
-        )}
       </div>
 
       {/* ── Bottom bar ── */}
       <BottomBar
         openPanel={openPanel}
         onPanelToggle={(p) => setOpenPanel(prev => prev === p ? null : p)}
+        onAskOtto={openOrFocusChat}
+        chatOpen={env.artifacts.some(a => a.type === "chat" && !a.minimized)}
         onBreak={startBreak}
         onEnd={() => setShowEndModal(true)}
         audioPlaying={env.audioPlaying}

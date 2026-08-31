@@ -2,7 +2,11 @@ import type { SessionStatus } from "./StudyTypes.ts";
 
 interface BottomBarProps {
   openPanel: string | null;
-  onPanelToggle: (panel: "materials" | "tools" | "audio" | "ai" | "task") => void;
+  onPanelToggle: (panel: "materials" | "tools" | "audio" | "task") => void;
+  /** Opens (or brings back into view) the "Ask Otto" chat artifact — no longer a panel toggle, since chat
+   *  is now a movable/resizable artifact on the desk like everything else, not a fixed drawer. */
+  onAskOtto: () => void;
+  chatOpen: boolean;
   onBreak: () => void;
   onEnd: () => void;
   audioPlaying: boolean;
@@ -10,7 +14,7 @@ interface BottomBarProps {
   onPauseResume: () => void;
 }
 
-export function BottomBar({ openPanel, onPanelToggle, onBreak, onEnd, audioPlaying, sessionStatus, onPauseResume }: BottomBarProps) {
+export function BottomBar({ openPanel, onPanelToggle, onAskOtto, chatOpen, onBreak, onEnd, audioPlaying, sessionStatus, onPauseResume }: BottomBarProps) {
   return (
     <nav className="sm-bottombar">
       <div className="sm-bottombar-left">
@@ -39,8 +43,8 @@ export function BottomBar({ openPanel, onPanelToggle, onBreak, onEnd, audioPlayi
           Audio{audioPlaying ? " · playing" : ""}
         </button>
         <button
-          className={`sm-bar-btn ${openPanel === "ai" ? "active" : ""}`}
-          onClick={() => onPanelToggle("ai")}
+          className={`sm-bar-btn ${chatOpen ? "active" : ""}`}
+          onClick={onAskOtto}
         >
           Ask Otto
         </button>

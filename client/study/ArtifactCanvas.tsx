@@ -15,6 +15,7 @@ import { VideoArtifact } from "./artifacts/VideoArtifact.tsx";
 import { DocumentArtifact } from "./artifacts/DocumentArtifact.tsx";
 import { ImageArtifact } from "./artifacts/ImageArtifact.tsx";
 import { CitationArtifact } from "./artifacts/CitationArtifact.tsx";
+import { ChatArtifact } from "./artifacts/ChatArtifact.tsx";
 
 interface ArtifactCanvasProps {
   artifacts: ArtifactState[];
@@ -30,12 +31,26 @@ interface ArtifactCanvasProps {
   onScratchpadChange: (s: string) => void;
   language?: "fr" | "en";
   backgroundImageUrl?: string | null;
+  // Ask Otto chat state — still owned/lived in StudyMode.tsx (same as `notes`/`scratchpad` above), just
+  // threaded through so the "chat" artifact type can render it inside the generic movable/resizable chrome
+  // instead of a fixed drawer. Optional: canvases that never render a chat artifact (there are none today,
+  // but keeps the type honest) don't need to pass all of this.
+  chat?: {
+    currentStep: { text: string } | undefined;
+    input: string; setInput: (v: string) => void;
+    sending: boolean; error: string | null; pendingMsg: string | null; slow: boolean; verySlow: boolean;
+    onSend: () => void;
+    onOpenNote: (id: string, title: string) => void;
+    onOpenDeck: (id: string, title: string) => void;
+    onOpenQuiz: (id: string, title: string) => void;
+    voiceChat?: boolean;
+  };
 }
 
 export function ArtifactCanvas({
   artifacts, notes, scratchpad, task, taskId, environmentId,
   onUpdateArtifact, onAddArtifact, onRemoveArtifact,
-  onNotesChange, onScratchpadChange, language = "en", backgroundImageUrl,
+  onNotesChange, onScratchpadChange, language = "en", backgroundImageUrl, chat,
 }: ArtifactCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
@@ -141,6 +156,8 @@ export function ArtifactCanvas({
         return <QuizArtifact task={task} quizId={String(art.contentState?.quizId || "")} />;
       case "citation":
         return <CitationArtifact {...contentProps} />;
+      case "chat":
+        return chat ? <ChatArtifact task={task} {...chat} /> : null;
       default:
         return null;
     }

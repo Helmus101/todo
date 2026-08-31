@@ -15,7 +15,8 @@ export type ArtifactType =
   | "document"     // Google Doc / generic document
   | "flashcard"
   | "quiz"
-  | "citation";
+  | "citation"
+  | "chat";
 
 export type DockSide = "none" | "left" | "right" | "fullscreen";
 

@@ -13,7 +13,6 @@ interface AskOttoPanelProps {
   slow: boolean;
   verySlow: boolean;
   onSend: () => void;
-  onClose: () => void;
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
@@ -36,8 +35,11 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
 // machine, same markdown rendering) — a student should get the identical tutoring experience whether
 // they're on the main task card or inside Study Mode, not a stripped-down copy.
+// Renders just the chat body/input — no drawer chrome of its own. It's embedded inside a movable/resizable
+// "chat" artifact (ChatArtifact.tsx → ArtifactCanvas.tsx) rather than docked to a fixed side panel like the
+// other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
-  task, currentStep, input, setInput, sending, error, pendingMsg, slow, verySlow, onSend, onClose,
+  task, currentStep, input, setInput, sending, error, pendingMsg, slow, verySlow, onSend,
   onOpenNote, onOpenDeck, onOpenQuiz, voiceChat,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
@@ -91,12 +93,7 @@ export function AskOttoPanel({
   }, [speakingIdx]);
 
   return (
-    <div className="sm-drawer sm-drawer-ai">
-      <div className="sm-drawer-header">
-        <span>ASK OTTO</span>
-        <button className="sm-drawer-close" onClick={onClose}>×</button>
-      </div>
-
+    <div className="sm-ai-embed">
       <div className="sm-ai-chat" role="log" aria-live="polite" aria-label="Conversation with Otto">
         {!task.chat?.length && !pendingMsg ? (
           <p className="sm-ai-empty">

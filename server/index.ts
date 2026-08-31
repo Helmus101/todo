@@ -1113,29 +1113,34 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
 
 // A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) is built
 // around a WebTask (chat/notes/artifacts all key off task.id server-side), so a session not tied to any
-// real to-do still needs a lightweight placeholder task to attach to. Reused across visits (find-or-create
-// by source==="freestudy", not yet handled) rather than minted fresh each time, so returning to /study
-// resumes the same workspace/materials instead of starting over. No AI call, no refine pass, no quadrant
-// weight — this is intentionally NOT a real to-do, just a peg for StudyMode's own persistence.
+// real to-do still needs a lightweight placeholder task to attach to. Client only calls this once, when
+// "Enter study mode" is actually clicked on the /study landing page (see StandaloneStudyEntry in App.tsx) —
+// never on every render — so this call IS the session boundary. A FRESH task is minted every time rather
+// than resuming the last one: any previous unhandled freestudy task is dismissed here, taking its chat
+// (task.chat lives on the task itself) with it, so one free session's conversation never bleeds into the
+// next. (StudyMode's own client-side environment/artifacts, in IndexedDB keyed by the old task's id, are
+// simply orphaned — same as any other completed task's leftover StudyDB entry, nothing new to clean up.)
+// No AI call, no refine pass, no quadrant weight — this is intentionally NOT a real to-do, just a peg for
+// StudyMode's own persistence for the DURATION of one session.
 app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
   const list = req.session.tasks || [];
-  let t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
-  if (!t) {
-    const en = req.session.profile?.language === "en";
-    const now = new Date().toISOString();
-    const e = tasks.eisenhower(0, 0);
-    const id = randomUUID();
-    t = {
-      id, title: en ? "Free study session" : "Séance de révision libre",
-      why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
-      source: "freestudy", risk: "low",
-      urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
-      createdAt: now, anchorKey: `freestudy:${id}`,
-    };
-    list.push(t);
-    req.session.tasks = list;
-    await commit(req);
+  const now = new Date().toISOString();
+  for (const old of list) {
+    if (old.source === "freestudy" && !isHandled(old.status)) { old.status = "dismissed"; old.updatedAt = now; }
   }
+  const en = req.session.profile?.language === "en";
+  const e = tasks.eisenhower(0, 0);
+  const id = randomUUID();
+  const t: WebTask = {
+    id, title: en ? "Free study session" : "Séance de révision libre",
+    why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
+    source: "freestudy", risk: "low",
+    urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
+    createdAt: now, anchorKey: `freestudy:${id}`,
+  };
+  list.push(t);
+  req.session.tasks = list;
+  await commit(req);
   res.json(req.session.tasks || []);
 }));
 
