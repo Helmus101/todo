@@ -13,6 +13,7 @@ import { useEffect, useState, useRef, useContext, type ReactNode, type Dispatch,
 import type { WebTask, TaskStep } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
 import { api } from "./api.ts";
+import { BookOpen } from "lucide-react";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
@@ -193,7 +194,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       {/* Study Mode button - only for active tasks with steps */}
       {!isDone && (task.steps || []).length > 0 && onEnterStudyMode && (
         <button type="button" className="card-study" title={L("Mode étude", "Study Mode")} aria-label={L(`Mode étude pour : ${task.title}`, `Study Mode for: ${task.title}`)} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
-          <span aria-hidden="true">📖</span>
+          <BookOpen aria-hidden="true" size={16} />
         </button>
       )}
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
@@ -450,7 +451,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
               modal and going back to find the row's tiny icon button. */}
           {!isDone && steps.length > 0 && onEnterStudyMode && (
             <button type="button" className="tf-study-btn" onClick={onEnterStudyMode}>
-              <span aria-hidden="true">📖</span> {L("Mode étude", "Study Mode")}
+              <BookOpen aria-hidden="true" size={16} /> {L("Mode étude", "Study Mode")}
             </button>
           )}
         </div>

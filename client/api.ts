@@ -121,6 +121,7 @@ export const api = {
   studyLogWeek: (start: string): Promise<{ monday: string; days: (WebTask | null)[]; summary: WebTask | null }> =>
     req(`/api/studylog/week?start=${encodeURIComponent(start)}`).then(j),
   studyLogWeekSummary: (weekStart: string): Promise<WebTask[]> => post("/api/studylog/week-summary", { weekStart }),
+  studyFreeSession: (): Promise<WebTask[]> => post("/api/study/free", {}),
   addExam: (subject: string, deadline: string): Promise<Profile> => post("/api/profile/exam", { subject, deadline }).then(normalizeProfile),
   deleteExam: (id: string): Promise<Profile> => req(`/api/profile/exam/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),

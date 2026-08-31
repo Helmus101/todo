@@ -1,10 +1,18 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
-import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
+import { 
+  LayoutDashboard,
+  BookOpen,
+  GraduationCap,
+  Settings as SettingsIcon,
+  Menu,
+  X
+} from "lucide-react";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
  *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
@@ -252,6 +260,8 @@ export function App() {
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
   const [studyModeTask, setStudyModeTask] = useState<WebTask | null>(null);
+  // Sidebar state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   // Briefly highlights the row a just-confirmed task lands on in "Completed" — gives finishing something a
   // visible destination instead of the card just vanishing from the active list with nothing to show for it.
   const [justDoneId, setJustDoneId] = useState<string | null>(null);
@@ -628,8 +638,8 @@ export function App() {
   // studylog entries (the Journal tab) are WebTasks under the hood (reusing the flashcard/spaced-repetition
   // machinery — see server/index.ts's /api/studylog/*) but they're not to-dos, so they never appear in the
   // normal Tasks dashboard — same exclusion in both `live` and `completed` below.
-  const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed" && t.source !== "studylog"), status?.highPriorityPeople || []);
-  const completed = tasks.filter((t) => t.status === "done" && t.source !== "studylog").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed" && t.source !== "studylog" && t.source !== "freestudy"), status?.highPriorityPeople || []);
+  const completed = tasks.filter((t) => t.status === "done" && t.source !== "studylog" && t.source !== "freestudy").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const en = status?.language === "en";
@@ -660,16 +670,63 @@ export function App() {
     <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
     <NotifyContext.Provider value={notify}>
     <div className="app">
-      <header className="topbar">
-        <div className="brand"><Logo size={20} /> Otto</div>
-        <nav className="tabs">
-          <a className={`tab ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} aria-current={(route === "" || route === "tasks" || route.startsWith("task/")) ? "page" : undefined} href="/tasks">{status?.language === "en" ? "Tasks" : "Tâches"}{live.length > 0 ? <span className="tab-badge">{live.length}</span> : null}</a>
-          <a className={`tab ${route === "log" ? "active" : ""}`} aria-current={route === "log" ? "page" : undefined} href="/log">{status?.language === "en" ? "Journal" : "Journal"}</a>
-          <a className={`tab ${route === "settings" ? "active" : ""}`} aria-current={route === "settings" ? "page" : undefined} href="/settings">{status?.language === "en" ? "Settings" : "Réglages"}</a>
+      {/* Sidebar */}
+      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
+        <div className="sidebar-brand">
+          <Logo size={20} /> Otto
+        </div>
+        <nav className="sidebar-nav">
+          <a 
+            className={`sidebar-item ${route === "" || route === "tasks" || route.startsWith("task/") ? "active" : ""}`} 
+            href="/tasks"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <LayoutDashboard />
+            {status?.language === "en" ? "Tasks" : "Tâches"}
+            {live.length > 0 && <span className="sidebar-badge">{live.length}</span>}
+          </a>
+          <a 
+            className={`sidebar-item ${route === "log" ? "active" : ""}`} 
+            href="/log"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <BookOpen />
+            {status?.language === "en" ? "Journal" : "Journal"}
+          </a>
+          <a
+            className={`sidebar-item ${route === "study" ? "active" : ""}`}
+            href="/study"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <GraduationCap />
+            {status?.language === "en" ? "Study" : "Réviser"}
+          </a>
+          <a
+            className={`sidebar-item ${route === "settings" ? "active" : ""}`}
+            href="/settings"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <SettingsIcon />
+            {status?.language === "en" ? "Settings" : "Réglages"}
+          </a>
         </nav>
-        <div className="spacer" />
-        {(route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
-      </header>
+      </aside>
+
+      {/* Mobile sidebar toggle */}
+      <button 
+        className="sidebar-toggle" 
+        onClick={() => setSidebarOpen(!sidebarOpen)}
+        aria-label="Toggle sidebar"
+      >
+        {sidebarOpen ? <X /> : <Menu />}
+      </button>
+
+      {/* Main content area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <header className="topbar">
+          <div className="spacer" />
+          {(route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
+        </header>
 
       {/* Hoisted out of the dashboard-only branch below (where it used to live, inside the `route ===
           "settings" ? ... : (...)` ternary's else-arm) so it renders on EVERY route, not just /tasks —
@@ -689,6 +746,8 @@ export function App() {
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} />
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} />
+      ) : route === "study" ? (
+        <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -937,6 +996,7 @@ export function App() {
           })()}
         </main>
       )}
+      </div>
     </div>
     </NotifyContext.Provider>
     </LangContext.Provider>
@@ -1520,6 +1580,52 @@ const addDays = (dateStr: string, n: number): string => {
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
 };
+
+/** Standalone "Study" mode (route /study, no task id) — the exact same full StudyMode workspace a task's
+ *  own "Study Mode" button opens, just not anchored to a real to-do. StudyMode.tsx persists everything
+ *  (chat, notes, artifacts) keyed off task.id server-side, so a session with no task still needs a
+ *  lightweight placeholder to attach to — POST /api/study/free finds-or-creates one (source:"freestudy",
+ *  excluded from the normal dashboard, see the `live`/`completed` filters above), so returning to /study
+ *  later resumes the same workspace instead of starting over. */
+function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
+  tasks: WebTask[]; setTasks: Dispatch<SetStateAction<WebTask[]>>; status: ConnectionStatus; notify: (msg: string, kind?: "error" | "info") => void; navigate: (r: string) => void;
+}) {
+  const en = status?.language === "en";
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const start = () => {
+    setStarting(true);
+    void api.studyFreeSession().then((list) => {
+      setTasks(list);
+      const t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
+      if (t) setTaskId(t.id);
+      else notify(en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie.", "error");
+    }).catch((e: any) => notify(e?.message || (en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie."), "error"))
+      .finally(() => setStarting(false));
+  };
+  const task = taskId ? tasks.find((t) => t.id === taskId) : null;
+  if (!task) {
+    return (
+      <main className="list-wrap">
+        <div className="empty-state">
+          <div className="empty-mark"><GraduationCap /></div>
+          <h3>{en ? "Study whenever you want" : "Révise quand tu veux"}</h3>
+          <p>{en ? "Not tied to a task — a free workspace with notes, materials, and Otto's help." : "Sans tâche associée — un espace libre avec notes, ressources, et l'aide d'Otto."}</p>
+          <button className="btn primary" disabled={starting} onClick={start}>{starting ? (en ? "Starting…" : "Démarrage…") : (en ? "Enter study mode" : "Entrer en mode étude")}</button>
+        </div>
+      </main>
+    );
+  }
+  return (
+    <StudyMode
+      task={task}
+      onExit={() => navigate("tasks")}
+      onTaskUpdate={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+      userId={status?.user}
+      language={en ? "en" : "fr"}
+    />
+  );
+}
 
 /** The Journal tab (route /log): Monday-Friday, a free-text "what did I learn today" box per day, auto-
  *  generating flashcards on save (server/index.ts's /api/studylog/day → generateDailyStudyCards). End of

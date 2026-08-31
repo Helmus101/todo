@@ -1110,6 +1110,34 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the week summary — try again." }); }
 }));
 
+// A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) is built
+// around a WebTask (chat/notes/artifacts all key off task.id server-side), so a session not tied to any
+// real to-do still needs a lightweight placeholder task to attach to. Reused across visits (find-or-create
+// by source==="freestudy", not yet handled) rather than minted fresh each time, so returning to /study
+// resumes the same workspace/materials instead of starting over. No AI call, no refine pass, no quadrant
+// weight — this is intentionally NOT a real to-do, just a peg for StudyMode's own persistence.
+app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
+  const list = req.session.tasks || [];
+  let t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
+  if (!t) {
+    const en = req.session.profile?.language === "en";
+    const now = new Date().toISOString();
+    const e = tasks.eisenhower(0, 0);
+    const id = randomUUID();
+    t = {
+      id, title: en ? "Free study session" : "Séance de révision libre",
+      why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
+      source: "freestudy", risk: "low",
+      urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
+      createdAt: now, anchorKey: `freestudy:${id}`,
+    };
+    list.push(t);
+    req.session.tasks = list;
+    await commit(req);
+  }
+  res.json(req.session.tasks || []);
+}));
+
 // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.
 // Costs one AI call, so it's gated the same as any other interactive AI action (paused/budget).
 app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {
