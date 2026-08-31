@@ -31,7 +31,7 @@
     "express-session": "^1.18.1",
     "googleapis": "^144.0.0",
     "lucide-react": "^0.468.0",
-    "openai": "^6.45.0",
+    "openai": "^7.8.0",
     "pawnote": "^1.6.2",
     "pdfjs-dist": "^6.3.289",
     "react": "^18.3.1",
