@@ -117,6 +117,15 @@ export interface Profile {
    *  which is the one place this actually gets used to calibrate content difficulty. Set at onboarding,
    *  editable in Settings; NOT a source of truth for scoring/priority (same boundary as `track` itself). */
   yearLevel?: string;
+  /** Opt-in mic input + read-aloud replies in the Ask Otto chat (Study Mode). Off by default like every
+   *  other opt-in capability in this app. Deliberately browser-native (Web Speech API's SpeechRecognition/
+   *  speechSynthesis) rather than a hosted STT/TTS API or a self-hosted model server: this app runs on
+   *  Vercel serverless (no persistent process to host a model, no GPU, 300s execution ceiling), so the only
+   *  way to offer voice at genuinely $0 marginal cost — no per-request bill, no rate limit to hit — is to
+   *  use what the browser already ships. Trade-off: quality/voices vary by browser/OS, and Firefox has no
+   *  SpeechRecognition support (input degrades to text-only there; read-aloud still works everywhere via
+   *  speechSynthesis, which is far more broadly supported). */
+  voiceChat?: boolean;
   /** VARK learning style, student-selectable in Settings. PRESENTATION ONLY — this must NEVER influence
    *  difficulty, depth, or what gets taught (the evidence for matching TEACHING to a "learning style" is
    *  weak; the evidence for retrieval practice + spacing, which Otto already does regardless of this field,
@@ -692,6 +701,7 @@ export interface ConnectionStatus {
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
   streak?: { current: number; longest: number; lastDayIso?: string }; // see Profile.streak — bumped on task confirm
+  voiceChat?: boolean;         // see Profile.voiceChat — mic input + read-aloud in Study Mode's Ask Otto chat
 }
 
 // Study Mode types for the focused study environment feature

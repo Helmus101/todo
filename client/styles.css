@@ -3805,12 +3805,16 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .sm-ai-input-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: var(--space-2);
   padding: var(--space-3);
   border-top: 1px solid var(--line-soft);
 }
 .sm-ai-input { height: 40px; min-width: 0; }
+.sm-ai-mic { width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--vermilion, #c94b32); }
+.sm-ai-mic-active { animation: smMicPulse 1.1s ease-in-out infinite; }
+@keyframes smMicPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+.sm-ai-speak { margin-top: 6px; }
 .sm-ai-step-tag { display: block; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,0.75); margin-bottom: 3px; letter-spacing: 0.02em; }
 .sm-ai-sender { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
 .sm-ai-sender-user { color: rgba(255,255,255,0.7); }

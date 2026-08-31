@@ -3105,7 +3105,13 @@ export async function chatAboutTask(
     return lines.length ? `\nSTUDY RESULTS ON THIS TASK SO FAR (use these to spot what's still shaky — don't just recite the numbers back):\n${lines.join("\n")}\n` : "";
   })();
   const fr = profile?.language !== "en";
-  const sys = languageLine(profile) + trackLine(profile) + learningStyleLine(profile) + MISSION +
+  // MISSION (used by runTask/planning prompts) is deliberately NOT included here: it's ~330 tokens about
+  // task generation and the `remember` tool — neither applies to this one-to-one chat (chat's tool set has
+  // no `remember`, see `tools` below), and everything actually relevant to tutoring (purpose, boundaries,
+  // method) is already covered more precisely by the methodology block right below. Resent on every turn
+  // and every tool-loop round (CHAT_MAX_ROUNDS), so cutting genuinely-irrelevant content here is a real,
+  // recurring token saving, not a one-off trim.
+  const sys = languageLine(profile) + trackLine(profile) + learningStyleLine(profile) +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -3234,9 +3240,14 @@ export async function chatAboutTask(
     `the second reply as the moment to unload everything you held back from the first.` +
     `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}` +
     assignmentBlock(task) + profileBlock(profile) + academicBlock(academic);
+  // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
+  // tool-loop round (up to CHAT_MAX_ROUNDS) — a long-running chat's cost scales with this window, not just
+  // message count. 10 turns is still enough for rule 5's "tie back to something from earlier in THIS
+  // thread" and the Feynman-loop follow-up (rule 4) to work in practice; a real tutoring exchange rarely
+  // needs to reference something from 12+ messages ago.
   const messages: any[] = [
     { role: "system", content: sys },
-    ...history.slice(-16).map((h) => ({ role: h.role, content: h.text })),
+    ...history.slice(-10).map((h) => ({ role: h.role, content: h.text })),
     { role: "user", content: message },
   ];
   const client = deepseekClient();

@@ -627,7 +627,6 @@ export function App() {
               onTaskUpdate={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
               userId={status?.user}
               language={status?.language === "en" ? "en" : "fr"}
-              voiceChat={!!status?.voiceChat}
             />
           </NotifyContext.Provider>
         </LangContext.Provider>
@@ -639,8 +638,8 @@ export function App() {
   // studylog entries (the Journal tab) are WebTasks under the hood (reusing the flashcard/spaced-repetition
   // machinery — see server/index.ts's /api/studylog/*) but they're not to-dos, so they never appear in the
   // normal Tasks dashboard — same exclusion in both `live` and `completed` below.
-  const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed" && t.source !== "studylog" && t.source !== "freestudy"), status?.highPriorityPeople || []);
-  const completed = tasks.filter((t) => t.status === "done" && t.source !== "studylog" && t.source !== "freestudy").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const live = sortWithinQuadrant(tasks.filter((t) => t.status !== "done" && t.status !== "dismissed" && t.source !== "studylog"), status?.highPriorityPeople || []);
+  const completed = tasks.filter((t) => t.status === "done" && t.source !== "studylog").sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const en = status?.language === "en";
@@ -748,7 +747,7 @@ export function App() {
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} />
       ) : route === "study" ? (
-        <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
+        <StandaloneStudyPage tasks={tasks} setTasks={setTasks} lang={status?.language} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -994,7 +993,7 @@ export function App() {
                 />
               </TaskModal>
             );
-          })()}
+          })}
         </main>
       )}
       </div>
@@ -1383,17 +1382,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
     catch (e: any) { notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
   };
-  // Voice input/read-aloud in Study Mode's Ask Otto chat — off by default, opt-in like every other
-  // capability toggle in this app. Browser-native (Web Speech API), so there's no per-request cost to
-  // gate against — see Profile.voiceChat's doc comment for why this is the free option that actually works
-  // on this app's serverless deployment.
-  const [voiceChat, setVoiceChatState] = useState(!!profile?.voiceChat);
-  useEffect(() => { setVoiceChatState(!!profile?.voiceChat); }, [profile?.voiceChat]);
-  const saveVoiceChat = async (v: boolean) => {
-    setVoiceChatState(v);
-    try { onChanged?.(await api.setProfilePreference("voiceChat", v)); }
-    catch (e: any) { setVoiceChatState(!v); notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
-  };
   return (
     <>
       <div className="set-row">
@@ -1417,10 +1405,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : L("ex. Terminale", "e.g. Terminale")}
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
-      </label>
-      <label className="set-row">
-        <span className="set-text"><b>{L("Chat vocal avec Otto", "Voice chat with Otto")}</b><span className="settings-hint">{L("Parle au lieu d'écrire dans le chat d'étude, et fais lire les réponses à voix haute. 100% gratuit — utilise la synthèse vocale de ton navigateur, pas d'API payante.", "Speak instead of typing in the study chat, and have replies read aloud. 100% free — uses your browser's own speech engine, not a paid API.")}</span></span>
-        <span className="switch"><input type="checkbox" checked={voiceChat} onChange={(e) => void saveVoiceChat(e.target.checked)} /><span className="switch-track" /></span>
       </label>
     </>
   );
@@ -1597,50 +1581,45 @@ const addDays = (dateStr: string, n: number): string => {
   return d.toISOString().slice(0, 10);
 };
 
-/** Standalone "Study" mode (route /study, no task id) — the exact same full StudyMode workspace a task's
- *  own "Study Mode" button opens, just not anchored to a real to-do. StudyMode.tsx persists everything
- *  (chat, notes, artifacts) keyed off task.id server-side, so a session with no task still needs a
- *  lightweight placeholder to attach to — POST /api/study/free finds-or-creates one (source:"freestudy",
- *  excluded from the normal dashboard, see the `live`/`completed` filters above), so returning to /study
- *  later resumes the same workspace instead of starting over. */
-function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
-  tasks: WebTask[]; setTasks: Dispatch<SetStateAction<WebTask[]>>; status: ConnectionStatus; notify: (msg: string, kind?: "error" | "info") => void; navigate: (r: string) => void;
-}) {
-  const en = status?.language === "en";
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
-  const start = () => {
-    setStarting(true);
-    void api.studyFreeSession().then((list) => {
-      setTasks(list);
-      const t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
-      if (t) setTaskId(t.id);
-      else notify(en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie.", "error");
-    }).catch((e: any) => notify(e?.message || (en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie."), "error"))
-      .finally(() => setStarting(false));
-  };
-  const task = taskId ? tasks.find((t) => t.id === taskId) : null;
-  if (!task) {
-    return (
-      <main className="list-wrap">
-        <div className="empty-state">
-          <div className="empty-mark"><GraduationCap /></div>
-          <h3>{en ? "Study whenever you want" : "Révise quand tu veux"}</h3>
-          <p>{en ? "Not tied to a task — a free workspace with notes, materials, and Otto's help." : "Sans tâche associée — un espace libre avec notes, ressources, et l'aide d'Otto."}</p>
-          <button className="btn primary" disabled={starting} onClick={start}>{starting ? (en ? "Starting…" : "Démarrage…") : (en ? "Enter study mode" : "Entrer en mode étude")}</button>
-        </div>
-      </main>
-    );
+/** Standalone "Study" mode (route /study, no task id) — launch a review session anytime, not tied to any
+ *  one task: pools every due card (same dueAt<=now rule as GET /api/reviews/due) across every non-handled
+ *  task's decks into one synthetic session deck, then hands it to the same FlashcardDeck UI. Each card
+ *  review still posts back to ITS OWN task/deck via api.reviewFlashcard — the pooling is purely a client-
+ *  side view over already-loaded `tasks`, no new endpoint needed. */
+function StandaloneStudyPage({ tasks, setTasks, lang }: { tasks: WebTask[]; setTasks: (fn: (prev: WebTask[]) => WebTask[]) => void; lang?: "fr" | "en" }) {
+  const L = useLang();
+  const en = lang === "en";
+  const now = Date.now();
+  const owners: { taskId: string; deckId: string; cardIndex: number }[] = [];
+  const cards: { front: string; back: string }[] = [];
+  for (const t of tasks) {
+    if (t.status === "done" || t.status === "dismissed") continue;
+    for (const deck of t.flashcards || []) {
+      deck.cards.forEach((c, i) => {
+        if (c.review?.dueAt && Date.parse(c.review.dueAt) <= now) {
+          owners.push({ taskId: t.id, deckId: deck.id, cardIndex: i });
+          cards.push({ front: c.front, back: c.back });
+        }
+      });
+    }
   }
+  const sessionDeck: TaskFlashcards = { id: `study-session-${todayIso()}`, title: L("Session de révision", "Study session"), cards };
+  const onReview = (i: number, correct: boolean) => {
+    const o = owners[i];
+    if (!o) return;
+    void api.reviewFlashcard(o.taskId, o.deckId, o.cardIndex, correct)
+      .then((list) => setTasks(() => list))
+      .catch(() => {});
+  };
   return (
-    <StudyMode
-      task={task}
-      onExit={() => navigate("tasks")}
-      onTaskUpdate={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
-      userId={status?.user}
-      language={en ? "en" : "fr"}
-      voiceChat={!!status?.voiceChat}
-    />
+    <main className="studylog-page">
+      <h2>{L("Réviser", "Study")}</h2>
+      {cards.length === 0 ? (
+        <p className="muted small">{L("Rien à réviser pour l'instant — reviens plus tard.", "Nothing due right now — check back later.")}</p>
+      ) : (
+        <FlashcardDeck deck={sessionDeck} onReview={onReview} />
+      )}
+    </main>
   );
 }
 

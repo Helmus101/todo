@@ -33,6 +33,8 @@ interface StudyModeProps {
   onTaskUpdate: (t: WebTask) => void;
   userId?: string;
   language?: "fr" | "en";
+  /** Opt-in mic input + read-aloud in the Ask Otto chat below — see Profile.voiceChat's doc comment. */
+  voiceChat?: boolean;
 }
 
 // ── Detect task type from task title/description ──────────────────────────────
@@ -189,7 +191,7 @@ export const AUDIO_OPTIONS: { id: NoiseType; label: string }[] = [
 ];
 
 // ── Main StudyMode component ───────────────────────────────────────────────────
-export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" }: StudyModeProps) {
+export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr", voiceChat = false }: StudyModeProps) {
   const [phase, setPhase] = useState<"setup" | "session">("setup");
   const [env, setEnv] = useState<StudyEnvironment | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
@@ -845,6 +847,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
             onOpenNote={(id, title) => openArtifactByKind("note", id, title)}
             onOpenDeck={(id, title) => openArtifactByKind("deck", id, title)}
             onOpenQuiz={(id, title) => openArtifactByKind("quiz", id, title)}
+            voiceChat={voiceChat}
           />
         )}
       </div>

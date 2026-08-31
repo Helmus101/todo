@@ -1,6 +1,6 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText } from "../ui.tsx";
+import { renderChatText, stripStrayMarkdown } from "../ui.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -17,6 +17,20 @@ interface AskOttoPanelProps {
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
+  /** Opt-in mic input + read-aloud — Settings' "Voice chat with Otto" toggle (Profile.voiceChat). Built on
+   *  the browser's own Web Speech API (SpeechRecognition for input, speechSynthesis for read-aloud) rather
+   *  than a hosted or self-hosted STT/TTS service: this is the one way to offer voice at genuinely zero
+   *  marginal cost on a serverless deployment with no persistent compute to host a model on. */
+  voiceChat?: boolean;
+}
+
+// SpeechRecognition is still vendor-prefixed in some browsers (Chrome/Edge/Safari) and entirely absent in
+// Firefox — feature-detect once rather than assuming, so the mic button just doesn't render where it can't
+// work instead of throwing when clicked.
+type SpeechRecognitionCtor = new () => any;
+function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
+  if (typeof window === "undefined") return null;
+  return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
 }
 
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
@@ -24,14 +38,57 @@ interface AskOttoPanelProps {
 // they're on the main task card or inside Study Mode, not a stripped-down copy.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, slow, verySlow, onSend, onClose,
-  onOpenNote, onOpenDeck, onOpenQuiz,
+  onOpenNote, onOpenDeck, onOpenQuiz, voiceChat,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const [listening, setListening] = useState(false);
+  const [speakingIdx, setSpeakingIdx] = useState<number | null>(null);
+  const canListen = !!voiceChat && !!getSpeechRecognitionCtor();
+  const canSpeak = !!voiceChat && typeof window !== "undefined" && "speechSynthesis" in window;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
   }, [task.chat?.length, sending]);
+
+  // Stop any in-flight mic/speech the moment voice chat is turned off or the panel unmounts — nothing
+  // should keep listening or talking in the background once the student leaves this drawer.
+  useEffect(() => () => {
+    recognitionRef.current?.stop();
+    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+  }, []);
+
+  const toggleListen = useCallback(() => {
+    if (listening) { recognitionRef.current?.stop(); return; }
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) return;
+    const rec = new Ctor();
+    rec.lang = document.documentElement.lang === "en" ? "en-US" : "fr-FR";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (e: any) => {
+      const text = Array.from(e.results as any).map((r: any) => r[0]?.transcript || "").join(" ").trim();
+      if (text) setInput(text);
+    };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => setListening(false);
+    recognitionRef.current = rec;
+    setListening(true);
+    rec.start();
+  }, [listening, setInput]);
+
+  const speak = useCallback((idx: number, text: string) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    if (speakingIdx === idx) { setSpeakingIdx(null); return; }
+    const utter = new SpeechSynthesisUtterance(stripStrayMarkdown(text));
+    utter.lang = document.documentElement.lang === "en" ? "en-US" : "fr-FR";
+    utter.onend = () => setSpeakingIdx(null);
+    utter.onerror = () => setSpeakingIdx(null);
+    setSpeakingIdx(idx);
+    window.speechSynthesis.speak(utter);
+  }, [speakingIdx]);
 
   return (
     <div className="sm-drawer sm-drawer-ai">
@@ -67,6 +124,11 @@ export function AskOttoPanel({
             {m.role === "assistant" && m.guardrail ? (
               <span className="sm-ai-guardrail-tag">Otto guides, doesn't do it for you</span>
             ) : null}
+            {m.role === "assistant" && canSpeak ? (
+              <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm sm-ai-speak" aria-label={speakingIdx === i ? "Stop reading aloud" : "Read aloud"} onClick={() => speak(i, m.text)}>
+                {speakingIdx === i ? "◼ Stop" : "▶ Listen"}
+              </button>
+            ) : null}
           </div>
         ))}
         {pendingMsg ? <div className="sm-ai-msg sm-ai-msg-user sm-ai-msg-pending">{pendingMsg}</div> : null}
@@ -100,6 +162,11 @@ export function AskOttoPanel({
           disabled={sending}
           autoFocus
         />
+        {canListen ? (
+          <button type="button" className={`sm-btn sm-btn-ghost sm-ai-mic ${listening ? "sm-ai-mic-active" : ""}`} aria-pressed={listening} aria-label={listening ? "Stop listening" : "Speak your message"} onClick={toggleListen} disabled={sending}>
+            {listening ? "◼" : "●"}
+          </button>
+        ) : null}
         <button className="sm-btn sm-btn-primary" onClick={onSend} disabled={sending || !input.trim()}>
           Send
         </button>
