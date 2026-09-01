@@ -733,13 +733,20 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // now mutate it in place via the "remember" tool, so it needs a real object to write into for that to
     // ever take effect, not just for the token-usage bump that used to be the only reason this existed.
     const profile = req.session.profile ||= emptyProfile();
+    // Read-only connected-account access (e.g. "did my teacher already reply?") — integrations.readOnly()
+    // strips every write action at both the schema and call level before chatAboutTask ever sees it, so
+    // this can never send/draft/delete anything, unlike runTask's own (separately scoped) tool access.
+    // Best-effort: toolsFor already swallows its own errors into `undefined`, so a Composio hiccup here
+    // just means chat runs without account access this turn, not a broken chat.
+    const rawExtras = await toolsFor(req);
+    const extras = rawExtras ? integrations.readOnly(rawExtras) : undefined;
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials },
+      { stepIndex, materials, extras },
     );
     addUsage(profile, out.tokens); // untracked before — a tool-calling turn can now cost like a small run
     const now = new Date().toISOString();

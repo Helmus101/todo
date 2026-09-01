@@ -294,7 +294,26 @@ export const PLAN_ONLY_OVERRIDE =
   `"research/arrange/book" something (travel, a reservation, a purchase), search Gmail/Calendar for a ` +
   `confirmation that it's ALREADY arranged (a booking email, a confirmed calendar event, a thread where it was ` +
   `settled). If you find it's already handled, say so in "context" and drop that step — never propose ` +
-  `re-researching or re-arranging something that's already confirmed in their own inbox/calendar.` +
+  `re-researching or re-arranging something that's already confirmed in their own inbox/calendar. ` +
+  `(g) GROUNDING — EVERY SPECIFIC CLAIM NEEDS A REAL TOOL CALL BEHIND IT, NO EXCEPTIONS. Never write that ` +
+  `something "appears in your Drive doc", "shows up in your inbox", "is referenced in X" unless a tool call ` +
+  `THIS RUN actually returned that exact content — not a plausible inference from the task title, not ` +
+  `something that seems like it would probably be true given the subject. A student reading a fiche/note ` +
+  `has no way to tell "Otto actually found this in your files" apart from "Otto guessed this would probably ` +
+  `be in your files" — they read both as equally verified, so presenting a guess with the confidence of a ` +
+  `finding is a lie by presentation even if every individual word is hedged-sounding. If you're inferring or ` +
+  `pattern-matching rather than quoting/citing something a tool actually returned, say so explicitly ` +
+  `("I couldn't confirm this, but given the topic it's likely...") — never phrase an inference as a discovery. ` +
+  `(h) A DEAD END IS A VALID, HONEST OUTCOME — don't dress one up as a deliverable. If your searches (web AND ` +
+  `connected apps) genuinely come back empty after real attempts with varied terms — not just one obvious ` +
+  `query — that's real information, not a failure to hide: say plainly what you tried and that it came up ` +
+  `empty, and make the step something the student can actually do that you can't (go look in person, ask ` +
+  `someone, check a source you don't have access to). Do NOT paper over an empty result by writing a note ` +
+  `that restates context the student already had (the task's own title/why) dressed up as new findings — ` +
+  `that reads as if research happened when it didn't, which is exactly the fabrication (g) forbids. Before ` +
+  `calling it empty, actually vary your approach at least once (drop a qualifier that might be wrong, try the ` +
+  `entity alone, try it as a different kind of thing — a place name might be a shop, a market stall, a ` +
+  `neighborhood, a building) — "I searched once and got nothing" is not the same as "I genuinely tried".` +
   `\n(2) OUTLINE THE STEPS — from that research, work out the ordered list of concrete things that need to ` +
   `happen for THIS task to be done. This is your plan; you'll trim it down to what's actually left in stage 4. ` +
   `ONE TASK, ONE TOPIC — reading a mailbox/Drive often surfaces OTHER unrelated things along the way (a ` +
@@ -665,6 +684,20 @@ async function retryRequest<T>(fn: () => Promise<T>, retries = 3, delayMs = 1000
     }
   }
   throw lastErr;
+}
+
+/** Cap `text` at `maxLen` WITHOUT cutting mid-word/mid-sentence — a plain `.slice()` at a hard character
+ *  count can land anywhere, including mid-word ("Bertrand" → "Bertra"), which reads as broken rather than
+ *  just short. Backs up to the last sentence-ending punctuation within the cap; if none exists (one long
+ *  run-on, or the cap lands before the first sentence ends), backs up to the last whitespace instead so it
+ *  at least ends on a whole word. Only appends "…" when it actually cut something short. */
+function truncateCleanly(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  const slice = text.slice(0, maxLen);
+  const lastSentence = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "), slice.lastIndexOf(".\n"));
+  if (lastSentence > maxLen * 0.4) return slice.slice(0, lastSentence + 1);
+  const lastSpace = slice.lastIndexOf(" ");
+  return (lastSpace > 0 ? slice.slice(0, lastSpace) : slice).trim() + "…";
 }
 
 /** Tolerant: pull the first JSON value (object or array) out of a model reply. */
@@ -3108,8 +3141,12 @@ const CHAT_TOKEN_CEILING = 40_000;
  * Reply in a per-task coaching thread. Grounded in that ONE task's own context/steps/why so the student
  * never has to re-explain their situation, and scoped to being a supportive guide — never a ghostwriter.
  * Tool-capable (web_search + the three CREATE_* artifact tools, bounded) so the tutor can look something up
- * or hand over a deck/quiz/fiche mid-conversation instead of only ever talking — but NEVER Composio: chat
- * must not be able to touch the student's connected accounts.
+ * or hand over a deck/quiz/fiche mid-conversation instead of only ever talking.
+ * Composio access (opts.extras) is READ-ONLY, unlike runTask's — `integrations.readOnly()` strips every
+ * write action at both the schema AND call level (server/integrations.ts) before it ever reaches here, so
+ * chat can search/read a connected account (e.g. "did my teacher already reply about the deadline?") but
+ * can never send, draft, delete, or modify anything through it. Whatever `extras` this function receives
+ * MUST already be read-only-scoped by the caller — this function does not scope it itself.
  */
 export async function chatAboutTask(
   task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean; substeps?: { text: string; done: boolean }[] }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string; flashcards?: TaskFlashcards[]; quizzes?: TaskQuiz[] },
@@ -3117,7 +3154,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[] },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -3306,6 +3343,11 @@ export async function chatAboutTask(
     `back-and-forth, not one clever question followed by the full explanation next turn. Keep checking in, ` +
     `keep adjusting to what they just said, keep it going turn by turn until it's actually landed — don't treat ` +
     `the second reply as the moment to unload everything you held back from the first.` +
+    (opts?.extras?.connected?.length
+      ? `\n\nCONNECTED APPS YOU CAN SEARCH (read-only — never send/draft/delete/modify anything through them, ` +
+        `that's not what these are here for; just look something up when it genuinely helps, e.g. "did the ` +
+        `teacher already reply about the deadline?"): ${opts.extras.connected.join(", ")}.\n`
+      : "") +
     `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}` +
     assignmentBlock(task) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials);
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
@@ -3325,7 +3367,11 @@ export async function chatAboutTask(
   // mentioned teammate, a recurring struggle, a professor's grading quirk) — same tool/category the main
   // agent (RUN_TOOLS) already uses, so a fact learned in chat and one learned during a task run land in the
   // exact same place and get deduped against each other.
-  const tools = [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL];
+  // opts.extras is already read-only-scoped by the caller (server/index.ts wraps it in integrations.readOnly
+  // before passing it here) — e.g. GMAIL_FETCH_EMAILS, so the tutor can check "did my teacher already
+  // reply?" without ever being able to send/draft/delete anything through it.
+  const readOnlyExtras = opts?.extras;
+  const tools = [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -3346,8 +3392,12 @@ export async function chatAboutTask(
     // 2400 (was 1200): a genuine tutoring turn — a method walked through step by step, or a parallel worked
     // example — legitimately runs longer than a one-line nudge, and truncating mid-explanation is worse than
     // no explanation. The prompt still pushes hard for SHORT by default; this only stops the rare long-but-
-    // warranted reply from being cut off mid-sentence.
-    result.reply = reply.trim().slice(0, 2400) || (fr ? "Je suis là — qu'est-ce qui te bloque exactement ?" : "I'm here — what part of this is giving you trouble?");
+    // warranted reply from being cut off mid-sentence — a plain `.slice(0, 2400)` here used to cut off
+    // literally mid-WORD ("Bertrand" → "Bertra"), which is worse than the truncation this comment always
+    // claimed to prevent. truncateCleanly backs up to the last sentence end (falling back to the last word
+    // boundary if there's no sentence break inside the cap) and marks the cut with an ellipsis, so a
+    // response is never handed back looking like it broke mid-thought.
+    result.reply = truncateCleanly(reply.trim(), 2400) || (fr ? "Je suis là — qu'est-ce qui te bloque exactement ?" : "I'm here — what part of this is giving you trouble?");
     return result;
   };
 
@@ -3371,13 +3421,18 @@ export async function chatAboutTask(
         // Fewer/faster retries than the default (3 attempts, 1s+ backoff) — this is a live chat turn, not
         // a background sweep, and CHAT_DEADLINE_MS below is the real backstop anyway. One retry, short
         // delay: worth it for a genuine blip, not worth burning seconds of the user's wait on a repeat.
+        // retryRequest's loop exits when `i === retries - 1`, so `retries: 1` was actually giving ZERO
+        // retries (threw immediately on the first failure) despite this comment always having said "one
+        // retry" — a transient blip (a momentary rate limit, a brief network hiccup) went straight to the
+        // generic "I'm here — what part of this is giving you trouble?" fallback with no second attempt at
+        // all. `retries: 2` is what actually produces one retry.
         res = await retryRequest(() => client.chat.completions.create({
           model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
           messages: apiMessages,
           // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
           // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
           ...(lastRound ? {} : { tools: tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
-        }), 1, 400);
+        }), 2, 400);
       } catch (e: any) {
         // This used to swallow the real error completely — the ONLY visible symptom was every chat
         // message (even "hello") silently landing on the generic fallback line, with nothing in server
@@ -3434,6 +3489,19 @@ export async function chatAboutTask(
             content = "saved";
             logAudit("tool", fr ? `Retenu : ${fact.slice(0, 140)}` : `Remembered: ${fact.slice(0, 140)}`);
           }
+        } else if (readOnlyExtras?.tools.some((t) => t.name === name)) {
+          // A real connected-account call (e.g. GMAIL_FETCH_EMAILS) — unlike the in-app tools above, this is
+          // genuine external network latency on top of DeepSeek's own, against the same CHAT_DEADLINE_MS
+          // budget. A 15s cap here means one slow Composio call degrades to "couldn't check that" instead of
+          // silently eating the whole turn's time budget by itself.
+          try {
+            const r = await Promise.race([
+              readOnlyExtras!.call(String(name), input || {}),
+              new Promise<string>((resolve) => setTimeout(() => resolve("ERROR: timed out — try asking again."), 15_000)),
+            ]);
+            content = r ?? "ERROR: that didn't return anything.";
+            logAudit("tool", fr ? `Recherche dans un compte connecté : ${String(name)}` : `Searched a connected account: ${String(name)}`);
+          } catch (e: any) { content = `ERROR: ${e?.message || "that call failed"}.`; }
         } else content = "ERROR: unknown tool.";
         messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: untrustedToolResult(String(content).slice(0, 2000)) });
       }
