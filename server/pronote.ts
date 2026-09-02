@@ -124,12 +124,18 @@ function withPronoteLock<T>(email: string, fn: () => Promise<T>): Promise<T> {
 // no indication of what was actually wrong. Real Pronote URLs need the specific page path (the Settings
 // form's own placeholder shows this: .../pronote/eleve.html or .../pronote/parent.html) — normalize a
 // bare-domain input to the right one for the account kind instead of forcing the student to already know
-// this and retype it. Leaves an already-correct URL (or anything else unrecognized) untouched.
+// this and retype it. Leaves an already-correct URL untouched.
+// NOTE: deliberately does NOT use pawnote's own `cleanURL` here — that function strips the page filename
+// entirely (turns ".../pronote/eleve.html" into just ".../pronote"), which is presumably right for
+// whatever pawnote uses it for internally, but is exactly the WRONG transformation for what this function
+// needs: loginCredentials wants the full page path, and blindly cleaning first (an earlier version of this
+// function did) silently mangled an already-correct URL into ".../pronote/pronote/eleve.html" — a real,
+// shipped regression, caught immediately when a real account with the full correct URL still failed.
 function normalizePronoteUrl(url: string, kind: number): string {
-  const cleaned = pronote.cleanURL(url);
-  if (/\/pronote\/[a-z]+\.html/i.test(cleaned)) return cleaned; // already points at a specific page
+  const trimmed = url.trim().replace(/\/+$/, "");
+  if (/\/pronote\/[a-z]+\.html/i.test(trimmed)) return trimmed; // already points at a specific page — leave it alone
   const page = kind === pronote.AccountKind.PARENT ? "parent.html" : "eleve.html";
-  return `${cleaned.replace(/\/+$/, "")}/pronote/${page}`;
+  return /\/pronote$/i.test(trimmed) ? `${trimmed}/${page}` : `${trimmed}/pronote/${page}`;
 }
 
 /** Connect a Pronote account: log in ONCE with the real credentials (never stored past this call), then
