@@ -17,6 +17,7 @@ import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPr
 import type { AcademicContext } from "./claude.ts";
 import { replanMilestones } from "./milestones.ts";
 import { computeWorkload } from "./workload.ts";
+import { reportError } from "./sentry.ts";
 
 /** Live Pronote homework/exams for a task's own run/chat context — best-effort, never blocks execution. */
 async function loadAcademicContext(email: string): Promise<AcademicContext | undefined> {
@@ -467,6 +468,7 @@ export async function drain(limit = 3, budgetMs = 240_000, userEmail?: string): 
       processed++;
     } catch (e: any) {
       console.error(`[jobs] ${job.type} failed for ${job.user_email}${job.task_id ? ` task ${job.task_id}` : ""}:`, e?.message || e);
+      reportError("job-failed", e, { jobType: job.type, email: job.user_email, taskId: job.task_id });
       await store.finishJob(job.id, workerId, "failed", e?.message || String(e));
       if (job.task_id) void store.recordEvent(job.user_email, "run_failed", { taskId: job.task_id, jobId: job.id, message: String(e?.message || e).slice(0, 200) });
       failed++;
@@ -540,7 +542,7 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       // enqueueJob is idempotent per task, so a queued task that still HAS a live job is a no-op here.
       const activeIds = await store.activeJobTaskIds(email);
       for (const t of tasksToEnqueue(list, activeIds)) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
-    } catch (e: any) { console.warn(`[jobs] cron skip ${email}:`, e?.message || e); }
+    } catch (e: any) { console.warn(`[jobs] cron skip ${email}:`, e?.message || e); reportError("cron-tick-skip", e, { email }); }
   }
   // Vercel Hobby caps cron at once/day (Pro allows finer schedules) — so THIS tick is the only guaranteed
   // background turn for most deployments, which makes fairness within it matter more, not less. Drain

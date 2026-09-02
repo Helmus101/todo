@@ -94,6 +94,25 @@ create index if not exists weave_web_job_events_task on weave_web_job_events (us
 alter table weave_web_jobs enable row level security;
 alter table weave_web_job_events enable row level security;
 
+-- ── Rate limiting ──────────────────────────────────────────────────────────────
+-- Cross-instance hit counters for rateLimit() (server/index.ts) — an in-memory Map's counts are per-process,
+-- so on a multi-instance/serverless deploy the real-world cap becomes max × instance-count, not max. This
+-- table is the shared counter every instance reads/writes instead. One row per (account or IP) + route.
+-- Hits are a JSON array of millisecond timestamps within the current sliding window — same shape the old
+-- in-memory version used, just persisted. The server falls back to the in-memory limiter if this table is
+-- unreachable (missing migration, or a transient outage), same graceful-degradation pattern as the job
+-- queue above — a rate limiter that fails should never take the whole app down with it.
+create table if not exists weave_web_ratelimits (
+  key text primary key,
+  hits jsonb not null default '[]'::jsonb,
+  updated_at timestamptz not null default now()
+);
+-- Stale rows (nothing hit in a while) are harmless dead weight, not a correctness issue — cleaned up lazily
+-- by the server rather than needing a cron job of its own; this index just makes that cheap if ever needed.
+create index if not exists weave_web_ratelimits_updated on weave_web_ratelimits (updated_at);
+alter table weave_web_ratelimits enable row level security;
+drop policy if exists "weave_web_ratelimits server access" on weave_web_ratelimits;
+
 -- ── DEV ONLY — local setups running with the ANON key (no service key) ────────────────────────
 -- DO NOT run this in production. These permissive policies let the semi-public anon key read/write the
 -- secret tables (password hashes, OAuth tokens) — acceptable only on a throwaway local project. In
@@ -104,3 +123,4 @@ alter table weave_web_job_events enable row level security;
 --   create policy "weave_web_sessions server access" on weave_web_sessions for all using (true) with check (true);
 --   create policy "weave_web_jobs server access"       on weave_web_jobs       for all using (true) with check (true);
 --   create policy "weave_web_job_events server access" on weave_web_job_events for all using (true) with check (true);
+--   create policy "weave_web_ratelimits server access"  on weave_web_ratelimits for all using (true) with check (true);

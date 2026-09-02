@@ -33,7 +33,7 @@
       "source": "/((?!assets/).*)",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache" },
-        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://logos.composio.dev; connect-src 'self' https://freedictionaryapi.com; frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://www.youtube-nocookie.com https://www.desmos.com; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'" },
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://logos.composio.dev; connect-src 'self' https://freedictionaryapi.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io; frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://www.youtube-nocookie.com https://www.desmos.com; font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'" },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "X-Frame-Options", "value": "DENY" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },

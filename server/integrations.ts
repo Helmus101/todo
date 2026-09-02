@@ -154,6 +154,21 @@ function sdk(): Composio {
   return (_client ||= new Composio({ apiKey }));
 }
 
+// The Composio SDK wraps its own HTTP calls with no exposed AbortSignal/timeout option, so unlike
+// server/websearch.ts's plain `fetch(..., { signal: AbortSignal.timeout(...) })`, a hung call here has no
+// native way to be cancelled. This is a LOGICAL timeout, not a true cancellation — the underlying request
+// may keep running in Composio's backend after we stop waiting on it — but it's what stops a stuck call
+// from stalling the caller (a sweep, an interactive request) toward Vercel's 300s function ceiling. 25s:
+// generous for a real third-party API round trip (unlike websearch's fast 9s), short enough to still
+// leave real budget for the rest of a run/sweep afterward.
+const COMPOSIO_TIMEOUT_MS = 25_000;
+function withComposioTimeout<T>(label: string, p: Promise<T>): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Composio call timed out: ${label}`)), COMPOSIO_TIMEOUT_MS)),
+  ]);
+}
+
 const isActive = (i: any) => ["ACTIVE", "CONNECTED", "ENABLED"].includes(String(i?.status ?? i?.connectionStatus ?? i?.state ?? "").toUpperCase());
 const acctToolkit = (i: any) => norm(i?.toolkit?.slug ?? i?.toolkit?.name ?? i?.toolkit ?? i?.appName ?? i?.app?.name ?? i?.app ?? i?.appUniqueId ?? i?.toolkitSlug ?? "");
 const acctId = (i: any) => String(i?.id ?? i?.connectedAccountId ?? i?.nanoId ?? "");
@@ -241,7 +256,7 @@ async function resolveAccountEmail(userId: string, app: string, accountId: strin
   const probe = EMAIL_PROBE[app];
   if (!probe) return undefined;
   try {
-    const r: any = await sdk().tools.execute(probe.action, { userId, arguments: probe.args, dangerouslySkipVersionCheck: true, connectedAccountId: accountId } as any);
+    const r: any = await withComposioTimeout(probe.action, sdk().tools.execute(probe.action, { userId, arguments: probe.args, dangerouslySkipVersionCheck: true, connectedAccountId: accountId } as any));
     const data = r?.data ?? r;
     const email = probe.pick(data);
     return typeof email === "string" && /@/.test(email) ? email : undefined;
@@ -346,13 +361,13 @@ function isTransientComposioError(e: any): boolean {
   const code = String(e?.code || e?.cause?.code || "");
   if (["ENOTFOUND", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(code)) return true;
   const msg = `${e?.message || ""} ${e?.cause?.message || ""}`;
-  if (/fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed/i.test(msg)) return true;
+  if (/fetch failed|socket hang up|terminated|aborted|premature close|network|other side closed|timed out/i.test(msg)) return true;
   return [429, 500, 502, 503, 504].includes(Number(e?.status));
 }
 async function executeWithRetry(action: string, args: Record<string, unknown>, retries = 2, delayMs = 500): Promise<any> {
   let lastErr: any;
   for (let i = 0; i <= retries; i++) {
-    try { return await sdk().tools.execute(action, args as any); }
+    try { return await withComposioTimeout(action, sdk().tools.execute(action, args as any)); }
     catch (e: any) {
       lastErr = e;
       if (!isTransientComposioError(e) || i === retries) throw e;
@@ -404,7 +419,7 @@ export async function updateGmailDraft(userId: string, draftId: string, patch: {
     if (patch.to) args.recipient_email = patch.to;
     if (patch.subject !== undefined) args.subject = patch.subject;
     if (patch.body !== undefined) args.body = patch.body;
-    const r: any = await sdk().tools.execute("GMAIL_UPDATE_EMAIL_DRAFT", { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+    const r: any = await withComposioTimeout("GMAIL_UPDATE_EMAIL_DRAFT", sdk().tools.execute("GMAIL_UPDATE_EMAIL_DRAFT", { userId, arguments: args, dangerouslySkipVersionCheck: true } as any));
     if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Update failed.") };
     return { ok: true };
   } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
@@ -435,7 +450,7 @@ export async function sendSendable(userId: string, s: { app: string; draftId?: s
     }
   } catch { /* best-effort — falls through to Composio's own default */ }
   try {
-    const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any);
+    const r: any = await withComposioTimeout(action, sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true, ...(connectedAccountId ? { connectedAccountId } : {}) } as any));
     if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Send failed.") };
     return { ok: true };
   } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
@@ -459,12 +474,12 @@ export async function sendSystemEmail(userId: string, opts: { to: string; subjec
       }
     } catch { /* best-effort — falls through to Composio's own default */ }
     // Composio's Gmail actions use snake_case param names (recipient_email, is_html).
-    const r: any = await sdk().tools.execute("GMAIL_SEND_EMAIL", {
+    const r: any = await withComposioTimeout("GMAIL_SEND_EMAIL", sdk().tools.execute("GMAIL_SEND_EMAIL", {
       userId,
       arguments: { recipient_email: opts.to, subject: opts.subject, body: opts.body, is_html: true },
       dangerouslySkipVersionCheck: true,
       ...(connectedAccountId ? { connectedAccountId } : {}),
-    } as any);
+    } as any));
     if (r && (r.successful === false || r.error)) return { ok: false, error: String(r.error || "Send failed.") };
     return { ok: true };
   } catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
@@ -676,7 +691,7 @@ export async function readAction(userId: string, action: string, args: Record<st
 export interface SmokeResult { app: string; step: string; ok: boolean; detail?: string }
 
 async function execDirect(userId: string, action: string, args: Record<string, unknown>): Promise<any> {
-  const r: any = await sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any);
+  const r: any = await withComposioTimeout(action, sdk().tools.execute(action, { userId, arguments: args, dangerouslySkipVersionCheck: true } as any));
   if (r && r.successful === false) throw new Error(String(r.error || `${action} failed`));
   return r?.data ?? r;
 }
@@ -809,11 +824,11 @@ export const DOC_LINK = /docs\.google\.com\/(document|spreadsheets|presentation)
 export async function isArtifactShared(userId: string, fileId: string): Promise<boolean> {
   if (!fileId) return true;
   try {
-    const r: any = await sdk().tools.execute("GOOGLEDRIVE_GET_FILE_METADATA", {
+    const r: any = await withComposioTimeout("GOOGLEDRIVE_GET_FILE_METADATA", sdk().tools.execute("GOOGLEDRIVE_GET_FILE_METADATA", {
       userId,
       arguments: { file_id: fileId, fields: "shared,permissions,ownedByMe" },
       dangerouslySkipVersionCheck: true,
-    } as any);
+    } as any));
     if (!r || r.successful === false) return true; // couldn't check → fail closed
     const meta = (r.data ?? r)?.response_data ?? r.data ?? r;
     if (meta?.shared === true) return true;

@@ -22,6 +22,8 @@
   },
   "dependencies": {
     "@composio/core": "^0.17.0",
+    "@sentry/node": "^10.73.0",
+    "@sentry/react": "^10.73.0",
     "@supabase/supabase-js": "^2.43.2",
     "@vercel/analytics": "^2.0.1",
     "bcryptjs": "^2.4.3",

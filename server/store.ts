@@ -4,6 +4,7 @@ import type { Credentials } from "google-auth-library";
 import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile } from "../shared/types.ts";
 import { encryptSecret, decryptSecret } from "./crypto.ts";
+import { reportError } from "./sentry.ts";
 
 /** A persisted Google connection for an account (incl. the refresh token, so it stays connected). */
 export interface StoredGoogle { tokens: Credentials; email?: string; }
@@ -66,25 +67,57 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
   if (probe) { console.warn(`[store] persistent sessions OFF — run web/supabase.sql to create '${SESSIONS}' (${probe.message}). Using in-memory sessions (lost on restart).`); return undefined; }
   const ttlMs = (sess: any) => (sess?.cookie?.maxAge ?? 30 * 24 * 3600 * 1000);
   const expiry = (sess: any) => new Date(Date.now() + ttlMs(sess)).toISOString();
+  // express-session's middleware calls store.get() on EVERY authenticated request to hydrate req.session —
+  // each one was a fresh `select("sess,expire")` pulling the ENTIRE session blob (profile + all tasks,
+  // notes, flashcards, quizzes, chat history, audit trail — see shared/types.ts) straight from Supabase.
+  // That's the single biggest egress driver in this app: a page load alone fires several API calls close
+  // together (status, tasks, reviews/due, ...), each separately re-fetching the identical blob, and the
+  // client's own 45s poll (client/App.tsx) repeats that every cycle for every open tab. A short in-memory
+  // cache (per warm process — helps a long-running server fully, and helps a serverless deployment for
+  // requests landing on the same warm instance within the window) collapses that burst into one real read.
+  // 4s: long enough to absorb a page load's request burst and back-to-back polls firing close together,
+  // short enough that a genuinely stale read (another tab/device just wrote) self-heals almost immediately
+  // even without the explicit invalidation below.
+  const GET_CACHE_TTL_MS = 4000;
+  // Bounded so this can't grow forever on a long-running server (a serverless deployment recycles the
+  // process anyway) — every distinct sid that's ever hit get()/set() would otherwise sit in memory until
+  // process restart, and a session blob can be sizeable (see comment above). A Map preserves insertion
+  // order, so deleting from the front evicts the OLDEST entries first — a crude but correct LRU-ish bound
+  // given entries are re-inserted (moved conceptually to "recently used") via delete+set in `touch()` below.
+  const GET_CACHE_MAX = 500;
+  const getCache = new Map<string, { at: number; sess: any }>();
+  const cacheSet = (sid: string, sess: any) => {
+    getCache.delete(sid); // re-insert to the end so this counts as "most recently used" for eviction below
+    getCache.set(sid, { at: Date.now(), sess });
+    while (getCache.size > GET_CACHE_MAX) { const oldest = getCache.keys().next().value; if (oldest === undefined) break; getCache.delete(oldest); }
+  };
   class SupabaseStore extends session.Store {
     get(sid: string, cb: (err: any, sess?: any) => void) {
+      const cached = getCache.get(sid);
+      if (cached && Date.now() - cached.at < GET_CACHE_TTL_MS) { cb(null, cached.sess); return; }
       c.from(SESSIONS).select("sess,expire").eq("sid", sid).maybeSingle().then(
         ({ data, error }) => {
-          if (error) return cb(error);
+          if (error) { reportError("session-store-get", error); return cb(error); }
           if (!data) return cb(null, null);
           if (data.expire && new Date(data.expire).getTime() < Date.now()) { this.destroy(sid, () => {}); return cb(null, null); }
+          cacheSet(sid, data.sess);
           cb(null, data.sess);
         },
         (e) => cb(e),
       );
     }
     set(sid: string, sess: any, cb?: (err?: any) => void) {
+      // Cache the just-written value immediately (not just invalidate) — the very next get() in the same
+      // burst (extremely common: a route calls commit() then the response handler re-reads) would otherwise
+      // do a real round-trip anyway, right after we already had the answer in hand.
+      cacheSet(sid, sess);
       c.from(SESSIONS).upsert({ sid, sess, expire: expiry(sess) }, { onConflict: "sid" }).then(
-        ({ error }) => cb?.(error || undefined),
-        (e) => cb?.(e),
+        ({ error }) => { if (error) reportError("session-store-set", error); cb?.(error || undefined); },
+        (e) => { reportError("session-store-set", e); cb?.(e); },
       );
     }
     destroy(sid: string, cb?: (err?: any) => void) {
+      getCache.delete(sid);
       c.from(SESSIONS).delete().eq("sid", sid).then(({ error }) => cb?.(error || undefined), (e) => cb?.(e));
     }
     touch(sid: string, sess: any, cb?: (err?: any) => void) {
@@ -167,19 +200,38 @@ async function withRetry<T>(label: string, op: () => Promise<{ data: T; error: {
   return { data: null, error: lastErr };
 }
 
+// loadState() is called from ~15 places across index.ts/pronote.ts/jobs.ts — commit()'s own background
+// cross-device merge, findTaskOrReload's cloud-miss fallback, the login/session-bootstrap path, the sweep
+// job, etc. Each was previously an uncached `select(...)` returning the account's full profile+tasks blob
+// (the same egress driver as the session store, see makeSessionStore's cache above) — a single request
+// that touches a couple of these call sites (routine before this cache existed) paid for that blob's full
+// weight multiple times over. Same pattern, same reasoning: short TTL, invalidate-on-write, bounded size.
+const STATE_CACHE_TTL_MS = 4000;
+const STATE_CACHE_MAX = 500;
+const stateCache = new Map<string, { at: number; state: AccountState }>();
+function cacheSetState(email: string, state: AccountState) {
+  stateCache.delete(email);
+  stateCache.set(email, { at: Date.now(), state });
+  while (stateCache.size > STATE_CACHE_MAX) { const oldest = stateCache.keys().next().value; if (oldest === undefined) break; stateCache.delete(oldest); }
+}
+
 /** Load an account's saved profile + tasks + Google connection. Empty if cloud off or row missing.
  *  Transient network failures are retried (see withRetry) so a blip never collapses state to empty. */
 export async function loadState(email?: string): Promise<AccountState> {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
+  const cached = stateCache.get(email);
+  if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
   const { data, error } = await withRetry("load", async () =>
     client!.from(TABLE).select("profile,tasks,google,pronote").eq("email", email).maybeSingle());
-  if (error) { console.warn("[store] load failed:", error.message); return { profile: emptyProfile(), tasks: [] }; }
+  if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
   const pronote = d?.pronote && d.pronote.token
     ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token) }
     : undefined;
-  return { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote };
+  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote };
+  cacheSetState(email, result);
+  return result;
 }
 
 /** Persist an account's profile + tasks + Google/Pronote connection (best-effort; never throws into the
@@ -195,9 +247,14 @@ export async function saveState(email: string | undefined, state: AccountState):
   if ("pronote" in state) {
     row.pronote = state.pronote ? { ...state.pronote, token: encryptSecret(state.pronote.token) } : null;
   }
+  // Invalidate rather than try to update-in-place: `state` here often omits google/pronote entirely (see
+  // comment above), so overwriting the cached entry with it would wrongly blank out fields this save never
+  // touched. A plain delete costs one extra real read on the next loadState() for this email — cheap and
+  // safe compared to reconstructing the merged shape by hand.
+  stateCache.delete(email);
   const { error } = await withRetry("save", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
-  if (error) console.warn("[store] save failed:", error.message);
+  if (error) { console.warn("[store] save failed:", error.message); reportError("save-state", error, { email }); }
 }
 
 /** Every account email with saved state — the cron sweeper iterates these to work while users are offline. */
@@ -208,6 +265,44 @@ export async function listAccountEmails(limit = 200): Promise<string[]> {
     if (error) { console.warn("[store] listAccountEmails failed:", error.message); return []; }
     return (data || []).map((r: any) => String(r.email)).filter(Boolean);
   } catch { return []; }
+}
+
+const RATELIMITS = "weave_web_ratelimits";
+// Cached across calls, not re-probed every time — a missing table (migration not yet run) shouldn't mean a
+// failed `select` on literally every rate-limited request forever; one probe per boot is enough, mirroring
+// makeSessionStore's own probe-then-remember pattern above.
+let ratelimitsTableOk: boolean | null = null;
+
+/** Cross-instance rate-limit check backed by Supabase — see `weave_web_ratelimits` in supabase.sql. Returns
+ *  `null` (not `{allowed:false}`) when the table is unreachable, so the caller can fall back to its
+ *  in-memory limiter rather than either failing open (no limit at all) or failing closed (locking everyone
+ *  out because a migration hasn't run yet). Read-then-write, not a single atomic op — under real concurrent
+ *  requests to the SAME key this can let a couple extra through right at the boundary, which is fine for
+ *  abuse mitigation (not a hard security limit); an RPC/stored-procedure version would close that gap at
+ *  the cost of a schema migration most deployments of this app don't need. */
+export async function checkRateLimit(key: string, max: number, windowMs: number): Promise<{ allowed: boolean; retryAfterMs: number } | null> {
+  if (!client || ratelimitsTableOk === false) return null;
+  const now = Date.now();
+  try {
+    const { data, error } = await client.from(RATELIMITS).select("hits").eq("key", key).maybeSingle();
+    if (error) { if (ratelimitsTableOk === null) { ratelimitsTableOk = false; console.warn(`[store] rate-limit table unreachable (${error.message}) — falling back to per-process limiting.`); } return null; }
+    ratelimitsTableOk = true;
+    const prior: number[] = Array.isArray((data as any)?.hits) ? (data as any).hits : [];
+    const hits = prior.filter((t) => now - t < windowMs);
+    if (hits.length >= max) {
+      return { allowed: false, retryAfterMs: windowMs - (now - hits[0]) };
+    }
+    hits.push(now);
+    // Cap the stored array itself (not just the window filter above) so a key that's ALWAYS at/near the
+    // cap never accumulates more than `max` entries in the jsonb column — bounded storage, not just
+    // bounded logical count.
+    void client.from(RATELIMITS).upsert({ key, hits: hits.slice(-max), updated_at: new Date().toISOString() }, { onConflict: "key" })
+      .then(({ error: e2 }) => { if (e2) reportError("ratelimit-write", e2, { key }); });
+    return { allowed: true, retryAfterMs: 0 };
+  } catch (e) {
+    reportError("ratelimit-check", e, { key });
+    return null;
+  }
 }
 
 /** GDPR right-to-erasure (Art. 17), self-serve: permanently deletes EVERY row this account owns, across

@@ -1,4 +1,6 @@
 import "./env.ts"; // load web/.env + the repo-root .env (COMPOSIO_API_KEY etc.) — MUST be first
+import { initSentry, reportError } from "./sentry.ts";
+initSentry(); // before anything else can throw — no-op if SENTRY_DSN isn't set
 import express from "express";
 import type { RequestHandler } from "express";
 import session from "express-session";
@@ -10,7 +12,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } f
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateWeeklyStudyDeck } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -186,31 +188,38 @@ const requireAuth: RequestHandler = (req, res, next) => {
   next();
 };
 
-// Per-account rate limiter (in-memory sliding window) for the expensive AI/Composio endpoints, so a runaway
-// client loop or a leaked session can't run up the bill. Keyed by account email (falls back to IP).
-// KNOWN LIMITATION (documented, not fixed): this Map is per-process. On a multi-instance/serverless
-// deploy (Vercel) each instance keeps its own counter, so the real-world cap is effectively
-// max × instance-count, not max. A correct fix needs a shared store (a Supabase table or Redis) for the
-// hit counters — a meaningfully bigger change than a single-process in-memory Map, deliberately out of
-// scope for now; flagging it here rather than leaving it silently assumed to be a hard cap.
+// Per-account rate limiter for the expensive AI/Composio endpoints (and login/signup), so a runaway client
+// loop, a leaked session, or a brute-force attempt can't run up the bill or bypass auth throttling. Keyed
+// by account email (falls back to IP). Primary check is Supabase-backed (checkRateLimit, server/store.ts)
+// so the cap is real across every serverless instance, not just per-process — an in-memory Map's counts
+// don't survive across instances, so on Vercel the old version's real-world cap was effectively
+// max × instance-count. Falls back to the in-memory Map below when Supabase is unreachable (table not
+// migrated yet, or a transient outage) — a rate limiter failing must never mean the app fails, just that
+// it temporarily degrades to the weaker per-process guarantee it always had before this existed.
 const rlHits = new Map<string, number[]>();
-const rateLimit = (max: number, windowMs: number): RequestHandler => (req, res, next) => {
+const inMemoryRateLimit = (key: string, max: number, windowMs: number): { allowed: boolean; retryAfterMs: number } => {
+  const now = Date.now();
+  const hits = (rlHits.get(key) || []).filter((t) => now - t < windowMs);
+  if (hits.length >= max) return { allowed: false, retryAfterMs: windowMs - (now - hits[0]) };
+  hits.push(now);
+  rlHits.set(key, hits);
+  if (rlHits.size > 5000) for (const [k, v] of rlHits) if (!v.some((t) => now - t < windowMs)) rlHits.delete(k); // bound memory
+  return { allowed: true, retryAfterMs: 0 };
+};
+const rateLimit = (max: number, windowMs: number): RequestHandler => async (req, res, next) => {
   // MUST key on the route's TEMPLATE (req.route.path, e.g. "/api/tasks/:id/run"), never req.path (the
   // resolved URL with the actual id/index baked in) — keying on req.path gave every distinct task/step id
   // its own independent counter, so cycling ids fully bypassed every per-task cap in this file (verified:
   // /run, /refine, /send/:index, /confirm, /dismiss, /step/:index/* all parameterized). req.route is set
   // by the time this runs since rateLimit is itself one of the matched route's own handlers.
   const key = `${req.session.user || req.ip}:${req.baseUrl}${req.route?.path || req.path}`;
-  const now = Date.now();
-  const hits = (rlHits.get(key) || []).filter((t) => now - t < windowMs);
-  if (hits.length >= max) {
-    const retry = Math.ceil((windowMs - (now - hits[0])) / 1000);
+  const cloud = await checkRateLimit(key, max, windowMs);
+  const result = cloud ?? inMemoryRateLimit(key, max, windowMs);
+  if (!result.allowed) {
+    const retry = Math.ceil(result.retryAfterMs / 1000);
     res.set("Retry-After", String(retry)).status(429).json({ error: `Too many requests — give it ${retry}s.` });
     return;
   }
-  hits.push(now);
-  rlHits.set(key, hits);
-  if (rlHits.size > 5000) for (const [k, v] of rlHits) if (!v.some((t) => now - t < windowMs)) rlHits.delete(k); // bound memory
   next();
 };
 // The agent's toolset for this account's connected apps (Composio). Empty if Composio's unset/nothing linked.
@@ -1661,7 +1670,7 @@ if (PROD && !process.env.VERCEL) {
 // Give every API consumer a consistent JSON error and a right-sized status; never leak a stack in prod.
 app.use(((err, _req, res, _next) => {
   const status = err?.status || err?.statusCode || (err?.type === "entity.too.large" ? 413 : err?.type === "entity.parse.failed" ? 400 : 500);
-  if (status >= 500) console.error("[weave-web] request error:", err?.message || err);
+  if (status >= 500) { console.error("[weave-web] request error:", err?.message || err); reportError("route-catchall", err); }
   if (res.headersSent) return;
   res.status(status).json({ error: status === 413 ? "Request body too large." : status === 400 ? "Malformed request body." : "Internal error." });
 }) as express.ErrorRequestHandler);
@@ -1670,8 +1679,8 @@ app.use(((err, _req, res, _next) => {
 // concurrent AI run (DeepSeek, googleapis, a tool reject) would otherwise crash the whole
 // process — killing every in-flight /run with "socket hang up" so tasks never finish (no steps).
 // Log and keep serving; the affected request already has its own try/catch and 500s on its own.
-process.on("unhandledRejection", (reason) => console.error("[weave-web] unhandledRejection:", reason));
-process.on("uncaughtException", (err) => console.error("[weave-web] uncaughtException:", err));
+process.on("unhandledRejection", (reason) => { console.error("[weave-web] unhandledRejection:", reason); reportError("unhandledRejection", reason); });
+process.on("uncaughtException", (err) => { console.error("[weave-web] uncaughtException:", err); reportError("uncaughtException", err); });
 
 // On Vercel the app is exported and invoked per-request by the serverless wrapper (api/index.ts) —
 // there is no long-lived listener. Everywhere else (local, Docker, Railway/Render/Fly) we listen.

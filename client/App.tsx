@@ -430,12 +430,16 @@ export function App() {
     window.addEventListener("focus", on);
     // A backend-generated task (from cron, another device, or a queued-but-not-auto-run item) is only ever
     // shown by a task re-fetch. The old 15-min tick meant such a task could sit INVISIBLE on an open, idle
-    // tab for up to 15 minutes ("it generated but doesn't show"). Poll the cheap /api/tasks GET every 45s so
+    // tab for up to 15 minutes ("it generated but doesn't show"). Poll the cheap /api/tasks GET every 90s so
     // new tasks surface quickly; the heavier sweep it also triggers stays gated by the user's cadence
     // (sweepIfDue is a fast no-op until due), so this doesn't sweep more often. Also re-pull /api/status on
     // the same tick — account-level fields (language, in particular) can change in another tab/device, and
     // without this an already-open session would show a stale language until reload.
-    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 45_000);
+    // Was 45s — every tick re-hydrates the Supabase-backed session (the FULL profile+tasks blob, see
+    // store.ts's SupabaseStore.get) on the server, so this interval is a direct multiplier on Supabase
+    // egress across every open tab/device. 90s still surfaces a new task well within a session (nowhere
+    // near the old 15-min problem this was built to fix), at half the request rate.
+    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 90_000);
     const fullTick = setInterval(on, 5 * 60_000); // periodic budget refresh + cadence-gated sweep check
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
   }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus]);

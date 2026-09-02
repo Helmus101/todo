@@ -1,15 +1,27 @@
 import { StrictMode, Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { Analytics } from "@vercel/analytics/react";
+import * as Sentry from "@sentry/react";
 import { App } from "./App.tsx";
 import "./styles.css";
+
+// Same purpose as the server-side wiring in server/sentry.ts: production error visibility, currently
+// nonexistent on the client (a render crash or a rejected promise only ever reached the console — a real
+// user's browser console, which nobody sees). No-ops entirely when VITE_SENTRY_DSN isn't set. A DSN isn't
+// a secret (it's meant to be embedded in client code, same as any analytics key) — VITE_-prefixed so Vite
+// exposes it to the browser bundle; a plain SENTRY_DSN (no VITE_ prefix, used server-side) never reaches
+// the client build.
+const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
+if (SENTRY_DSN) {
+  Sentry.init({ dsn: SENTRY_DSN, environment: import.meta.env.DEV ? "development" : "production", tracesSampleRate: 0 });
+}
 
 /** Last-resort error boundary: if any render throws (e.g. malformed task data), show a recoverable
  *  fallback instead of a blank white screen — credibility-critical for production. */
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null as Error | null };
   static getDerivedStateFromError(error: Error) { return { error }; }
-  componentDidCatch(error: Error) { console.error("[otto] render error:", error); }
+  componentDidCatch(error: Error) { console.error("[otto] render error:", error); if (SENTRY_DSN) Sentry.captureException(error, { tags: { scope: "render" } }); }
   render() {
     if (this.state.error) {
       return (
@@ -33,6 +45,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 if (typeof window !== "undefined") {
   const logCrash = (label: string, err: unknown) => {
     console.error(`[otto] ${label}:`, err);
+    if (SENTRY_DSN) Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { scope: label } });
     if (!import.meta.env.DEV) return;
     const box = document.createElement("div");
     box.style.cssText = "position:fixed;inset:auto 8px 8px 8px;z-index:99999;background:#c6462f;color:#fff;padding:10px 12px;border-radius:8px;font:12px monospace;max-height:40vh;overflow:auto;white-space:pre-wrap;";

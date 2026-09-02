@@ -27,6 +27,20 @@ import { credentialEncryptionConfigured } from "./crypto.ts";
 
 export const PRONOTE_KIND = { STUDENT: pronote.AccountKind.STUDENT, PARENT: pronote.AccountKind.PARENT } as const;
 
+// pawnote (the unofficial Pronote client this file wraps — see the module doc comment above) talks to a
+// real school's own server, which has no uptime/latency guarantee at all — a slow or hanging school portal
+// had no ceiling here, unlike server/websearch.ts's DuckDuckGo call which already timed out at 9s. A LOGICAL
+// timeout, same caveat as integrations.ts's Composio wrapper: this stops OUR wait, not necessarily the
+// underlying request. 20s: a login/homework-fetch round trip against a real (sometimes slow) school server
+// legitimately needs more room than a search API.
+const PRONOTE_TIMEOUT_MS = 20_000;
+function withPronoteTimeout<T>(label: string, p: Promise<T>): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Pronote call timed out: ${label}`)), PRONOTE_TIMEOUT_MS)),
+  ]);
+}
+
 // ── Dev-only mock (no real Pronote account needed) ──────────────────────────────────────────────────
 // Index Éducation's public demo instance has moved/changed URLs often enough that hardcoding one here
 // would just go stale again. This lets local dev/testing exercise the WHOLE pipeline (connect → discover
@@ -123,7 +137,7 @@ export async function connectPronote(email: string, opts: { url: string; usernam
     }
     try {
       const session = pronote.createSessionHandle();
-      const refresh = await pronote.loginCredentials(session, { url, kind, username, password: opts.password, deviceUUID });
+      const refresh = await withPronoteTimeout("loginCredentials", pronote.loginCredentials(session, { url, kind, username, password: opts.password, deviceUUID }));
       // needsReconnect is deliberately omitted (not set false) — a fresh successful login has nothing to
       // carry forward from any prior dead-token flag; a full replacement object naturally clears it.
       const stored: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier };
@@ -190,10 +204,10 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
   if (!stored) return undefined;
   try {
     const session = pronote.createSessionHandle();
-    const refresh = await pronote.loginToken(session, {
+    const refresh = await withPronoteTimeout("loginToken", pronote.loginToken(session, {
       url: stored.url, username: stored.username, kind: stored.kind as pronote.AccountKind, token: stored.token,
       deviceUUID: stored.deviceUUID, navigatorIdentifier: stored.navigatorIdentifier,
-    });
+    }));
     const rotated: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID: stored.deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier };
     await saveRotatedToken(email, rotated);
     try { return await fn(session); }
@@ -240,7 +254,7 @@ export async function pronoteHomework(email: string, daysAhead = HOMEWORK_DAYS_A
   const out = await withPronoteSession(email, async (session) => {
     const now = new Date();
     const end = new Date(now.getTime() + daysAhead * 86_400_000);
-    const assignments = await pronote.assignmentsFromIntervals(session, now, end);
+    const assignments = await withPronoteTimeout("assignmentsFromIntervals", pronote.assignmentsFromIntervals(session, now, end));
     return assignments
       .filter((a) => !a.done)
       .map((a): PronoteHomeworkItem => ({
@@ -271,7 +285,7 @@ export async function pronoteTests(email: string, daysAhead = TEST_DAYS_AHEAD): 
   const out = await withPronoteSession(email, async (session) => {
     const now = new Date();
     const end = new Date(now.getTime() + daysAhead * 86_400_000);
-    const timetable = await pronote.timetableFromIntervals(session, now, end);
+    const timetable = await withPronoteTimeout("timetableFromIntervals", pronote.timetableFromIntervals(session, now, end));
     return timetable.classes
       .filter((c): c is pronote.TimetableClassLesson => c.is === "lesson" && (c as pronote.TimetableClassLesson).test === true && !(c as pronote.TimetableClassLesson).canceled)
       .map((c): PronoteTestItem => ({
