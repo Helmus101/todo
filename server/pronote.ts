@@ -94,6 +94,12 @@ function humanizeError(e: unknown): string {
   if (e instanceof pronote.SecurityError) return "Pronote demande une étape de sécurité supplémentaire non gérée ici (double authentification / CAPTCHA).";
   if (e instanceof pronote.SessionExpiredError) return "Session Pronote expirée — reconnecte-toi dans les Réglages.";
   const msg = (e as any)?.message || String(e);
+  // pawnote's own error text for a URL that doesn't point at a real Pronote page — normalizePronoteUrl
+  // (above) already fixes the common bare-domain case before this is ever reached, so seeing this still
+  // means the URL is genuinely wrong (wrong subdomain, typo) rather than just missing the page suffix.
+  if (/requested page does not exist/i.test(msg)) {
+    return "Impossible de contacter Pronote à cette adresse — vérifie l'URL (ex : https://0000000a.index-education.net/pronote/eleve.html), copiée depuis la page de connexion de ton établissement.";
+  }
   return `Impossible de contacter Pronote : ${msg}`.slice(0, 200);
 }
 
@@ -112,6 +118,20 @@ function withPronoteLock<T>(email: string, fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+// A student pasting just the school's base domain (e.g. "https://0753874d.index-education.net", copied
+// from a bookmark or a school handout rather than the actual login page's address bar) hit Pronote's
+// server root — not a real page — and got back a raw, unhelpful "The requested page does not exist" with
+// no indication of what was actually wrong. Real Pronote URLs need the specific page path (the Settings
+// form's own placeholder shows this: .../pronote/eleve.html or .../pronote/parent.html) — normalize a
+// bare-domain input to the right one for the account kind instead of forcing the student to already know
+// this and retype it. Leaves an already-correct URL (or anything else unrecognized) untouched.
+function normalizePronoteUrl(url: string, kind: number): string {
+  const cleaned = pronote.cleanURL(url);
+  if (/\/pronote\/[a-z]+\.html/i.test(cleaned)) return cleaned; // already points at a specific page
+  const page = kind === pronote.AccountKind.PARENT ? "parent.html" : "eleve.html";
+  return `${cleaned.replace(/\/+$/, "")}/pronote/${page}`;
+}
+
 /** Connect a Pronote account: log in ONCE with the real credentials (never stored past this call), then
  *  persist only the rotating token pawnote issues in their place. */
 export async function connectPronote(email: string, opts: { url: string; username: string; password: string; kind?: number }): Promise<{ ok: boolean; error?: string }> {
@@ -124,9 +144,10 @@ export async function connectPronote(email: string, opts: { url: string; usernam
     return { ok: false, error: "Pronote n'est pas disponible pour le moment — ce serveur n'est pas encore " +
       "configuré pour stocker les identifiants scolaires en toute sécurité. Réessaie plus tard ou contacte le support." };
   }
-  const url = opts.url.trim(), username = opts.username.trim();
-  if (!url || !username || !opts.password) return { ok: false, error: "L'URL, l'identifiant et le mot de passe sont requis." };
+  const rawUrl = opts.url.trim(), username = opts.username.trim();
+  if (!rawUrl || !username || !opts.password) return { ok: false, error: "L'URL, l'identifiant et le mot de passe sont requis." };
   const kind = opts.kind === pronote.AccountKind.PARENT ? pronote.AccountKind.PARENT : pronote.AccountKind.STUDENT;
+  const url = rawUrl.toLowerCase() === "demo" ? rawUrl : normalizePronoteUrl(rawUrl, kind);
   const deviceUUID = randomUUID();
   return withPronoteLock(email, async () => {
     if (MOCK_ENABLED && url.toLowerCase() === "demo") {
