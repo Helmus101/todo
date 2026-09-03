@@ -336,7 +336,7 @@ export function budgetRenewsOn(profile?: Profile | null, now: Date = new Date())
 // What kind of AI call spent the money — lets Settings answer "what's actually costing money" instead of
 // just a single opaque total. Deliberately a small, fixed set (not a free-text label) so it stays a real
 // breakdown a person can scan, not a growing pile of one-off strings.
-export type AddUsageCategory = "sweep" | "autorun" | "chat" | "manual_refine" | "other";
+export type AddUsageCategory = "sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "other";
 
 export function addUsage(profile: Profile, tokens?: { in?: number; out?: number; cachedIn?: number } | null, category: AddUsageCategory = "other"): void {
   const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0, cached = Number(tokens?.cachedIn) || 0;

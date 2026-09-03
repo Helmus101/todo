@@ -753,7 +753,7 @@ export function App() {
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "flashcards" ? (
-        <FlashcardsLibraryPage lang={status?.language} />
+        <FlashcardsLibraryPage lang={status?.language} tasks={tasks} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -1583,7 +1583,7 @@ const addDays = (dateStr: string, n: number): string => {
  *  every deck as it's created, so this is always populated even offline or if a task got pruned/merged
  *  server-side. Reviewing from here posts back to the deck's real owner (taskId) exactly like reviewing it
  *  from the task/journal itself — this is a second way IN, not a separate copy of the review state. */
-function FlashcardsLibraryPage({ lang }: { lang?: "fr" | "en" }) {
+function FlashcardsLibraryPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   const L = useLang();
   const en = lang === "en";
   const [decks, setDecks] = useState(() => getAllLocalDecks());
@@ -1596,6 +1596,13 @@ function FlashcardsLibraryPage({ lang }: { lang?: "fr" | "en" }) {
     return () => window.removeEventListener("focus", refresh);
   }, []);
   const open = decks.find((d) => d.deck.id === openId) || null;
+  // The local backup can outlive the deck it's a copy of — an old day's deck gets replaced by a fresh one
+  // (a new id) on regeneration, so a STALE local entry from before that happened points at a deckId the
+  // server no longer has under that task at all. Posting a review for it 404s on every single card (this
+  // was observed live: 17 consecutive 404s reviewing a stale deck). Check the deck actually still exists in
+  // the live task list before ever attempting a server post — a stale deck is still fully reviewable
+  // locally (FlashcardDeck tracks its own right/wrong regardless), it just can't sync to the server anymore.
+  const liveOwner = open ? tasks.find((t) => t.id === open.taskId && t.flashcards?.some((d) => d.id === open.deck.id)) : undefined;
   return (
     <main className="list-wrap">
       <div className="dash-head">
@@ -1618,10 +1625,15 @@ function FlashcardsLibraryPage({ lang }: { lang?: "fr" | "en" }) {
       )}
       {open ? (
         <TaskModal onClose={() => setOpenId(null)} title={open.deck.title}>
+          {!liveOwner ? (
+            <p className="settings-hint" style={{ marginBottom: "var(--space-3)" }}>
+              {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This deck's source has changed on the server — you can still review it, but progress won't sync.")}
+            </p>
+          ) : null}
           <FlashcardDeck
             deck={open.deck}
             taskId={open.taskId}
-            onReview={(cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); }}
+            onReview={liveOwner ? (cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); } : undefined}
           />
         </TaskModal>
       ) : null}
@@ -1909,7 +1921,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> } | null>(null);
+  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "other", number>> } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
   const [showTrustLog, setShowTrustLog] = useState(false);
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
@@ -1967,6 +1979,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                 ["autorun", L("tâches auto-exécutées", "auto-run tasks")],
                 ["chat", L("chat", "chat")],
                 ["manual_refine", L("tâches ajoutées", "added tasks")],
+                ["studylog", L("journal d'apprentissage", "study journal")],
                 ["other", L("autre", "other")],
               ] as const).filter(([k]) => (usage.byCategory[k] || 0) > 0)
                 .map(([k, label]) => `${label} : ${fmtEur(usage.byCategory[k] || 0)}`).join(" · ")}

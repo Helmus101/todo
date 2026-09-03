@@ -548,8 +548,27 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       // running them (a pause/over-budget skip, or a task-not-found race between enqueue and the state
       // commit). Nothing else re-queues a non-"ready" task, so without this they'd sit "working" forever.
       // enqueueJob is idempotent per task, so a queued task that still HAS a live job is a no-op here.
+      //
+      // CRITICAL: this used to enqueue up to 3 brand-new "ready" executions with NO connection to
+      // AUTO_RUN_DAILY_CAP (tasks.autoRunBudgetLeft) — the cap that's supposed to be the one hard ceiling
+      // on unattended, no-click AI spend per day. The sweep (processSweep, above) already spends against
+      // that same cap for ITS OWN auto-run picks; this catch-all ran completely independently, so a day
+      // with several backlog "ready" tasks could silently full-execute the sweep's 3 PLUS this step's 3
+      // more — 6 real agent runs (each its own multi-round tool-calling loop) with nothing the student
+      // clicked and nothing that showed up as a single obvious "why did this cost so much" line anywhere.
+      // Recovering a genuinely ORPHANED task (one whose execution was already committed to and paid for
+      // once) is NOT new discretionary spend, so only the brand-new "ready" picks are capped here.
       const activeIds = await store.activeJobTaskIds(email);
-      for (const t of tasksToEnqueue(list, activeIds)) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
+      const candidates = tasksToEnqueue(list, activeIds);
+      const orphaned = candidates.filter((t) => canonStatus(t.status) === "queued");
+      let readyBudget = tasks.autoRunBudgetLeft(profile, now);
+      const readyPicks = candidates.filter((t) => canonStatus(t.status) === "ready").slice(0, readyBudget);
+      const toEnqueueNow = [...orphaned, ...readyPicks];
+      for (const t of toEnqueueNow) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
+      if (readyPicks.length) {
+        tasks.recordAutoRuns(profile, readyPicks.length, now);
+        await commitUser(email, profile, list);
+      }
     } catch (e: any) { console.warn(`[jobs] cron skip ${email}:`, e?.message || e); reportError("cron-tick-skip", e, { email }); }
   }
   // Vercel Hobby caps cron at once/day (Pro allows finer schedules) — so THIS tick is the only guaranteed

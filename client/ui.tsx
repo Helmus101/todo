@@ -478,18 +478,27 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
     const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => setSkipFlipAnim(false)); });
     return () => { cancelAnimationFrame(raf1); if (raf2) cancelAnimationFrame(raf2); };
   }, [skipFlipAnim]);
-  const done = i >= deck.cards.length;
-  const card = !done ? deck.cards[i] : null;
+  // "Retry the ones I got wrong" — when set, we're cycling through JUST these original-deck indices instead
+  // of 0..cards.length sequentially. `i` still means "position in the current sequence" (now the retry
+  // queue's own position), and `cardIndex` below resolves that to the real index into deck.cards — this way
+  // right/wrong/onReview/localStorage all keep working exactly as before with zero special-casing: a card
+  // re-marked correct during a retry pass moves from `wrong` to `right` as normal, which is what makes the
+  // score screen you land back on after a retry pass show an updated, meaningful percentage.
+  const [retryQueue, setRetryQueue] = useState<number[] | null>(null);
+  const seqLen = retryQueue ? retryQueue.length : deck.cards.length;
+  const done = i >= seqLen;
+  const cardIndex = retryQueue ? retryQueue[i] : i;
+  const card = !done ? deck.cards[cardIndex] : null;
   const mark = (ok: boolean) => {
     if (!card) return;
     // Dedupe by index, not just append: going back to a card (see `back` below) and re-marking it must
     // REPLACE its earlier verdict, never leave both a stale "wrong" and a fresh "right" counted for the
     // same card at once — that would silently inflate the final score screen.
-    (ok ? setRight : setWrong)((prev) => [...prev.filter((x) => x !== i), i]);
-    (ok ? setWrong : setRight)((prev) => prev.filter((x) => x !== i));
+    (ok ? setRight : setWrong)((prev) => [...prev.filter((x) => x !== cardIndex), cardIndex]);
+    (ok ? setWrong : setRight)((prev) => prev.filter((x) => x !== cardIndex));
     // Fire-and-forget — the deck's own local right/wrong state (for the score screen) doesn't wait on the
     // network either, so this shouldn't make marking a card feel any less instant.
-    onReview?.(i, ok);
+    onReview?.(cardIndex, ok);
     setSkipFlipAnim(true);
     setFlipped(false);
     setI((v) => v + 1);
@@ -498,17 +507,25 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
   // always restart" spirit, but for one card instead of the whole deck. Never removes its recorded
   // verdict on its own; re-marking it (see `mark` above) is what actually changes the score.
   const back = () => { if (i === 0) return; setFlipped(false); setI((v) => v - 1); };
-  const restart = () => { setI(0); setFlipped(false); setRight([]); setWrong([]); };
+  const restart = () => { setRetryQueue(null); setI(0); setFlipped(false); setRight([]); setWrong([]); };
+  // Cycle through ONLY the cards currently marked wrong, in their original deck order — right/wrong stay as
+  // they are (not reset), so getting one right this time genuinely moves the needle on the score you see
+  // when this pass finishes, instead of starting the whole deck's tally over.
+  const retryWrong = () => { if (!wrong.length) return; setRetryQueue([...wrong].sort((a, b) => a - b)); setI(0); setFlipped(false); };
   // Local progress save — same reasoning as QuizPlayer's: closing the popup mid-deck (or a reload)
   // shouldn't throw away where you were. Per-card review outcomes are ALREADY durable server-side
   // (onReview writes them via /flashcard/.../review) — this only saves the local "which card am I on"
-  // position, which had nowhere else to live.
+  // position, which had nowhere else to live. Deliberately skipped mid-RETRY pass: `i` there means
+  // "position in the retry queue," not a raw deck index, and retryQueue itself isn't persisted — restoring
+  // that `i` after a reload without the matching queue would point at the wrong card. A reload mid-retry
+  // just falls back to the last normal-pass save (still valid) instead of a wrong position.
   useEffect(() => {
+    if (retryQueue) return;
     try {
       if (done) { localStorage.removeItem(`otto-deck:${deck.id}`); return; }
       localStorage.setItem(`otto-deck:${deck.id}`, JSON.stringify({ i, right, wrong }));
     } catch { /* private browsing / storage full — progress just won't survive a reload, not fatal */ }
-  }, [deck.id, i, right, wrong, done]);
+  }, [deck.id, i, right, wrong, done, retryQueue]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done) return;
@@ -529,7 +546,10 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
         </div>
         <p className="deck-score">{L(`${right.length} / ${deck.cards.length} correctes`, `${right.length} / ${deck.cards.length} correct`)}</p>
         <div className="deck-acts">
-          <button className="btn primary" onClick={restart}>{L("Recommencer", "Restart")}</button>
+          {wrong.length > 0 ? (
+            <button className="btn primary" onClick={retryWrong}>{L(`Réessayer les ${wrong.length} ratées`, `Retry the ${wrong.length} you got wrong`)}</button>
+          ) : null}
+          <button className={wrong.length > 0 ? "btn ghost" : "btn primary"} onClick={restart}>{L("Recommencer tout", "Restart all")}</button>
         </div>
       </div>
     );
@@ -537,8 +557,9 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
   return (
     <div className="deck-popup">
       <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
-      <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / deck.cards.length) * 100}%` }} /></div>
-      <div className="deck-progress">{i + 1} / {deck.cards.length}</div>
+      {retryQueue ? <p className="deck-retry-label">{L("Reprise des cartes ratées", "Retrying missed cards")}</p> : null}
+      <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / seqLen) * 100}%` }} /></div>
+      <div className="deck-progress">{i + 1} / {seqLen}</div>
       <div className={`deck-card-3d ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
         <div className="deck-card-inner" style={skipFlipAnim ? { transition: "none" } : undefined}>
           <div className="deck-card-face deck-card-front">

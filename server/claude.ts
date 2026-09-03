@@ -1496,7 +1496,7 @@ const CARD_STYLE_RULE =
  *  strict transcript of it. One-shot, no tool loop (same shape as refineManualTask above): the log text is
  *  the starting point/signal for what to study, not a ceiling on what the deck may contain. Reuses
  *  makeDeck() for the same validation every other deck-producing path already gets. */
-export async function generateDailyStudyCards(logText: string, profile?: Profile): Promise<TaskFlashcards | null> {
+export async function generateDailyStudyCards(logText: string, profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const raw = String(logText || "").trim();
   if (!raw) return null;
   try {
@@ -1541,7 +1541,10 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
     }));
     const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     const result = makeDeck(out);
-    return "deck" in result ? result.deck : null;
+    if (!("deck" in result)) return null;
+    const tokens = usageOf(res);
+    console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, tokens };
   } catch { return null; }
 }
 
@@ -1549,7 +1552,7 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
  *  actually got WRONG (Leitner box 1 — see nextLeitnerReview in shared/types.ts) rather than re-testing
  *  everything evenly. `weakFronts` are the fronts of any card sitting at box 1 across that week's daily
  *  decks; the model is told to make sure those concepts get re-tested, not just repeated verbatim. */
-export async function generateWeeklyStudyDeck(entries: { date: string; logText: string }[], weakFronts: string[], profile?: Profile): Promise<TaskFlashcards | null> {
+export async function generateWeeklyStudyDeck(entries: { date: string; logText: string }[], weakFronts: string[], profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const days = entries.filter((e) => e.logText?.trim());
   if (!days.length) return null;
   try {
@@ -1583,7 +1586,10 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
     }));
     const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     const result = makeDeck(out);
-    return "deck" in result ? result.deck : null;
+    if (!("deck" in result)) return null;
+    const tokens = usageOf(res);
+    console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: ${days.length} day(s), ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, tokens };
   } catch { return null; }
 }
 
@@ -1591,7 +1597,7 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
  *  time a month has passed the weekly decks are already the distilled signal, so re-reading every daily
  *  entry again would just re-spend tokens re-deriving what the weekly pass already figured out). Weighted
  *  the same way weekly is: `weakFronts` are box-1 cards from across the month's weekly decks. */
-export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { front: string; back: string }[] }[], weakFronts: string[], profile?: Profile): Promise<TaskFlashcards | null> {
+export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { front: string; back: string }[] }[], weakFronts: string[], profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const nonEmpty = weeks.filter((w) => w.cards.length);
   if (!nonEmpty.length) return null;
   try {
@@ -1622,7 +1628,10 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
     }));
     const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     const result = makeDeck(out);
-    return "deck" in result ? result.deck : null;
+    if (!("deck" in result)) return null;
+    const tokens = usageOf(res);
+    console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: ${nonEmpty.length} week(s), ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, tokens };
   } catch { return null; }
 }
 
@@ -1630,7 +1639,7 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
  *  have a test on the French Revolution, quiz me." If the student pastes their own notes, extract from
  *  those only (same "never pad" rule as the daily deck); with no notes, fall back to Otto's own knowledge
  *  of the topic, scoped to the student's track/level so difficulty matches their actual course. */
-export async function generateTopicStudyDeck(topic: string, notes: string | undefined, profile?: Profile): Promise<TaskFlashcards | null> {
+export async function generateTopicStudyDeck(topic: string, notes: string | undefined, profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const t = topic.trim();
   if (!t) return null;
   const hasNotes = !!notes?.trim();
@@ -1667,7 +1676,10 @@ export async function generateTopicStudyDeck(topic: string, notes: string | unde
     }));
     const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     const result = makeDeck(out);
-    return "deck" in result ? result.deck : null;
+    if (!("deck" in result)) return null;
+    const tokens = usageOf(res);
+    console.log(`${new Date().toISOString()} [ai] generateTopicStudyDeck "${t.slice(0, 40)}": ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, tokens };
   } catch { return null; }
 }
 

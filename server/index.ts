@@ -3,6 +3,7 @@ import { initSentry, reportError } from "./sentry.ts";
 initSentry(); // before anything else can throw — no-op if SENTRY_DSN isn't set
 import express from "express";
 import type { RequestHandler } from "express";
+import compression from "compression";
 import session from "express-session";
 import bcrypt from "bcryptjs";
 import path from "node:path";
@@ -53,6 +54,14 @@ if (PROD) {
 
 const app = express();
 app.set("trust proxy", 1);
+// Vercel's Node serverless functions do NOT auto-gzip responses (confirmed live: /api/status came back
+// with no content-encoding header even with Accept-Encoding: gzip sent) — unlike the static asset CDN,
+// which does compress. Every JSON API response in this app was going out uncompressed, and several of the
+// heaviest, most frequent ones (res.json(req.session.tasks) — the WHOLE task list, including every task's
+// full chat history/steps/notes/decks — fire on nearly every click: reviewing one flashcard, answering one
+// quiz question, ticking one step). This is the single highest-leverage fix for response egress: gzip
+// typically cuts JSON payloads 70-85%, with zero behavior change for callers.
+app.use(compression());
 // Liveness probe for the host platform — no auth, no session, no DB; just "the process is up".
 app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
 // Content-Security-Policy: scripts are self-only (the self-heal script is externalized, not inline);
@@ -1088,9 +1097,10 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     return;
   }
   try {
-    const deck = await generateDailyStudyCards(text, req.session.profile);
-    t.flashcards = deck ? [deck] : [];
-    t.title = deck?.title || date;
+    const result = await generateDailyStudyCards(text, req.session.profile);
+    if (result) addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
+    t.flashcards = result ? [result.deck] : [];
+    t.title = result?.deck.title || date;
     t.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(req.session.tasks || []);
@@ -1119,8 +1129,10 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
   if (!dayTasks.length) { res.status(400).json({ error: "No entries logged this week yet." }); return; }
   const weakFronts = tasks.weakCardFronts(dayTasks);
   try {
-    const deck = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), weakFronts, req.session.profile);
-    if (!deck) { res.status(500).json({ error: "Couldn't build the week summary — try again." }); return; }
+    const result = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), weakFronts, req.session.profile);
+    if (!result) { res.status(500).json({ error: "Couldn't build the week summary — try again." }); return; }
+    addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
+    const deck = result.deck;
     const anchorKey = `studylog:week:${monday}`;
     const logDate = `week:${monday}`;
     let t = list.find((x) => x.source === "studylog" && x.logDate === logDate);
@@ -1173,11 +1185,13 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
   if (!weekTasks.length) { res.status(400).json({ error: "No weekly summaries yet this month." }); return; }
   const weakFronts = tasks.weakCardFronts(weekTasks);
   try {
-    const deck = await generateMonthlyStudyDeck(
+    const result = await generateMonthlyStudyDeck(
       weekTasks.map((wt) => ({ label: wt.logDate!.slice(5), cards: (wt.flashcards![0]?.cards || []).map((c) => ({ front: c.front, back: c.back })) })),
       weakFronts, req.session.profile,
     );
-    if (!deck) { res.status(500).json({ error: "Couldn't build the month summary — try again." }); return; }
+    if (!result) { res.status(500).json({ error: "Couldn't build the month summary — try again." }); return; }
+    addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
+    const deck = result.deck;
     const anchorKey = `studylog:month:${month}`;
     const logDate = `month:${month}`;
     let t = list.find((x) => x.source === "studylog" && x.logDate === logDate);
@@ -1214,8 +1228,10 @@ app.post("/api/studylog/topic", requireAuth, rateLimit(20, 60_000), ah(async (re
   if (!topic) { res.status(400).json({ error: "Name a topic first." }); return; }
   const list = req.session.tasks || [];
   try {
-    const deck = await generateTopicStudyDeck(topic, notes || undefined, req.session.profile);
-    if (!deck) { res.status(500).json({ error: "Couldn't build a deck for that topic — try again." }); return; }
+    const result = await generateTopicStudyDeck(topic, notes || undefined, req.session.profile);
+    if (!result) { res.status(500).json({ error: "Couldn't build a deck for that topic — try again." }); return; }
+    addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
+    const deck = result.deck;
     const id = randomUUID();
     const now = new Date().toISOString();
     const e = tasks.eisenhower(0, 0);
