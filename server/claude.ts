@@ -620,7 +620,14 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // A plain "just talking" turn still only spends ~200 tokens; this is a CEILING for the rare turn that
 // thinks, calls a tool, then emits a 12-question quiz with explanations — a real payload that size would
 // silently truncate at 2000. CHAT_MAX_ROUNDS/CHAT_TOKEN_CEILING (near chatAboutTask) bound the real cost.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 8000 } as const;
+// studylog was 8000 — confirmed live truncating on a real dense multi-subject entry (4 subjects, mixed
+// French/English): the prompt told the model "no cap, 25-40+ cards for a dense entry" with no ceiling, so
+// a genuinely dense entry's completion (DeepSeek's own reasoning tokens ALSO count against max_tokens,
+// eating budget before visible output even starts — see the OUT config's own history elsewhere) got cut off
+// mid-JSON, firstJson() returned null on the unbalanced braces, and the whole thing silently produced NO
+// deck with a 200-success response — see the fix at generateDailyStudyCards' own prompt (capped at 40, not
+// "no cap") and the route-level error surfacing this budget bump pairs with.
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -1476,8 +1483,11 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `example actually IN it — aim for FULL coverage, not a quick sample. Never pad with something ` +
           `plausible-sounding they didn't write, but don't under-cover either: if the entry mentions five ` +
           `sub-points, that's five-plus cards, not two. A short one-idea entry might only support 3-5 cards; a ` +
-          `dense multi-subject entry can easily need 25-40+ — there is no cap, match the count to how much is ` +
-          `genuinely there. Each card front is a question/prompt, back is the answer — MEDIUM length (a ` +
+          `dense multi-subject entry can easily need 25-40 — match the count to how much is genuinely there, ` +
+          `but 40 is a HARD ceiling regardless of how dense the entry is (a technical limit on this reply's ` +
+          `token budget, not a product opinion) — if the entry genuinely has more than 40 distinct things, ` +
+          `cover the 40 most important/substantial ones rather than trying to fit everything and risking an ` +
+          `incomplete response. Each card front is a question/prompt, back is the answer — MEDIUM length (a ` +
           `phrase/sentence, not one word, not a paragraph). Output STRICT JSON only.` },
         { role: "user", content:
           `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +

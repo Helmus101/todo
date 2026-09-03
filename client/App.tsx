@@ -1665,6 +1665,14 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
       const list = await api.studyLogDay(dates[selected], text);
       const fresh = list.find((t) => t.logDate === dates[selected]) || null;
       setDays((prev) => prev.map((d, i) => (i === selected ? fresh : d)));
+      // The server saves the log text either way (never loses what you typed) but can come back with a
+      // 200 success and an EMPTY deck if generation itself failed (a truncated/unparseable model response —
+      // see generateDailyStudyCards) — that used to be entirely silent: text saved, no deck, no error, no
+      // clue why the "View flashcards" button never appeared. Detect it here since the client already has
+      // enough info to (non-empty text, no cards) without needing a server response-shape change.
+      if (text.trim() && !fresh?.flashcards?.length) {
+        notify(en ? "Saved, but couldn't make flashcards from that — try saving again." : "Enregistré, mais impossible de créer les cartes — réessaie d'enregistrer.", "error");
+      }
     } catch (e: any) { notify(e?.message || (en ? "Couldn't save — try again." : "Enregistrement impossible — réessaie."), "error"); }
     finally { setSaving(false); }
   };
