@@ -8,7 +8,7 @@
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
-import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, overInteractiveBudget, isPeakHourUtc } from "../shared/types.ts";
+import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, overInteractiveBudget, addUsage } from "../shared/types.ts";
 import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
@@ -49,19 +49,19 @@ export function sweepDueForDay(lastSweepAt: string | undefined, profile: Profile
   return localDay(lastSweepAt, tz) !== localDay(now, tz);
 }
 
-/** Minimum spacing between sweeps, from the user's chosen cadence (genPerDay 1–4). 1/day → 24h, 4/day → 6h.
- *  This is what stops Otto sweeping "quite often": the 45-min heartbeat is gone. */
-export function genIntervalMs(profile: Profile): number {
-  const perDay = Math.min(4, Math.max(1, Math.round(Number(profile.genPerDay) || 1)));
-  return Math.floor(86_400_000 / perDay);
-}
+// Automatic generation is now ONE fixed time a day, not a multi-times-a-day cadence — was previously
+// genPerDay (1-4×/day, spaced by genIntervalMs). Manual generation (the Refresh button, POST
+// /api/tasks/generate with force:true) is a completely separate code path and is untouched by this — this
+// only gates the unattended cron/background sweep.
+const SWEEP_HOUR = 16; // 4pm local time (per-account timezone) — see localHour below (defined further down,
+// shared with the quiet-hours email-timing logic — same Intl-based local-hour math, no need for a second copy)
 
-/** Is another sweep allowed yet under the user's cadence? Due when the daily floor hasn't been met OR the
- *  cadence interval since the last SUCCESSFUL sweep has elapsed. */
+/** Is the automatic sweep due? Due once per local calendar day, and only from SWEEP_HOUR (16:00) onward —
+ *  never before, even if nothing has run yet today. A sweep that already landed today (any hour) is not
+ *  due again until tomorrow, regardless of how many times cron/kick fires. */
 export function sweepDue(profile: Profile, now: Date = new Date()): boolean {
-  if (sweepDueForDay(profile.lastSweepAt, profile, now)) return true;
-  const last = Date.parse(profile.lastSweepAt || "") || 0;
-  return now.getTime() - last >= genIntervalMs(profile);
+  if (!sweepDueForDay(profile.lastSweepAt, profile, now)) return false;
+  return localHour(tzOf(profile), now) >= SWEEP_HOUR;
 }
 
 /** Which tasks the cron catch-all should enqueue for execution (bounded, cron's offline auto-run):
@@ -76,6 +76,39 @@ export function tasksToEnqueue(list: WebTask[], activeTaskIds: string[], limit =
   const ready = list.filter((t) => canonStatus(t.status) === "ready" && !t.autoRan);
   const orphaned = list.filter((t) => canonStatus(t.status) === "queued" && !active.has(t.id));
   return [...ready, ...orphaned].slice(0, limit);
+}
+
+/** Enqueue whatever's due for this ONE account right now via tasksToEnqueue (ready tasks never yet
+ *  attempted, plus orphaned queued ones) — the exact same logic cronTick's catch-all already runs, just
+ *  callable on demand for a single account instead of waiting for the once-a-day cron pass. This is what
+ *  lets "ready" tasks start executing themselves the moment a user has the tab open, WITHOUT a manual
+ *  Start click and without waiting up to a day for cron: see the "no start button" UI change (TaskCard.tsx)
+ *  this backs — POST /api/jobs/kick calls this before every drain. Respects the same pause/budget gates
+ *  processSweep uses elsewhere, so this can never run interactive AI work an account has paused or is over
+ *  budget for. Returns the count actually enqueued (0 is normal — usually nothing new is due).
+ *
+ *  Respects the SAME daily auto-run cap as the sweep (tasks.autoRunBudgetLeft/recordAutoRuns, shared via
+ *  `profile`) — without this, a tab left open all day would call this every 4s (App.tsx's kick loop) and
+ *  each call's own tasksToEnqueue(limit=3) would happily enqueue 3 MORE ready tasks, so the real ceiling on
+ *  a busy day was "however many ready tasks exist," not 3 — exactly the unwatched-spend problem this cap
+ *  exists to prevent. Orphaned QUEUED tasks (a job that was lost, not a fresh auto-run decision) are exempt
+ *  from the cap — recovering a stuck task isn't new spend, it's finishing a decision already made. */
+export async function enqueueDueTasks(email: string): Promise<number> {
+  const { profile, list } = await loadUser(email);
+  if (profile.paused || overMonthlyBudget(profile)) return 0;
+  const activeIds = await store.activeJobTaskIds(email);
+  const active = new Set(activeIds);
+  const orphaned = list.filter((t) => canonStatus(t.status) === "queued" && !active.has(t.id));
+  const budget = tasks.autoRunBudgetLeft(profile, new Date());
+  const readyDue = budget > 0 ? tasksToEnqueue(list, activeIds, budget).filter((t) => canonStatus(t.status) === "ready") : [];
+  const due = [...readyDue, ...orphaned];
+  if (!due.length) return 0;
+  for (const t of due) await store.enqueueJob(email, "execute_task", t.id);
+  if (readyDue.length) {
+    tasks.recordAutoRuns(profile, readyDue.length, new Date());
+    await store.saveState(email, { profile, tasks: list });
+  }
+  return due.length;
 }
 
 /** Load the account's durable state (the job runner's ONLY source of truth — no sessions here). */
@@ -111,16 +144,28 @@ async function processSweep(job: store.Job): Promise<string> {
   // execution right here: without this, a manual task added while paused/over-budget would sit refined-
   // but-idle until the separate "ready tasks the browser never got to" catch-all in cronTick ran — which
   // on Vercel's Hobby plan is once a day. No button, no next-day wait — refine and run in the same pass.
+  // Real ceiling on today's PASSIVE auto-run spend (see tasks.autoRunBudgetLeft's own doc comment) — shared
+  // across BOTH auto-run sites below (manual-task refine-and-run, and the discovered-tasks top-by-score
+  // run), and also shared with the kick loop's own catch-up (enqueueDueTasks) via the same profile fields,
+  // so a tab left open all day can't quietly blow past the daily cap just by kicking more often than the
+  // sweep itself runs.
+  let autoRunBudget = tasks.autoRunBudgetLeft(profile, new Date());
+  let autoRunSpent = 0;
   for (const t of list.filter((x) => x.unrefined && !isHandled(x.status)).slice(0, 3)) {
     try {
       const refined = await claude.refineManualTask(t.title, profile);
       if (refined) {
+        // This call's cost was previously untracked entirely — refineManualTask returned no token info and
+        // nothing here called addUsage, so a real DeepSeek spend on every unrefined manual task never
+        // counted toward profile.usage OR the monthly budget cap at all.
+        addUsage(profile, refined.tokens, "manual_refine");
         tasks.applyRefinement(list, t.id, refined);
         void store.recordEvent(email, "refined", { taskId: t.id, message: `Refined to "${t.title}"` });
-        if (canonStatus(t.status) === "ready" && !t.autoRan) {
+        if (canonStatus(t.status) === "ready" && !t.autoRan && autoRunBudget - autoRunSpent > 0) {
           t.status = "queued";
           await store.enqueueJob(email, "execute_task", t.id);
           void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" });
+          autoRunSpent++;
         }
       }
     } catch { /* stays unrefined */ }
@@ -133,8 +178,10 @@ async function processSweep(job: store.Job): Promise<string> {
   // Server-side auto-run: queue execution for the new ready tasks RIGHT IN THE SWEEP (top by score,
   // bounded) — the browser no longer decides what runs; it only displays state and kicks the drain.
   const found = next.filter((t) => !before.has(t.id) && !isHandled(t.status));
-  const toRun = found.filter((t) => canonStatus(t.status) === "ready").sort((a, b) => b.score - a.score).slice(0, 3);
+  const toRun = found.filter((t) => canonStatus(t.status) === "ready").sort((a, b) => b.score - a.score).slice(0, Math.max(0, autoRunBudget - autoRunSpent));
   for (const t of toRun) t.status = "queued";
+  autoRunSpent += toRun.length;
+  tasks.recordAutoRuns(profile, autoRunSpent, new Date());
   profile.lastSweepAt = new Date().toISOString(); // durable "checked today" marker — survives restarts
   // Pull fresh grade averages alongside the daily sweep — best-effort, same "Pronote is the source of truth
   // for what it reports" merge as the manual Settings sync, just automatic so a student never has to think
@@ -514,23 +561,16 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       if (profile.paused) continue;
       if (overMonthlyBudget(profile)) continue; // over the monthly AI budget — no new work until it resets
 
-      // (1) SWEEP FIRST — cadence-driven, from the user's genPerDay (1–4/day; default once daily). Uses the
-      // persisted lastSweepAt marker (survives restarts) so it's spaced by the chosen interval, not a fixed
-      // 45-min heartbeat. An already queued/running sweep dedupes via idempotency.
+      // (1) SWEEP FIRST — once a day, fixed at SWEEP_HOUR (16:00) local time, not a multi-times-a-day
+      // cadence (see sweepDue's own doc comment). Uses the persisted lastSweepAt marker (survives
+      // restarts). An already queued/running sweep dedupes via idempotency. No peak-hour cost deferral
+      // here anymore — that only ever made sense for the old >1×/day cadence (defer the EXTRA sweeps, never
+      // the once-a-day floor); with just one sweep a day, sweepDue() being true already IS the floor, so
+      // there's nothing left to defer without breaking "at least one sweep a day".
       const last = await store.getLatestJob(email, "sweep");
       const sweepActive = last && (last.status === "queued" || last.status === "running");
       if (!sweepActive && sweepDue(profile, now)) {
-        // Cost-aware scheduling: DeepSeek's peak window is 2x price. When this sweep is due only because
-        // of the >1x/day cadence interval (the once-a-day FLOOR hasn't been crossed), it's safe to hold
-        // off during peak hours — the cadence check fires again soon, likely once we're off-peak, and
-        // today's coverage isn't at risk. The once-a-day guarantee itself (sweepDueForDay) is NEVER
-        // deferred — missing that would break "at least one sweep a day".
-        const dayFloorDue = sweepDueForDay(profile.lastSweepAt, profile, now);
-        if (isPeakHourUtc(now) && !dayFloorDue) {
-          // skip this tick — cheaper to wait for an off-peak opportunity within the same day
-        } else {
-          await store.enqueueJob(email, "sweep"); enqueued++;
-        }
+        await store.enqueueJob(email, "sweep"); enqueued++;
       }
 
       // (2) EXECUTE ready tasks the browser never got to (offline auto-run), bounded per user per tick.

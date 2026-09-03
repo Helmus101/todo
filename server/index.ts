@@ -11,7 +11,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateWeeklyStudyDeck } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateWeeklyStudyDeck, generateMonthlyStudyDeck, generateTopicStudyDeck } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -650,6 +650,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   // unavailable/paused/over budget, it goes in unrefined and the background sweep's auto-refine cleans it up.
   const ready = aiReady() && !isPaused(req) && !overBudget(req);
   const refined = ready ? await refineManualTask(title, req.session.profile).catch(() => null) : null;
+  if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
   try {
     req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen, clientId);
     const added = req.session.tasks[0];
@@ -699,6 +700,7 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
   if (!t) { res.status(404).json({ error: "not found" }); return; }
   try {
     const refined = await refineManualTask(t.title, req.session.profile);
+    if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
     tasks.applyRefinement(req.session.tasks || [], t.id, refined);
     await commit(req);
     res.json(req.session.tasks || []);
@@ -757,7 +759,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       academic,
       { stepIndex, materials, extras },
     );
-    addUsage(profile, out.tokens); // untracked before — a tool-calling turn can now cost like a small run
+    addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     const now = new Date().toISOString();
     // Accumulate this turn's artifacts onto the task exactly like a run does (same ARTIFACT_CAP), and
     // reference them from the assistant's own message so the thread can render an inline chip — the
@@ -814,7 +816,7 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(asy
     card = { kind: "quiz", question, options, correct };
   } else { res.status(400).json({ error: "Missing card." }); return; }
   const out = await studyHelp(card, history, message, req.session.profile);
-  addUsage(req.session.profile ||= emptyProfile(), out.tokens);
+  addUsage(req.session.profile ||= emptyProfile(), out.tokens, "chat");
   await commit(req);
   res.json({ reply: out.reply });
 }));
@@ -1135,6 +1137,97 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the week summary — try again." }); }
 }));
 
+// YYYY-MM of the month containing `dateStr` — used to group weekly decks (keyed by their Monday) into a
+// month-end summary without any formal calendar-month task list of its own.
+function monthOf(dateStr: string): string { return dateStr.slice(0, 7); }
+app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
+  const start = String(req.query.start || "");
+  if (!DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
+  const month = monthOf(start);
+  const list = req.session.tasks || [];
+  const weeks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month)
+    .sort((a, b) => a.logDate!.localeCompare(b.logDate!));
+  const summary = list.find((x) => x.source === "studylog" && x.logDate === `month:${month}`) || null;
+  res.json({ month, weeks, summary });
+}));
+app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate the summary." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  const monthStart = String(req.body?.monthStart || "");
+  if (!DATE_RE.test(monthStart)) { res.status(400).json({ error: "Invalid date." }); return; }
+  const month = monthOf(monthStart);
+  const list = req.session.tasks || [];
+  const weekTasks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month && x.flashcards?.length);
+  if (!weekTasks.length) { res.status(400).json({ error: "No weekly summaries yet this month." }); return; }
+  const weakFronts = tasks.weakCardFronts(weekTasks);
+  try {
+    const deck = await generateMonthlyStudyDeck(
+      weekTasks.map((wt) => ({ label: wt.logDate!.slice(5), cards: (wt.flashcards![0]?.cards || []).map((c) => ({ front: c.front, back: c.back })) })),
+      weakFronts, req.session.profile,
+    );
+    if (!deck) { res.status(500).json({ error: "Couldn't build the month summary — try again." }); return; }
+    const anchorKey = `studylog:month:${month}`;
+    const logDate = `month:${month}`;
+    let t = list.find((x) => x.source === "studylog" && x.logDate === logDate);
+    const now = new Date().toISOString();
+    if (!t) {
+      const e = tasks.eisenhower(0, 0);
+      t = {
+        id: randomUUID(), title: deck.title, why: "Monthly study summary", source: "studylog", risk: "low",
+        urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
+        createdAt: now, anchorKey, logDate,
+      };
+      list.push(t);
+      req.session.tasks = list;
+    }
+    t.title = deck.title;
+    t.flashcards = [deck];
+    t.updatedAt = now;
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the month summary — try again." }); }
+}));
+
+// On-demand deck for one named topic (e.g. "test on the French Revolution Friday"), independent of the
+// daily/weekly/monthly calendar cadence. Optional pasted notes narrow it to exactly that material; without
+// notes, Otto draws on its own knowledge of the topic. Each call mints its own task (never upserted against
+// an existing one, unlike day/week/month) since a student may want several different topic decks live at
+// once — the anchorKey is randomized per deck rather than derived from the topic text.
+app.post("/api/studylog/topic", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate flashcards." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  const topic = String(req.body?.topic || "").trim().slice(0, 200);
+  const notes = String(req.body?.notes || "").trim().slice(0, 4000);
+  if (!topic) { res.status(400).json({ error: "Name a topic first." }); return; }
+  const list = req.session.tasks || [];
+  try {
+    const deck = await generateTopicStudyDeck(topic, notes || undefined, req.session.profile);
+    if (!deck) { res.status(500).json({ error: "Couldn't build a deck for that topic — try again." }); return; }
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const e = tasks.eisenhower(0, 0);
+    const t: WebTask = {
+      id, title: deck.title, why: `Topic review: ${topic}`, source: "studylog", risk: "low",
+      urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
+      createdAt: now, anchorKey: `studylog:topic:${id}`, logDate: `topic:${id}`,
+      flashcards: [deck],
+    };
+    list.push(t);
+    req.session.tasks = list;
+    await commit(req);
+    res.json(req.session.tasks || []);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build a deck for that topic — try again." }); }
+}));
+
+app.get("/api/studylog/topics", requireAuth, ah(async (req, res) => {
+  const list = req.session.tasks || [];
+  const topics = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("topic:") && !isHandled(x.status))
+    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  res.json(topics);
+}));
+
 // A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) is built
 // around a WebTask (chat/notes/artifacts all key off task.id server-side), so a session not tied to any
 // real to-do still needs a lightweight placeholder task to attach to. Client only calls this once, when
@@ -1324,6 +1417,11 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // even with the tab open and kicking every 4s — this was reported live as "task constantly queued,
     // never executed" for a task that only ran ~20 minutes later, once its OWN turn came up in the global
     // queue instead of the very next kick.
+    // Catch up any "ready" task that's never been queued (never got a run at all — see enqueueDueTasks)
+    // BEFORE draining, so a task the discovery sweep didn't immediately auto-run (bounded to its own top-3
+    // by score) still starts itself the moment the tab is open, no Start click needed, instead of waiting
+    // for the once-a-day cron catch-all.
+    await jobs.enqueueDueTasks(req.session.user!).catch(() => {});
     const out = await jobs.drain(1, undefined, req.session.user!);
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(req.session.user!), activeJobTaskIds(req.session.user!)]);
     // Refresh this session's view of the cloud copy the job just wrote.
@@ -1391,6 +1489,9 @@ app.get("/api/usage", requireAuth, async (req, res) => {
       in: u?.in || 0, out: u?.out || 0, total: (u?.in || 0) + (u?.out || 0), runs: u?.runs || 0, since: u?.since || null,
       // Month-to-date spend against the cap (both USD) — what the Settings view + budget banner read.
       monthCostUsd: monthCostUsd(p), budgetUsd: monthlyBudgetUsd(), over: overMonthlyBudget(p), renewsOn: budgetRenewsOn(p),
+      // Month-to-date spend BY WHAT SPENT IT (sweep/autorun/chat/manual_refine) — added so "what's actually
+      // costing money" is an answerable question instead of one opaque total (see addUsage's own comment).
+      byCategory: u?.monthByCategory || {},
     });
   } catch (e: any) { res.status(500).json({ error: e?.message || "usage failed" }); }
 });

@@ -1,12 +1,12 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview } from "../shared/types.ts";
-import { sweepDueForDay, localDay, genIntervalMs, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
+import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 
 let pass = 0, fail = 0;
@@ -478,17 +478,37 @@ check("forced YESTERDAY → due again today", forcedDueToday({ ...utcProfile, la
 // Timezone: 2026-07-20T02:00Z is still Jul 19 in NY, so a force the next NY day is due — the gate is per LOCAL day.
 check("force gate respects the user's timezone", forcedDueToday({ ...nyProfile, lastForcedAt: "2026-07-20T02:00:00Z" }, new Date("2026-07-20T13:00:00Z")));
 
-// ── Sweep cadence (genPerDay 1–4) ─────────────────────────────────────────────
-section("sweep cadence");
-check("default cadence is once a day (24h)", genIntervalMs(utcProfile) === 86_400_000);
-check("4×/day cadence is 6h", genIntervalMs({ ...emptyProfile(), genPerDay: 4 }) === 21_600_000);
-check("genPerDay clamps above 4", genIntervalMs({ ...emptyProfile(), genPerDay: 9 }) === 21_600_000);
-check("genPerDay clamps below 1", genIntervalMs({ ...emptyProfile(), genPerDay: 0 }) === 86_400_000);
-// 1×/day: a sweep 2h ago on the SAME day is not due yet (interval not elapsed, day floor met).
-check("1×/day: not due 2h after a same-day sweep", !sweepDue({ ...utcProfile, genPerDay: 1, lastSweepAt: "2026-07-20T06:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
-// 4×/day: same 2h gap IS enough once >6h... 2h isn't, 7h is.
-check("4×/day: not due 2h after a sweep", !sweepDue({ ...utcProfile, genPerDay: 4, lastSweepAt: "2026-07-20T06:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
-check("4×/day: due 7h after a sweep", sweepDue({ ...utcProfile, genPerDay: 4, lastSweepAt: "2026-07-20T01:00:00Z" }, new Date("2026-07-20T08:00:00Z")));
+// ── Daily auto-run spend cap (sweep + kick loop share one budget) ─────────────
+section("autoRunBudgetLeft / recordAutoRuns — daily cap on passive AI spend");
+{
+  const p = { ...utcProfile };
+  check("fresh day → full budget (3)", autoRunBudgetLeft(p, new Date("2026-07-20T08:00:00Z")) === 3);
+  recordAutoRuns(p, 1, new Date("2026-07-20T08:00:00Z"));
+  check("after spending 1 → 2 left", autoRunBudgetLeft(p, new Date("2026-07-20T09:00:00Z")) === 2);
+  recordAutoRuns(p, 2, new Date("2026-07-20T16:00:00Z"));
+  check("after spending 3 total → 0 left, same day", autoRunBudgetLeft(p, new Date("2026-07-20T20:00:00Z")) === 0);
+  recordAutoRuns(p, 5, new Date("2026-07-20T21:00:00Z")); // overspend attempt (bug elsewhere) never goes negative
+  check("budget floors at 0, never negative", autoRunBudgetLeft(p, new Date("2026-07-20T22:00:00Z")) === 0);
+  check("next local day → resets to full 3, ignoring yesterday's count", autoRunBudgetLeft(p, new Date("2026-07-21T08:00:00Z")) === 3);
+  check("recordAutoRuns(0) is a no-op", (() => { const q = { ...utcProfile, autoRunDay: "2026-07-20", autoRunCount: 1 }; recordAutoRuns(q, 0, new Date("2026-07-20T10:00:00Z")); return q.autoRunCount === 1; })());
+}
+
+// ── Sweep cadence: once a day, fixed at 16:00 local ───────────────────────────
+section("sweep cadence — once a day, fixed at 16:00 local");
+// Before 4pm local: never due, even with no prior sweep at all.
+check("08:00 UTC, no prior sweep → NOT due (before 4pm)", !sweepDue({ ...utcProfile }, new Date("2026-07-20T08:00:00Z")));
+check("15:59 UTC, no prior sweep → NOT due (still before 4pm)", !sweepDue({ ...utcProfile }, new Date("2026-07-20T15:59:00Z")));
+// At/after 4pm local, nothing swept yet today: due.
+check("16:00 UTC, no prior sweep → due", sweepDue({ ...utcProfile }, new Date("2026-07-20T16:00:00Z")));
+check("20:00 UTC, no prior sweep → due", sweepDue({ ...utcProfile }, new Date("2026-07-20T20:00:00Z")));
+// Already swept today (even this morning, before 4pm) — not due again regardless of current hour.
+check("already swept 08:00 same day → NOT due at 20:00", !sweepDue({ ...utcProfile, lastSweepAt: "2026-07-20T08:00:00Z" }, new Date("2026-07-20T20:00:00Z")));
+// Swept yesterday → due again today once past 4pm.
+check("swept yesterday → due today at 17:00", sweepDue({ ...utcProfile, lastSweepAt: "2026-07-19T18:00:00Z" }, new Date("2026-07-20T17:00:00Z")));
+check("swept yesterday → NOT due today at 10:00 (before 4pm)", !sweepDue({ ...utcProfile, lastSweepAt: "2026-07-19T18:00:00Z" }, new Date("2026-07-20T10:00:00Z")));
+// Timezone-aware: 19:00 UTC is 15:00 in New York (EDT, UTC-4) — still before 4pm THERE.
+check("19:00 UTC is only 15:00 in New York → NOT due yet", !sweepDue({ ...nyProfile }, new Date("2026-07-20T19:00:00Z")));
+check("20:00 UTC is 16:00 in New York → due", sweepDue({ ...nyProfile }, new Date("2026-07-20T20:00:00Z")));
 
 // ── Cron catch-all: offline auto-run + stuck-queued recovery ──────────────────
 section("cron enqueue + stuck-queued recovery");

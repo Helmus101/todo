@@ -620,7 +620,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // A plain "just talking" turn still only spends ~200 tokens; this is a CEILING for the rare turn that
 // thinks, calls a tool, then emits a 12-question quiz with explanations — a real payload that size would
 // silently truncate at 2000. CHAT_MAX_ROUNDS/CHAT_TOKEN_CEILING (near chatAboutTask) bound the real cost.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 4000 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 8000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -1407,7 +1407,7 @@ export async function pickOneTask(
   } catch { return null; }
 }
 
-export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; }
+export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; tokens: { in: number; out: number; cachedIn: number }; }
 
 /**
  * Turn a user's rough to-do note into a crisp, actionable task (keeps their intent — never invents
@@ -1449,6 +1449,7 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
       when: out.when ? String(out.when).slice(0, 40) : undefined,
       urgency: clamp01(out.urgency ?? 0.6),
       importance: clamp01(out.importance ?? 0.7),
+      tokens: usageOf(res),
     };
   } catch { return null; }
 }
@@ -1471,11 +1472,13 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
           `You turn a student's own end-of-day "what I learned today" dump into flashcards that actually drill ` +
-          `it. Extract the DISTINCT facts/concepts/definitions/formulas/dates actually IN the text — never pad ` +
-          `with something plausible-sounding they didn't write. A short entry (one topic) gets as few as 3-5 ` +
-          `cards; a dense entry (several subjects) can go up to 20 — match the count to how much is genuinely ` +
-          `there, don't force a fixed number. Each card front is a question/prompt, back is the answer — MEDIUM ` +
-          `length (a phrase/sentence, not one word, not a paragraph). Output STRICT JSON only.` },
+          `it. Go through the text and make ONE card for EVERY distinct fact/concept/definition/formula/date/ ` +
+          `example actually IN it — aim for FULL coverage, not a quick sample. Never pad with something ` +
+          `plausible-sounding they didn't write, but don't under-cover either: if the entry mentions five ` +
+          `sub-points, that's five-plus cards, not two. A short one-idea entry might only support 3-5 cards; a ` +
+          `dense multi-subject entry can easily need 25-40+ — there is no cap, match the count to how much is ` +
+          `genuinely there. Each card front is a question/prompt, back is the answer — MEDIUM length (a ` +
+          `phrase/sentence, not one word, not a paragraph). Output STRICT JSON only.` },
         { role: "user", content:
           `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
           `Return JSON: {"title": short label for today's deck (≤8 words, name the actual topic(s), e.g. ` +
@@ -1511,14 +1514,96 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
           `You build a WEEK-END-REVIEW flashcard deck from a student's own daily "what I learned" entries. This ` +
-          `is a SUMMARY across the whole week, not a re-dump of every daily card — pick the concepts that ` +
-          `actually matter to remember a week later, connect related ideas across different days when they're ` +
-          `genuinely related, and weight toward what the weak-list below says they got wrong. 8 to 20 cards. ` +
-          `Output STRICT JSON only.` },
+          `is a SUMMARY across the whole week, not a re-dump of every daily card verbatim — merge near-duplicate ` +
+          `ideas from different days into one card, connect genuinely related concepts across days, and weight ` +
+          `toward what the weak-list below says they got wrong. But summarizing does NOT mean shrinking: cover ` +
+          `every distinct concept the week actually contained, so a heavy week with many topics should produce ` +
+          `a correspondingly large deck — there is no cap, aim for full coverage of the week's material rather ` +
+          `than a token "highlights" selection. Output STRICT JSON only.` },
         { role: "user", content:
           `THIS WEEK'S DAILY ENTRIES:\n${days.map((d) => `— ${d.date}:\n"""\n${d.logText.slice(0, 2000)}\n"""`).join("\n\n")}` +
           weakBlock +
           `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
+      ],
+    }));
+    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
+    const result = makeDeck(out);
+    return "deck" in result ? result.deck : null;
+  } catch { return null; }
+}
+
+/** Month-end summary: synthesizes across that month's WEEKLY decks (not the raw daily entries — by the
+ *  time a month has passed the weekly decks are already the distilled signal, so re-reading every daily
+ *  entry again would just re-spend tokens re-deriving what the weekly pass already figured out). Weighted
+ *  the same way weekly is: `weakFronts` are box-1 cards from across the month's weekly decks. */
+export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { front: string; back: string }[] }[], weakFronts: string[], profile?: Profile): Promise<TaskFlashcards | null> {
+  const nonEmpty = weeks.filter((w) => w.cards.length);
+  if (!nonEmpty.length) return null;
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const weakBlock = weakFronts.length
+      ? `\n\nGOT WRONG THIS MONTH (re-test these specifically, a different way, don't just copy the card): ${weakFronts.slice(0, 30).map((f) => `"${f}"`).join(", ")}\n`
+      : "";
+    const res = await retryRequest(() => client.chat.completions.create({
+      model,
+      max_tokens: OUT.studylog,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content:
+          languageLine(profile) + trackLine(profile) +
+          `You build a MONTH-END-REVIEW flashcard deck from a student's own weekly summary decks. Merge ` +
+          `near-duplicate cards that show up across different weeks into one, and weight toward the weak-list ` +
+          `below — but otherwise keep FULL coverage of the month's distinct concepts, don't shrink down to a ` +
+          `"highlights only" selection. A month with many weeks of real material should produce a correspondingly ` +
+          `large deck; there is no cap. Output STRICT JSON only.` },
+        { role: "user", content:
+          `THIS MONTH'S WEEKLY DECKS:\n${nonEmpty.map((w) => `— ${w.label}:\n${w.cards.map((c) => `  Q: ${c.front}\n  A: ${c.back}`).join("\n")}`).join("\n\n")}` +
+          weakBlock +
+          `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
+      ],
+    }));
+    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
+    const result = makeDeck(out);
+    return "deck" in result ? result.deck : null;
+  } catch { return null; }
+}
+
+/** On-demand deck for ONE named topic, independent of the daily/weekly/monthly calendar cadence — e.g. "I
+ *  have a test on the French Revolution, quiz me." If the student pastes their own notes, extract from
+ *  those only (same "never pad" rule as the daily deck); with no notes, fall back to Otto's own knowledge
+ *  of the topic, scoped to the student's track/level so difficulty matches their actual course. */
+export async function generateTopicStudyDeck(topic: string, notes: string | undefined, profile?: Profile): Promise<TaskFlashcards | null> {
+  const t = topic.trim();
+  if (!t) return null;
+  const hasNotes = !!notes?.trim();
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model,
+      max_tokens: OUT.studylog,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content:
+          languageLine(profile) + trackLine(profile) +
+          (hasNotes
+            ? `Build a flashcard deck to drill ONE topic from the student's own pasted notes. Make a card for ` +
+              `EVERY distinct fact/concept/definition/formula actually IN the notes — full coverage, not a ` +
+              `sample. Never pad with something plausible-sounding they didn't write. There is no cap: dense ` +
+              `notes should produce a correspondingly large deck.`
+            : `Build a flashcard deck to drill ONE topic the student named, using your own knowledge of it. ` +
+              `Match difficulty to their track/level above. Aim to comprehensively cover the topic the way a ` +
+              `full exam review would — every major sub-concept, definition, mechanism, key date/formula/example ` +
+              `worth knowing, not just a quick highlights pass. There is no cap on card count; a substantial ` +
+              `topic (a whole chapter, a historical period, a math unit) should easily produce 25-50+ cards.`) +
+          ` Each card front is a question/prompt, back is the answer — MEDIUM length. Output STRICT JSON only.` },
+        { role: "user", content:
+          `TOPIC: ${t.slice(0, 200)}` +
+          (hasNotes ? `\n\nNOTES:\n"""\n${notes!.slice(0, 4000)}\n"""` : "") +
+          `\n\nReturn JSON: {"title": short label (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
     const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");

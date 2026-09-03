@@ -657,16 +657,28 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     );
   }
   if (steps.length === 0) {
+    // No "Start" button — a task never needs a click to begin. The sweep that created it already tries to
+    // auto-run its top few by score immediately; anything left over (or a task from before this existed)
+    // gets picked up the moment the tab is open, within seconds, by App.tsx's kick loop (widened to also
+    // cover a never-attempted "ready" task, not just already-queued ones — see hasActiveWork there) calling
+    // POST /api/jobs/kick, which enqueues any due ready task before draining (server/jobs.ts's
+    // enqueueDueTasks). Reads task.status directly (isInFlight), NOT the local `running` state — that flag
+    // only ever gets set by THIS component's own onRun() click, which nothing calls here anymore now that
+    // there's no button; the task list refreshing via the kick loop is what actually flips task.status.
+    const autoStarting = isInFlight(task.status);
     return (
       <div className="step-hero hero-empty">
         <p className="hero-line">{stripStrayMarkdown(subtitle(task) || task.why || "")}</p>
-        <div className="hero-acts">
-          <button className="btn primary" disabled={running} onClick={() => onRun()}>{running ? L("En cours…", "Working…") : L("Lancer", "Start")}</button>
-          {/* Without this, a task Otto hasn't planned yet (or never needed a plan — already handled
-              elsewhere, a duplicate, a quick manual note) had no way to be marked done except "Lancer"
-              first. Secondary/ghost so it never competes with Start as the obvious next action. */}
-          <button className="btn ghost" disabled={running} onClick={onConfirm}>{L("C'est bon", "Looks good")}</button>
-        </div>
+        {autoStarting ? (
+          <p className="hero-sub">{L("Otto prépare ça…", "Otto is getting this ready…")}</p>
+        ) : (
+          <div className="hero-acts">
+            {/* "Looks good" stays: a task Otto hasn't planned yet (or never needed a plan — already handled
+                elsewhere, a duplicate, a quick manual note) still needs SOME way to be marked done without
+                waiting for a run that isn't coming. */}
+            <button className="btn ghost" onClick={onConfirm}>{L("C'est bon", "Looks good")}</button>
+          </div>
+        )}
       </div>
     );
   }

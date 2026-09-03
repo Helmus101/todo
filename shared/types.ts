@@ -53,7 +53,19 @@ export interface Profile {
                           // marker (survives restarts; source of truth for the once-per-local-day guarantee)
   lastForcedAt?: string;  // ISO stamp of the last time the sweep FORCED a "daily minimum" task (when it would
                           // otherwise have surfaced nothing) — so we guarantee at most one forced task per local day
-  genPerDay?: number;     // how many times/day Otto scans for new tasks (1–4; default 1). Sets the sweep cadence.
+  // Daily cap on AUTOMATIC task execution (sweep's own auto-run-top-3 AND the kick loop's catch-up, see
+  // server/jobs.ts's autoRunBudgetLeft/recordAutoRuns) — a real per-day ceiling on passive AI spend that
+  // happens with zero user interaction, distinct from the monthly $ budget (which is too coarse to catch
+  // "why did €0.20 get spent today when I didn't touch the app" — by the time the monthly cap trips, a
+  // whole month of unwatched daily spend has already happened). autoRunDay/autoRunCount reset together
+  // whenever the local day changes; count is the number of tasks auto-enqueued so far THAT day.
+  autoRunDay?: string;
+  autoRunCount?: number;
+  // No longer drives sweep cadence — automatic generation is now fixed at once/day, 16:00 local (see
+  // server/jobs.ts's sweepDue) rather than this 1-4x/day setting. Field kept (not removed) since it's
+  // still a harmless, settable preference with no UI exposing it either way — not worth a wider removal
+  // for zero behavior change.
+  genPerDay?: number;
   // Structured preferences for autonomous behavior
   responseStyle?: "concise" | "detailed" | "casual" | "formal"; // how AI should draft responses
   autoApprove?: string[]; // categories of actions AI can do without approval (e.g., ["schedule_meetings_under_30min", "archive_newsletters"])
@@ -77,7 +89,13 @@ export interface Profile {
      *  separately, ×2 during DeepSeek peak hours) — NOT re-derived from token totals, which can't recover
      *  either factor. This is the number the cap enforces and Settings shows. Pre-upgrade rows lack it and
      *  fall back to the flat-rate token estimate. */
-    monthCost?: number };
+    monthCost?: number;
+    /** Month-to-date spend broken down by WHAT spent it (see AddUsageCategory) — added because the total
+     *  alone gives no way to answer "what's actually costing money" (a real question asked live: daily
+     *  spend with zero user interaction, no way to tell sweep vs auto-run vs chat apart). Resets with the
+     *  rest of the month* fields on a new month; pre-existing accounts simply have no entries here yet
+     *  (never backfilled, same as monthCost's own "pre-upgrade rows lack it" note above). */
+    monthByCategory?: Partial<Record<AddUsageCategory, number>> };
   // Which connected account to use for a multi-account app (Gmail, Calendar, Docs, Sheets, Slides, Drive)
   // when a task ISN'T tied to a specific discovered item (a manual task, a brand-new doc) — keyed by the
   // app's catalog key ("gmail", "googlecalendar", …) → Composio connectedAccountId. Defaults to whichever
@@ -154,6 +172,8 @@ export function normalizeProfile(p: any): Profile {
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
     lastForcedAt: typeof p?.lastForcedAt === "string" ? p.lastForcedAt : undefined,
+    autoRunDay: typeof p?.autoRunDay === "string" ? p.autoRunDay : undefined,
+    autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
     timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
     // Structured preferences
@@ -313,7 +333,12 @@ export function budgetRenewsOn(profile?: Profile | null, now: Date = new Date())
 
 /** Add one AI call's token cost to a profile's usage counters (mutates in place) — cumulative for the
  *  Settings view, plus month-to-date (with calendar-month rollover) for the spend cap. Best-effort. */
-export function addUsage(profile: Profile, tokens?: { in?: number; out?: number; cachedIn?: number } | null): void {
+// What kind of AI call spent the money — lets Settings answer "what's actually costing money" instead of
+// just a single opaque total. Deliberately a small, fixed set (not a free-text label) so it stays a real
+// breakdown a person can scan, not a growing pile of one-off strings.
+export type AddUsageCategory = "sweep" | "autorun" | "chat" | "manual_refine" | "other";
+
+export function addUsage(profile: Profile, tokens?: { in?: number; out?: number; cachedIn?: number } | null, category: AddUsageCategory = "other"): void {
   const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0, cached = Number(tokens?.cachedIn) || 0;
   if (!tin && !tout) return;
   const u = profile.usage || { in: 0, out: 0, runs: 0, since: new Date().toISOString() };
@@ -321,12 +346,14 @@ export function addUsage(profile: Profile, tokens?: { in?: number; out?: number;
   const sameMonth = u.monthKey === mk;
   // Meter the TRUE cost of this call now — cache breakdown and peak multiplier can't be recovered later.
   const cost = callCostUsd(tin, tout, cached);
+  const priorByCategory = sameMonth ? (u.monthByCategory || {}) : {};
   profile.usage = {
     in: u.in + tin, out: u.out + tout, runs: u.runs + 1, since: u.since,
     monthKey: mk,
     monthIn: (sameMonth ? (u.monthIn || 0) : 0) + tin,
     monthOut: (sameMonth ? (u.monthOut || 0) : 0) + tout,
     monthCost: (sameMonth ? (u.monthCost || 0) : 0) + cost,
+    monthByCategory: { ...priorByCategory, [category]: (priorByCategory[category] || 0) + cost },
   };
 }
 

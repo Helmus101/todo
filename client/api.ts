@@ -121,6 +121,11 @@ export const api = {
   studyLogWeek: (start: string): Promise<{ monday: string; days: (WebTask | null)[]; summary: WebTask | null }> =>
     req(`/api/studylog/week?start=${encodeURIComponent(start)}`).then(j),
   studyLogWeekSummary: (weekStart: string): Promise<WebTask[]> => post("/api/studylog/week-summary", { weekStart }),
+  studyLogMonth: (start: string): Promise<{ month: string; weeks: WebTask[]; summary: WebTask | null }> =>
+    req(`/api/studylog/month?start=${encodeURIComponent(start)}`).then(j),
+  studyLogMonthSummary: (monthStart: string): Promise<WebTask[]> => post("/api/studylog/month-summary", { monthStart }),
+  studyLogTopic: (topic: string, notes?: string): Promise<WebTask[]> => post("/api/studylog/topic", { topic, notes }),
+  studyLogTopics: (): Promise<WebTask[]> => req("/api/studylog/topics").then(j),
   studyFreeSession: (): Promise<WebTask[]> => post("/api/study/free", {}),
   addExam: (subject: string, deadline: string): Promise<Profile> => post("/api/profile/exam", { subject, deadline }).then(normalizeProfile),
   deleteExam: (id: string): Promise<Profile> => req(`/api/profile/exam/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
@@ -170,7 +175,7 @@ export const api = {
   goUnlimited: (): Promise<Profile> => post("/api/settings/unlimited").then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),
   cronStatus: (): Promise<{ lastSweepAt: string | null; lastSweepDay: string | null; today: string; sweptToday: boolean; queued: number; cronConfigured: boolean }> => req("/api/cron/status").then(j),
-  usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string }> => req("/api/usage").then(j),
+  usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> }> => req("/api/usage").then(j),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
   // stepIndex: set by the per-step "Aide" button (see F) — the server validates the range itself.
   // Returns the WHOLE updated task, not just `chat` — a tutor turn can now create notes/decks/quizzes,

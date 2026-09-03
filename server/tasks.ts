@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { WebTask, Quadrant, TaskLink, Profile, Sendable } from "../shared/types.ts";
+import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory } from "../shared/types.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
@@ -337,6 +337,20 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
+    // The daily auto-run cap MUST merge conservatively (never under-count) — this is a spend guard, not a
+    // display value, so losing count across a merge would silently let two devices/instances each think
+    // they have the full daily budget left. Same day on both sides → sum stays capped by taking the higher
+    // count isn't right either (two real sweeps on two instances really did spend twice); take the LATER
+    // day wholesale (a stale earlier day's count is genuinely irrelevant), but on the SAME day take the
+    // MAX of the two counts — not a sum, since one side is usually a stale copy of what already got merged
+    // back once already, and double-counting would cap real usage too aggressively over repeated merges.
+    ...(() => {
+      const d1 = p1.autoRunDay, d2 = p2.autoRunDay;
+      if (d1 && d2 && d1 === d2) return { autoRunDay: d1, autoRunCount: Math.max(p1.autoRunCount || 0, p2.autoRunCount || 0) };
+      if (!d1) return { autoRunDay: d2, autoRunCount: p2.autoRunCount };
+      if (!d2) return { autoRunDay: d1, autoRunCount: p1.autoRunCount };
+      return d2 > d1 ? { autoRunDay: d2, autoRunCount: p2.autoRunCount } : { autoRunDay: d1, autoRunCount: p1.autoRunCount };
+    })(),
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
     // genPerDay/timezone/responseStyle/autoApprove/highPriorityPeople/autoArchivePatterns/track/yearLevel/
     // voiceChat: all set through the ONE POST /api/profile/preference route (server/index.ts), all stamped together via
@@ -415,6 +429,16 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         monthOut: Math.max(monthOf(p1.usage, "monthOut"), monthOf(p2.usage, "monthOut")),
         // Monotonic like the token counters — MAX within the same month so a stale copy can't reset spend.
         monthCost: Math.max(monthOf(p1.usage, "monthCost"), monthOf(p2.usage, "monthCost")),
+        // Same MAX-per-category, same-month-only reasoning as monthCost above.
+        monthByCategory: (() => {
+          const c1 = p1.usage?.monthKey === mk ? p1.usage?.monthByCategory : undefined;
+          const c2 = p2.usage?.monthKey === mk ? p2.usage?.monthByCategory : undefined;
+          if (!c1 && !c2) return undefined;
+          const keys = new Set([...Object.keys(c1 || {}), ...Object.keys(c2 || {})]) as Set<AddUsageCategory>;
+          const out: Partial<Record<AddUsageCategory, number>> = {};
+          for (const k of keys) out[k] = Math.max(c1?.[k] || 0, c2?.[k] || 0);
+          return out;
+        })(),
       };
     })() : undefined,
   };
@@ -531,6 +555,32 @@ export function forcedDueToday(profile: Profile, now: Date = new Date()): boolea
   return localDayOf(profile.lastForcedAt, tz) !== localDayOf(now.toISOString(), tz);
 }
 
+// A real ceiling on PASSIVE AI spend — tasks that start themselves with zero user click (the sweep's own
+// auto-run-top-N, and the kick loop's catch-up for anything the sweep didn't get to — see
+// server/jobs.ts's enqueueDueTasks). Before this, the kick loop's per-call cap (3) reset on EVERY kick, not
+// once per day — a tab left open with many "ready" tasks could auto-run far more than 3 a day, since kick
+// fires every 4s while the tab's open. This is what actually bounds "how much can Otto spend on its own
+// today", independent of and much tighter than the monthly $ budget (which only catches this after a whole
+// month of unwatched daily spend, not the day it happens).
+const AUTO_RUN_DAILY_CAP = 3;
+/** How many more tasks may auto-start today, across every trigger (sweep + kick) combined. 0 once the cap
+ *  is hit; resets to the full cap at local midnight. */
+export function autoRunBudgetLeft(profile: Profile, now: Date = new Date()): number {
+  const tz = tzOf(profile);
+  const today = localDayOf(now.toISOString(), tz);
+  if (profile.autoRunDay !== today) return AUTO_RUN_DAILY_CAP;
+  return Math.max(0, AUTO_RUN_DAILY_CAP - (profile.autoRunCount || 0));
+}
+/** Record that `n` more tasks were just auto-started today — mutates `profile` in place (same pattern as
+ *  applyRememberFact/applyProfileUpdate), so the caller's own commit/saveState persists it. */
+export function recordAutoRuns(profile: Profile, n: number, now: Date = new Date()): void {
+  if (n <= 0) return;
+  const tz = tzOf(profile);
+  const today = localDayOf(now.toISOString(), tz);
+  if (profile.autoRunDay !== today) { profile.autoRunDay = today; profile.autoRunCount = 0; }
+  profile.autoRunCount = (profile.autoRunCount || 0) + n;
+}
+
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
   // Tell the generator what's already finished/dismissed so it never resurfaces a handled to-do.
   const handled = existing
@@ -562,7 +612,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         const classified = candidates.length
           ? await classifyCandidates(candidates, profile, active.map((a) => a.title), handled.map((h) => h.title))
           : { tasks: [], profileUpdates: [] as ProfileUpdate[] };
-        addUsage(profile, (classified as { tokens?: { in: number; out: number } }).tokens);
+        addUsage(profile, (classified as { tokens?: { in: number; out: number } }).tokens, "sweep");
         // The classification pass also LEARNS: durable facts these items revealed (a key person, an
         // ongoing project) fold straight into the profile — memory keeps growing on every sweep.
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
@@ -589,7 +639,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         if (newCards === 0 && candidates.length && forcedDueToday(profile)) {
           const one = await pickOneTask(candidates, profile, active.map((a) => a.title), handled.map((h) => h.title));
           if (one) {
-            addUsage(profile, one.tokens);
+            addUsage(profile, one.tokens, "sweep");
             profile.lastForcedAt = new Date().toISOString();
             result = foldGenerated(existing, [...kept, one.task], profile.highPriorityPeople || []);
             const forcedNew = result.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
@@ -612,7 +662,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
             try {
               const otherActive = result.filter((t) => t.status !== "done" && t.status !== "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
               const gen2 = await generateTasks(profile, readOnly({ tools: otherTools, call: extras.call, connected: extras.connected }), handled, otherActive);
-              addUsage(profile, gen2.tokens);
+              addUsage(profile, gen2.tokens, "sweep");
               for (const u of gen2.profileUpdates) applyProfileUpdate(profile, u);
               if (gen2.tasks.length) result = foldGenerated(result, gen2.tasks, profile.highPriorityPeople || []);
             } catch (e: any) { console.warn("[tasks] supplementary non-Google sweep failed:", e?.message || e); }
@@ -626,7 +676,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
   // FALLBACK — open-ended agent sweep over the read-only tool view (covers non-Google sources too).
   // Only reached when the deterministic pipeline couldn't attempt anything at all (e.g. Gmail not connected).
   const gen = await generateTasks(profile, extras ? readOnly(extras) : undefined, handled, active);
-  addUsage(profile, gen.tokens);
+  addUsage(profile, gen.tokens, "sweep");
   for (const u of gen.profileUpdates) applyProfileUpdate(profile, u);
   const result = foldGenerated(existing, gen.tasks, profile.highPriorityPeople || []);
   return result;
@@ -842,7 +892,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     task.sendables = out.sendables?.length ? out.sendables : undefined; // drafts the user can send in one click
     task.artifacts = unionArtifacts(task.artifacts, extractArtifacts(out, out.createdDocIds));
     task.lastRunTokens = out.tokens;
-    addUsage(profile, out.tokens);
+    addUsage(profile, out.tokens, "autorun");
     // Spin off DISTINCT new obligations the run discovered as their OWN tasks — so Otto plans + works each
     // fully (as if freshly generated) instead of burying it as a one-line step. Deduped against the list;
     // inherits the source account so its own execution routes to the right inbox. The job layer auto-runs them.
@@ -908,7 +958,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
     : "";
   const focus = (decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text) + qa;
   const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, extras, academic);
-  addUsage(profile, out.tokens);
+  addUsage(profile, out.tokens, "autorun");
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);
   // If the focused run still needs the user (it returned a needs-you step), it couldn't finish — flip this step

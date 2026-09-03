@@ -93,13 +93,17 @@ function humanizeError(e: unknown): string {
   if (e instanceof pronote.RateLimitedError) return "Pronote a limité cette requête — réessaie dans un instant.";
   if (e instanceof pronote.SecurityError) return "Pronote demande une étape de sécurité supplémentaire non gérée ici (double authentification / CAPTCHA).";
   if (e instanceof pronote.SessionExpiredError) return "Session Pronote expirée — reconnecte-toi dans les Réglages.";
-  const msg = (e as any)?.message || String(e);
-  // pawnote's own error text for a URL that doesn't point at a real Pronote page — normalizePronoteUrl
-  // (above) already fixes the common bare-domain case before this is ever reached, so seeing this still
-  // means the URL is genuinely wrong (wrong subdomain, typo) rather than just missing the page suffix.
-  if (/requested page does not exist/i.test(msg)) {
-    return "Impossible de contacter Pronote à cette adresse — vérifie l'URL (ex : https://0000000a.index-education.net/pronote/eleve.html), copiée depuis la page de connexion de ton établissement.";
+  // PageUnavailableError is thrown by BOTH a genuinely wrong URL AND — confirmed live, see the comment
+  // below — a URL that's verifiably correct (pronote.instance() succeeds against it) but where
+  // loginCredentials() still fails this way, even before checking credentials. normalizePronoteUrl (above)
+  // already fixes the common bare-domain case before this is ever reached, so don't claim "check your URL"
+  // here — that's actively misleading once the URL is already right. Something in pawnote's login
+  // handshake itself isn't completing against this account/instance (observed against a real, live 2026.2
+  // -era Pronote server) — outside what a URL fix or a retry can resolve from this app's side.
+  if (e instanceof pronote.PageUnavailableError) {
+    return "Pronote a refusé la connexion à cette adresse (« page introuvable » pendant la connexion, alors que l'adresse elle-même est correcte) — ça ressemble à un problème de compatibilité entre notre outil et la version actuelle du Pronote de ton établissement, pas à une erreur de ta part. Réessaie plus tard ; si ça persiste, contacte le support.";
   }
+  const msg = (e as any)?.message || String(e);
   return `Impossible de contacter Pronote : ${msg}`.slice(0, 200);
 }
 

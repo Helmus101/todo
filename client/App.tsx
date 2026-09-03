@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
+import { saveDeckLocally } from "./localDecks.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
@@ -216,6 +217,14 @@ export function App() {
   const signedOutRef = useRef(false);
   const [route] = usePathRoute();
   const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
+  // Every flashcard deck Otto has ever generated gets mirrored to this browser's localStorage (see
+  // client/localDecks.ts) — a real DB write already happens server-side, but this is a local backup so a
+  // deck survives (viewable, if not reviewable-with-progress-sync) even through a sync hiccup or briefly
+  // being offline. Cheap: saveDeckLocally no-ops on content that's already saved, and this only runs when
+  // the task list actually changes.
+  useEffect(() => {
+    for (const t of tasks) for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck);
+  }, [tasks]);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
   const [scanning, setScanning] = useState(false); // the daily background sweep is running
   const [busy, setBusy] = useState(false);
@@ -378,21 +387,19 @@ export function App() {
   // so a failed/timed-out sweep retries on the next trigger instead of silently losing its slot. Each
   // sweep is a cheap read-only DELTA ("what's new since the list was built"), which is what makes
   // watching all day affordable.
-  // Cadence from the user's setting: 1–4 scans/day (default 1). 1/day → 24h between sweeps, 4/day → 6h.
-  const genPerDay = Math.min(4, Math.max(1, status?.genPerDay || 1));
-  const SWEEP_EVERY_MS = Math.floor(24 * 60 * 60_000 / genPerDay);
+  // Once a day, fixed at 16:00 (4pm) local time — not a multi-times-a-day cadence (was: genPerDay 1-4x/day,
+  // spaced by SWEEP_EVERY_MS). Mirrors server/jobs.ts's sweepDue exactly: never due before 4pm even if
+  // nothing's run yet today; due once from 4pm onward, not due again until tomorrow. Manual "Refresh" is a
+  // completely separate call (api.generate(true)) and is untouched by this.
+  const SWEEP_HOUR = 16;
   const sweeping = useRef(false);
   const sweepIfDue = useCallback(async () => {
     if (signedOutRef.current || !connected || status?.paused || status?.overBudget || sweeping.current) return;
+    if (new Date().getHours() < SWEEP_HOUR) return;
     let last = 0;
     try { last = Number(localStorage.getItem("otto-lastgen") || 0); } catch { /* sweep anyway */ }
-    if (Date.now() - last < SWEEP_EVERY_MS) return;
-    // Cost-aware: DeepSeek prices peak UTC hours (01:00-04:00, 06:00-10:00) at 2x. If today's once-a-day
-    // minimum is already covered (this is an EXTRA cadence sweep from a >1x/day setting), it's fine to
-    // hold off for an off-peak window — the 15-min/focus retry picks it up. Never delay the ONE sweep
-    // that guarantees daily coverage: a fresh day (or no prior sweep) always runs immediately.
     const sameLocalDayAsLast = last > 0 && new Date(last).toDateString() === new Date().toDateString();
-    if (isPeakHourUtc() && sameLocalDayAsLast && genPerDay > 1) return;
+    if (sameLocalDayAsLast) return;
     sweeping.current = true;
     setScanning(true);
     try {
@@ -409,7 +416,7 @@ export function App() {
       try { localStorage.setItem("otto-lastgen", String(Date.now())); } catch { /* ignore */ }
     } catch { /* marker stays unset — next focus/interval tick retries */ }
     finally { sweeping.current = false; setScanning(false); }
-  }, [connected, status?.paused, SWEEP_EVERY_MS]);
+  }, [connected, status?.paused]);
 
   // Once Google is connected: load tasks + budget, trigger the daily sweep (silent, in background).
   // These three are INDEPENDENT requests — `await syncTasks()` before starting the other two used to
@@ -453,7 +460,12 @@ export function App() {
   const [retryingIds, setRetryingIds] = useState<string[]>([]);
   // Kicks continue through failed_retryable too — the failed attempt's job is REQUEUED server-side, so
   // "Failed — will retry" actually retries within seconds while the tab is open (not at the next cron).
-  const hasActiveWork = (list: WebTask[]) => list.some((t) => isInFlight(t.status) || canonStatus(t.status) === "failed_retryable");
+  // ALSO true for a plain "ready" task that's never been attempted (canonStatus==="ready" && !autoRan) —
+  // there's no "Start" button anymore (tasks start themselves): this is what makes that actually happen
+  // while the tab is open, instead of only ever being caught by the once-a-day cron. /api/jobs/kick itself
+  // now enqueues any due ready task before draining (server/jobs.ts's enqueueDueTasks), so once this loop
+  // is running it's enough to just keep kicking.
+  const hasActiveWork = (list: WebTask[]) => list.some((t) => isInFlight(t.status) || canonStatus(t.status) === "failed_retryable" || (canonStatus(t.status) === "ready" && !t.autoRan));
   useEffect(() => {
     if (!connected || !loaded || status?.paused) return;
     if (!hasActiveWork(tasks)) return;
@@ -1626,7 +1638,23 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
-  const [openDeckFor, setOpenDeckFor] = useState<"day" | "summary" | null>(null);
+  const [openDeckFor, setOpenDeckFor] = useState<"day" | "summary" | "month" | "topic" | null>(null);
+  const [openTopic, setOpenTopic] = useState<WebTask | null>(null);
+
+  // Month summary: aggregates whatever weekly decks already exist in the month containing `monday`, not
+  // its own calendar nav — riding the week nav keeps this simple (no second date picker) at the cost of
+  // the month view following whichever week you're currently on.
+  const month = monday.slice(0, 7);
+  const [monthWeeks, setMonthWeeks] = useState<WebTask[]>([]);
+  const [monthSummary, setMonthSummary] = useState<WebTask | null>(null);
+  const [monthGenBusy, setMonthGenBusy] = useState(false);
+
+  // Topic decks: on-demand, independent of the calendar entirely.
+  const [topics, setTopics] = useState<WebTask[]>([]);
+  const [topicName, setTopicName] = useState("");
+  const [topicNotes, setTopicNotes] = useState("");
+  const [topicBusy, setTopicBusy] = useState(false);
+  const [topicOpen, setTopicOpen] = useState(false);
 
   const load = useCallback((m: string) => {
     setLoaded(false);
@@ -1635,6 +1663,10 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   }, [en, notify]);
   useEffect(() => { load(monday); }, [monday, load]);
   useEffect(() => { setText(days[selected]?.logText || ""); }, [selected, days]);
+  useEffect(() => {
+    void api.studyLogMonth(month).then((r) => { setMonthWeeks(r.weeks); setMonthSummary(r.summary); }).catch(() => {});
+  }, [month]);
+  useEffect(() => { void api.studyLogTopics().then(setTopics).catch(() => {}); }, []);
 
   const dates = Array.from({ length: 5 }, (_, i) => addDays(monday, i));
   const dayLabels = en ? ["Mon", "Tue", "Wed", "Thu", "Fri"] : ["Lun", "Mar", "Mer", "Jeu", "Ven"];
@@ -1673,6 +1705,41 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
       if (fresh) setSummary(fresh);
     }).catch(() => {});
   } : undefined;
+
+  const monthDeck = monthSummary?.flashcards?.[0];
+  const onMonthReview = monthSummary && monthDeck ? (cardIndex: number, correct: boolean) => {
+    void api.reviewFlashcard(monthSummary.id, monthDeck.id, cardIndex, correct).then((list) => {
+      const fresh = list.find((t) => t.id === monthSummary.id);
+      if (fresh) setMonthSummary(fresh);
+    }).catch(() => {});
+  } : undefined;
+  const genMonthSummary = async () => {
+    setMonthGenBusy(true);
+    try {
+      const list = await api.studyLogMonthSummary(month);
+      setMonthSummary(list.find((t) => t.logDate === `month:${month}`) || null);
+    } catch (e: any) { notify(e?.message || (en ? "Couldn't build the month summary — try again." : "Impossible de créer le résumé mensuel — réessaie."), "error"); }
+    finally { setMonthGenBusy(false); }
+  };
+
+  const topicDeck = openTopic?.flashcards?.[0];
+  const onTopicReview = openTopic && topicDeck ? (cardIndex: number, correct: boolean) => {
+    void api.reviewFlashcard(openTopic.id, topicDeck.id, cardIndex, correct).then((list) => {
+      const fresh = list.find((t) => t.id === openTopic.id);
+      if (fresh) setOpenTopic(fresh);
+    }).catch(() => {});
+  } : undefined;
+  const genTopicDeck = async () => {
+    if (!topicName.trim()) return;
+    setTopicBusy(true);
+    try {
+      const list = await api.studyLogTopic(topicName.trim(), topicNotes.trim() || undefined);
+      const fresh = list.filter((t) => t.source === "studylog" && t.logDate?.startsWith("topic:")).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0];
+      if (fresh) setTopics((prev) => [fresh, ...prev]);
+      setTopicName(""); setTopicNotes(""); setTopicOpen(false);
+    } catch (e: any) { notify(e?.message || (en ? "Couldn't build that deck — try again." : "Impossible de créer ces cartes — réessaie."), "error"); }
+    finally { setTopicBusy(false); }
+  };
 
   return (
     <main className="list-wrap studylog-page">
@@ -1716,6 +1783,48 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
             )}
             {!anyEntryThisWeek ? <p className="settings-hint">{L("Ajoute au moins une entrée cette semaine d'abord.", "Add at least one entry this week first.")}</p> : null}
           </div>
+
+          <div className="studylog-summary-sec">
+            <h3>{L("Résumé du mois", "Month summary")}</h3>
+            {monthDeck ? (
+              <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("month")}>{L("Voir le résumé", "View summary")} ({monthDeck.cards.length})</button>
+            ) : (
+              <button type="button" className="btn ghost" disabled={monthGenBusy || monthWeeks.length === 0} onClick={() => void genMonthSummary()}>
+                {monthGenBusy ? L("Création…", "Building…") : L("Créer le résumé du mois", "Generate month summary")}
+              </button>
+            )}
+            {monthWeeks.length === 0 ? <p className="settings-hint">{L("Crée d'abord au moins un résumé de semaine ce mois-ci.", "Build at least one week summary this month first.")}</p> : null}
+          </div>
+
+          <div className="studylog-summary-sec">
+            <h3>{L("Réviser un sujet précis", "Revise a specific topic")}</h3>
+            {!topicOpen ? (
+              <button type="button" className="btn ghost" onClick={() => setTopicOpen(true)}>{L("+ Nouveau sujet", "+ New topic")}</button>
+            ) : (
+              <div className="studylog-topic-form">
+                <input type="text" className="studylog-topic-input" placeholder={L("Sujet (ex. Révolution française)", "Topic (e.g. French Revolution)")}
+                  value={topicName} onChange={(e) => setTopicName(e.target.value)} maxLength={200} />
+                <textarea className="studylog-textarea" rows={4}
+                  placeholder={L("Colle tes notes ici (facultatif) — sinon Otto s'appuie sur ses propres connaissances.", "Paste your notes here (optional) — otherwise Otto draws on its own knowledge.")}
+                  value={topicNotes} onChange={(e) => setTopicNotes(e.target.value)} maxLength={4000} />
+                <div className="studylog-actions">
+                  <button type="button" className="btn primary" disabled={topicBusy || !topicName.trim()} onClick={() => void genTopicDeck()}>
+                    {topicBusy ? L("Création…", "Building…") : L("Créer les cartes", "Generate flashcards")}
+                  </button>
+                  <button type="button" className="btn ghost" onClick={() => { setTopicOpen(false); setTopicName(""); setTopicNotes(""); }}>{L("Annuler", "Cancel")}</button>
+                </div>
+              </div>
+            )}
+            {topics.length > 0 ? (
+              <div className="studylog-topic-list">
+                {topics.map((t) => (
+                  <button key={t.id} type="button" className="btn xs ghost" onClick={() => { setOpenTopic(t); setOpenDeckFor("topic"); }}>
+                    {t.title} ({t.flashcards?.[0]?.cards.length || 0})
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </>
       )}
 
@@ -1724,6 +1833,12 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
       ) : null}
       {openDeckFor === "summary" && summaryDeck ? (
         <TaskModal onClose={() => setOpenDeckFor(null)} title={summaryDeck.title}><FlashcardDeck deck={summaryDeck} onReview={onSummaryReview} taskId={summary?.id} /></TaskModal>
+      ) : null}
+      {openDeckFor === "month" && monthDeck ? (
+        <TaskModal onClose={() => setOpenDeckFor(null)} title={monthDeck.title}><FlashcardDeck deck={monthDeck} onReview={onMonthReview} taskId={monthSummary?.id} /></TaskModal>
+      ) : null}
+      {openDeckFor === "topic" && topicDeck ? (
+        <TaskModal onClose={() => { setOpenDeckFor(null); setOpenTopic(null); }} title={topicDeck.title}><FlashcardDeck deck={topicDeck} onReview={onTopicReview} taskId={openTopic?.id} /></TaskModal>
       ) : null}
     </main>
   );
@@ -1736,7 +1851,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string } | null>(null);
+  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
   const [showTrustLog, setShowTrustLog] = useState(false);
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
@@ -1780,6 +1895,26 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             no confirmed EU residency and no DPA (see DATA_PROTECTION.md). Only state what's actually true. */}
         <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails sur le traitement de tes données →", "Details on how your data is handled →")}</a></span></div>
         {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn)}</span></div>}
+        {/* Breakdown by WHAT spent it — added after a live "why is €0.30/day being spent with no interaction"
+            question that the single total above couldn't answer on its own. sweep = the daily background scan,
+            autorun = tasks Otto ran on its own (no click needed anymore), chat = Ask Otto conversations,
+            manual_refine = tightening a rough manually-typed title. Only shown once there's something to show —
+            an empty/all-zero breakdown (new account, or spend from before this existed) would just be noise. */}
+        {usage && Object.values(usage.byCategory).some((v) => (v || 0) > 0) ? (
+          <div className="modal-row">
+            <span className="lbl" />
+            <span className="val settings-hint">
+              {([
+                ["sweep", L("scan quotidien", "daily scan")],
+                ["autorun", L("tâches auto-exécutées", "auto-run tasks")],
+                ["chat", L("chat", "chat")],
+                ["manual_refine", L("tâches ajoutées", "added tasks")],
+                ["other", L("autre", "other")],
+              ] as const).filter(([k]) => (usage.byCategory[k] || 0) > 0)
+                .map(([k, label]) => `${label} : ${fmtEur(usage.byCategory[k] || 0)}`).join(" · ")}
+            </span>
+          </div>
+        ) : null}
         <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
         {/* GDPR self-serve: download everything stored (Art. 20, portability) and permanently delete it
             (Art. 17, erasure) — no "email us and wait" step for either. */}
