@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateA
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
-import { saveDeckLocally } from "./localDecks.ts";
+import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   BookOpen,
   GraduationCap,
+  Layers,
   Settings as SettingsIcon,
   Menu,
   X
@@ -697,6 +698,14 @@ export function App() {
             {status?.language === "en" ? "Study" : "Réviser"}
           </a>
           <a
+            className={`sidebar-item ${route === "flashcards" ? "active" : ""}`}
+            href="/flashcards"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <Layers />
+            {status?.language === "en" ? "Flashcards" : "Cartes"}
+          </a>
+          <a
             className={`sidebar-item ${route === "settings" ? "active" : ""}`}
             href="/settings"
             onClick={() => setSidebarOpen(false)}
@@ -743,6 +752,8 @@ export function App() {
         <StudyLogPage lang={status?.language} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
+      ) : route === "flashcards" ? (
+        <FlashcardsLibraryPage lang={status?.language} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -1567,6 +1578,57 @@ const addDays = (dateStr: string, n: number): string => {
  *  lightweight placeholder to attach to — POST /api/study/free finds-or-creates one (source:"freestudy",
  *  excluded from the normal dashboard, see the `live`/`completed` filters above), so returning to /study
  *  later resumes the same workspace instead of starting over. */
+/** Every flashcard deck this browser has ever generated, in one place, reachable regardless of where its
+ *  source task/journal entry lives — built on the local backup (client/localDecks.ts) that already mirrors
+ *  every deck as it's created, so this is always populated even offline or if a task got pruned/merged
+ *  server-side. Reviewing from here posts back to the deck's real owner (taskId) exactly like reviewing it
+ *  from the task/journal itself — this is a second way IN, not a separate copy of the review state. */
+function FlashcardsLibraryPage({ lang }: { lang?: "fr" | "en" }) {
+  const L = useLang();
+  const en = lang === "en";
+  const [decks, setDecks] = useState(() => getAllLocalDecks());
+  const [openId, setOpenId] = useState<string | null>(null);
+  // Local storage isn't reactive — refresh the list on focus so a deck generated in another tab (or just
+  // now, before this page was opened) shows up without needing a full reload.
+  useEffect(() => {
+    const refresh = () => setDecks(getAllLocalDecks());
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
+  const open = decks.find((d) => d.deck.id === openId) || null;
+  return (
+    <main className="list-wrap">
+      <div className="dash-head">
+        <h2>{L("Tes cartes", "Your flashcards")}</h2>
+        <p className="dash-line">{L("Toutes les cartes générées, accessibles à tout moment — même sans connexion.", "Every deck you've ever generated, accessible anytime — even offline.")}</p>
+      </div>
+      {decks.length === 0 ? (
+        <p className="muted small">{L("Pas encore de cartes — elles apparaissent ici dès qu'Otto (ou toi) en crée.", "No flashcards yet — they'll show up here as soon as Otto (or you) creates some.")}</p>
+      ) : (
+        <div className="list">
+          {decks.map(({ deck, taskTitle, savedAt }) => (
+            <button key={deck.id} type="button" className="card" onClick={() => setOpenId(deck.id)}>
+              <div className="card-text">
+                <div className="card-title">{deck.title}</div>
+                <div className="card-sub">{taskTitle} · {deck.cards.length} {L("cartes", "cards")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      {open ? (
+        <TaskModal onClose={() => setOpenId(null)} title={open.deck.title}>
+          <FlashcardDeck
+            deck={open.deck}
+            taskId={open.taskId}
+            onReview={(cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); }}
+          />
+        </TaskModal>
+      ) : null}
+    </main>
+  );
+}
+
 function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
   tasks: WebTask[]; setTasks: Dispatch<SetStateAction<WebTask[]>>; status: ConnectionStatus; notify: (msg: string, kind?: "error" | "info") => void; navigate: (r: string) => void;
 }) {

@@ -463,6 +463,21 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
   const [flipped, setFlipped] = useState(false);
   const [right, setRight] = useState<number[]>(saved?.right ?? []);
   const [wrong, setWrong] = useState<number[]>(saved?.wrong ?? []);
+  // Marking a card used to set flipped=false and advance `i` in the same instant — the DOM content swaps to
+  // the NEXT card immediately, but the CSS un-flip is a 420ms animated transition (styles.css's
+  // .deck-card-inner), so for that whole 420ms the viewer was watching the card rotate back while it was
+  // already showing the NEXT card's text — a real "wrong def flashes for a split second" bug, not a timing
+  // fluke. Fix: suppress the transition for exactly the one frame where flip+content both change (double
+  // rAF so the no-transition style is actually applied before the state change paints), so advancing to the
+  // next card is an instant cut, front-facing, no animated flip at all — the flip animation still plays
+  // normally for an actual user-initiated flip (space/click), which never touches `i`.
+  const [skipFlipAnim, setSkipFlipAnim] = useState(false);
+  useEffect(() => {
+    if (!skipFlipAnim) return;
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => { raf2 = requestAnimationFrame(() => setSkipFlipAnim(false)); });
+    return () => { cancelAnimationFrame(raf1); if (raf2) cancelAnimationFrame(raf2); };
+  }, [skipFlipAnim]);
   const done = i >= deck.cards.length;
   const card = !done ? deck.cards[i] : null;
   const mark = (ok: boolean) => {
@@ -475,6 +490,7 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
     // Fire-and-forget — the deck's own local right/wrong state (for the score screen) doesn't wait on the
     // network either, so this shouldn't make marking a card feel any less instant.
     onReview?.(i, ok);
+    setSkipFlipAnim(true);
     setFlipped(false);
     setI((v) => v + 1);
   };
@@ -524,7 +540,7 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
       <div className="deck-progress-bar"><div className="deck-progress-fill" style={{ width: `${(i / deck.cards.length) * 100}%` }} /></div>
       <div className="deck-progress">{i + 1} / {deck.cards.length}</div>
       <div className={`deck-card-3d ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((v) => !v)}>
-        <div className="deck-card-inner">
+        <div className="deck-card-inner" style={skipFlipAnim ? { transition: "none" } : undefined}>
           <div className="deck-card-face deck-card-front">
             <span className="deck-face-label">{L("Question", "Front")}</span>
             <div className="deck-face-text">{formatMath(stripStrayMarkdown(card!.front))}</div>

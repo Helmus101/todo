@@ -1076,6 +1076,17 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     req.session.tasks = list;
   }
   t.logText = text;
+  // Generate ONCE per day, not on every save — saving is how the text itself persists as you type through
+  // the day (autosave-style, could be many times), but re-running generation on every one of those saves
+  // would burn AI spend repeatedly AND blow away any review progress already made on the existing deck each
+  // time. Once a real deck exists for this day, further saves just update the text. A prior FAILED attempt
+  // (flashcards still empty after a real try) is the one case that's still allowed to retry on the next save.
+  if (t.flashcards?.length) {
+    t.updatedAt = new Date().toISOString();
+    await commit(req);
+    res.json(req.session.tasks || []);
+    return;
+  }
   try {
     const deck = await generateDailyStudyCards(text, req.session.profile);
     t.flashcards = deck ? [deck] : [];

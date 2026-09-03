@@ -919,7 +919,7 @@ const CREATE_FLASHCARDS_TOOL = {
     title: { type: "string", description: "short label shown on the button, e.g. 'Vocabulaire — Chapitre 4'" },
     cards: {
       type: "array",
-      description: "Around 25 by default when the student didn't name a number, adapted to the actual task (a short formula sheet needs fewer, a whole chapter's vocabulary needs more) and to the student (more if they're drilling hard for a contrôle, fewer for a quick review). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller deck with no explanation, and never try to cram more than 50 into one call (it will fail/truncate before you can even reply). MEDIUM length each side (a phrase/sentence, not one word and not a paragraph) — real content from the task's subject, never placeholders.",
+      description: "Around 25 by default when the student didn't name a number, adapted to the actual task (a short formula sheet needs fewer, a whole chapter's vocabulary needs more) and to the student (more if they're drilling hard for a contrôle, fewer for a quick review). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller deck with no explanation, and never try to cram more than 50 into one call (it will fail/truncate before you can even reply). CARD QUALITY (the minimum-information principle — retrieval practice only works if a card forces ONE precise recall, not recognition of a blob): one idea per card, split anything with multiple facts/causes/steps into separate cards rather than listing them on one back; front names the subject/context and asks for real recall ('Physics: why does...') not recognition; back is short and precise — a word, value, equation, or one compact clause, never a paragraph; use your own wording, not the source text verbatim; vary card type to fit the content (definition/contrast/cause-effect/application/cloze) rather than forcing everything into one shape — real content from the task's subject, never placeholders.",
       items: { type: "object", properties: {
         front: { type: "string", description: "the prompt side — a term, question, or formula name. Every card must be a genuinely DISTINCT fact — never two cards that are really the same term/definition reworded, or the same formula applied to trivially different numbers. If the topic doesn't actually have that many distinct facts to drill, make FEWER cards rather than pad with near-duplicates." },
         back: { type: "string", description: "the answer side — the definition, translation, or value" },
@@ -1461,8 +1461,40 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
   } catch { return null; }
 }
 
-/** Daily study-log entry → a flashcard deck of what was actually IN it. One-shot, no tool loop (same shape
- *  as refineManualTask above) — the log text is self-contained, there's nothing to look up. Reuses
+// Shared by every study-deck generator below (daily/weekly/monthly/topic) — the "minimum information
+// principle" from the actual research on effective flashcards (retrieval practice + spacing are the two
+// best-evidenced study techniques; a card only serves that if it forces ONE precise retrieval, not
+// recognition of a vague paragraph). Supersedes an earlier version of this rule that said to COMBINE a
+// multi-part answer into one card — that was backwards: "three reasons for X" as one card lets you
+// recognize the gist without being able to produce any ONE of the three on demand, which is exactly the
+// "testing yourself on a paragraph" failure mode this whole approach exists to avoid.
+const CARD_STYLE_RULE =
+  `CARD QUALITY — every card must pass this bar:\n` +
+  `1. ONE IDEA PER CARD (the minimum-information principle). If a question would need several facts, ` +
+  `causes, steps, or examples to answer fully, that is SEVERAL cards, not one with a multi-part back — ` +
+  `"three reasons demand curves slope down" is three separate cards, one reason each, not one card listing ` +
+  `all three. A card testing more than one fact tests recognition of a blob, not recall of a precise idea.\n` +
+  `2. SPECIFIC FRONT. Name the subject/context in the prompt so it stands alone outside the deck — "Physics: ` +
+  `what does 'a' represent in v = u + at?" not just "what does a represent?". Prefer a real retrieval prompt ` +
+  `("Why does...", "What happens when...", "What's the difference between...") over a recognition prompt ` +
+  `("Do you know X?").\n` +
+  `3. SHORT, PRECISE BACK. A word, a value, an equation, or one compact sentence — if the true answer needs a ` +
+  `paragraph, that's a sign the card is still testing too much and should be split further. A cause-and-effect ` +
+  `card's back is naturally a short causal clause ("because..."), not a bare label with zero mechanism — ` +
+  `short does not mean context-free, it means no padding, no restating the question, no second unrelated fact ` +
+  `riding along.\n` +
+  `4. YOUR OWN WORDING, not the textbook's or the student's notes verbatim — paraphrasing is itself part of ` +
+  `what makes a card test understanding rather than memorized phrasing.\n` +
+  `5. VARY THE CARD TYPE to fit what's actually being tested, don't force everything into one shape: a ` +
+  `definition card ("what is X?") for vocabulary, a contrast card ("how does X differ from Y?") for two ideas ` +
+  `students actually confuse, a cause-effect card ("why does X lead to Y?") for mechanisms, an application ` +
+  `card (a short scenario, "which principle applies here?") for problem-solving subjects, a cloze card (one ` +
+  `key term blanked in an otherwise-meaningful sentence) when the surrounding context matters to the answer.\n` +
+  `Output STRICT JSON only.`;
+
+/** Daily study-log entry → a flashcard deck built from the CONCEPTS the entry is actually about — not a
+ *  strict transcript of it. One-shot, no tool loop (same shape as refineManualTask above): the log text is
+ *  the starting point/signal for what to study, not a ceiling on what the deck may contain. Reuses
  *  makeDeck() for the same validation every other deck-producing path already gets. */
 export async function generateDailyStudyCards(logText: string, profile?: Profile): Promise<TaskFlashcards | null> {
   const raw = String(logText || "").trim();
@@ -1478,17 +1510,29 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
       messages: [
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
-          `You turn a student's own end-of-day "what I learned today" dump into flashcards that actually drill ` +
-          `it. Go through the text and make ONE card for EVERY distinct fact/concept/definition/formula/date/ ` +
-          `example actually IN it — aim for FULL coverage, not a quick sample. Never pad with something ` +
-          `plausible-sounding they didn't write, but don't under-cover either: if the entry mentions five ` +
-          `sub-points, that's five-plus cards, not two. A short one-idea entry might only support 3-5 cards; a ` +
-          `dense multi-subject entry can easily need 25-40 — match the count to how much is genuinely there, ` +
-          `but 40 is a HARD ceiling regardless of how dense the entry is (a technical limit on this reply's ` +
-          `token budget, not a product opinion) — if the entry genuinely has more than 40 distinct things, ` +
-          `cover the 40 most important/substantial ones rather than trying to fit everything and risking an ` +
-          `incomplete response. Each card front is a question/prompt, back is the answer — MEDIUM length (a ` +
-          `phrase/sentence, not one word, not a paragraph). Output STRICT JSON only.` },
+          `You turn a student's own end-of-day "what I learned today" dump into a flashcard deck good enough to ` +
+          `actually revise from — not a transcript of their notes turned into Q&A pairs. The entry tells you ` +
+          `WHAT TOPICS they studied; your job is to build the best possible deck ON THOSE TOPICS, using your ` +
+          `own real subject knowledge, not just what they happened to jot down:\n` +
+          `1. COVER what's in the entry, ATOMICALLY — every distinct fact/definition/formula/date/example they ` +
+          `wrote becomes its own card (see the one-idea-per-card rule below); if a line mentions three things, ` +
+          `that's three cards, not one that lists all three.\n` +
+          `2. CORRECT anything wrong. Notes taken quickly are often imprecise or flat-out mistaken (a wrong ` +
+          `formula, a swapped definition, a value that's off) — fix it in the card rather than reproducing ` +
+          `their error. If a correction is genuinely non-obvious (not just a typo), say so briefly on that ` +
+          `card's back ("actually X, not Y") so they notice the fix, not just absorb it silently.\n` +
+          `3. COMPLETE what's incomplete. If they name a concept without its content (e.g. "SUVAT equations" ` +
+          `with no equations listed, "the Krebs cycle" with no steps), add the real, correct content as its own ` +
+          `card(s) — one card per equation/step, not a single card listing all of them — this is you supplying ` +
+          `genuine curriculum knowledge for a topic they've clearly already named as something they're ` +
+          `studying, not inventing a new topic they never mentioned.\n` +
+          `4. STRETCH a little. Once the core is covered, add a small number of harder cards per major topic — ` +
+          `an application, a "why" behind a fact they only noted as a "what," a case that tests whether they ` +
+          `actually understand it vs. just recognize it — real revision needs more than pure recall.\n` +
+          `Stay ON the topics the entry actually names — this is depth on what they studied, never a detour ` +
+          `into an unrelated topic. Every correction/completion/stretch card must be genuinely correct, ` +
+          `established subject content (the kind of thing in any real textbook for this level), never a ` +
+          `plausible-sounding guess.\n${CARD_STYLE_RULE}` },
         { role: "user", content:
           `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
           `Return JSON: {"title": short label for today's deck (≤8 words, name the actual topic(s), e.g. ` +
@@ -1528,8 +1572,9 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
           `ideas from different days into one card, connect genuinely related concepts across days, and weight ` +
           `toward what the weak-list below says they got wrong. But summarizing does NOT mean shrinking: cover ` +
           `every distinct concept the week actually contained, so a heavy week with many topics should produce ` +
-          `a correspondingly large deck — there is no cap, aim for full coverage of the week's material rather ` +
-          `than a token "highlights" selection. Output STRICT JSON only.` },
+          `a correspondingly large deck, up to 50 cards (a hard technical ceiling on this reply's token budget, ` +
+          `not a product opinion) — aim for full coverage of the week's material within that, not a token ` +
+          `"highlights" selection. ${CARD_STYLE_RULE}` },
         { role: "user", content:
           `THIS WEEK'S DAILY ENTRIES:\n${days.map((d) => `— ${d.date}:\n"""\n${d.logText.slice(0, 2000)}\n"""`).join("\n\n")}` +
           weakBlock +
@@ -1567,7 +1612,8 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
           `near-duplicate cards that show up across different weeks into one, and weight toward the weak-list ` +
           `below — but otherwise keep FULL coverage of the month's distinct concepts, don't shrink down to a ` +
           `"highlights only" selection. A month with many weeks of real material should produce a correspondingly ` +
-          `large deck; there is no cap. Output STRICT JSON only.` },
+          `large deck, up to 50 cards (a hard technical ceiling on this reply's token budget, not a product ` +
+          `opinion). ${CARD_STYLE_RULE}` },
         { role: "user", content:
           `THIS MONTH'S WEEKLY DECKS:\n${nonEmpty.map((w) => `— ${w.label}:\n${w.cards.map((c) => `  Q: ${c.front}\n  A: ${c.back}`).join("\n")}`).join("\n\n")}` +
           weakBlock +
@@ -1600,16 +1646,19 @@ export async function generateTopicStudyDeck(topic: string, notes: string | unde
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
           (hasNotes
-            ? `Build a flashcard deck to drill ONE topic from the student's own pasted notes. Make a card for ` +
-              `EVERY distinct fact/concept/definition/formula actually IN the notes — full coverage, not a ` +
-              `sample. Never pad with something plausible-sounding they didn't write. There is no cap: dense ` +
-              `notes should produce a correspondingly large deck.`
+            ? `Build a flashcard deck to drill ONE topic from the student's own pasted notes — but the notes are ` +
+              `the starting signal for what to study, not a ceiling: cover every distinct fact/concept/definition/` +
+              `formula actually in them, correct anything wrong, complete anything named but not written out, and ` +
+              `add a few harder cards once the core is covered (same as the daily study-log deck), using your own ` +
+              `real subject knowledge — never a plausible-sounding guess, and stay on the topics the notes actually ` +
+              `name. Up to 50 cards: dense notes should produce a correspondingly large deck within that ceiling.`
             : `Build a flashcard deck to drill ONE topic the student named, using your own knowledge of it. ` +
               `Match difficulty to their track/level above. Aim to comprehensively cover the topic the way a ` +
               `full exam review would — every major sub-concept, definition, mechanism, key date/formula/example ` +
-              `worth knowing, not just a quick highlights pass. There is no cap on card count; a substantial ` +
-              `topic (a whole chapter, a historical period, a math unit) should easily produce 25-50+ cards.`) +
-          ` Each card front is a question/prompt, back is the answer — MEDIUM length. Output STRICT JSON only.` },
+              `worth knowing, not just a quick highlights pass. Up to 50 cards (a hard technical ceiling on this ` +
+              `reply's token budget, not a product opinion) — a substantial topic (a whole chapter, a historical ` +
+              `period, a math unit) should easily use most of that.`) +
+          ` ${CARD_STYLE_RULE}` },
         { role: "user", content:
           `TOPIC: ${t.slice(0, 200)}` +
           (hasNotes ? `\n\nNOTES:\n"""\n${notes!.slice(0, 4000)}\n"""` : "") +
