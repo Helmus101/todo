@@ -460,12 +460,13 @@ export function App() {
   const [retryingIds, setRetryingIds] = useState<string[]>([]);
   // Kicks continue through failed_retryable too — the failed attempt's job is REQUEUED server-side, so
   // "Failed — will retry" actually retries within seconds while the tab is open (not at the next cron).
-  // ALSO true for a plain "ready" task that's never been attempted (canonStatus==="ready" && !autoRan) —
-  // there's no "Start" button anymore (tasks start themselves): this is what makes that actually happen
-  // while the tab is open, instead of only ever being caught by the once-a-day cron. /api/jobs/kick itself
-  // now enqueues any due ready task before draining (server/jobs.ts's enqueueDueTasks), so once this loop
-  // is running it's enough to just keep kicking.
-  const hasActiveWork = (list: WebTask[]) => list.some((t) => isInFlight(t.status) || canonStatus(t.status) === "failed_retryable" || (canonStatus(t.status) === "ready" && !t.autoRan));
+  // Deliberately NOT true for a plain "ready" task that's never been attempted — that used to also count as
+  // "active work" so a merely-ready task would get auto-enqueued and run the moment the tab was open, any
+  // time of day. Reverted: AI spend should only happen at the once-daily 4pm sweep (which still auto-runs
+  // its own top-N by score — see processSweep/autoRunBudgetLeft in server/jobs.ts,tasks.ts), in chat, or in
+  // Journal/Study Mode — not continuously throughout the day just because a tab is sitting open. A ready
+  // task with no button now simply waits for the next 4pm cycle instead of being caught up mid-day.
+  const hasActiveWork = (list: WebTask[]) => list.some((t) => isInFlight(t.status) || canonStatus(t.status) === "failed_retryable");
   useEffect(() => {
     if (!connected || !loaded || status?.paused) return;
     if (!hasActiveWork(tasks)) return;
@@ -1408,22 +1409,16 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
 function GradesEditor({ profile, onChanged, pronoteConnected, onTasksChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void; pronoteConnected?: boolean; onTasksChanged: (tasks: WebTask[]) => void }) {
   const L = useLang();
   const notify = useNotify();
-  const [subject, setSubject] = useState("");
-  const [grade, setGrade] = useState("");
-  const [scale, setScale] = useState("20");
   const [openSubject, setOpenSubject] = useState<string | null>(null);
   const [addedTaskFor, setAddedTaskFor] = useState<string | null>(null);
+  // Grades come from Pronote only — no manual self-report. Not connected → naturally nothing to show,
+  // rather than a form the student fills in by hand that then silently drifts from reality. Any manual
+  // entries from before this existed still render below (and can be deleted) so a legacy account isn't
+  // left with mystery data it can't see, but there's no way to ADD a new one anymore.
+  if (!pronoteConnected) {
+    return <p className="settings-hint">{L("Connecte ton Pronote pour voir tes notes ici.", "Connect your Pronote to see your grades here.")}</p>;
+  }
   const grades = profile?.grades || [];
-  const add = async () => {
-    const s = subject.trim();
-    const g = Number(grade);
-    const sc = Number(scale) > 0 ? Number(scale) : 20;
-    if (!s || !Number.isFinite(g)) return;
-    try {
-      onChanged?.(await api.setGrade(s, g, sc));
-      setSubject(""); setGrade("");
-    } catch (e: any) { notify(e?.message || L("Impossible d'ajouter la note.", "Couldn't add the grade."), "error"); }
-  };
   // No manual "sync" button — Pronote grades pull in automatically (on connect, and again with every
   // daily sweep; see applyPronoteGrades in server/pronote.ts). A passive status line, not a button the
   // student has to remember to press, matches how the rest of Otto works (things just happen for you).
@@ -1455,7 +1450,7 @@ function GradesEditor({ profile, onChanged, pronoteConnected, onTasksChanged }: 
   };
   return (
     <div className="grades-editor">
-      {pronoteConnected && grades.length > 0 && (
+      {grades.length > 0 && (
         <p className="settings-hint grades-sync-note">{L("Synchronisées automatiquement depuis Pronote", "Synced automatically from Pronote")}</p>
       )}
       {overallAvg20 !== null && (
@@ -1503,13 +1498,6 @@ function GradesEditor({ profile, onChanged, pronoteConnected, onTasksChanged }: 
           })}
         </ul>
       )}
-      <div className="addrow grade-addrow">
-        <input className="addinput sm" placeholder={L("Matière (ex : Maths)", "Subject (e.g. Math)")} value={subject} onChange={(e) => setSubject(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
-        <input className="addinput sm grade-num" type="number" min={0} placeholder={L("Note", "Grade")} value={grade} onChange={(e) => setGrade(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
-        <span className="grade-scale-sep">/</span>
-        <input className="addinput sm grade-scale" type="number" min={1} placeholder="20" value={scale} onChange={(e) => setScale(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
-        <button className="btn" disabled={!subject.trim() || grade === ""} onClick={() => void add()}>{L("Ajouter", "Add")}</button>
-      </div>
     </div>
   );
 }

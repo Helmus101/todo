@@ -657,14 +657,13 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     );
   }
   if (steps.length === 0) {
-    // No "Start" button — a task never needs a click to begin. The sweep that created it already tries to
-    // auto-run its top few by score immediately; anything left over (or a task from before this existed)
-    // gets picked up the moment the tab is open, within seconds, by App.tsx's kick loop (widened to also
-    // cover a never-attempted "ready" task, not just already-queued ones — see hasActiveWork there) calling
-    // POST /api/jobs/kick, which enqueues any due ready task before draining (server/jobs.ts's
-    // enqueueDueTasks). Reads task.status directly (isInFlight), NOT the local `running` state — that flag
-    // only ever gets set by THIS component's own onRun() click, which nothing calls here anymore now that
-    // there's no button; the task list refreshing via the kick loop is what actually flips task.status.
+    // No "Start" button — a task never needs a click to begin. The daily 4pm sweep auto-runs its top few by
+    // score itself (server/jobs.ts's processSweep + tasks.autoRunBudgetLeft); anything left over just waits
+    // for the NEXT 4pm cycle rather than being clickable — AI spend is deliberately confined to that once-
+    // daily window (plus chat and Journal/Study Mode), not triggered by merely having a tab open. Reads
+    // task.status directly (isInFlight), NOT the local `running` state — that flag only ever gets set by
+    // THIS component's own onRun() click, which nothing calls here anymore now that there's no button; the
+    // task list refreshing (poll/kick) is what actually flips task.status once the sweep does run it.
     const autoStarting = isInFlight(task.status);
     return (
       <div className="step-hero hero-empty">

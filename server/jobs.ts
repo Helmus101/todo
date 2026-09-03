@@ -78,39 +78,6 @@ export function tasksToEnqueue(list: WebTask[], activeTaskIds: string[], limit =
   return [...ready, ...orphaned].slice(0, limit);
 }
 
-/** Enqueue whatever's due for this ONE account right now via tasksToEnqueue (ready tasks never yet
- *  attempted, plus orphaned queued ones) — the exact same logic cronTick's catch-all already runs, just
- *  callable on demand for a single account instead of waiting for the once-a-day cron pass. This is what
- *  lets "ready" tasks start executing themselves the moment a user has the tab open, WITHOUT a manual
- *  Start click and without waiting up to a day for cron: see the "no start button" UI change (TaskCard.tsx)
- *  this backs — POST /api/jobs/kick calls this before every drain. Respects the same pause/budget gates
- *  processSweep uses elsewhere, so this can never run interactive AI work an account has paused or is over
- *  budget for. Returns the count actually enqueued (0 is normal — usually nothing new is due).
- *
- *  Respects the SAME daily auto-run cap as the sweep (tasks.autoRunBudgetLeft/recordAutoRuns, shared via
- *  `profile`) — without this, a tab left open all day would call this every 4s (App.tsx's kick loop) and
- *  each call's own tasksToEnqueue(limit=3) would happily enqueue 3 MORE ready tasks, so the real ceiling on
- *  a busy day was "however many ready tasks exist," not 3 — exactly the unwatched-spend problem this cap
- *  exists to prevent. Orphaned QUEUED tasks (a job that was lost, not a fresh auto-run decision) are exempt
- *  from the cap — recovering a stuck task isn't new spend, it's finishing a decision already made. */
-export async function enqueueDueTasks(email: string): Promise<number> {
-  const { profile, list } = await loadUser(email);
-  if (profile.paused || overMonthlyBudget(profile)) return 0;
-  const activeIds = await store.activeJobTaskIds(email);
-  const active = new Set(activeIds);
-  const orphaned = list.filter((t) => canonStatus(t.status) === "queued" && !active.has(t.id));
-  const budget = tasks.autoRunBudgetLeft(profile, new Date());
-  const readyDue = budget > 0 ? tasksToEnqueue(list, activeIds, budget).filter((t) => canonStatus(t.status) === "ready") : [];
-  const due = [...readyDue, ...orphaned];
-  if (!due.length) return 0;
-  for (const t of due) await store.enqueueJob(email, "execute_task", t.id);
-  if (readyDue.length) {
-    tasks.recordAutoRuns(profile, readyDue.length, new Date());
-    await store.saveState(email, { profile, tasks: list });
-  }
-  return due.length;
-}
-
 /** Load the account's durable state (the job runner's ONLY source of truth — no sessions here). */
 async function loadUser(email: string): Promise<{ profile: Profile; list: WebTask[] }> {
   const st = await store.loadState(email);
@@ -144,11 +111,12 @@ async function processSweep(job: store.Job): Promise<string> {
   // execution right here: without this, a manual task added while paused/over-budget would sit refined-
   // but-idle until the separate "ready tasks the browser never got to" catch-all in cronTick ran — which
   // on Vercel's Hobby plan is once a day. No button, no next-day wait — refine and run in the same pass.
-  // Real ceiling on today's PASSIVE auto-run spend (see tasks.autoRunBudgetLeft's own doc comment) — shared
-  // across BOTH auto-run sites below (manual-task refine-and-run, and the discovered-tasks top-by-score
-  // run), and also shared with the kick loop's own catch-up (enqueueDueTasks) via the same profile fields,
-  // so a tab left open all day can't quietly blow past the daily cap just by kicking more often than the
-  // sweep itself runs.
+  // Real ceiling on today's auto-run spend (see tasks.autoRunBudgetLeft's own doc comment) — shared across
+  // BOTH auto-run sites below (manual-task refine-and-run, and the discovered-tasks top-by-score run), so
+  // one sweep can't quietly run more than the daily cap on its own. This is now the ONLY place tasks get
+  // auto-run without a click — the kick loop no longer catches up ready tasks mid-day (reverted: AI spend
+  // should only happen at this once-daily 4pm sweep, in chat, or in Journal/Study Mode, not continuously
+  // through the day just because a tab is open).
   let autoRunBudget = tasks.autoRunBudgetLeft(profile, new Date());
   let autoRunSpent = 0;
   for (const t of list.filter((x) => x.unrefined && !isHandled(x.status)).slice(0, 3)) {

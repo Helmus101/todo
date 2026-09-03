@@ -1417,11 +1417,6 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // even with the tab open and kicking every 4s — this was reported live as "task constantly queued,
     // never executed" for a task that only ran ~20 minutes later, once its OWN turn came up in the global
     // queue instead of the very next kick.
-    // Catch up any "ready" task that's never been queued (never got a run at all — see enqueueDueTasks)
-    // BEFORE draining, so a task the discovery sweep didn't immediately auto-run (bounded to its own top-3
-    // by score) still starts itself the moment the tab is open, no Start click needed, instead of waiting
-    // for the once-a-day cron catch-all.
-    await jobs.enqueueDueTasks(req.session.user!).catch(() => {});
     const out = await jobs.drain(1, undefined, req.session.user!);
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(req.session.user!), activeJobTaskIds(req.session.user!)]);
     // Refresh this session's view of the cloud copy the job just wrote.
