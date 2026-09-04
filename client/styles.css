@@ -832,7 +832,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-card-front { background: var(--surface); }
 .deck-card-back { transform: rotateY(180deg); background: var(--accent-soft); border-color: var(--accent); }
 .deck-face-label { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
-.deck-face-text { font-size: 18px; line-height: 1.5; max-height: 130px; overflow-y: auto; }
+/* white-space: pre-wrap so a multi-line worked solution (practice-problem cards) actually shows its line
+   breaks step by step instead of collapsing into one run-on line — plain recall answers (no \n) render
+   identically either way. max-height raised from 130 to 190 for the same reason: a worked solution needs
+   more room than a one-clause recall answer; it scrolls internally past that. */
+.deck-face-text { font-size: 18px; line-height: 1.5; max-height: 190px; overflow-y: auto; white-space: pre-wrap; }
 .deck-hint { font-size: 12px; color: var(--ink-3); margin: 12px 0; }
 .deck-acts { display: flex; gap: var(--space-2); justify-content: center; margin-top: var(--space-1); }
 .deck-btn-back { display: block; margin: var(--space-2) auto 0; }
