@@ -1090,7 +1090,14 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   if (!t) {
     const e = tasks.eisenhower(0, 0);
     t = {
-      id: randomUUID(), title: date, why: "Daily study log", source: "studylog", risk: "low",
+      // `why` MUST embed the actual date — see the CRITICAL note at dedupeTasks/sameTask in server/tasks.ts:
+      // a literal identical "Daily study log" for every single day meant sameTask()'s `source === source &&
+      // nearDup(why, why)` fallback matched EVERY pair of studylog day tasks (different anchors, but that
+      // fallback is only skipped for handled/manual tasks — a live "needs_review" day task hits it every
+      // time). dedupeTasks runs inside mergeTaskLists, which fires on every commit()'s background cloud
+      // sync — so this was silently collapsing DIFFERENT days' entries into one on essentially every save,
+      // which is what made a day's flashcards look like they'd never been saved at all after a reload.
+      id: randomUUID(), title: date, why: `Daily study log — ${date}`, source: "studylog", risk: "low",
       // status "needs_review" (never "done"/"dismissed"): GET /api/reviews/due (above) explicitly SKIPS
       // handled tasks (`if (isHandled(t.status)) continue`) — "done" would silently hide these decks from
       // the exact cross-task due-for-review view this feature was built to reuse. Not "ready" either: the
@@ -1171,7 +1178,9 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
     if (!t) {
       const e = tasks.eisenhower(0, 0);
       t = {
-        id: randomUUID(), title: deck.title, why: "Weekly study summary", source: "studylog", risk: "low",
+        // `why` embeds the week so it can't collide with another week's summary via sameTask's nearDup(why)
+        // fallback — see the CRITICAL note on the daily task above; the same bug applied here identically.
+        id: randomUUID(), title: deck.title, why: `Weekly study summary — week of ${monday}`, source: "studylog", risk: "low",
         // status "needs_review" (never "done"/"dismissed"): GET /api/reviews/due (above) explicitly SKIPS
       // handled tasks (`if (isHandled(t.status)) continue`) — "done" would silently hide these decks from
       // the exact cross-task due-for-review view this feature was built to reuse. Not "ready" either: the
@@ -1231,7 +1240,8 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
     if (!t) {
       const e = tasks.eisenhower(0, 0);
       t = {
-        id: randomUUID(), title: deck.title, why: "Monthly study summary", source: "studylog", risk: "low",
+        // `why` embeds the month, same fix and same reason as the daily/weekly tasks above.
+        id: randomUUID(), title: deck.title, why: `Monthly study summary — ${month}`, source: "studylog", risk: "low",
         urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
         createdAt: now, anchorKey, logDate,
       };
