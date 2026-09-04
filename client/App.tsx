@@ -3,7 +3,7 @@ import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shar
 import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck } from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { 
@@ -1702,6 +1702,11 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   const [genBusy, setGenBusy] = useState(false);
   const [openDeckFor, setOpenDeckFor] = useState<"day" | "summary" | "month" | "topic" | null>(null);
   const [openTopic, setOpenTopic] = useState<WebTask | null>(null);
+  // Companion quiz on week/month summaries — separate open-state from the flashcard deck's, since a summary
+  // can have both live at once and they're reviewed independently (see generateWeeklyStudyDeck/
+  // generateMonthlyStudyDeck in server/claude.ts: a quiz is included only when the material genuinely calls
+  // for discrimination-style testing, so it may not exist even when the deck does).
+  const [openQuizFor, setOpenQuizFor] = useState<"summary" | "month" | null>(null);
 
   // Month summary: aggregates whatever weekly decks already exist in the month containing `monday`, not
   // its own calendar nav — riding the week nav keeps this simple (no second date picker) at the cost of
@@ -1762,6 +1767,7 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   const dayTask = days[selected];
   const dayDeck = dayTask?.flashcards?.[0];
   const summaryDeck = summary?.flashcards?.[0];
+  const summaryQuiz = summary?.quizzes?.[0];
   const anyEntryThisWeek = days.some((d) => d?.logText?.trim());
   const onDayReview = dayTask && dayDeck ? (cardIndex: number, correct: boolean) => {
     void api.reviewFlashcard(dayTask.id, dayDeck.id, cardIndex, correct).then((list) => {
@@ -1777,6 +1783,7 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   } : undefined;
 
   const monthDeck = monthSummary?.flashcards?.[0];
+  const monthQuiz = monthSummary?.quizzes?.[0];
   const onMonthReview = monthSummary && monthDeck ? (cardIndex: number, correct: boolean) => {
     void api.reviewFlashcard(monthSummary.id, monthDeck.id, cardIndex, correct).then((list) => {
       const fresh = list.find((t) => t.id === monthSummary.id);
@@ -1845,7 +1852,12 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
           <div className="studylog-summary-sec">
             <h3>{L("Résumé de la semaine", "Week summary")}</h3>
             {summaryDeck ? (
-              <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("summary")}>{L("Voir le résumé", "View summary")} ({summaryDeck.cards.length})</button>
+              <div className="studylog-actions">
+                <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("summary")}>{L("Voir le résumé", "View summary")} ({summaryDeck.cards.length})</button>
+                {/* The quiz is only present when the week's material genuinely called for discrimination-style
+                    testing (server decides, not a guaranteed add-on) — so it may not exist even with a deck. */}
+                {summaryQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("summary")}>{L("Quiz", "Quiz")} ({summaryQuiz.questions.length})</button> : null}
+              </div>
             ) : (
               <button type="button" className="btn ghost" disabled={genBusy || !anyEntryThisWeek} onClick={() => void genSummary()}>
                 {genBusy ? L("Création…", "Building…") : L("Créer le résumé de la semaine", "Generate week summary")}
@@ -1857,7 +1869,10 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
           <div className="studylog-summary-sec">
             <h3>{L("Résumé du mois", "Month summary")}</h3>
             {monthDeck ? (
-              <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("month")}>{L("Voir le résumé", "View summary")} ({monthDeck.cards.length})</button>
+              <div className="studylog-actions">
+                <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("month")}>{L("Voir le résumé", "View summary")} ({monthDeck.cards.length})</button>
+                {monthQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("month")}>{L("Quiz", "Quiz")} ({monthQuiz.questions.length})</button> : null}
+              </div>
             ) : (
               <button type="button" className="btn ghost" disabled={monthGenBusy || monthWeeks.length === 0} onClick={() => void genMonthSummary()}>
                 {monthGenBusy ? L("Création…", "Building…") : L("Créer le résumé du mois", "Generate month summary")}
@@ -1909,6 +1924,12 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
       ) : null}
       {openDeckFor === "topic" && topicDeck ? (
         <TaskModal onClose={() => { setOpenDeckFor(null); setOpenTopic(null); }} title={topicDeck.title}><FlashcardDeck deck={topicDeck} onReview={onTopicReview} taskId={openTopic?.id} /></TaskModal>
+      ) : null}
+      {openQuizFor === "summary" && summaryQuiz ? (
+        <TaskModal onClose={() => setOpenQuizFor(null)} title={summaryQuiz.title}><QuizPlayer quiz={summaryQuiz} taskId={summary?.id} /></TaskModal>
+      ) : null}
+      {openQuizFor === "month" && monthQuiz ? (
+        <TaskModal onClose={() => setOpenQuizFor(null)} title={monthQuiz.title}><QuizPlayer quiz={monthQuiz} taskId={monthSummary?.id} /></TaskModal>
       ) : null}
     </main>
   );

@@ -1127,9 +1127,9 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
   const list = req.session.tasks || [];
   const dayTasks = dates.map((d) => list.find((x) => x.source === "studylog" && x.logDate === d)).filter((x): x is WebTask => !!x?.logText?.trim());
   if (!dayTasks.length) { res.status(400).json({ error: "No entries logged this week yet." }); return; }
-  const weakFronts = tasks.weakCardFronts(dayTasks);
+  const boxBreakdown = tasks.leitnerBoxBreakdown(dayTasks);
   try {
-    const result = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), weakFronts, req.session.profile);
+    const result = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), boxBreakdown, req.session.profile);
     if (!result) { res.status(500).json({ error: "Couldn't build the week summary — try again." }); return; }
     addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
     const deck = result.deck;
@@ -1154,6 +1154,7 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
     }
     t.title = deck.title;
     t.flashcards = [deck];
+    t.quizzes = result.quiz ? [result.quiz] : [];
     t.updatedAt = now;
     await commit(req);
     res.json(req.session.tasks || []);
@@ -1183,11 +1184,11 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
   const list = req.session.tasks || [];
   const weekTasks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month && x.flashcards?.length);
   if (!weekTasks.length) { res.status(400).json({ error: "No weekly summaries yet this month." }); return; }
-  const weakFronts = tasks.weakCardFronts(weekTasks);
+  const boxBreakdown = tasks.leitnerBoxBreakdown(weekTasks);
   try {
     const result = await generateMonthlyStudyDeck(
       weekTasks.map((wt) => ({ label: wt.logDate!.slice(5), cards: (wt.flashcards![0]?.cards || []).map((c) => ({ front: c.front, back: c.back })) })),
-      weakFronts, req.session.profile,
+      boxBreakdown, req.session.profile,
     );
     if (!result) { res.status(500).json({ error: "Couldn't build the month summary — try again." }); return; }
     addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
@@ -1208,6 +1209,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
     }
     t.title = deck.title;
     t.flashcards = [deck];
+    t.quizzes = result.quiz ? [result.quiz] : [];
     t.updatedAt = now;
     await commit(req);
     res.json(req.session.tasks || []);

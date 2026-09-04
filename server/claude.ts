@@ -1500,6 +1500,39 @@ const CARD_STYLE_RULE =
   `math, not only recite it.\n` +
   `Output STRICT JSON only.`;
 
+// Same "one idea, real discrimination, teach not just score" bar as CREATE_QUIZ_TOOL's own description
+// (kept in sync deliberately — a companion quiz on a review deck should read exactly as well-made as one
+// the student explicitly asked for in chat, not a lesser auto-generated version).
+const QUIZ_STYLE_RULE =
+  `IF you include a "quiz" (see below), same bar as any real quiz: each question tests ONE distinct sub-` +
+  `notion (never the same question with numbers swapped); 3-4 options, EXACTLY one correct, and the wrong ` +
+  `ones must be genuinely plausible (a common mix-up, an off-by-one, the right idea applied to the wrong ` +
+  `case) — an obviously-silly distractor teaches nothing; every question needs a one-line "why" the correct ` +
+  `answer is right, which is what makes it teach instead of just score.`;
+
+/** Turns a Leitner box breakdown (server/tasks.ts's leitnerBoxBreakdown) into the spaced-repetition
+ *  instruction block for a summary deck's prompt. This is the real spacing signal, not just "wrong or
+ *  right": box 0/1 (never tested, or tested and missed) needs frequent re-exposure — heavy weight in the
+ *  new deck; box 2-3 (getting there) needs a periodic touch, not every time; box 4-5 (well-retained) should
+ *  get LESS space here, not equal space — spaced repetition's whole premise is that review time should
+ *  concentrate on what's shaky, not spread evenly across everything ever learned. */
+function spacedRepetitionBlock(boxBreakdown: { front: string; box: number }[], periodLabel: string): string {
+  if (!boxBreakdown.length) return "";
+  const weak = boxBreakdown.filter((c) => c.box <= 1).map((c) => c.front);
+  const mid = boxBreakdown.filter((c) => c.box >= 2 && c.box <= 3).map((c) => c.front);
+  const strong = boxBreakdown.filter((c) => c.box >= 4).map((c) => c.front);
+  let block = `\n\nSPACED-REPETITION SIGNAL FROM ${periodLabel} (Leitner box per card — use this to decide how ` +
+    `much space each concept gets in the new deck, don't weight everything evenly):\n`;
+  if (weak.length) block += `- NEVER TESTED YET OR GOTTEN WRONG (box 0-1) — these need the MOST space, re-tested a genuinely ` +
+    `different way, not copy-pasted: ${weak.slice(0, 25).map((f) => `"${f}"`).join(", ")}\n`;
+  if (mid.length) block += `- PARTIALLY SOLID (box 2-3) — a periodic touch is enough, don't over-invest here: ` +
+    `${mid.slice(0, 15).map((f) => `"${f}"`).join(", ")}\n`;
+  if (strong.length) block += `- WELL-RETAINED (box 4-5) — give these the LEAST space (a light check-in at most, or skip ` +
+    `entirely in favor of the weaker concepts above) — re-testing something already solid wastes review time ` +
+    `that spaced repetition says should go elsewhere: ${strong.slice(0, 15).map((f) => `"${f}"`).join(", ")}\n`;
+  return block;
+}
+
 /** Daily study-log entry → a flashcard deck built from the CONCEPTS the entry is actually about — not a
  *  strict transcript of it. One-shot, no tool loop (same shape as refineManualTask above): the log text is
  *  the starting point/signal for what to study, not a ceiling on what the deck may contain. Reuses
@@ -1556,20 +1589,19 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
   } catch { return null; }
 }
 
-/** End-of-week summary deck: synthesizes across the week's daily entries, weighted toward cards the student
- *  actually got WRONG (Leitner box 1 — see nextLeitnerReview in shared/types.ts) rather than re-testing
- *  everything evenly. `weakFronts` are the fronts of any card sitting at box 1 across that week's daily
- *  decks; the model is told to make sure those concepts get re-tested, not just repeated verbatim. */
-export async function generateWeeklyStudyDeck(entries: { date: string; logText: string }[], weakFronts: string[], profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
+/** End-of-week summary deck: synthesizes across the week's daily entries, weighted by a REAL spaced-
+ *  repetition signal (Leitner box breakdown — see spacedRepetitionBlock/nextLeitnerReview) rather than
+ *  either re-testing everything evenly or only tracking "wrong or not". Also decides, per week, whether a
+ *  companion multiple-choice quiz would genuinely help — concepts easily confused with each other, or that
+ *  need discrimination between similar options, test better as MCQ than recall flashcards — and includes
+ *  one only when the material calls for it, never as a default add-on. */
+export async function generateWeeklyStudyDeck(entries: { date: string; logText: string }[], boxBreakdown: { front: string; box: number }[], profile?: Profile): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const days = entries.filter((e) => e.logText?.trim());
   if (!days.length) return null;
   try {
     const client = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const weakBlock = weakFronts.length
-      ? `\n\nGOT WRONG THIS WEEK (re-test these concepts specifically — don't just copy the same card, test the ` +
-        `same underlying idea a different way): ${weakFronts.slice(0, 30).map((f) => `"${f}"`).join(", ")}\n`
-      : "";
+    const spacedBlock = spacedRepetitionBlock(boxBreakdown, "THIS WEEK'S DAILY DECKS");
     const res = await retryRequest(() => client.chat.completions.create({
       model,
       max_tokens: OUT.studylog,
@@ -1581,39 +1613,51 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
           `You build a WEEK-END-REVIEW flashcard deck from a student's own daily "what I learned" entries. This ` +
           `is a SUMMARY across the whole week, not a re-dump of every daily card verbatim — merge near-duplicate ` +
           `ideas from different days into one card, connect genuinely related concepts across days, and weight ` +
-          `toward what the weak-list below says they got wrong. But summarizing does NOT mean shrinking: cover ` +
-          `every distinct concept the week actually contained, so a heavy week with many topics should produce ` +
-          `a correspondingly large deck, up to 50 cards (a hard technical ceiling on this reply's token budget, ` +
-          `not a product opinion) — aim for full coverage of the week's material within that, not a token ` +
-          `"highlights" selection. ${CARD_STYLE_RULE}` },
+          `space given to each concept using the spaced-repetition signal below, NOT evenly. But summarizing ` +
+          `does NOT mean shrinking: cover every distinct concept the week actually contained (weighted as ` +
+          `above), so a heavy week with many topics should produce a correspondingly large deck, up to 50 ` +
+          `cards (a hard technical ceiling on this reply's token budget, not a product opinion) — aim for full ` +
+          `coverage of the week's material within that, not a token "highlights" selection. ${CARD_STYLE_RULE}\n\n` +
+          `ALSO decide if a companion QUIZ is warranted: if this week's material has concepts students commonly ` +
+          `confuse with each other, or that genuinely need discriminating between similar-looking answers ` +
+          `(not just recalling one fact), include a "quiz" object with 4-10 multiple-choice questions on ` +
+          `exactly those concepts (never duplicate what a flashcard already tests the same way). If nothing ` +
+          `this week actually calls for that format, omit "quiz" entirely (or set it null) — it is NOT a ` +
+          `default add-on, only include it when it genuinely helps. ${QUIZ_STYLE_RULE}` },
         { role: "user", content:
           `THIS WEEK'S DAILY ENTRIES:\n${days.map((d) => `— ${d.date}:\n"""\n${d.logText.slice(0, 2000)}\n"""`).join("\n\n")}` +
-          weakBlock +
-          `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
+          spacedBlock +
+          `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", ` +
+          `"back": "..."}, ...], "quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], ` +
+          `"correct": 0, "why": "..."}, ...]} or null}.` },
       ],
     }));
-    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
+    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
     const result = makeDeck(out);
     if (!("deck" in result)) return null;
     const tokens = usageOf(res);
-    console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: ${days.length} day(s), ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
-    return { deck: result.deck, tokens };
+    let quiz: TaskQuiz | undefined;
+    if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
+      const qr = makeQuiz(out.quiz);
+      if ("quiz" in qr) quiz = qr.quiz;
+    }
+    console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: ${days.length} day(s), ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, quiz, tokens };
   } catch { return null; }
 }
 
 /** Month-end summary: synthesizes across that month's WEEKLY decks (not the raw daily entries — by the
  *  time a month has passed the weekly decks are already the distilled signal, so re-reading every daily
  *  entry again would just re-spend tokens re-deriving what the weekly pass already figured out). Weighted
- *  the same way weekly is: `weakFronts` are box-1 cards from across the month's weekly decks. */
-export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { front: string; back: string }[] }[], weakFronts: string[], profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
+ *  by the same real Leitner spaced-repetition signal as weekly (spacedRepetitionBlock), and can likewise
+ *  include a companion quiz when the month's material genuinely calls for discrimination-style testing. */
+export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { front: string; back: string }[] }[], boxBreakdown: { front: string; box: number }[], profile?: Profile): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const nonEmpty = weeks.filter((w) => w.cards.length);
   if (!nonEmpty.length) return null;
   try {
     const client = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const weakBlock = weakFronts.length
-      ? `\n\nGOT WRONG THIS MONTH (re-test these specifically, a different way, don't just copy the card): ${weakFronts.slice(0, 30).map((f) => `"${f}"`).join(", ")}\n`
-      : "";
+    const spacedBlock = spacedRepetitionBlock(boxBreakdown, "THIS MONTH'S WEEKLY DECKS");
     const res = await retryRequest(() => client.chat.completions.create({
       model,
       max_tokens: OUT.studylog,
@@ -1623,23 +1667,36 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
           `You build a MONTH-END-REVIEW flashcard deck from a student's own weekly summary decks. Merge ` +
-          `near-duplicate cards that show up across different weeks into one, and weight toward the weak-list ` +
-          `below — but otherwise keep FULL coverage of the month's distinct concepts, don't shrink down to a ` +
-          `"highlights only" selection. A month with many weeks of real material should produce a correspondingly ` +
-          `large deck, up to 50 cards (a hard technical ceiling on this reply's token budget, not a product ` +
-          `opinion). ${CARD_STYLE_RULE}` },
+          `near-duplicate cards that show up across different weeks into one, and weight the space each concept ` +
+          `gets using the spaced-repetition signal below, NOT evenly — but otherwise keep FULL coverage of the ` +
+          `month's distinct concepts, don't shrink down to a "highlights only" selection. A month with many ` +
+          `weeks of real material should produce a correspondingly large deck, up to 50 cards (a hard technical ` +
+          `ceiling on this reply's token budget, not a product opinion). ${CARD_STYLE_RULE}\n\n` +
+          `ALSO decide if a companion QUIZ is warranted: if this month's material has concepts students commonly ` +
+          `confuse with each other, or that genuinely need discriminating between similar-looking answers (not ` +
+          `just recalling one fact), include a "quiz" object with 4-10 multiple-choice questions on exactly ` +
+          `those concepts (never duplicate what a flashcard already tests the same way). If nothing this month ` +
+          `actually calls for that format, omit "quiz" entirely (or set it null) — it is NOT a default add-on, ` +
+          `only include it when it genuinely helps. ${QUIZ_STYLE_RULE}` },
         { role: "user", content:
           `THIS MONTH'S WEEKLY DECKS:\n${nonEmpty.map((w) => `— ${w.label}:\n${w.cards.map((c) => `  Q: ${c.front}\n  A: ${c.back}`).join("\n")}`).join("\n\n")}` +
-          weakBlock +
-          `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
+          spacedBlock +
+          `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", ` +
+          `"back": "..."}, ...], "quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], ` +
+          `"correct": 0, "why": "..."}, ...]} or null}.` },
       ],
     }));
-    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
+    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
     const result = makeDeck(out);
     if (!("deck" in result)) return null;
     const tokens = usageOf(res);
-    console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: ${nonEmpty.length} week(s), ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
-    return { deck: result.deck, tokens };
+    let quiz: TaskQuiz | undefined;
+    if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
+      const qr = makeQuiz(out.quiz);
+      if ("quiz" in qr) quiz = qr.quiz;
+    }
+    console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: ${nonEmpty.length} week(s), ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, quiz, tokens };
   } catch { return null; }
 }
 
