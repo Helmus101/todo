@@ -3,6 +3,7 @@ import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shar
 import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
+import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
@@ -224,7 +225,10 @@ export function App() {
   // being offline. Cheap: saveDeckLocally no-ops on content that's already saved, and this only runs when
   // the task list actually changes.
   useEffect(() => {
-    for (const t of tasks) for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck);
+    for (const t of tasks) {
+      for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck);
+      for (const quiz of t.quizzes || []) saveQuizLocally(t.id, t.title, quiz);
+    }
   }, [tasks]);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
   const [scanning, setScanning] = useState(false); // the daily background sweep is running
@@ -1587,27 +1591,31 @@ function FlashcardsLibraryPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: Web
   const L = useLang();
   const en = lang === "en";
   const [decks, setDecks] = useState(() => getAllLocalDecks());
+  const [quizzes, setQuizzes] = useState(() => getAllLocalQuizzes());
   const [openId, setOpenId] = useState<string | null>(null);
-  // Local storage isn't reactive — refresh the list on focus so a deck generated in another tab (or just
-  // now, before this page was opened) shows up without needing a full reload.
+  const [openQuizId, setOpenQuizId] = useState<string | null>(null);
+  // Local storage isn't reactive — refresh the list on focus so a deck/quiz generated in another tab (or
+  // just now, before this page was opened) shows up without needing a full reload.
   useEffect(() => {
-    const refresh = () => setDecks(getAllLocalDecks());
+    const refresh = () => { setDecks(getAllLocalDecks()); setQuizzes(getAllLocalQuizzes()); };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, []);
   const open = decks.find((d) => d.deck.id === openId) || null;
-  // The local backup can outlive the deck it's a copy of — an old day's deck gets replaced by a fresh one
-  // (a new id) on regeneration, so a STALE local entry from before that happened points at a deckId the
+  const openQuiz = quizzes.find((q) => q.quiz.id === openQuizId) || null;
+  // The local backup can outlive the deck/quiz it's a copy of — an old day's deck gets replaced by a fresh
+  // one (a new id) on regeneration, so a STALE local entry from before that happened points at an id the
   // server no longer has under that task at all. Posting a review for it 404s on every single card (this
-  // was observed live: 17 consecutive 404s reviewing a stale deck). Check the deck actually still exists in
-  // the live task list before ever attempting a server post — a stale deck is still fully reviewable
-  // locally (FlashcardDeck tracks its own right/wrong regardless), it just can't sync to the server anymore.
+  // was observed live: 17 consecutive 404s reviewing a stale deck). Check it actually still exists in the
+  // live task list before ever attempting a server post — a stale copy is still fully reviewable locally
+  // (FlashcardDeck/QuizPlayer track their own right/wrong regardless), it just can't sync anymore.
   const liveOwner = open ? tasks.find((t) => t.id === open.taskId && t.flashcards?.some((d) => d.id === open.deck.id)) : undefined;
+  const liveQuizOwner = openQuiz ? tasks.find((t) => t.id === openQuiz.taskId && t.quizzes?.some((q) => q.id === openQuiz.quiz.id)) : undefined;
   return (
     <main className="list-wrap">
       <div className="dash-head">
         <h2>{L("Tes cartes", "Your flashcards")}</h2>
-        <p className="dash-line">{L("Toutes les cartes générées, accessibles à tout moment — même sans connexion.", "Every deck you've ever generated, accessible anytime — even offline.")}</p>
+        <p className="dash-line">{L("Toutes les cartes et quiz générés, accessibles à tout moment — même sans connexion.", "Every deck and quiz you've ever generated, accessible anytime — even offline.")}</p>
       </div>
       {decks.length === 0 ? (
         <p className="muted small">{L("Pas encore de cartes — elles apparaissent ici dès qu'Otto (ou toi) en crée.", "No flashcards yet — they'll show up here as soon as Otto (or you) creates some.")}</p>
@@ -1623,6 +1631,23 @@ function FlashcardsLibraryPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: Web
           ))}
         </div>
       )}
+      {quizzes.length > 0 ? (
+        <div className="dash-head" style={{ marginTop: "var(--space-4)" }}>
+          <h2>{L("Tes quiz", "Your quizzes")}</h2>
+        </div>
+      ) : null}
+      {quizzes.length > 0 ? (
+        <div className="list">
+          {quizzes.map(({ quiz, taskTitle, savedAt }) => (
+            <button key={quiz.id} type="button" className="card" onClick={() => setOpenQuizId(quiz.id)}>
+              <div className="card-text">
+                <div className="card-title">{quiz.title}</div>
+                <div className="card-sub">{taskTitle} · {quiz.questions.length} {L("questions", "questions")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : null}
       {open ? (
         <TaskModal onClose={() => setOpenId(null)} title={open.deck.title}>
           {!liveOwner ? (
@@ -1635,6 +1660,16 @@ function FlashcardsLibraryPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: Web
             taskId={open.taskId}
             onReview={liveOwner ? (cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); } : undefined}
           />
+        </TaskModal>
+      ) : null}
+      {openQuiz ? (
+        <TaskModal onClose={() => setOpenQuizId(null)} title={openQuiz.quiz.title}>
+          {!liveQuizOwner ? (
+            <p className="settings-hint" style={{ marginBottom: "var(--space-3)" }}>
+              {L("Cette source a changé côté serveur — tu peux toujours réviser, mais ta progression ne sera pas synchronisée.", "This quiz's source has changed on the server — you can still review it, but progress won't sync.")}
+            </p>
+          ) : null}
+          <QuizPlayer quiz={openQuiz.quiz} taskId={liveQuizOwner ? openQuiz.taskId : undefined} />
         </TaskModal>
       ) : null}
     </main>
@@ -1748,6 +1783,29 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   const [monthWeeks, setMonthWeeks] = useState<WebTask[]>(() => loadMonthCache(mondayOf(todayIso()).slice(0, 7))?.weeks || []);
   const [monthSummary, setMonthSummary] = useState<WebTask | null>(() => loadMonthCache(mondayOf(todayIso()).slice(0, 7))?.summary || null);
   const [monthGenBusy, setMonthGenBusy] = useState(false);
+
+  // Journal decks/quizzes live on their own synthetic studylog tasks, fetched through /api/studylog/* —
+  // entirely separate from the main app-level `tasks` list, so they never reached the App-level backup
+  // effect that mirrors every deck/quiz to localStorage (client/localDecks.ts, client/localQuizzes.ts) for
+  // the Flashcards tab. That's why a Journal deck could be generated, reviewed, everything — yet never show
+  // up in "Your flashcards" and not survive a sync hiccup the way an ordinary task's deck already did. Same
+  // backup call, just driven off this page's own day/week/month state instead of the global task list.
+  useEffect(() => {
+    for (const d of days) {
+      if (!d) continue;
+      for (const deck of d.flashcards || []) saveDeckLocally(d.id, d.title, deck);
+      for (const quiz of d.quizzes || []) saveQuizLocally(d.id, d.title, quiz);
+    }
+    if (summary) {
+      for (const deck of summary.flashcards || []) saveDeckLocally(summary.id, summary.title, deck);
+      for (const quiz of summary.quizzes || []) saveQuizLocally(summary.id, summary.title, quiz);
+    }
+  }, [days, summary]);
+  useEffect(() => {
+    if (!monthSummary) return;
+    for (const deck of monthSummary.flashcards || []) saveDeckLocally(monthSummary.id, monthSummary.title, deck);
+    for (const quiz of monthSummary.quizzes || []) saveQuizLocally(monthSummary.id, monthSummary.title, quiz);
+  }, [monthSummary]);
 
   const load = useCallback((m: string) => {
     const cached = loadWeekCache(m);

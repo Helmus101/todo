@@ -1084,13 +1084,16 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     list.push(t);
     req.session.tasks = list;
   }
+  // Re-generate on a real edit, not on every save — the save button is a deliberate click (not per-
+  // keystroke autosave), so re-running generation whenever the text actually CHANGED is the right call:
+  // that's the only way editing a day's entry after its deck already exists can ever do anything. Only skip
+  // regeneration when the text is genuinely UNCHANGED (a duplicate/no-op save) — that's the case that used
+  // to be conflated with "already has a deck", which made editing a logged day's entry silently do nothing
+  // ("saved" the identical deck, never picked up what was actually typed). A prior FAILED attempt
+  // (flashcards still empty after a real try) also always retries, same as before.
+  const textChanged = t.logText !== text;
   t.logText = text;
-  // Generate ONCE per day, not on every save — saving is how the text itself persists as you type through
-  // the day (autosave-style, could be many times), but re-running generation on every one of those saves
-  // would burn AI spend repeatedly AND blow away any review progress already made on the existing deck each
-  // time. Once a real deck exists for this day, further saves just update the text. A prior FAILED attempt
-  // (flashcards still empty after a real try) is the one case that's still allowed to retry on the next save.
-  if (t.flashcards?.length) {
+  if (t.flashcards?.length && !textChanged) {
     t.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(req.session.tasks || []);

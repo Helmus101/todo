@@ -919,10 +919,10 @@ const CREATE_FLASHCARDS_TOOL = {
     title: { type: "string", description: "short label shown on the button, e.g. 'Vocabulaire — Chapitre 4'" },
     cards: {
       type: "array",
-      description: "Around 25 by default when the student didn't name a number, adapted to the actual task (a short formula sheet needs fewer, a whole chapter's vocabulary needs more) and to the student (more if they're drilling hard for a contrôle, fewer for a quick review). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller deck with no explanation, and never try to cram more than 50 into one call (it will fail/truncate before you can even reply). CARD QUALITY (the minimum-information principle — retrieval practice only works if a card forces ONE precise recall, not recognition of a blob): one idea per card, split anything with multiple facts/causes/steps into separate cards rather than listing them on one back; front names the subject/context and asks for real recall ('Physics: why does...') not recognition; back is short and precise — a word, value, equation, or one compact clause, never a paragraph; use your own wording, not the source text verbatim; vary card type to fit the content (definition/contrast/cause-effect/application/cloze) rather than forcing everything into one shape — real content from the task's subject, never placeholders. FOR QUANTITATIVE SUBJECTS (math, physics, chemistry, econ calculations, ...), MIX IN actual PRACTICE PROBLEMS, not just definition/recall cards — a real exercise to solve (an equation, a computation, a short word problem), not just 'what is the formula for X'. A practice-problem card is the one exception to the short-back rule: its back is a worked step-by-step solution ending in the final answer, not a one-clause answer — that's fine, the point is showing the method, not just the result. Put each step on its own line (a real newline between steps, not run together) so it reads as a worked solution, not a wall of text. Don't make EVERY card a practice problem (recall cards for definitions/formulas/vocabulary still matter), just make sure some of the deck actually makes the student DO the math, not just recite it.",
+      description: "Around 25 by default when the student didn't name a number, adapted to the actual task (a short formula sheet needs fewer, a whole chapter's vocabulary needs more) and to the student (more if they're drilling hard for a contrôle, fewer for a quick review). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller deck with no explanation, and never try to cram more than 50 into one call (it will fail/truncate before you can even reply). CARD QUALITY (the minimum-information principle — retrieval practice only works if a card forces ONE precise recall, not recognition of a blob): one idea per card, split anything with multiple facts/causes/steps into separate cards rather than listing them on one back. HARD, SPECIFIC FRONT: name the subject/context and ask for real recall ('Physics: why does...'), never recognition, and NEVER put the answer (or a giveaway) IN the front — a card testing WHEN something happened asks for the date, it doesn't state the date and ask what happened (that answers itself). DETAILED BACK: a bare word or one-liner is NOT enough — the back should teach, giving the real answer plus the context/mechanism/reasoning that makes it stick (why it matters, how it works), not just name/confirm it; still ONE idea, just genuinely informative on that one idea. Use your own wording, not the source text verbatim; vary card type to fit the content (definition/contrast/cause-effect/application/cloze) rather than forcing everything into one shape — real content from the task's subject, never placeholders. FOR QUANTITATIVE SUBJECTS (math, physics, chemistry, econ calculations, ...), ALWAYS INCLUDE actual PRACTICE PROBLEMS, not just definition/recall cards — a real exercise to solve (an equation, a computation, a short word problem), not just 'what is the formula for X'; this is NOT optional for these subjects. A practice-problem card's back is a worked step-by-step solution ending in the final answer, each step on its own line (a real newline between steps, not run together) so it reads as a worked solution, not a wall of text. Don't make EVERY card a practice problem (recall cards for definitions/formulas/vocabulary still matter), just make sure a real, visible chunk of the deck is the student actually DOING the math, not just reciting it.",
       items: { type: "object", properties: {
-        front: { type: "string", description: "the prompt side — a term, question, formula name, or (for quantitative subjects) an actual problem/exercise to solve. Every card must be a genuinely DISTINCT fact or problem — never two cards that are really the same term/definition reworded, or the same formula applied to trivially different numbers. If the topic doesn't actually have that many distinct facts to drill, make FEWER cards rather than pad with near-duplicates." },
-        back: { type: "string", description: "the answer side — the definition, translation, or value; for a practice-problem card, the full worked step-by-step solution ending in the final answer" },
+        front: { type: "string", description: "the prompt side — a term, question, formula name, or (for quantitative subjects) an actual problem/exercise to solve. Never state the answer or a giveaway (like the date being tested) in the front itself. Every card must be a genuinely DISTINCT fact or problem — never two cards that are really the same term/definition reworded, or the same formula applied to trivially different numbers. If the topic doesn't actually have that many distinct facts to drill, make FEWER cards rather than pad with near-duplicates." },
+        back: { type: "string", description: "the answer side — detailed and informative: the real answer PLUS the context/mechanism/reasoning that makes it stick, not just a bare word or value; for a practice-problem card, the full worked step-by-step solution ending in the final answer" },
       }, required: ["front", "back"] },
     },
   }, required: ["title", "cards"] },
@@ -1479,16 +1479,24 @@ const CARD_STYLE_RULE =
   `causes, steps, or examples to answer fully, that is SEVERAL cards, not one with a multi-part back — ` +
   `"three reasons demand curves slope down" is three separate cards, one reason each, not one card listing ` +
   `all three. A card testing more than one fact tests recognition of a blob, not recall of a precise idea.\n` +
-  `2. SPECIFIC FRONT. Name the subject/context in the prompt so it stands alone outside the deck — "Physics: ` +
-  `what does 'a' represent in v = u + at?" not just "what does a represent?". Prefer a real retrieval prompt ` +
-  `("Why does...", "What happens when...", "What's the difference between...") over a recognition prompt ` +
-  `("Do you know X?").\n` +
-  `3. SHORT, PRECISE BACK. A word, a value, an equation, or one compact sentence — if the true answer needs a ` +
-  `paragraph, that's a sign the card is still testing too much and should be split further. A cause-and-effect ` +
-  `card's back is naturally a short causal clause ("because..."), not a bare label with zero mechanism — ` +
-  `short does not mean context-free, it means no padding, no restating the question, no second unrelated fact ` +
-  `riding along. EXCEPTION: a practice-problem card (rule 6 below) — its back is a worked step-by-step ` +
-  `solution, which is allowed to run longer since showing the method is the point.\n` +
+  `2. HARD, SPECIFIC FRONT — make the student actually RECALL, never just recognize or pattern-match. Name ` +
+  `the subject/context so it stands alone outside the deck ("Physics: what does 'a' represent in v = u + at?" ` +
+  `not just "what does a represent?"), and always phrase it as a genuine retrieval prompt ("Why does...", ` +
+  `"What happens when...", "What's the difference between...", "Derive...", "Explain why..."), never a bare ` +
+  `recognition prompt ("Do you know X?") or a fill-in-the-blank so obvious it gives itself away. NEVER put ` +
+  `the answer — or a giveaway that makes it trivial — IN the front: if the card is testing WHEN something ` +
+  `happened, the front asks for the date, it doesn't already state the date ("What year did the French ` +
+  `Revolution begin?" not "In 1789, what began?" — the second one answers itself). Same for any other fact ` +
+  `the back is supposed to supply: never pre-load it into the question.\n` +
+  `3. DETAILED, INFORMATIVE BACK — this is the single biggest quality bar: a bare word or one-line answer is ` +
+  `NOT enough, even for a "short" fact. The back should teach, not just confirm — give the real answer PLUS ` +
+  `the context/mechanism/reasoning that makes it stick: a definition explains what it means and why it ` +
+  `matters, not just names it; a date/event card says what happened and why it's significant, not just the ` +
+  `bare year; a formula card shows the formula AND what each symbol means; a cause-effect card explains the ` +
+  `actual mechanism, not just "because X". Still ONE idea per card (rule 1) — detailed means genuinely ` +
+  `informative on that one idea, not padded with unrelated facts or restating the question. EXCEPTION: a ` +
+  `practice-problem card (rule 6 below) — its back is a full worked step-by-step solution, longer still, ` +
+  `since showing the method is the point.\n` +
   `4. YOUR OWN WORDING, not the textbook's or the student's notes verbatim — paraphrasing is itself part of ` +
   `what makes a card test understanding rather than memorized phrasing.\n` +
   `5. VARY THE CARD TYPE to fit what's actually being tested, don't force everything into one shape: a ` +
@@ -1496,13 +1504,15 @@ const CARD_STYLE_RULE =
   `students actually confuse, a cause-effect card ("why does X lead to Y?") for mechanisms, an application ` +
   `card (a short scenario, "which principle applies here?") for problem-solving subjects, a cloze card (one ` +
   `key term blanked in an otherwise-meaningful sentence) when the surrounding context matters to the answer.\n` +
-  `6. FOR QUANTITATIVE SUBJECTS (math, physics, chemistry, econ calculations, ...), MIX IN actual practice ` +
-  `problems, not just recall cards — a real exercise to solve (an equation, a computation, a short word ` +
-  `problem), front poses the problem, back is the full worked step-by-step solution ending in the final ` +
+  `6. FOR QUANTITATIVE SUBJECTS (math, physics, chemistry, econ calculations, ...), ALWAYS INCLUDE actual ` +
+  `practice problems, not just recall cards — a real exercise to solve (an equation, a computation, a short ` +
+  `word problem), front poses the problem, back is the full worked step-by-step solution ending in the final ` +
   `answer, each step on its own line (a real newline between steps) so it reads as worked steps, not a wall ` +
-  `of text (see the rule 3 exception above). Don't make every card a practice problem — recall cards for ` +
-  `definitions/formulas still matter too — just make sure some of the deck actually makes the student DO the ` +
-  `math, not only recite it.\n` +
+  `of text (see the rule 3 exception above). This is NOT optional for these subjects — a math/physics/science ` +
+  `deck with zero practice problems has failed this bar, no matter how good its recall cards are. Recall ` +
+  `cards for definitions/formulas still matter too, so don't make EVERY card a practice problem — but make ` +
+  `sure a real, visible chunk of the deck (roughly a third or more, when the topic supports it) is the ` +
+  `student actually DOING the math, not only reciting it.\n` +
   `Output STRICT JSON only.`;
 
 // Same "one idea, real discrimination, teach not just score" bar as CREATE_QUIZ_TOOL's own description
