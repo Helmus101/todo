@@ -1751,6 +1751,19 @@ function loadMonthCache(month: string): { weeks: WebTask[]; summary: WebTask | n
 function saveMonthCache(month: string, data: { weeks: WebTask[]; summary: WebTask | null }): void {
   try { localStorage.setItem(STUDYLOG_MONTH_CACHE_PREFIX + month, JSON.stringify(data)); } catch { /* best-effort */ }
 }
+// A fresh server response for one day/summary slot REPLACES the cached one — except when the fresh side
+// has lost its deck/quiz entirely while the cached side still has one. That specific shape (server says
+// "nothing here" for a slot the browser just watched get generated) is what made a freshly-generated deck
+// visually vanish on reload: a stale read hitting a session/cache race, a cross-device merge that hasn't
+// caught up yet, anything — is far more likely than the deck having been genuinely deleted, since deletion
+// isn't a feature this page has. Preferring "whichever side actually has content" makes the Journal page
+// itself resilient to that class of bug, on top of the Flashcards tab's separate permanent local backup.
+function richerTask(fresh: WebTask | null, cached: WebTask | null): WebTask | null {
+  const freshHasContent = !!(fresh?.flashcards?.length || fresh?.quizzes?.length);
+  const cachedHasContent = !!(cached?.flashcards?.length || cached?.quizzes?.length);
+  if (!freshHasContent && cachedHasContent) return cached;
+  return fresh;
+}
 
 function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   const L = useLang();
@@ -1812,8 +1825,10 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
     if (cached) { setDays(cached.days); setSummary(cached.summary); setLoaded(true); }
     else setLoaded(false);
     void api.studyLogWeek(m).then((r) => {
-      setDays(r.days); setSummary(r.summary); setLoaded(true);
-      saveWeekCache(m, { days: r.days, summary: r.summary });
+      const mergedDays = r.days.map((d, i) => richerTask(d, cached?.days[i] ?? null));
+      const mergedSummary = richerTask(r.summary, cached?.summary ?? null);
+      setDays(mergedDays); setSummary(mergedSummary); setLoaded(true);
+      saveWeekCache(m, { days: mergedDays, summary: mergedSummary });
     }).catch(() => { if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); } });
   }, [en, notify]);
   useEffect(() => { load(monday); }, [monday, load]);
@@ -1822,8 +1837,9 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
     const cached = loadMonthCache(month);
     if (cached) { setMonthWeeks(cached.weeks); setMonthSummary(cached.summary); }
     void api.studyLogMonth(month).then((r) => {
-      setMonthWeeks(r.weeks); setMonthSummary(r.summary);
-      saveMonthCache(month, { weeks: r.weeks, summary: r.summary });
+      const mergedSummary = richerTask(r.summary, cached?.summary ?? null);
+      setMonthWeeks(r.weeks); setMonthSummary(mergedSummary);
+      saveMonthCache(month, { weeks: r.weeks, summary: mergedSummary });
     }).catch(() => {});
   }, [month]);
 
