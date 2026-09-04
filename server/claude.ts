@@ -1627,7 +1627,9 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
       console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: first attempt unparseable, retrying with a smaller ask`);
       const res2 = await retryRequest(() => client.chat.completions.create({
         model,
-        max_tokens: OUT.studylog,
+        // Deliberately a fraction of the primary call's budget — this is the whole point of the fallback:
+        // a small, cheap, low-risk ask that can't run long enough to hit the same truncation/timeout wall.
+        max_tokens: 4000,
         temperature: 0.3,
         response_format: { type: "json_object" },
         messages: [
@@ -1647,7 +1649,15 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
       const t2 = usageOf(res2);
       tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
     }
-    if (!("deck" in result)) return null;
+    if (!("deck" in result)) {
+      // Both the ambitious attempt AND the small fallback failed to produce a single valid card — log WHY
+      // (previously a bare `catch { return null; }` swallowed this entirely, so a real recurring failure
+      // had zero visibility beyond the student's generic toast). `result.error` is makeDeck's own reason
+      // when JSON parsed but validation rejected it; otherwise firstJson itself returned null (unparseable/
+      // truncated) — the raw snippet shows which.
+      console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: FAILED after fallback — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res.choices[0]?.message?.content || "").slice(-300)}`);
+      return null;
+    }
     let quiz: TaskQuiz | undefined;
     if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
       const qr = makeQuiz(out.quiz);
@@ -1655,7 +1665,10 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
     }
     console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
     return { deck: result.deck, quiz, tokens };
-  } catch { return null; }
+  } catch (e: any) {
+    console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: EXCEPTION — ${e?.message || e}`);
+    return null;
+  }
 }
 
 /** End-of-week summary deck: synthesizes across the week's daily entries, weighted by a REAL spaced-

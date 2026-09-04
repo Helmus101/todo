@@ -1061,7 +1061,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   if (!text) {
     // Clearing an entry — keep the (now-empty) task shell rather than deleting, so re-typing later just
     // upserts the same anchor again instead of minting a fresh id.
-    if (t) { t.logText = ""; t.flashcards = []; t.updatedAt = new Date().toISOString(); await commit(req); }
+    if (t) { t.logText = ""; t.flashcards = []; t.quizzes = []; t.updatedAt = new Date().toISOString(); await commit(req); }
     res.json(req.session.tasks || []);
     return;
   }
