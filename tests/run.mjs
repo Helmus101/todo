@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
@@ -1097,6 +1097,16 @@ section("weakCardFronts — the study-journal week summary's 'what did I get wro
   check("excludes never-reviewed cards (no review field at all)", !fronts.includes("No review yet"));
   check("empty input yields empty output", weakCardFronts([]).length === 0);
   check("a day with no flashcards at all is handled without throwing", weakCardFronts([{ ...dayA, id: "c", flashcards: undefined }]).length === 0);
+}
+
+section("needsAutoBreakdown — only auto-expand a step when it's genuinely complicated");
+{
+  check("broad-scope verb ('review') flags for auto-breakdown", needsAutoBreakdown("Review the Brave Search API prepaid billing change"));
+  check("broad-scope verb ('research') flags for auto-breakdown", needsAutoBreakdown("Research colleges"));
+  check("an already-concrete single action does NOT get auto-expanded", !needsAutoBreakdown("Email the professor"));
+  check("a short imperative does NOT get auto-expanded", !needsAutoBreakdown("Submit the form"));
+  check("a long multi-clause step flags even without a broad-scope verb", needsAutoBreakdown("Call the dentist, confirm the appointment time, and ask about insurance coverage"));
+  check("empty text never flags", !needsAutoBreakdown(""));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

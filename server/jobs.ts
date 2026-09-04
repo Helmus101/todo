@@ -325,9 +325,14 @@ async function processExecuteTask(job: store.Job): Promise<string> {
     // themselves before ever seeing the benefit. Same functions the manual buttons call
     // (server/index.ts's /step/:index/expand and /substep/:subIndex/run routes), same bounded-to-2 idiom as
     // the two blocks below, so this can't spiral into an unbounded chain of AI calls on a bad run.
+    // ONLY for steps that actually look complicated (tasks.needsAutoBreakdown) — this used to fire for
+    // EVERY eligible step unconditionally, so an already-simple one-action step ("Confirm attendance") got
+    // a bolted-on checklist just as often as a genuinely bundled one ("Review the billing change..."),
+    // burying the plan in sub-lists nobody asked for. The manual "Détailler cette étape" button is
+    // unaffected by this gate — a user who explicitly asks for a breakdown always gets one.
     if (updated?.steps?.length) {
       const expandable = updated.steps
-        .filter((s) => !s.done && !s.synthetic && !s.automatable && !s.substeps?.length)
+        .filter((s) => !s.done && !s.synthetic && !s.automatable && !s.substeps?.length && tasks.needsAutoBreakdown(s.text))
         .slice(0, 2);
       let substepRunsLeft = 2;
       for (const s of expandable) {

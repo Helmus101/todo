@@ -4392,10 +4392,5 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .studylog-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .studylog-summary-sec { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }
 .studylog-summary-sec h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); margin-bottom: 8px; }
-.studylog-topic-form { display: flex; flex-direction: column; gap: var(--space-2); margin-top: 8px; }
-.studylog-topic-input {
-  width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
-  padding: 10px 12px; font-size: 14.5px; font-family: inherit;
-}
-.studylog-topic-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
-.studylog-topic-list { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: 10px; }
+.studylog-day-cards-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: 4px; }
+.studylog-day-cards-head h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); }

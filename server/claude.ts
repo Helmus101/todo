@@ -1540,7 +1540,7 @@ function spacedRepetitionBlock(boxBreakdown: { front: string; box: number }[], p
  *  strict transcript of it. One-shot, no tool loop (same shape as refineManualTask above): the log text is
  *  the starting point/signal for what to study, not a ceiling on what the deck may contain. Reuses
  *  makeDeck() for the same validation every other deck-producing path already gets. */
-export async function generateDailyStudyCards(logText: string, profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
+export async function generateDailyStudyCards(logText: string, profile?: Profile): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const raw = String(logText || "").trim();
   if (!raw) return null;
   try {
@@ -1585,19 +1585,32 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `Stay ON the topics the entry actually names — this is depth on what they studied, never a detour ` +
           `into an unrelated topic. Every correction/completion/stretch card must be genuinely correct, ` +
           `established subject content (the kind of thing in any real textbook for this level), never a ` +
-          `plausible-sounding guess.\n${CARD_STYLE_RULE}` },
+          `plausible-sounding guess.\n${CARD_STYLE_RULE}\n\n` +
+          `ALSO decide if a companion QUIZ is warranted: if today's material has concepts easily confused with ` +
+          `each other, or that genuinely need discriminating between similar-looking answers (not just ` +
+          `recalling one fact), include a "quiz" object with 3-8 multiple-choice questions on exactly those ` +
+          `concepts (never duplicate what a flashcard already tests the same way). If nothing today actually ` +
+          `calls for that format, omit "quiz" entirely (or set it null) — it is NOT a default add-on, only ` +
+          `include it when it genuinely helps. ${QUIZ_STYLE_RULE}` },
         { role: "user", content:
           `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
           `Return JSON: {"title": short label for today's deck (≤8 words, name the actual topic(s), e.g. ` +
-          `"Photosynthesis + French Revolution causes"), "cards": [{"front": "...", "back": "..."}, ...]}.` },
+          `"Photosynthesis + French Revolution causes"), "cards": [{"front": "...", "back": "..."}, ...], ` +
+          `"quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], "correct": 0, "why": ` +
+          `"..."}, ...]} or null}.` },
       ],
     }));
-    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
+    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
     const result = makeDeck(out);
     if (!("deck" in result)) return null;
     const tokens = usageOf(res);
-    console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
-    return { deck: result.deck, tokens };
+    let quiz: TaskQuiz | undefined;
+    if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
+      const qr = makeQuiz(out.quiz);
+      if ("quiz" in qr) quiz = qr.quiz;
+    }
+    console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, quiz, tokens };
   } catch { return null; }
 }
 
@@ -1709,54 +1722,6 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
     }
     console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: ${nonEmpty.length} week(s), ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
     return { deck: result.deck, quiz, tokens };
-  } catch { return null; }
-}
-
-/** On-demand deck for ONE named topic, independent of the daily/weekly/monthly calendar cadence — e.g. "I
- *  have a test on the French Revolution, quiz me." If the student pastes their own notes, extract from
- *  those only (same "never pad" rule as the daily deck); with no notes, fall back to Otto's own knowledge
- *  of the topic, scoped to the student's track/level so difficulty matches their actual course. */
-export async function generateTopicStudyDeck(topic: string, notes: string | undefined, profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
-  const t = topic.trim();
-  if (!t) return null;
-  const hasNotes = !!notes?.trim();
-  try {
-    const client = deepseekClient();
-    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client.chat.completions.create({
-      model,
-      max_tokens: OUT.studylog,
-      temperature: 0.3,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content:
-          languageLine(profile) + trackLine(profile) +
-          (hasNotes
-            ? `Build a flashcard deck to drill ONE topic from the student's own pasted notes — but the notes are ` +
-              `the starting signal for what to study, not a ceiling: cover every distinct fact/concept/definition/` +
-              `formula actually in them, correct anything wrong, complete anything named but not written out, and ` +
-              `add a few harder cards once the core is covered (same as the daily study-log deck), using your own ` +
-              `real subject knowledge — never a plausible-sounding guess, and stay on the topics the notes actually ` +
-              `name. Up to 50 cards: dense notes should produce a correspondingly large deck within that ceiling.`
-            : `Build a flashcard deck to drill ONE topic the student named, using your own knowledge of it. ` +
-              `Match difficulty to their track/level above. Aim to comprehensively cover the topic the way a ` +
-              `full exam review would — every major sub-concept, definition, mechanism, key date/formula/example ` +
-              `worth knowing, not just a quick highlights pass. Up to 50 cards (a hard technical ceiling on this ` +
-              `reply's token budget, not a product opinion) — a substantial topic (a whole chapter, a historical ` +
-              `period, a math unit) should easily use most of that.`) +
-          ` ${CARD_STYLE_RULE}` },
-        { role: "user", content:
-          `TOPIC: ${t.slice(0, 200)}` +
-          (hasNotes ? `\n\nNOTES:\n"""\n${notes!.slice(0, 4000)}\n"""` : "") +
-          `\n\nReturn JSON: {"title": short label (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
-      ],
-    }));
-    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
-    const result = makeDeck(out);
-    if (!("deck" in result)) return null;
-    const tokens = usageOf(res);
-    console.log(`${new Date().toISOString()} [ai] generateTopicStudyDeck "${t.slice(0, 40)}": ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
-    return { deck: result.deck, tokens };
   } catch { return null; }
 }
 

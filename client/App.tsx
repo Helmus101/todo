@@ -1687,53 +1687,87 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
  *  week, an on-demand summary deck weighted toward whatever got marked wrong that week (generateWeeklyStudyDeck).
  *  Both decks reuse the exact same FlashcardDeck review UI + Leitner spaced-repetition schedule as any other
  *  task's deck — reviewing a card here shows up in the normal cross-task "due for review" view for free. */
+// Local cache for a week's studylog data (days + week summary), keyed by that week's Monday — this is
+// what makes a day's flashcards/quiz "always accessible": the page paints from whatever's in
+// localStorage INSTANTLY on mount/week-change (no loading flash, works even the moment before the network
+// request resolves), then a background fetch reconciles with the server as the source of truth. Not a
+// replacement for server persistence (Leitner review state still lives server-side) — purely a fast local
+// mirror of what was last seen, same spirit as FlashcardDeck/QuizPlayer's own localStorage progress saves.
+const STUDYLOG_CACHE_PREFIX = "otto-studylog-week:";
+function loadWeekCache(monday: string): { days: (WebTask | null)[]; summary: WebTask | null } | null {
+  try {
+    const raw = localStorage.getItem(STUDYLOG_CACHE_PREFIX + monday);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveWeekCache(monday: string, data: { days: (WebTask | null)[]; summary: WebTask | null }): void {
+  try { localStorage.setItem(STUDYLOG_CACHE_PREFIX + monday, JSON.stringify(data)); } catch { /* storage full/private — cache is best-effort only */ }
+}
+// Same local-mirror pattern as the week cache, for the month summary (deck + companion quiz) — this was
+// the one piece of the Journal that DIDN'T get a local copy, so its flashcards/quiz only ever showed up
+// after a fresh network round-trip instead of being "always accessible" like the daily/weekly ones.
+const STUDYLOG_MONTH_CACHE_PREFIX = "otto-studylog-month:";
+function loadMonthCache(month: string): { weeks: WebTask[]; summary: WebTask | null } | null {
+  try {
+    const raw = localStorage.getItem(STUDYLOG_MONTH_CACHE_PREFIX + month);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveMonthCache(month: string, data: { weeks: WebTask[]; summary: WebTask | null }): void {
+  try { localStorage.setItem(STUDYLOG_MONTH_CACHE_PREFIX + month, JSON.stringify(data)); } catch { /* best-effort */ }
+}
+
 function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   const L = useLang();
   const notify = useNotify();
   const en = lang === "en";
   const [monday, setMonday] = useState(() => mondayOf(todayIso()));
-  const [days, setDays] = useState<(WebTask | null)[]>([null, null, null, null, null]);
-  const [summary, setSummary] = useState<WebTask | null>(null);
+  const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(mondayOf(todayIso()))?.days || [null, null, null, null, null]);
+  const [summary, setSummary] = useState<WebTask | null>(() => loadWeekCache(mondayOf(todayIso()))?.summary || null);
   const [loaded, setLoaded] = useState(false);
   const todayIdx = (() => { const d = new Date(`${todayIso()}T00:00:00`).getDay(); return d >= 1 && d <= 5 ? d - 1 : 0; })();
   const [selected, setSelected] = useState(mondayOf(todayIso()) === monday ? todayIdx : 0);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
-  const [openDeckFor, setOpenDeckFor] = useState<"day" | "summary" | "month" | "topic" | null>(null);
-  const [openTopic, setOpenTopic] = useState<WebTask | null>(null);
+  // Editing a day whose deck already exists — false by default so a day WITH a deck shows the deck/quiz
+  // straight away, not the entry textarea again. Flipping this back to the textarea is an explicit choice
+  // (the "modifier" link), never the default view once a deck exists.
+  const [editingDay, setEditingDay] = useState(false);
+  const [openDeckFor, setOpenDeckFor] = useState<"summary" | "month" | null>(null);
   // Companion quiz on week/month summaries — separate open-state from the flashcard deck's, since a summary
   // can have both live at once and they're reviewed independently (see generateWeeklyStudyDeck/
   // generateMonthlyStudyDeck in server/claude.ts: a quiz is included only when the material genuinely calls
   // for discrimination-style testing, so it may not exist even when the deck does).
-  const [openQuizFor, setOpenQuizFor] = useState<"summary" | "month" | null>(null);
+  const [openQuizFor, setOpenQuizFor] = useState<"day" | "summary" | "month" | null>(null);
 
   // Month summary: aggregates whatever weekly decks already exist in the month containing `monday`, not
   // its own calendar nav — riding the week nav keeps this simple (no second date picker) at the cost of
   // the month view following whichever week you're currently on.
   const month = monday.slice(0, 7);
-  const [monthWeeks, setMonthWeeks] = useState<WebTask[]>([]);
-  const [monthSummary, setMonthSummary] = useState<WebTask | null>(null);
+  const [monthWeeks, setMonthWeeks] = useState<WebTask[]>(() => loadMonthCache(mondayOf(todayIso()).slice(0, 7))?.weeks || []);
+  const [monthSummary, setMonthSummary] = useState<WebTask | null>(() => loadMonthCache(mondayOf(todayIso()).slice(0, 7))?.summary || null);
   const [monthGenBusy, setMonthGenBusy] = useState(false);
 
-  // Topic decks: on-demand, independent of the calendar entirely.
-  const [topics, setTopics] = useState<WebTask[]>([]);
-  const [topicName, setTopicName] = useState("");
-  const [topicNotes, setTopicNotes] = useState("");
-  const [topicBusy, setTopicBusy] = useState(false);
-  const [topicOpen, setTopicOpen] = useState(false);
-
   const load = useCallback((m: string) => {
-    setLoaded(false);
-    void api.studyLogWeek(m).then((r) => { setDays(r.days); setSummary(r.summary); setLoaded(true); })
-      .catch(() => { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); });
+    const cached = loadWeekCache(m);
+    if (cached) { setDays(cached.days); setSummary(cached.summary); setLoaded(true); }
+    else setLoaded(false);
+    void api.studyLogWeek(m).then((r) => {
+      setDays(r.days); setSummary(r.summary); setLoaded(true);
+      saveWeekCache(m, { days: r.days, summary: r.summary });
+    }).catch(() => { if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); } });
   }, [en, notify]);
   useEffect(() => { load(monday); }, [monday, load]);
-  useEffect(() => { setText(days[selected]?.logText || ""); }, [selected, days]);
+  useEffect(() => { setText(days[selected]?.logText || ""); setEditingDay(false); }, [selected, days]);
   useEffect(() => {
-    void api.studyLogMonth(month).then((r) => { setMonthWeeks(r.weeks); setMonthSummary(r.summary); }).catch(() => {});
+    const cached = loadMonthCache(month);
+    if (cached) { setMonthWeeks(cached.weeks); setMonthSummary(cached.summary); }
+    void api.studyLogMonth(month).then((r) => {
+      setMonthWeeks(r.weeks); setMonthSummary(r.summary);
+      saveMonthCache(month, { weeks: r.weeks, summary: r.summary });
+    }).catch(() => {});
   }, [month]);
-  useEffect(() => { void api.studyLogTopics().then(setTopics).catch(() => {}); }, []);
 
   const dates = Array.from({ length: 5 }, (_, i) => addDays(monday, i));
   const dayLabels = en ? ["Mon", "Tue", "Wed", "Thu", "Fri"] : ["Lun", "Mar", "Mer", "Jeu", "Ven"];
@@ -1743,12 +1777,17 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
     try {
       const list = await api.studyLogDay(dates[selected], text);
       const fresh = list.find((t) => t.logDate === dates[selected]) || null;
-      setDays((prev) => prev.map((d, i) => (i === selected ? fresh : d)));
+      setDays((prev) => {
+        const next = prev.map((d, i) => (i === selected ? fresh : d));
+        saveWeekCache(monday, { days: next, summary });
+        return next;
+      });
+      setEditingDay(false);
       // The server saves the log text either way (never loses what you typed) but can come back with a
       // 200 success and an EMPTY deck if generation itself failed (a truncated/unparseable model response —
       // see generateDailyStudyCards) — that used to be entirely silent: text saved, no deck, no error, no
-      // clue why the "View flashcards" button never appeared. Detect it here since the client already has
-      // enough info to (non-empty text, no cards) without needing a server response-shape change.
+      // clue why the flashcards never appeared. Detect it here since the client already has enough info
+      // (non-empty text, no cards) without needing a server response-shape change.
       if (text.trim() && !fresh?.flashcards?.length) {
         notify(en ? "Saved, but couldn't make flashcards from that — try saving again." : "Enregistré, mais impossible de créer les cartes — réessaie d'enregistrer.", "error");
       }
@@ -1759,26 +1798,33 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
     setGenBusy(true);
     try {
       const list = await api.studyLogWeekSummary(monday);
-      setSummary(list.find((t) => t.logDate === `week:${monday}`) || null);
+      const fresh = list.find((t) => t.logDate === `week:${monday}`) || null;
+      setSummary(fresh);
+      saveWeekCache(monday, { days, summary: fresh });
     } catch (e: any) { notify(e?.message || (en ? "Couldn't build the week summary — try again." : "Impossible de créer le résumé — réessaie."), "error"); }
     finally { setGenBusy(false); }
   };
 
   const dayTask = days[selected];
   const dayDeck = dayTask?.flashcards?.[0];
+  const dayQuiz = dayTask?.quizzes?.[0];
   const summaryDeck = summary?.flashcards?.[0];
   const summaryQuiz = summary?.quizzes?.[0];
   const anyEntryThisWeek = days.some((d) => d?.logText?.trim());
   const onDayReview = dayTask && dayDeck ? (cardIndex: number, correct: boolean) => {
     void api.reviewFlashcard(dayTask.id, dayDeck.id, cardIndex, correct).then((list) => {
       const fresh = list.find((t) => t.id === dayTask.id);
-      if (fresh) setDays((prev) => prev.map((d) => (d?.id === dayTask.id ? fresh : d)));
+      if (fresh) setDays((prev) => {
+        const next = prev.map((d) => (d?.id === dayTask.id ? fresh : d));
+        saveWeekCache(monday, { days: next, summary });
+        return next;
+      });
     }).catch(() => {});
   } : undefined;
   const onSummaryReview = summary && summaryDeck ? (cardIndex: number, correct: boolean) => {
     void api.reviewFlashcard(summary.id, summaryDeck.id, cardIndex, correct).then((list) => {
       const fresh = list.find((t) => t.id === summary.id);
-      if (fresh) setSummary(fresh);
+      if (fresh) { setSummary(fresh); saveWeekCache(monday, { days, summary: fresh }); }
     }).catch(() => {});
   } : undefined;
 
@@ -1787,35 +1833,18 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   const onMonthReview = monthSummary && monthDeck ? (cardIndex: number, correct: boolean) => {
     void api.reviewFlashcard(monthSummary.id, monthDeck.id, cardIndex, correct).then((list) => {
       const fresh = list.find((t) => t.id === monthSummary.id);
-      if (fresh) setMonthSummary(fresh);
+      if (fresh) { setMonthSummary(fresh); saveMonthCache(month, { weeks: monthWeeks, summary: fresh }); }
     }).catch(() => {});
   } : undefined;
   const genMonthSummary = async () => {
     setMonthGenBusy(true);
     try {
       const list = await api.studyLogMonthSummary(month);
-      setMonthSummary(list.find((t) => t.logDate === `month:${month}`) || null);
+      const fresh = list.find((t) => t.logDate === `month:${month}`) || null;
+      setMonthSummary(fresh);
+      saveMonthCache(month, { weeks: monthWeeks, summary: fresh });
     } catch (e: any) { notify(e?.message || (en ? "Couldn't build the month summary — try again." : "Impossible de créer le résumé mensuel — réessaie."), "error"); }
     finally { setMonthGenBusy(false); }
-  };
-
-  const topicDeck = openTopic?.flashcards?.[0];
-  const onTopicReview = openTopic && topicDeck ? (cardIndex: number, correct: boolean) => {
-    void api.reviewFlashcard(openTopic.id, topicDeck.id, cardIndex, correct).then((list) => {
-      const fresh = list.find((t) => t.id === openTopic.id);
-      if (fresh) setOpenTopic(fresh);
-    }).catch(() => {});
-  } : undefined;
-  const genTopicDeck = async () => {
-    if (!topicName.trim()) return;
-    setTopicBusy(true);
-    try {
-      const list = await api.studyLogTopic(topicName.trim(), topicNotes.trim() || undefined);
-      const fresh = list.filter((t) => t.source === "studylog" && t.logDate?.startsWith("topic:")).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))[0];
-      if (fresh) setTopics((prev) => [fresh, ...prev]);
-      setTopicName(""); setTopicNotes(""); setTopicOpen(false);
-    } catch (e: any) { notify(e?.message || (en ? "Couldn't build that deck — try again." : "Impossible de créer ces cartes — réessaie."), "error"); }
-    finally { setTopicBusy(false); }
   };
 
   return (
@@ -1839,15 +1868,33 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
 
       {!loaded ? <p className="muted small">{L("Chargement…", "Loading…")}</p> : (
         <>
-          <textarea className="studylog-textarea" rows={8}
-            placeholder={L("Aujourd'hui, j'ai appris…", "Today I learned…")}
-            value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
-          <div className="studylog-actions">
-            <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>
-              {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer et créer les cartes", "Save & make flashcards")}
-            </button>
-            {dayDeck ? <button type="button" className="btn ghost" onClick={() => setOpenDeckFor("day")}>{L("Voir les cartes", "View flashcards")} ({dayDeck.cards.length})</button> : null}
-          </div>
+          {/* Once a day has a deck, that IS the view — the entry textarea only comes back if you explicitly
+              ask to edit. This is the point of the whole redesign: flashcards (and the quiz, when Otto made
+              one) are always what you see for a day you already logged, not a "make cards" screen again. */}
+          {dayDeck && !editingDay ? (
+            <div className="studylog-day-cards">
+              <div className="studylog-day-cards-head">
+                <h3>{dayDeck.title}</h3>
+                <button type="button" className="btn xs ghost" onClick={() => setEditingDay(true)}>{L("Modifier l'entrée", "Edit entry")}</button>
+              </div>
+              <FlashcardDeck deck={dayDeck} onReview={onDayReview} taskId={dayTask?.id} />
+              {/* The quiz is only present when today's material genuinely called for discrimination-style
+                  testing (server decides, not a guaranteed add-on) — so it may not exist even with a deck. */}
+              {dayQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("day")}>{L("Quiz", "Quiz")} ({dayQuiz.questions.length})</button> : null}
+            </div>
+          ) : (
+            <>
+              <textarea className="studylog-textarea" rows={8}
+                placeholder={L("Aujourd'hui, j'ai appris…", "Today I learned…")}
+                value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
+              <div className="studylog-actions">
+                <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>
+                  {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer et créer les cartes", "Save & make flashcards")}
+                </button>
+                {dayDeck ? <button type="button" className="btn ghost" onClick={() => setEditingDay(false)}>{L("Voir les cartes", "View flashcards")}</button> : null}
+              </div>
+            </>
+          )}
 
           <div className="studylog-summary-sec">
             <h3>{L("Résumé de la semaine", "Week summary")}</h3>
@@ -1880,50 +1927,17 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
             )}
             {monthWeeks.length === 0 ? <p className="settings-hint">{L("Crée d'abord au moins un résumé de semaine ce mois-ci.", "Build at least one week summary this month first.")}</p> : null}
           </div>
-
-          <div className="studylog-summary-sec">
-            <h3>{L("Réviser un sujet précis", "Revise a specific topic")}</h3>
-            {!topicOpen ? (
-              <button type="button" className="btn ghost" onClick={() => setTopicOpen(true)}>{L("+ Nouveau sujet", "+ New topic")}</button>
-            ) : (
-              <div className="studylog-topic-form">
-                <input type="text" className="studylog-topic-input" placeholder={L("Sujet (ex. Révolution française)", "Topic (e.g. French Revolution)")}
-                  value={topicName} onChange={(e) => setTopicName(e.target.value)} maxLength={200} />
-                <textarea className="studylog-textarea" rows={4}
-                  placeholder={L("Colle tes notes ici (facultatif) — sinon Otto s'appuie sur ses propres connaissances.", "Paste your notes here (optional) — otherwise Otto draws on its own knowledge.")}
-                  value={topicNotes} onChange={(e) => setTopicNotes(e.target.value)} maxLength={4000} />
-                <div className="studylog-actions">
-                  <button type="button" className="btn primary" disabled={topicBusy || !topicName.trim()} onClick={() => void genTopicDeck()}>
-                    {topicBusy ? L("Création…", "Building…") : L("Créer les cartes", "Generate flashcards")}
-                  </button>
-                  <button type="button" className="btn ghost" onClick={() => { setTopicOpen(false); setTopicName(""); setTopicNotes(""); }}>{L("Annuler", "Cancel")}</button>
-                </div>
-              </div>
-            )}
-            {topics.length > 0 ? (
-              <div className="studylog-topic-list">
-                {topics.map((t) => (
-                  <button key={t.id} type="button" className="btn xs ghost" onClick={() => { setOpenTopic(t); setOpenDeckFor("topic"); }}>
-                    {t.title} ({t.flashcards?.[0]?.cards.length || 0})
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
         </>
       )}
 
-      {openDeckFor === "day" && dayDeck ? (
-        <TaskModal onClose={() => setOpenDeckFor(null)} title={dayDeck.title}><FlashcardDeck deck={dayDeck} onReview={onDayReview} taskId={dayTask?.id} /></TaskModal>
-      ) : null}
       {openDeckFor === "summary" && summaryDeck ? (
         <TaskModal onClose={() => setOpenDeckFor(null)} title={summaryDeck.title}><FlashcardDeck deck={summaryDeck} onReview={onSummaryReview} taskId={summary?.id} /></TaskModal>
       ) : null}
       {openDeckFor === "month" && monthDeck ? (
         <TaskModal onClose={() => setOpenDeckFor(null)} title={monthDeck.title}><FlashcardDeck deck={monthDeck} onReview={onMonthReview} taskId={monthSummary?.id} /></TaskModal>
       ) : null}
-      {openDeckFor === "topic" && topicDeck ? (
-        <TaskModal onClose={() => { setOpenDeckFor(null); setOpenTopic(null); }} title={topicDeck.title}><FlashcardDeck deck={topicDeck} onReview={onTopicReview} taskId={openTopic?.id} /></TaskModal>
+      {openQuizFor === "day" && dayQuiz ? (
+        <TaskModal onClose={() => setOpenQuizFor(null)} title={dayQuiz.title}><QuizPlayer quiz={dayQuiz} taskId={dayTask?.id} /></TaskModal>
       ) : null}
       {openQuizFor === "summary" && summaryQuiz ? (
         <TaskModal onClose={() => setOpenQuizFor(null)} title={summaryQuiz.title}><QuizPlayer quiz={summaryQuiz} taskId={summary?.id} /></TaskModal>

@@ -5,6 +5,28 @@ import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type 
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
 
+// Broad-scope verbs that genuinely tend to bundle several sub-actions under one short step text ("Review
+// the Brave Search API billing change", "Research colleges", "Organize the trip") — a step opening on one
+// of these is the actual signal worth auto-expanding, not just "any step at all". A narrow, already-
+// concrete step ("Email the professor", "Submit the form") doesn't need a checklist under it.
+const BROAD_SCOPE_STEP_RE = /^(review|research|investigate|assess|evaluate|analyze|analyse|organize|organise|plan|prepare|coordinate|compile|audit|compare|explore)\b/i;
+/** Is this step text "particularly complicated" — genuinely worth an automatic substep breakdown, vs an
+ *  already-concrete single action that would just get a checklist bolted on for no reason? Used ONLY to
+ *  gate the AUTOMATIC post-run expansion (server/jobs.ts) — the manual "Détailler cette étape" button stays
+ *  available for ANY step regardless, since a user explicitly asking for a breakdown should always get one.
+ *  Two independent signals, either is enough: (1) the step opens on a broad-scope verb that typically
+ *  bundles several real sub-actions ("review X" almost always means find-it, read-it, judge-it, decide-
+ *  what's-next); (2) the step text itself is long/multi-clause (joined by "and"/commas/semicolons), which is
+ *  itself a sign the model already tried to cram more than one action into one line. Pure so it's testable
+ *  without a live AI call. */
+export function needsAutoBreakdown(stepText: string): boolean {
+  const t = stepText.trim();
+  if (!t) return false;
+  if (BROAD_SCOPE_STEP_RE.test(t)) return true;
+  const clauses = (t.match(/,| and | et |;/gi) || []).length;
+  return t.length > 60 || clauses >= 2;
+}
+
 /** Fold a learned fact into the person-profile. 'name'/'about' replace. List facts REPLACE an existing
  *  same-entity fact (newest wording wins — so a correction actually takes effect; dedupeFacts alone keeps
  *  the LONGER wording, which lets stale facts survive), else append; then dedupe + cap. */

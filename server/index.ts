@@ -12,7 +12,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateWeeklyStudyDeck, generateMonthlyStudyDeck, generateTopicStudyDeck } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateWeeklyStudyDeck, generateMonthlyStudyDeck } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -1100,6 +1100,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     const result = await generateDailyStudyCards(text, req.session.profile);
     if (result) addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
     t.flashcards = result ? [result.deck] : [];
+    t.quizzes = result?.quiz ? [result.quiz] : [];
     t.title = result?.deck.title || date;
     t.updatedAt = new Date().toISOString();
     await commit(req);
@@ -1214,47 +1215,6 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the month summary — try again." }); }
-}));
-
-// On-demand deck for one named topic (e.g. "test on the French Revolution Friday"), independent of the
-// daily/weekly/monthly calendar cadence. Optional pasted notes narrow it to exactly that material; without
-// notes, Otto draws on its own knowledge of the topic. Each call mints its own task (never upserted against
-// an existing one, unlike day/week/month) since a student may want several different topic decks live at
-// once — the anchorKey is randomized per deck rather than derived from the topic text.
-app.post("/api/studylog/topic", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate flashcards." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
-  const topic = String(req.body?.topic || "").trim().slice(0, 200);
-  const notes = String(req.body?.notes || "").trim().slice(0, 4000);
-  if (!topic) { res.status(400).json({ error: "Name a topic first." }); return; }
-  const list = req.session.tasks || [];
-  try {
-    const result = await generateTopicStudyDeck(topic, notes || undefined, req.session.profile);
-    if (!result) { res.status(500).json({ error: "Couldn't build a deck for that topic — try again." }); return; }
-    addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
-    const deck = result.deck;
-    const id = randomUUID();
-    const now = new Date().toISOString();
-    const e = tasks.eisenhower(0, 0);
-    const t: WebTask = {
-      id, title: deck.title, why: `Topic review: ${topic}`, source: "studylog", risk: "low",
-      urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
-      createdAt: now, anchorKey: `studylog:topic:${id}`, logDate: `topic:${id}`,
-      flashcards: [deck],
-    };
-    list.push(t);
-    req.session.tasks = list;
-    await commit(req);
-    res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build a deck for that topic — try again." }); }
-}));
-
-app.get("/api/studylog/topics", requireAuth, ah(async (req, res) => {
-  const list = req.session.tasks || [];
-  const topics = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("topic:") && !isHandled(x.status))
-    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-  res.json(topics);
 }));
 
 // A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) is built
