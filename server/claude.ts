@@ -968,7 +968,9 @@ export function makeNote(input: any): { note: TaskNote } | { error: string } {
 export function makeDeck(input: any): { deck: TaskFlashcards } | { error: string } {
   const title = String(input?.title || "Flashcards").trim().slice(0, 120) || "Flashcards";
   const cards = (Array.isArray(input?.cards) ? input.cards : [])
-    .map((c: any) => ({ front: String(c?.front || "").trim().slice(0, 300), back: String(c?.back || "").trim().slice(0, 300) }))
+    // back's cap is well above front's: a practice-problem card's back is a full worked step-by-step
+    // solution (see CARD_STYLE_RULE's rule 3 exception) — 300 chars silently chopped that off mid-solution.
+    .map((c: any) => ({ front: String(c?.front || "").trim().slice(0, 300), back: String(c?.back || "").trim().slice(0, 900) }))
     .filter((c: { front: string; back: string }) => c.front && c.back)
     // No real product cap — a student who names a specific count (e.g. "100 flashcards") should get it,
     // not an arbitrary product-level ceiling; see CREATE_FLASHCARDS_TOOL's description for the model-side
@@ -1600,10 +1602,42 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `"..."}, ...]} or null}.` },
       ],
     }));
-    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
-    const result = makeDeck(out);
+    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
+    let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
+    let tokens = usageOf(res);
+    // FALLBACK: the ask above is ambitious (full coverage + a practice problem per subject + an optional
+    // quiz, up to 50 cards) — on a dense multi-subject entry the response can run long enough to get cut
+    // off before the closing brace, which firstJson can't parse AT ALL (one dropped brace loses 100% of an
+    // otherwise-fine deck, not just the tail). That used to mean the whole save came back empty with the
+    // student having no idea why ("Saved, but couldn't make flashcards from that"). Retry ONCE with a much
+    // smaller, quiz-free ask — short backs, no practice-problem expansion, no quiz — so a save reliably
+    // produces SOMETHING to revise from instead of silently nothing. This only fires on the rare truncated/
+    // malformed case, so it doesn't add cost to the normal path.
+    if (!("deck" in result)) {
+      console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: first attempt unparseable, retrying with a smaller ask`);
+      const res2 = await retryRequest(() => client.chat.completions.create({
+        model,
+        max_tokens: OUT.studylog,
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content:
+            languageLine(profile) + trackLine(profile) +
+            `You turn a student's own end-of-day "what I learned today" dump into a flashcard deck. Keep this ` +
+            `CONCISE and reliable: cover the distinct facts/definitions/formulas/dates the entry actually ` +
+            `contains, one idea per card, short precise backs (a word/value/short clause, no worked solutions, ` +
+            `no quiz). At most 20 cards. ${CARD_STYLE_RULE}` },
+          { role: "user", content:
+            `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
+            `Return JSON: {"title": short label (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
+        ],
+      }));
+      out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res2.choices[0]?.message?.content || "");
+      result = out ? makeDeck(out) : { error: "no parseable JSON in the retry either" };
+      const t2 = usageOf(res2);
+      tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
+    }
     if (!("deck" in result)) return null;
-    const tokens = usageOf(res);
     let quiz: TaskQuiz | undefined;
     if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
       const qr = makeQuiz(out.quiz);
