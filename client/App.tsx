@@ -1563,16 +1563,24 @@ function ExamsEditor({ profile, onChanged }: { profile: Profile | null; onChange
 }
 
 // Monday (YYYY-MM-DD) of the week containing `dateStr` — mirrors mondayOf in server/index.ts exactly
-// (same simple, year-boundary-safe scheme, not a formal ISO week number).
+// (same simple, year-boundary-safe scheme, not a formal ISO week number). MUST do the arithmetic in UTC,
+// not local time: parsing "T00:00:00" (no Z) reads it as LOCAL midnight, but then calling .toISOString()
+// converts that back to UTC — for anyone in a timezone ahead of UTC (most of Europe/Asia/Australia), local
+// midnight is still the PREVIOUS day in UTC, so every date this produced came out shifted back by one day.
+// That silently misaligned which date a saved entry's logDate landed on vs. what the server's own
+// (correctly all-UTC) mondayOf/weekdayDates expected when building the week-summary lookup — the real cause
+// of "No entries logged this week yet" despite entries clearly being there. Parsing with an explicit "Z"
+// and using the UTC getters/setters throughout makes this a pure calendar-string computation, immune to the
+// browser's local timezone, and byte-for-byte the same scheme the server already uses.
 const mondayOf = (dateStr: string): string => {
-  const d = new Date(`${dateStr}T00:00:00`);
-  const day = d.getDay();
-  d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  const day = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
   return d.toISOString().slice(0, 10);
 };
 const addDays = (dateStr: string, n: number): string => {
-  const d = new Date(`${dateStr}T00:00:00`);
-  d.setDate(d.getDate() + n);
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
 
@@ -1773,7 +1781,7 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
   const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(mondayOf(todayIso()))?.days || [null, null, null, null, null]);
   const [summary, setSummary] = useState<WebTask | null>(() => loadWeekCache(mondayOf(todayIso()))?.summary || null);
   const [loaded, setLoaded] = useState(false);
-  const todayIdx = (() => { const d = new Date(`${todayIso()}T00:00:00`).getDay(); return d >= 1 && d <= 5 ? d - 1 : 0; })();
+  const todayIdx = (() => { const d = new Date(`${todayIso()}T00:00:00Z`).getUTCDay(); return d >= 1 && d <= 5 ? d - 1 : 0; })();
   const [selected, setSelected] = useState(mondayOf(todayIso()) === monday ? todayIdx : 0);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
