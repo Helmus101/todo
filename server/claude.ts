@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
 import { dedupeFacts, sameFact } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -919,7 +919,7 @@ const CREATE_FLASHCARDS_TOOL = {
     title: { type: "string", description: "short label shown on the button, e.g. 'Vocabulaire — Chapitre 4'" },
     cards: {
       type: "array",
-      description: "Around 25 by default when the student didn't name a number, adapted to the actual task (a short formula sheet needs fewer, a whole chapter's vocabulary needs more) and to the student (more if they're drilling hard for a contrôle, fewer for a quick review). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller deck with no explanation, and never try to cram more than 50 into one call (it will fail/truncate before you can even reply). CARD QUALITY (the minimum-information principle — retrieval practice only works if a card forces ONE precise recall, not recognition of a blob): one idea per card, split anything with multiple facts/causes/steps into separate cards rather than listing them on one back. HARD, SPECIFIC FRONT: name the subject/context and ask for real recall ('Physics: why does...'), never recognition, and NEVER put the answer (or a giveaway) IN the front — a card testing WHEN something happened asks for the date, it doesn't state the date and ask what happened (that answers itself). DETAILED BACK: a bare word or one-liner is NOT enough — the back should teach, giving the real answer plus the context/mechanism/reasoning that makes it stick (why it matters, how it works), not just name/confirm it; still ONE idea, just genuinely informative on that one idea. Use your own wording, not the source text verbatim; vary card type to fit the content (definition/contrast/cause-effect/application/cloze) rather than forcing everything into one shape — real content from the task's subject, never placeholders. FOR QUANTITATIVE SUBJECTS (math, physics, chemistry, econ calculations, ...), ALWAYS INCLUDE actual PRACTICE PROBLEMS, not just definition/recall cards — a real exercise to solve (an equation, a computation, a short word problem), not just 'what is the formula for X'; this is NOT optional for these subjects. A practice-problem card's back is a worked step-by-step solution ending in the final answer, each step on its own line (a real newline between steps, not run together) so it reads as a worked solution, not a wall of text. Don't make EVERY card a practice problem (recall cards for definitions/formulas/vocabulary still matter), just make sure a real, visible chunk of the deck is the student actually DOING the math, not just reciting it.",
+      description: "Around 25 by default when the student didn't name a number, adapted to the actual task (a short formula sheet needs fewer, a whole chapter's vocabulary needs more) and to the student (more if they're drilling hard for a contrôle, fewer for a quick review). If the student named a SPECIFIC number, make exactly that many, up to 50 IN THIS ONE CALL — 50 is a hard technical ceiling (this single reply's token budget), not a product opinion, so never attempt more than 50 in one call no matter how high the student's number is. If they asked for more than 50, make exactly 50 now, say plainly in your reply that this is the first 50 of the N they asked for, and offer to make the rest in a follow-up message — never silently hand back a smaller deck with no explanation, and never try to cram more than 50 into one call (it will fail/truncate before you can even reply). CARD QUALITY (the minimum-information principle — retrieval practice only works if a card forces ONE precise recall, not recognition of a blob): one idea per card, split anything with multiple facts/causes/steps into separate cards rather than listing them on one back. HARD, SPECIFIC FRONT: name the subject/context and ask for real recall ('Physics: why does...'), never recognition, and NEVER put the answer (or a giveaway) IN the front — a card testing WHEN something happened asks for the date, it doesn't state the date and ask what happened (that answers itself). BACK LENGTH MATCHES THE CONTENT: a pure lookup fact (a value, a term, a bare date) gets a short precise back — don't pad it just to look thorough. But when the answer needs context to actually teach (why a date matters, what a formula's symbols mean, the mechanism behind a cause-effect link), give that — a bare answer with zero explanation there is under-explaining, not concise. Some backs are a word, some are two sentences; that variation is correct. Still ONE idea either way. Use your own wording, not the source text verbatim; vary card type to fit the content (definition/contrast/cause-effect/application/cloze) rather than forcing everything into one shape — real content from the task's subject, never placeholders. FOR QUANTITATIVE SUBJECTS (math, physics, chemistry, econ calculations, ...), ALWAYS INCLUDE actual PRACTICE PROBLEMS, not just definition/recall cards — a real exercise to solve (an equation, a computation, a short word problem), not just 'what is the formula for X'; this is NOT optional for these subjects. A practice-problem card's back is a worked step-by-step solution ending in the final answer, each step on its own line (a real newline between steps, not run together) so it reads as a worked solution, not a wall of text. Don't make EVERY card a practice problem (recall cards for definitions/formulas/vocabulary still matter), just make sure a real, visible chunk of the deck is the student actually DOING the math, not just reciting it.",
       items: { type: "object", properties: {
         front: { type: "string", description: "the prompt side — a term, question, formula name, or (for quantitative subjects) an actual problem/exercise to solve. Never state the answer or a giveaway (like the date being tested) in the front itself. Every card must be a genuinely DISTINCT fact or problem — never two cards that are really the same term/definition reworded, or the same formula applied to trivially different numbers. If the topic doesn't actually have that many distinct facts to drill, make FEWER cards rather than pad with near-duplicates." },
         back: { type: "string", description: "the answer side — detailed and informative: the real answer PLUS the context/mechanism/reasoning that makes it stick, not just a bare word or value; for a practice-problem card, the full worked step-by-step solution ending in the final answer" },
@@ -1013,6 +1013,17 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
     .slice(0, 50) as TaskQuiz["questions"];
   if (!questions.length) return { error: "ERROR: no valid questions (each needs a question, 2-4 distinct options, and a `correct` index pointing at one of them)." };
   return { quiz: { id: randomUUID(), title, questions, createdAt: new Date().toISOString() } };
+}
+
+/** ONE free-response practice problem — validated the same defensive way as makeDeck/makeQuiz. Both
+ *  `problem` and `answer` are required (a problem with no stored answer can never be checked; an "answer"
+ *  with no problem is meaningless), `format` is optional guidance text. */
+export function makePracticeProblem(input: any): { problem: DailyPracticeProblem } | { error: string } {
+  const problem = String(input?.problem || "").trim().slice(0, 600);
+  const answer = String(input?.answer || "").trim().slice(0, 200);
+  if (!problem || !answer) return { error: "ERROR: a practice problem needs both a non-empty problem and answer." };
+  const format = input?.format ? String(input.format).trim().slice(0, 200) : undefined;
+  return { problem: { id: randomUUID(), problem, answer, ...(format ? { format } : {}), createdAt: new Date().toISOString() } };
 }
 
 // Sources where every item HAS a stable id/link the tools return — a task claiming to come from one of
@@ -1488,14 +1499,15 @@ const CARD_STYLE_RULE =
   `happened, the front asks for the date, it doesn't already state the date ("What year did the French ` +
   `Revolution begin?" not "In 1789, what began?" — the second one answers itself). Same for any other fact ` +
   `the back is supposed to supply: never pre-load it into the question.\n` +
-  `3. DETAILED, INFORMATIVE BACK — this is the single biggest quality bar: a bare word or one-line answer is ` +
-  `NOT enough, even for a "short" fact. The back should teach, not just confirm — give the real answer PLUS ` +
-  `the context/mechanism/reasoning that makes it stick: a definition explains what it means and why it ` +
-  `matters, not just names it; a date/event card says what happened and why it's significant, not just the ` +
-  `bare year; a formula card shows the formula AND what each symbol means; a cause-effect card explains the ` +
-  `actual mechanism, not just "because X". Still ONE idea per card (rule 1) — detailed means genuinely ` +
-  `informative on that one idea, not padded with unrelated facts or restating the question. EXCEPTION: a ` +
-  `practice-problem card (rule 6 below) — its back is a full worked step-by-step solution, longer still, ` +
+  `3. BACK LENGTH MATCHES WHAT'S ACTUALLY BEING TESTED — don't force every back to the same length either ` +
+  `way. A pure lookup fact (a value, a term, a single date with nothing more to say) gets a short, precise ` +
+  `back — padding it with filler just to look "detailed" is as bad as being too terse. But when the real ` +
+  `answer NEEDS context to actually teach something (why a date matters, what a formula's symbols mean, the ` +
+  `mechanism behind a cause-effect relationship), give that — a bare "1789" or "because X" with zero mechanism ` +
+  `is under-explaining, not being concise. Judge each card on its own: some backs are a single word, some are ` +
+  `two sentences, and that variation is correct, not a flaw. Still ONE idea per card (rule 1) either way — ` +
+  `long or short, never padded with a second unrelated fact or a restatement of the question. EXCEPTION: a ` +
+  `practice-problem card (rule 6 below) — its back is a full worked step-by-step solution, always longer, ` +
   `since showing the method is the point.\n` +
   `4. YOUR OWN WORDING, not the textbook's or the student's notes verbatim — paraphrasing is itself part of ` +
   `what makes a card test understanding rather than memorized phrasing.\n` +
@@ -1581,13 +1593,18 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `wrote, one idea per card; fix anything they got wrong instead of repeating the error; if they named ` +
           `a concept without its content (e.g. "SUVAT equations", nothing listed), fill in the real content as ` +
           `its own card(s), using your own subject knowledge — but stay strictly on the topics they named, no ` +
-          `detours. ${concise ? "Keep it SHORT and reliable: short precise backs, no worked solutions, at most 15 cards." : `${CARD_STYLE_RULE}`}` },
+          `detours. However many cards the entry genuinely supports — a short one-topic entry might be 5-10, a ` +
+          `dense multi-subject day can go up to 50; don't pad to hit a number, and don't artificially cap a day ` +
+          `that really has more to cover either.` +
+          (concise ? " Keep it SHORT and reliable this time: short precise backs, no worked solutions, at most 15 cards." : ` ${CARD_STYLE_RULE}`) },
         { role: "user", content:
           `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
           `Return JSON: {"title": short label (≤8 words, name the actual topic(s)), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
-    const res = await makeReq(6000, false);
+    // 10000 leaves real headroom for a genuinely dense day (up to 50 varied-length cards) without being the
+    // 14000+bundled-quiz-sized ask that was making this fail — most days use a fraction of this.
+    const res = await makeReq(10000, false);
     let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
     let tokens = usageOf(res);
@@ -1619,6 +1636,60 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
   }
 }
 
+// Cheap pre-filter (no AI call) so generateDailyPracticeProblem only fires when the entry plausibly
+// mentions math/physics/science at all — bilingual (this app is FR/EN), and deliberately generous (a false
+// positive just costs one extra small AI call that self-selects "no problem"; a false negative silently
+// loses the feature entirely for that day, which is the worse failure). Pure + exported so it's testable.
+const STEM_HINT_RE = /\b(math|maths|mathématiques|algebra|alg[eè]bre|geometry|g[eé]om[eé]trie|calculus|trigonometry|trigonom[eé]trie|equation|[eé]quation|physics|physique|chemistry|chimie|biology|biologie|science|force|velocity|vitesse|acceleration|acc[eé]l[eé]ration|energy|[eé]nergie|mole|reaction|r[eé]action|derivative|d[eé]riv[eé]e|integral|int[eé]grale|vector|vecteur|probability|probabilit[eé]|statistics|statistiques|SUVAT|Newton|thermodynamics|thermodynamique|kinematics|cin[eé]matique)\b/i;
+export function looksLikeStem(logText: string): boolean {
+  return STEM_HINT_RE.test(logText);
+}
+
+/** ONE free-response practice problem on the day's math/physics/science themes — a SEPARATE, small, best-
+ *  effort call from generateDailyStudyCards, never bundled into it (the exact bundling that made the daily
+ *  save unreliable before — see that function's own comment). Failing here must NEVER cost the student their
+ *  flashcards: the caller treats a null return as "no problem today", not an error. Deliberately NOT multiple
+ *  choice — the student types an answer, checked via practiceAnswerMatches (shared/types.ts), which actually
+ *  exercises DOING the calculation rather than recognizing it among options. */
+export async function generateDailyPracticeProblem(logText: string, profile?: Profile): Promise<{ problem: DailyPracticeProblem; tokens: { in: number; out: number; cachedIn: number } } | null> {
+  const raw = String(logText || "").trim();
+  if (!raw || !looksLikeStem(raw)) return null;
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model,
+      max_tokens: 1200,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content:
+          languageLine(profile) + trackLine(profile) +
+          `The student's log entry below MAY cover math/physics/science. If it genuinely does, write ONE real ` +
+          `practice problem (a calculation, an equation to solve, a short applied problem) on THOSE actual ` +
+          `themes, calibrated to their year/grade level above. This is FREE-RESPONSE, not multiple choice — the ` +
+          `student will type their own answer, so: "answer" must be the single correct final answer in its ` +
+          `simplest normal form (a number, an expression, a short phrase) — not a worked solution, not a ` +
+          `sentence explaining it, just the answer itself, since it's checked by comparison. "format" is a ` +
+          `short note on what the typed answer should look like — units, decimal places, simplification — AND ` +
+          `which plain-text symbols to use for anything not on a normal keyboard (e.g. "^" for an exponent, ` +
+          `"sqrt(x)" for a square root, "pi", "x_1" for a subscript, "->" for a reaction arrow), so the student ` +
+          `knows how to actually type it. If the entry has NO real math/physics/science content, or you cannot ` +
+          `write a genuine problem from it, output {"problem": null}.\n\n` +
+          `Return ONLY this JSON: {"problem": {"problem": "...", "answer": "...", "format": "..."} | null}.` },
+        { role: "user", content: `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""` },
+      ],
+    }));
+    const out = firstJson<{ problem?: { problem?: string; answer?: string; format?: string } | null }>(res.choices[0]?.message?.content || "");
+    if (!out?.problem) return null;
+    const result = makePracticeProblem(out.problem);
+    if (!("problem" in result)) return null;
+    const tokens = usageOf(res);
+    console.log(`${new Date().toISOString()} [ai] generateDailyPracticeProblem: 1 problem, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { problem: result.problem, tokens };
+  } catch { return null; }
+}
+
 /** End-of-week summary deck: synthesizes across the week's daily entries, weighted by a REAL spaced-
  *  repetition signal (Leitner box breakdown — see spacedRepetitionBlock/nextLeitnerReview) rather than
  *  either re-testing everything evenly or only tracking "wrong or not". Also decides, per week, whether a
@@ -1642,12 +1713,17 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
           languageLine(profile) + trackLine(profile) +
           `You build a WEEK-END-REVIEW flashcard deck from a student's own daily "what I learned" entries. This ` +
           `is a SUMMARY across the whole week, not a re-dump of every daily card verbatim — merge near-duplicate ` +
-          `ideas from different days into one card, connect genuinely related concepts across days, and weight ` +
-          `space given to each concept using the spaced-repetition signal below, NOT evenly. But summarizing ` +
-          `does NOT mean shrinking: cover every distinct concept the week actually contained (weighted as ` +
-          `above), so a heavy week with many topics should produce a correspondingly large deck, up to 50 ` +
-          `cards (a hard technical ceiling on this reply's token budget, not a product opinion) — aim for full ` +
-          `coverage of the week's material within that, not a token "highlights" selection. ${CARD_STYLE_RULE}\n\n` +
+          `ideas from different days into one card, connect genuinely related concepts across days. THIS DECK ` +
+          `SHOULD BE LARGER THAN ANY SINGLE DAY'S — it spans up to 5 days of material, so on average it should ` +
+          `run noticeably longer than one day's deck, not come out similar in size; a week with real content ` +
+          `across several days that produces a SHORT summary has under-covered it. Cover every distinct concept ` +
+          `the week actually contained, up to 50 cards (a hard technical ceiling on this reply's token budget, ` +
+          `not a product opinion) — aim for full coverage, not a "highlights" selection. WITHIN that coverage, ` +
+          `WEIGHT HEAVILY toward what's in the spaced-repetition signal below as never-tested-or-wrong (box ` +
+          `0-1): those concepts should make up a CLEARLY LARGER share of the deck than partially-solid or ` +
+          `well-retained ones — re-tested a genuinely different way each time, not copy-pasted — since the ` +
+          `whole point of a week-end review is catching what didn't stick the first time, not re-visiting ` +
+          `everything evenly. ${CARD_STYLE_RULE}\n\n` +
           `ALSO decide if a companion QUIZ is warranted: if this week's material has concepts students commonly ` +
           `confuse with each other, or that genuinely need discriminating between similar-looking answers ` +
           `(not just recalling one fact), include a "quiz" object with 4-10 multiple-choice questions on ` +

@@ -114,6 +114,7 @@ export const api = {
   // popup and so the tutor chat can reference it later (see chatAboutTask's artifactsBlock).
   recordQuizAttempt: (taskId: string, quizId: string, score: number, total: number, wrong?: number[]): Promise<WebTask[]> =>
     post(`/api/tasks/${taskId}/quiz/${quizId}/attempt`, { score, total, wrong }),
+  submitPracticeAnswer: (taskId: string, answer: string): Promise<WebTask[]> => post(`/api/tasks/${taskId}/practice-problem/attempt`, { answer }),
   reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] }> => req("/api/reviews/due").then(j),
   // Study log: daily "what I learned today" → auto flashcards (see server/index.ts's /api/studylog/*).
   // Saving empty text clears that day's entry+deck; non-empty text (re)generates the deck server-side.

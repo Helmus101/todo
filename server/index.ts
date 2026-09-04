@@ -10,9 +10,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateWeeklyStudyDeck, generateMonthlyStudyDeck } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateMonthlyStudyDeck } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit } from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
@@ -1011,6 +1011,24 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   await commit(req);
   res.json(req.session.tasks || []);
 }));
+// Check a typed answer against a daily practice problem (see DailyPracticeProblem/practiceAnswerMatches in
+// shared/types.ts) — deterministic, no AI call, same "instant, no round-trip surprise" posture as the
+// flashcard/quiz recording routes above. The comparison itself (loose but not fuzzy — formatting-tolerant,
+// not answer-tolerant) lives in shared/types.ts so client and server can never disagree about what counts
+// as correct.
+app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 60_000), ah(async (req, res) => {
+  const id = String(req.params.id);
+  const answer = String(req.body?.answer || "").trim().slice(0, 200);
+  if (!answer) { res.status(400).json({ error: "Type an answer first." }); return; }
+  const task = await findTaskOrReload(req, id);
+  const problem = task?.practiceProblem;
+  if (!task || !problem) { res.status(404).json({ error: "Practice problem not found — it may have already changed elsewhere." }); return; }
+  const correct = practiceAnswerMatches(answer, problem.answer);
+  problem.attempt = { answer, correct, at: new Date().toISOString() };
+  task.updatedAt = new Date().toISOString();
+  await commit(req);
+  res.json(req.session.tasks || []);
+}));
 // Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
 // repetition only actually compounds if the student can see everything due at a glance instead of having
 // to reopen each task to check. Cheap enough to compute on every request (no AI, just a filter/sort).
@@ -1061,7 +1079,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   if (!text) {
     // Clearing an entry — keep the (now-empty) task shell rather than deleting, so re-typing later just
     // upserts the same anchor again instead of minting a fresh id.
-    if (t) { t.logText = ""; t.flashcards = []; t.quizzes = []; t.updatedAt = new Date().toISOString(); await commit(req); }
+    if (t) { t.logText = ""; t.flashcards = []; t.quizzes = []; t.practiceProblem = undefined; t.updatedAt = new Date().toISOString(); await commit(req); }
     res.json(req.session.tasks || []);
     return;
   }
@@ -1106,6 +1124,14 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     // No quiz from the daily call any more (see generateDailyStudyCards's own comment) — leave t.quizzes
     // untouched rather than clobbering it either way.
     t.title = result?.deck.title || date;
+    // Separate, best-effort, math/physics/science-only call (see generateDailyPracticeProblem's own
+    // comment on why this is never bundled into the deck call above) — a failure here never blocks the
+    // flashcards the student is actually waiting on; it just means no practice problem for today.
+    try {
+      const pp = await generateDailyPracticeProblem(text, req.session.profile);
+      if (pp) { addUsage(req.session.profile ||= emptyProfile(), pp.tokens, "studylog"); t.practiceProblem = pp.problem; }
+      else t.practiceProblem = undefined;
+    } catch { /* best-effort — flashcards above already succeeded regardless */ }
     t.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(req.session.tasks || []);

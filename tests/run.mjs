@@ -1,11 +1,11 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 
@@ -1107,6 +1107,31 @@ section("needsAutoBreakdown — only auto-expand a step when it's genuinely comp
   check("a short imperative does NOT get auto-expanded", !needsAutoBreakdown("Submit the form"));
   check("a long multi-clause step flags even without a broad-scope verb", needsAutoBreakdown("Call the dentist, confirm the appointment time, and ask about insurance coverage"));
   check("empty text never flags", !needsAutoBreakdown(""));
+}
+
+section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
+{
+  check("exact match", practiceAnswerMatches("42", "42"));
+  check("case/whitespace-insensitive text match", practiceAnswerMatches("  Paris  ", "paris"));
+  check("numeric match tolerates trailing zero formatting", practiceAnswerMatches("3", "3.0"));
+  check("numeric match tolerates a thousands separator", practiceAnswerMatches("1,000", "1000"));
+  check("strips a leading 'x=' echo of the variable", practiceAnswerMatches("x = 4", "4"));
+  check("strips a trailing period", practiceAnswerMatches("4.", "4"));
+  check("a genuinely wrong numeric answer still fails", !practiceAnswerMatches("41", "42"));
+  check("a genuinely wrong text answer still fails", !practiceAnswerMatches("London", "Paris"));
+  check("empty given answer never matches", !practiceAnswerMatches("", "42"));
+}
+
+section("looksLikeStem / makePracticeProblem — daily practice-problem generation gate + validation");
+{
+  check("English math keyword flags", looksLikeStem("Today I learned the quadratic equation formula."));
+  check("French physics keyword flags", looksLikeStem("Aujourd'hui j'ai révisé la vitesse et l'accélération en physique."));
+  check("plain non-STEM entry does not flag", !looksLikeStem("Today I read a chapter of the novel for English class."));
+  check("empty entry does not flag", !looksLikeStem(""));
+  const okProblem = makePracticeProblem({ problem: "Solve for x: 2x + 4 = 10", answer: "3", format: "a single number" });
+  check("valid problem+answer is accepted", "problem" in okProblem);
+  check("missing answer is rejected", "error" in makePracticeProblem({ problem: "Solve for x: 2x = 6" }));
+  check("missing problem is rejected", "error" in makePracticeProblem({ answer: "3" }));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

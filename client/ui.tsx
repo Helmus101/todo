@@ -8,8 +8,8 @@
  */
 import { useEffect, useState, useCallback, useRef, useContext, createContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { WebTask, TaskFlashcards, TaskQuiz } from "../shared/types.ts";
-import { canonStatus } from "../shared/types.ts";
+import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
+import { canonStatus, practiceAnswerMatches } from "../shared/types.ts";
 import { api } from "./api.ts";
 
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
@@ -715,6 +715,67 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
         <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Question précédente", "‹ Previous question")}</button>
       ) : null}
       <StudyHelpPanel taskId={taskId} card={{ kind: "quiz", question: q!.q, options: q!.options, correct: q!.correct }} />
+    </div>
+  );
+}
+
+/** ONE free-response math/physics/science practice problem (Study Journal daily entries — see
+ *  DailyPracticeProblem in shared/types.ts) — the student TYPES an answer instead of picking one, which is
+ *  the actual point: recognizing the right option among 3-4 is a much weaker test than producing the answer
+ *  yourself. Deliberately its own small component, not folded into QuizPlayer — different interaction
+ *  entirely (a text input + check, not pick-one-of-N), and singular (one problem, not a sequence). */
+export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: DailyPracticeProblem; taskId?: string; onAnswered?: (correct: boolean) => void }) {
+  const L = useLang();
+  const [answer, setAnswer] = useState(problem.attempt?.answer || "");
+  const [result, setResult] = useState<{ correct: boolean } | null>(problem.attempt ? { correct: problem.attempt.correct } : null);
+  const [checking, setChecking] = useState(false);
+  const check = async () => {
+    if (!answer.trim() || checking) return;
+    setChecking(true);
+    try {
+      if (taskId) {
+        const list = await api.submitPracticeAnswer(taskId, answer.trim());
+        const fresh = list.find((t) => t.id === taskId);
+        const correct = fresh?.practiceProblem?.attempt?.correct ?? practiceAnswerMatches(answer, problem.answer);
+        setResult({ correct });
+        onAnswered?.(correct);
+      } else {
+        // No live owner (e.g. reviewing from the Flashcards tab's local backup) — check locally with the
+        // exact same matching rule the server uses, so the verdict is identical either way, just unsynced.
+        const correct = practiceAnswerMatches(answer, problem.answer);
+        setResult({ correct });
+        onAnswered?.(correct);
+      }
+    } catch { /* best-effort — the student can just retry the check */ }
+    finally { setChecking(false); }
+  };
+  return (
+    <div className="practice-problem">
+      <div className="practice-problem-q">{formatMath(stripStrayMarkdown(problem.problem))}</div>
+      {problem.format ? <p className="practice-problem-format">{problem.format}</p> : null}
+      <div className="practice-problem-row">
+        <input
+          type="text" className="practice-problem-input" value={answer}
+          placeholder={L("Ta réponse…", "Your answer…")}
+          disabled={result !== null}
+          onChange={(e) => { setAnswer(e.target.value); setResult(null); }}
+          onKeyDown={(e) => { if (e.key === "Enter") void check(); }}
+        />
+        {result === null ? (
+          <button type="button" className="btn primary" disabled={!answer.trim() || checking} onClick={() => void check()}>
+            {checking ? L("Vérification…", "Checking…") : L("Vérifier", "Check")}
+          </button>
+        ) : (
+          <button type="button" className="btn ghost" onClick={() => { setResult(null); setAnswer(""); }}>{L("Réessayer", "Try again")}</button>
+        )}
+      </div>
+      {result ? (
+        <p className={`practice-problem-verdict ${result.correct ? "correct" : "wrong"}`} role="status" aria-live="polite">
+          {result.correct
+            ? L("✓ Correct.", "✓ Correct.")
+            : L(`✗ Pas tout à fait — la bonne réponse : ${problem.answer}`, `✗ Not quite — the correct answer: ${problem.answer}`)}
+        </p>
+      ) : null}
     </div>
   );
 }

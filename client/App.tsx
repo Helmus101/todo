@@ -4,7 +4,7 @@ import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gra
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer } from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { 
@@ -1759,8 +1759,8 @@ function saveMonthCache(month: string, data: { weeks: WebTask[]; summary: WebTas
 // isn't a feature this page has. Preferring "whichever side actually has content" makes the Journal page
 // itself resilient to that class of bug, on top of the Flashcards tab's separate permanent local backup.
 function richerTask(fresh: WebTask | null, cached: WebTask | null): WebTask | null {
-  const freshHasContent = !!(fresh?.flashcards?.length || fresh?.quizzes?.length);
-  const cachedHasContent = !!(cached?.flashcards?.length || cached?.quizzes?.length);
+  const freshHasContent = !!(fresh?.flashcards?.length || fresh?.quizzes?.length || fresh?.practiceProblem);
+  const cachedHasContent = !!(cached?.flashcards?.length || cached?.quizzes?.length || cached?.practiceProblem);
   if (!freshHasContent && cachedHasContent) return cached;
   return fresh;
 }
@@ -1955,6 +1955,15 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
               {/* The quiz is only present when today's material genuinely called for discrimination-style
                   testing (server decides, not a guaranteed add-on) — so it may not exist even with a deck. */}
               {dayQuiz ? <button type="button" className="btn ghost" onClick={() => setOpenQuizFor("day")}>{L("Quiz", "Quiz")} ({dayQuiz.questions.length})</button> : null}
+              {/* Only present when the day's entry actually covered math/physics/science (server decides via
+                  looksLikeStem) — a free-response problem, not multiple choice, so it's rendered inline
+                  rather than behind a button: it's one problem, not a sequence to open a popup for. */}
+              {dayTask?.practiceProblem ? (
+                <div className="studylog-practice-sec">
+                  <h4>{L("Problème d'application", "Practice problem")}</h4>
+                  <PracticeProblemCard problem={dayTask.practiceProblem} taskId={dayTask.id} />
+                </div>
+              ) : null}
             </div>
           ) : (
             <>

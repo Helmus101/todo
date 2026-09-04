@@ -610,6 +610,12 @@ export interface WebTask {
   /** In-app multiple-choice quizzes — for CHECKING UNDERSTANDING before a contrôle (flashcards drill raw
    *  recall; a quiz surfaces which part of a chapter isn't solid). Same no-account/no-approval model. */
   quizzes?: TaskQuiz[];
+  /** ONE free-response practice problem for the day's math/physics/science themes (Study Journal daily
+   *  entries only — see generateDailyStudyCards in server/claude.ts) — deliberately NOT multiple choice:
+   *  the student types their own answer and it's checked against `answer` (see practiceAnswerMatches
+   *  below), which is what actually exercises DOING the calculation instead of recognizing it among
+   *  options. Singular (not an array) — one genuinely worthwhile problem beats a padded list. */
+  practiceProblem?: DailyPracticeProblem;
   /** Human-readable log of what Otto actually did on this task — a tool call, an artifact created, or a
    *  guardrail refusing to do the student's graded work. Exists so a parent/teacher can verify "never does
    *  the work" is enforced in practice, not just claimed — see the audit panel on the task card. Capped
@@ -679,6 +685,42 @@ export interface TaskQuiz {
   /** Attempt history — cap 20, newest last. Groundwork for retention features (spaced re-quizzing, a
    *  "you missed this before" callout); nothing reads this yet. */
   attempts?: { at: string; score: number; total: number; wrong?: number[] }[];
+}
+
+/** A single free-response practice problem (math/physics/science) — the student types an answer instead of
+ *  picking one, which is the whole point: recognizing the right option among 3-4 plausible ones is a much
+ *  weaker test than actually producing the number/expression yourself. `format` tells the student what
+ *  shape/units/notation the answer should be in (e.g. "two decimal places, in m/s", "as a fraction in
+ *  lowest terms") and what symbols they can type for anything not on a plain keyboard (e.g. "type ^ for an
+ *  exponent, sqrt(x) for a square root, x_1 for a subscript") — set BY the generator, since it knows what
+ *  the answer actually looks like and what a student would need to type it. */
+export interface DailyPracticeProblem {
+  id: string;
+  problem: string;
+  answer: string;
+  /** Guidance on expected format/units/notation AND which plain-text symbols to use for anything not on a
+   *  standard keyboard — shown to the student BEFORE they answer, not part of grading itself. */
+  format?: string;
+  createdAt: string;
+  /** Set once the student checks their answer — persisted so re-opening the day shows the outcome instead
+   *  of re-asking, same spirit as a flashcard's review state. */
+  attempt?: { answer: string; correct: boolean; at: string };
+}
+
+// Loose equality for a typed free-response answer against the stored correct one — NOT exact string
+// equality, which would fail on trivial, meaningless differences (extra spaces, "3.0" vs "3", "X=4" vs "4").
+// Two paths: if both sides parse as a real number, compare numerically (small epsilon for float noise);
+// otherwise compare normalized text (trim, collapse whitespace, case-insensitive, strip a leading "x=" /
+// "y=" echo of the variable being solved for, drop a trailing unit-less "." ). Deliberately NOT fuzzy beyond
+// this — a genuinely wrong answer must still register as wrong, this only forgives formatting noise.
+export function practiceAnswerMatches(given: string, correct: string): boolean {
+  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^[a-z]\s*=\s*/, "").replace(/\.$/, "");
+  const g = norm(given), c = norm(correct);
+  if (!g) return false;
+  if (g === c) return true;
+  const gn = Number(g.replace(/,/g, "")), cn = Number(c.replace(/,/g, ""));
+  if (Number.isFinite(gn) && Number.isFinite(cn)) return Math.abs(gn - cn) < 1e-6 * Math.max(1, Math.abs(cn));
+  return false;
 }
 
 export interface ConnectionStatus {
