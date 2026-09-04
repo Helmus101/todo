@@ -1249,7 +1249,10 @@ export async function classifyCandidates(
     `sub-action. Anchor it on whichever single candidate best names the event, and don't lose the others' concrete ` +
     `detail — carry it into "why" or let the step-writing pass turn each one into its own step under that ONE ` +
     `task. NEVER emit two tasks for one meeting, thread, commitment, or event — no matter how differently-shaped ` +
-    `the source items look. SCORING & PRIORITIZATION: Score importance (0..1) and urgency (0..1) based on deadlines, effort required, and high-priority contacts/projects. Items with imminent deadlines, unfulfilled promises, or high-priority senders score urgency ≥ 0.7 and importance ≥ 0.7. For large complex requests, focus the task on the immediate, concrete next actionable step.\n` +
+    `the source items look. But (2) requires the SAME real event/thread/deadline — two candidates that merely ` +
+    `SOUND alike (both mention "billing"/"credits"/"reset") but name a DIFFERENT company, service, or thread ` +
+    `are unrelated and must stay two separate tasks; consolidating by topic-word overlap instead of a genuinely ` +
+    `shared event is the one failure mode to actively guard against here. SCORING & PRIORITIZATION: Score importance (0..1) and urgency (0..1) based on deadlines, effort required, and high-priority contacts/projects. Items with imminent deadlines, unfulfilled promises, or high-priority senders score urgency ≥ 0.7 and importance ≥ 0.7. For large complex requests, focus the task on the immediate, concrete next actionable step.\n` +
     `TITLES MUST BE SPECIFIC — name the actual person/company AND the actual subject, so the task is clear ` +
     `without opening anything. GOOD: "Reply to Chloe at BOND about the demo", "Send media-coverage docs to ` +
     `Paris Model Congress", "Confirm attendance to Guillaume's Aug call". BAD (too vague — never do this): ` +
@@ -1570,6 +1573,15 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `4. STRETCH a little. Once the core is covered, add a small number of harder cards per major topic — ` +
           `an application, a "why" behind a fact they only noted as a "what," a case that tests whether they ` +
           `actually understand it vs. just recognize it — real revision needs more than pure recall.\n` +
+          `5. ONE PRACTICE PROBLEM PER SUBJECT. For EACH distinct subject the entry actually covers, include AT ` +
+          `LEAST one genuine practice-problem card (front poses a real exercise to solve/analyze, back is the ` +
+          `full worked solution/answer — see the practice-problem exception in the card-quality rules below), ` +
+          `not just recall cards for that subject. Calibrate its difficulty to the student's actual stage using ` +
+          `their year/grade level above — e.g. an IB DP1 problem should be noticeably lighter than a DP2 one on ` +
+          `the same topic (DP2 is the exam year: full syllabus depth, exam-style phrasing; DP1 is still building ` +
+          `foundations) — never the same generic difficulty regardless of which year they're actually in. For a ` +
+          `subject that isn't naturally problem-solving (e.g. history, literature), "problem" means a genuine ` +
+          `analysis/argument prompt at that stage's rigor, not a plain fact-recall question.\n` +
           `Stay ON the topics the entry actually names — this is depth on what they studied, never a detour ` +
           `into an unrelated topic. Every correction/completion/stretch card must be genuinely correct, ` +
           `established subject content (the kind of thing in any real textbook for this level), never a ` +
