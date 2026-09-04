@@ -1555,116 +1555,64 @@ function spacedRepetitionBlock(boxBreakdown: { front: string; box: number }[], p
 export async function generateDailyStudyCards(logText: string, profile?: Profile): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const raw = String(logText || "").trim();
   if (!raw) return null;
+  // DELIBERATELY SIMPLE: this call runs on every single daily save (the most frequent AI action in the
+  // whole app), so it needs to be small and fast above almost everything else. An earlier version of this
+  // asked for full topic coverage + a guaranteed practice problem per subject + an optional bundled quiz +
+  // up to 50 cards, ALL in one JSON response — genuinely better decks when it worked, but a bigger, slower,
+  // more reasoning-heavy ask that failed ("Saved, but couldn't make flashcards") often enough to matter more
+  // than the extra polish was worth. One prompt in, one small JSON response out, render it — that's the
+  // whole feature; anything that makes that one round-trip less reliable is a net loss. No quiz here at all
+  // any more (that's still a thing for week/month summaries, generated separately, never blocking a daily
+  // save); no forced practice-problem-per-subject mandate — CARD_STYLE_RULE's own rule 6 already asks for
+  // practice problems on quantitative subjects when a card actually calls for one.
   try {
     const client = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client.chat.completions.create({
+    const makeReq = (maxTokens: number, concise: boolean) => retryRequest(() => client.chat.completions.create({
       model,
-      max_tokens: OUT.studylog,
+      max_tokens: maxTokens,
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
-          `You turn a student's own end-of-day "what I learned today" dump into a flashcard deck good enough to ` +
-          `actually revise from — not a transcript of their notes turned into Q&A pairs. The entry tells you ` +
-          `WHAT TOPICS they studied; your job is to build the best possible deck ON THOSE TOPICS, using your ` +
-          `own real subject knowledge, not just what they happened to jot down:\n` +
-          `1. COVER what's in the entry, ATOMICALLY — every distinct fact/definition/formula/date/example they ` +
-          `wrote becomes its own card (see the one-idea-per-card rule below); if a line mentions three things, ` +
-          `that's three cards, not one that lists all three.\n` +
-          `2. CORRECT anything wrong. Notes taken quickly are often imprecise or flat-out mistaken (a wrong ` +
-          `formula, a swapped definition, a value that's off) — fix it in the card rather than reproducing ` +
-          `their error. If a correction is genuinely non-obvious (not just a typo), say so briefly on that ` +
-          `card's back ("actually X, not Y") so they notice the fix, not just absorb it silently.\n` +
-          `3. COMPLETE what's incomplete. If they name a concept without its content (e.g. "SUVAT equations" ` +
-          `with no equations listed, "the Krebs cycle" with no steps), add the real, correct content as its own ` +
-          `card(s) — one card per equation/step, not a single card listing all of them — this is you supplying ` +
-          `genuine curriculum knowledge for a topic they've clearly already named as something they're ` +
-          `studying, not inventing a new topic they never mentioned.\n` +
-          `4. STRETCH a little. Once the core is covered, add a small number of harder cards per major topic — ` +
-          `an application, a "why" behind a fact they only noted as a "what," a case that tests whether they ` +
-          `actually understand it vs. just recognize it — real revision needs more than pure recall.\n` +
-          `5. ONE PRACTICE PROBLEM PER SUBJECT. For EACH distinct subject the entry actually covers, include AT ` +
-          `LEAST one genuine practice-problem card (front poses a real exercise to solve/analyze, back is the ` +
-          `full worked solution/answer — see the practice-problem exception in the card-quality rules below), ` +
-          `not just recall cards for that subject. Calibrate its difficulty to the student's actual stage using ` +
-          `their year/grade level above — e.g. an IB DP1 problem should be noticeably lighter than a DP2 one on ` +
-          `the same topic (DP2 is the exam year: full syllabus depth, exam-style phrasing; DP1 is still building ` +
-          `foundations) — never the same generic difficulty regardless of which year they're actually in. For a ` +
-          `subject that isn't naturally problem-solving (e.g. history, literature), "problem" means a genuine ` +
-          `analysis/argument prompt at that stage's rigor, not a plain fact-recall question.\n` +
-          `Stay ON the topics the entry actually names — this is depth on what they studied, never a detour ` +
-          `into an unrelated topic. Every correction/completion/stretch card must be genuinely correct, ` +
-          `established subject content (the kind of thing in any real textbook for this level), never a ` +
-          `plausible-sounding guess.\n${CARD_STYLE_RULE}\n\n` +
-          `ALSO decide if a companion QUIZ is warranted: if today's material has concepts easily confused with ` +
-          `each other, or that genuinely need discriminating between similar-looking answers (not just ` +
-          `recalling one fact), include a "quiz" object with 3-8 multiple-choice questions on exactly those ` +
-          `concepts (never duplicate what a flashcard already tests the same way). If nothing today actually ` +
-          `calls for that format, omit "quiz" entirely (or set it null) — it is NOT a default add-on, only ` +
-          `include it when it genuinely helps. ${QUIZ_STYLE_RULE}` },
+          `Turn a student's own "what I learned today" entry into a flashcard deck worth revising from — not a ` +
+          `1:1 transcript of their notes. Cover the distinct facts/definitions/formulas/dates they actually ` +
+          `wrote, one idea per card; fix anything they got wrong instead of repeating the error; if they named ` +
+          `a concept without its content (e.g. "SUVAT equations", nothing listed), fill in the real content as ` +
+          `its own card(s), using your own subject knowledge — but stay strictly on the topics they named, no ` +
+          `detours. ${concise ? "Keep it SHORT and reliable: short precise backs, no worked solutions, at most 15 cards." : `${CARD_STYLE_RULE}`}` },
         { role: "user", content:
           `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
-          `Return JSON: {"title": short label for today's deck (≤8 words, name the actual topic(s), e.g. ` +
-          `"Photosynthesis + French Revolution causes"), "cards": [{"front": "...", "back": "..."}, ...], ` +
-          `"quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], "correct": 0, "why": ` +
-          `"..."}, ...]} or null}.` },
+          `Return JSON: {"title": short label (≤8 words, name the actual topic(s)), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
-    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
+    const res = await makeReq(6000, false);
+    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
     let tokens = usageOf(res);
-    // FALLBACK: the ask above is ambitious (full coverage + a practice problem per subject + an optional
-    // quiz, up to 50 cards) — on a dense multi-subject entry the response can run long enough to get cut
-    // off before the closing brace, which firstJson can't parse AT ALL (one dropped brace loses 100% of an
-    // otherwise-fine deck, not just the tail). That used to mean the whole save came back empty with the
-    // student having no idea why ("Saved, but couldn't make flashcards from that"). Retry ONCE with a much
-    // smaller, quiz-free ask — short backs, no practice-problem expansion, no quiz — so a save reliably
-    // produces SOMETHING to revise from instead of silently nothing. This only fires on the rare truncated/
-    // malformed case, so it doesn't add cost to the normal path.
+    // FALLBACK: on the rare response that still gets cut off before its closing brace (firstJson can't
+    // parse a truncated JSON blob AT ALL — one dropped brace loses the whole deck, not just the tail),
+    // retry ONCE with an even smaller, plainer ask so a save reliably produces SOMETHING instead of
+    // silently nothing. Only fires on failure, so it never adds cost to the normal path.
     if (!("deck" in result)) {
       console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: first attempt unparseable, retrying with a smaller ask`);
-      const res2 = await retryRequest(() => client.chat.completions.create({
-        model,
-        // Deliberately a fraction of the primary call's budget — this is the whole point of the fallback:
-        // a small, cheap, low-risk ask that can't run long enough to hit the same truncation/timeout wall.
-        max_tokens: 4000,
-        temperature: 0.3,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content:
-            languageLine(profile) + trackLine(profile) +
-            `You turn a student's own end-of-day "what I learned today" dump into a flashcard deck. Keep this ` +
-            `CONCISE and reliable: cover the distinct facts/definitions/formulas/dates the entry actually ` +
-            `contains, one idea per card, short precise backs (a word/value/short clause, no worked solutions, ` +
-            `no quiz). At most 20 cards. ${CARD_STYLE_RULE}` },
-          { role: "user", content:
-            `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
-            `Return JSON: {"title": short label (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
-        ],
-      }));
+      const res2 = await makeReq(3000, true);
       out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res2.choices[0]?.message?.content || "");
       result = out ? makeDeck(out) : { error: "no parseable JSON in the retry either" };
       const t2 = usageOf(res2);
       tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
+      if (!("deck" in result)) {
+        // Both attempts failed — log WHY (a bare `catch { return null; }` used to swallow this completely,
+        // so a real recurring failure had zero visibility beyond the student's generic toast). `result.error`
+        // is makeDeck's own reason when JSON parsed but validation rejected it; otherwise firstJson itself
+        // returned null (unparseable/truncated) — the raw tail shows which.
+        console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: FAILED after fallback — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
+        return null;
+      }
     }
-    if (!("deck" in result)) {
-      // Both the ambitious attempt AND the small fallback failed to produce a single valid card — log WHY
-      // (previously a bare `catch { return null; }` swallowed this entirely, so a real recurring failure
-      // had zero visibility beyond the student's generic toast). `result.error` is makeDeck's own reason
-      // when JSON parsed but validation rejected it; otherwise firstJson itself returned null (unparseable/
-      // truncated) — the raw snippet shows which.
-      console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: FAILED after fallback — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res.choices[0]?.message?.content || "").slice(-300)}`);
-      return null;
-    }
-    let quiz: TaskQuiz | undefined;
-    if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
-      const qr = makeQuiz(out.quiz);
-      if ("quiz" in qr) quiz = qr.quiz;
-    }
-    console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
-    return { deck: result.deck, quiz, tokens };
+    console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, tokens };
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: EXCEPTION — ${e?.message || e}`);
     return null;

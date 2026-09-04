@@ -1103,7 +1103,8 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     const result = await generateDailyStudyCards(text, req.session.profile);
     if (result) addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
     t.flashcards = result ? [result.deck] : [];
-    t.quizzes = result?.quiz ? [result.quiz] : [];
+    // No quiz from the daily call any more (see generateDailyStudyCards's own comment) — leave t.quizzes
+    // untouched rather than clobbering it either way.
     t.title = result?.deck.title || date;
     t.updatedAt = new Date().toISOString();
     await commit(req);
