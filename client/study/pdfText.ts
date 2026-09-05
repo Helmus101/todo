@@ -22,7 +22,7 @@ async function getPdfjs() {
  *  scanned/image-only PDF, a corrupt file, an extraction error) — never throws, since this always runs as
  *  a best-effort background enhancement after the material is already usable (viewable in PDFArtifact)
  *  without it. */
-export async function extractPdfText(file: File): Promise<string> {
+export async function extractPdfText(file: File | Blob): Promise<string> {
   try {
     const pdfjs = await getPdfjs();
     const buf = await file.arrayBuffer();

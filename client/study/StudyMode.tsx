@@ -23,6 +23,7 @@ import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
 import { api } from "../api.ts";
 import { NoisePlayer, type NoiseType } from "./noise.ts";
 import { tileLayout, isTileable } from "./tileLayout.ts";
+import { extractPdfText } from "./pdfText.ts";
 
 interface StudyModeProps {
   task: WebTask;
@@ -677,6 +678,39 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       return updated;
     });
   }, [persistEnv]);
+
+  // A PDF uploaded in StudySetup gets its text extracted asynchronously (pdfText.ts — can take a moment for
+  // a longer file) WHILE the student is still on the setup screen; if "Start Studying" is clicked before
+  // that resolves, the material this session actually starts with has no `.text` yet, and — since nothing
+  // was re-checking it — the chat would silently NEVER get that PDF's content, forever, even though the
+  // artifact itself was already viewable. Catch up here: once the session's real environment exists, find
+  // any PDF material still missing text and re-run extraction against its (already-uploaded) blob: URL.
+  useEffect(() => {
+    if (!env) return;
+    const pending = env.materials.filter((m) => m.type === "pdf" && !m.text?.trim() && m.objectUrl);
+    if (!pending.length) return;
+    let cancelled = false;
+    void (async () => {
+      // Accumulate into a local running copy rather than calling updateEnv per material: updateEnv's patch
+      // REPLACES the whole materials array, so basing each iteration's map on the (stale, closed-over) env
+      // instead of the previous iteration's own result would silently undo an earlier material's text the
+      // moment a second one finished.
+      let running = env.materials;
+      let changed = false;
+      for (const m of pending) {
+        try {
+          const blob = await fetch(m.objectUrl!).then((r) => r.blob());
+          const text = await extractPdfText(blob);
+          if (cancelled || !text) continue;
+          running = running.map((x) => (x.id === m.id ? { ...x, text } : x));
+          changed = true;
+        } catch { /* best-effort — same posture as the original extraction in StudySetup.tsx */ }
+      }
+      if (!cancelled && changed) updateEnv({ materials: running });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [env?.id]);
 
   // ── Ask Otto ──────────────────────────────────────────────────────────────
   const sendChat = useCallback(async () => {
