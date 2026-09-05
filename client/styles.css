@@ -1421,6 +1421,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .settings-sec h2 { font-size: var(--text-md); font-weight: var(--weight-semibold); letter-spacing: -0.01em; margin-bottom: var(--space-3); }
 .settings-sec h3 { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); margin: 0 0 14px; }
 .settings-hint { font-size: var(--text-sm); color: var(--ink-2); line-height: 1.55; margin-bottom: 6px; }
+.modal-row-usage-breakdown { align-items: flex-start; }
+.usage-breakdown-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.usage-breakdown-list li { display: grid; grid-template-columns: minmax(0, 1fr) 80px auto; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--ink-2); }
+.usage-breakdown-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-breakdown-top .usage-breakdown-label { color: var(--ink); font-weight: var(--weight-medium); }
+.usage-breakdown-bar-track { background: var(--surface-3, #eee); border-radius: 4px; height: 6px; overflow: hidden; }
+.usage-breakdown-bar { display: block; height: 100%; background: var(--accent, #2563eb); border-radius: 4px; }
+.usage-breakdown-amount { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-2); }
+.usage-breakdown-top .usage-breakdown-amount { color: var(--ink); font-weight: var(--weight-medium); }
 .guardrail-stat { margin: 0; color: var(--ink); font-weight: var(--weight-medium); }
 /* Collapsible section header (What Otto knows about you) */
 .sec-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; background: none; border: none; padding: 0; cursor: pointer; text-align: left; }

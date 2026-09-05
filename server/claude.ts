@@ -1795,8 +1795,30 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
       const t2 = usageOf(res2);
       tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
       if (!("deck" in result)) {
-        console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: FAILED after fallback — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
-        return null;
+        console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: second attempt also unparseable — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
+        // THIRD, LAST-RESORT tier: two failures in a row on a genuinely dense/long week (5 days of real
+        // content) means DeepSeek's hidden reasoning is eating the budget before real output even at 5000
+        // tokens — reproduced live as two straight "Couldn't build the week summary" failures for the same
+        // account. Strip the instruction down to the bare minimum (no style rules, no spaced-repetition
+        // weighting, explicitly told to skip deliberation) so there's as little for the model to reason
+        // ABOUT before writing JSON — a small, plain deck beats a third silent failure.
+        const res3 = await retryRequest(() => client.chat.completions.create({
+          model, max_tokens: 2500, temperature: 0.2, response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: languageLine(profile) +
+              `Output a small flashcard deck directly — no analysis, no reasoning out loud, just the JSON. At ` +
+              `most 10 cards, short front/back pairs covering the week's main topics.` },
+            { role: "user", content: `${entriesBlock.slice(0, 3000)}\n\nReturn ONLY: {"title": "...", "cards": [{"front": "...", "back": "..."}, ...]}.` },
+          ],
+        }));
+        out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res3.choices[0]?.message?.content || "");
+        result = out ? makeDeck(out) : { error: "no parseable JSON in the last-resort retry either" };
+        const t3 = usageOf(res3);
+        tokens = { in: tokens.in + t3.in, out: tokens.out + t3.out, cachedIn: (tokens.cachedIn || 0) + (t3.cachedIn || 0) };
+        if (!("deck" in result)) {
+          console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: FAILED after all 3 attempts — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res3.choices[0]?.message?.content || "").slice(-300)}`);
+          return null;
+        }
       }
     }
     let quiz: TaskQuiz | undefined;
@@ -1873,8 +1895,25 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
       const t2 = usageOf(res2);
       tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
       if (!("deck" in result)) {
-        console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: FAILED after fallback — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
-        return null;
+        console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: second attempt also unparseable — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
+        // Same last-resort tier as generateWeeklyStudyDeck — see its own comment for why.
+        const res3 = await retryRequest(() => client.chat.completions.create({
+          model, max_tokens: 2500, temperature: 0.2, response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: languageLine(profile) +
+              `Output a small flashcard deck directly — no analysis, no reasoning out loud, just the JSON. At ` +
+              `most 10 cards, short front/back pairs covering the month's main topics.` },
+            { role: "user", content: `${weeksBlock.slice(0, 3000)}\n\nReturn ONLY: {"title": "...", "cards": [{"front": "...", "back": "..."}, ...]}.` },
+          ],
+        }));
+        out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res3.choices[0]?.message?.content || "");
+        result = out ? makeDeck(out) : { error: "no parseable JSON in the last-resort retry either" };
+        const t3 = usageOf(res3);
+        tokens = { in: tokens.in + t3.in, out: tokens.out + t3.out, cachedIn: (tokens.cachedIn || 0) + (t3.cachedIn || 0) };
+        if (!("deck" in result)) {
+          console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: FAILED after all 3 attempts — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res3.choices[0]?.message?.content || "").slice(-300)}`);
+          return null;
+        }
       }
     }
     let quiz: TaskQuiz | undefined;

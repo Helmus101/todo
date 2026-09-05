@@ -2101,18 +2101,39 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             manual_refine = tightening a rough manually-typed title. Only shown once there's something to show —
             an empty/all-zero breakdown (new account, or spend from before this existed) would just be noise. */}
         {usage && Object.values(usage.byCategory).some((v) => (v || 0) > 0) ? (
-          <div className="modal-row">
-            <span className="lbl" />
-            <span className="val settings-hint">
-              {([
-                ["sweep", L("scan quotidien", "daily scan")],
-                ["autorun", L("tâches auto-exécutées", "auto-run tasks")],
-                ["chat", L("chat", "chat")],
-                ["manual_refine", L("tâches ajoutées", "added tasks")],
-                ["studylog", L("journal d'apprentissage", "study journal")],
-                ["other", L("autre", "other")],
-              ] as const).filter(([k]) => (usage.byCategory[k] || 0) > 0)
-                .map(([k, label]) => `${label} : ${fmtEur(usage.byCategory[k] || 0)}`).join(" · ")}
+          <div className="modal-row modal-row-usage-breakdown">
+            <span className="lbl">{L("Détail des coûts", "Cost breakdown")}</span>
+            <span className="val">
+              {(() => {
+                const labels: Record<string, [string, string]> = {
+                  sweep: [L("Scan quotidien", "Daily scan"), ""],
+                  autorun: [L("Tâches auto-exécutées", "Auto-run tasks"), ""],
+                  chat: [L("Chat", "Chat"), ""],
+                  manual_refine: [L("Tâches ajoutées", "Added tasks"), ""],
+                  studylog: [L("Journal d'apprentissage", "Study journal"), ""],
+                  other: [L("Autre", "Other"), ""],
+                };
+                // Sorted highest-cost-first, so "what's actually costing the most" is answerable at a glance
+                // instead of a fixed-order list the reader has to scan and compare themselves.
+                const entries = (Object.entries(usage.byCategory) as [string, number | undefined][])
+                  .filter(([, v]) => (v || 0) > 0)
+                  .sort((a, b) => (b[1] || 0) - (a[1] || 0));
+                const total = entries.reduce((s, [, v]) => s + (v || 0), 0) || 1;
+                return (
+                  <ul className="usage-breakdown-list">
+                    {entries.map(([k, v], i) => {
+                      const pct = Math.round(((v || 0) / total) * 100);
+                      return (
+                        <li key={k} className={i === 0 ? "usage-breakdown-top" : ""}>
+                          <span className="usage-breakdown-label">{labels[k]?.[0] || k}{i === 0 ? L(" — le plus coûteux", " — costs the most") : ""}</span>
+                          <span className="usage-breakdown-bar-track"><span className="usage-breakdown-bar" style={{ width: `${pct}%` }} /></span>
+                          <span className="usage-breakdown-amount">{fmtEur(v || 0)} ({pct}%)</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
             </span>
           </div>
         ) : null}
