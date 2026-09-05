@@ -12,6 +12,7 @@ interface ToolsDrawerProps {
 }
 
 const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: WorkspaceTemplate[] }[] = [
+  { type: "task", label: "Task info", icon: "☰", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "notes", label: "Notes", icon: "▤", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "scratchpad", label: "Scratchpad", icon: "✎", templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },
   { type: "calculator", label: "Calculator", icon: "123", templates: ["PROBLEM_SOLVING", "STANDARD"] },
@@ -22,15 +23,27 @@ const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: W
   { type: "citation", label: "Citation", icon: "❞", templates: ["WRITING", "RESEARCH", "PROJECT"] },
 ];
 
+// Only real Google Docs/Sheets/Slides documents — not an arbitrary-URL opener. Anything else (a random
+// site, someone else's app) stays out of Study Mode's desk entirely; this is the one class of external
+// content the app treats as trusted enough to embed on the fly, mid-session, without it being a pre-vetted
+// task material.
+const GSUITE_DOC_RE = /^https:\/\/docs\.google\.com\/(document|spreadsheets|presentation)\//i;
+
 export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroundImageName, onSetBackground, onClearBackground }: ToolsDrawerProps) {
   const recommended = ALL_TOOLS.filter(t => t.templates.includes(template));
   const others = ALL_TOOLS.filter(t => !t.templates.includes(template));
   const bgInputRef = useRef<HTMLInputElement>(null);
   const [linkUrl, setLinkUrl] = useState("");
+  const [linkError, setLinkError] = useState("");
 
   const submitLink = () => {
     const url = linkUrl.trim();
     if (!url) return;
+    if (!GSUITE_DOC_RE.test(url)) {
+      setLinkError("Only Google Docs, Sheets, or Slides links can be opened here.");
+      return;
+    }
+    setLinkError("");
     onAddLink(url);
     setLinkUrl("");
   };
@@ -42,18 +55,19 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
         <button className="sm-drawer-close" onClick={onClose}>×</button>
       </div>
       <div className="sm-drawer-body">
-        <div className="sm-tools-divider">Open a link</div>
+        <div className="sm-tools-divider">Open a Google Doc, Sheet, or Slides</div>
         <div className="sm-bg-row">
           <input
             type="text"
             className="sm-link-input"
-            placeholder="Paste a Google Doc, PDF, video, or any link…"
+            placeholder="Paste a docs.google.com link…"
             value={linkUrl}
-            onChange={(e) => setLinkUrl(e.target.value)}
+            onChange={(e) => { setLinkUrl(e.target.value); setLinkError(""); }}
             onKeyDown={(e) => { if (e.key === "Enter") submitLink(); }}
           />
           <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkUrl.trim()}>Open</button>
         </div>
+        {linkError && <p className="sm-bg-filename" style={{ color: "var(--danger, #c0392b)" }}>{linkError}</p>}
 
         <div className="sm-tools-divider">Add a tool</div>
         <div className="sm-tools-grid">

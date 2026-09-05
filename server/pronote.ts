@@ -282,6 +282,21 @@ export interface PronoteHomeworkItem { id: string; subject: string; description:
 const HOMEWORK_DAYS_AHEAD = 21;
 
 /** Homework due in the next `daysAhead` days, not yet marked done. */
+// Pronote's assignment `description` is genuinely HTML (the school's own rich-text editor output) — e.g.
+// `<div>Exercices n° : &quot;...&quot; <br> - Rédigez...</div>` — but every downstream consumer of this
+// field (sourceDetail on WebTask, the "Instructions" panel, the AI prompt itself) treats it as plain text.
+// Nothing else in the pipeline ever strips tags/decodes entities, so without this the raw markup was showing
+// up verbatim to the student. `<br>`/block tags become a space (never silently glued two clauses together).
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/(p|div|li)>/gi, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
 export async function pronoteHomework(email: string, daysAhead = HOMEWORK_DAYS_AHEAD): Promise<PronoteHomeworkItem[]> {
   if (MOCK_ENABLED) { const { pronote: stored } = await loadState(email); if (stored?.url === MOCK_URL) return mockHomework(stored.mockConnectedAt || new Date().toISOString()); }
   const out = await withPronoteSession(email, async (session) => {
@@ -293,7 +308,7 @@ export async function pronoteHomework(email: string, daysAhead = HOMEWORK_DAYS_A
       .map((a): PronoteHomeworkItem => ({
         id: a.id,
         subject: a.subject?.name || "Homework",
-        description: String(a.description || "").replace(/\s+/g, " ").trim().slice(0, 400),
+        description: stripHtml(String(a.description || "")).replace(/\s+/g, " ").trim().slice(0, 400),
         deadline: a.deadline.toISOString(),
         done: a.done,
         ...(a.attachments?.length ? { attachments: a.attachments.map((x) => ({ name: x.name, url: x.url })) } : {}),

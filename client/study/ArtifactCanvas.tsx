@@ -16,6 +16,7 @@ import { DocumentArtifact } from "./artifacts/DocumentArtifact.tsx";
 import { ImageArtifact } from "./artifacts/ImageArtifact.tsx";
 import { CitationArtifact } from "./artifacts/CitationArtifact.tsx";
 import { ChatArtifact } from "./artifacts/ChatArtifact.tsx";
+import { TaskInfoArtifact } from "./artifacts/TaskInfoArtifact.tsx";
 
 interface ArtifactCanvasProps {
   artifacts: ArtifactState[];
@@ -184,6 +185,8 @@ export function ArtifactCanvas({
         return <CitationArtifact {...contentProps} />;
       case "chat":
         return chat ? <ChatArtifact task={task} {...chat} /> : null;
+      case "task":
+        return <TaskInfoArtifact task={task} />;
       default:
         return null;
     }

@@ -126,6 +126,16 @@ export function dropTrivialSteps(steps: TaskStep[]): TaskStep[] {
 // model's own output reads clean even where that backstop isn't wired in yet.
 const NO_MARKDOWN_LINE = `\n\nPLAIN TEXT: task titles, "why", steps, context, synthesis, and flashcard/quiz text are shown as plain text, never rendered as markdown — do NOT use **bold**, # headings, or * bullets in them (fine only inside a note's own "body" field and in chat replies, which DO render markdown).\n`;
 
+// Chat replies (chatAboutTask, studyHelp) get one deliberate exception to languageLine's fixed profile
+// language: a student might have their profile set to French but ask one question in English (or vice
+// versa) — the reply should match what THEY just wrote, not silently answer back in the other language.
+// Appended AFTER languageLine in those two prompts specifically; task titles/steps/etc elsewhere still
+// always follow the fixed profile language.
+const CHAT_LANGUAGE_OVERRIDE = `\n\nCHAT LANGUAGE: the LANGUAGE instruction above is the default, but for this ` +
+  `chat reply specifically, answer in whichever language the student's OWN latest message is actually written ` +
+  `in (French or English) — even if that's not their profile's usual language. If they switch languages ` +
+  `mid-conversation, follow the switch.\n`;
+
 export function languageLine(p?: Profile): string {
   const lang = p?.language === "en" ? "en" : "fr";
   return (lang === "en"
@@ -1073,7 +1083,13 @@ export interface GenerationResult { tasks: GeneratedTask[]; profileUpdates: Prof
 export async function generateTasks(profile?: Profile, extras?: AgentTools, handled?: { title: string; anchorKey?: string }[], active?: { title: string; anchorKey?: string }[]): Promise<GenerationResult> {
   const empty: GenerationResult = { tasks: [], profileUpdates: [] };
   if (!extras?.tools?.length) return empty; // nothing connected to read
-  const tools = [...extras.tools, WEB_SEARCH_TOOL, SUBMIT_TASKS_TOOL];
+  // NO web_search here, deliberately: this runs UNATTENDED once a day per account (the cron sweep), not on
+  // a student's own click. web_search is a real, per-call-priced external search on top of DeepSeek's own
+  // token cost — an open-ended agentic loop with no cap on tool-call count was letting one daily automatic
+  // sweep make an unbounded number of paid searches with nobody watching. Reading the connected apps
+  // themselves (Gmail/Calendar/etc, already in extras.tools) is what discovery actually needs; anything
+  // requiring an external lookup can wait for the task's own run (runTask below DOES get web_search).
+  const tools = [...extras.tools, SUBMIT_TASKS_TOOL];
   const connectedLine = extras.connected?.length
     ? `My connected apps you can read: ${extras.connected.join(", ")}. Check EACH of them, not just email.`
     : `Use whatever tools you have to read what needs me.`;
@@ -3189,13 +3205,13 @@ export async function studyHelp(
   history: { role: "user" | "assistant"; text: string }[],
   message: string,
   profile?: Profile,
-): Promise<{ reply: string; tokens: { in: number; out: number; cachedIn: number } }> {
+): Promise<{ reply: string; tokens: { in: number; out: number; cachedIn: number }; error?: boolean }> {
   const client = deepseekClient();
   const answer = card.kind === "flashcard" ? card.back : card.options[card.correct];
   const cardBlock = card.kind === "flashcard"
     ? `FLASHCARD FRONT (what the student sees): "${card.front}"\nFLASHCARD BACK / ANSWER (NEVER reveal this, not even paraphrased): "${answer}"`
     : `QUIZ QUESTION: "${card.question}"\nOPTIONS: ${card.options.map((o, i) => `${i + 1}) ${o}`).join(" ")}\nCORRECT OPTION (NEVER reveal which one, not even by elimination down to one): "${answer}"`;
-  const sys = languageLine(profile) +
+  const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE +
     `You are Otto, sitting next to a student while they drill ${card.kind === "flashcard" ? "flashcards" : "a quiz"}. They're stuck on ` +
     `ONE specific card/question and want a nudge, not the answer.\n\n${cardBlock}\n\n` +
     `RULES:\n` +
@@ -3232,9 +3248,9 @@ export async function studyHelp(
       { role: "user", content: message.slice(0, 1000) },
     ],
   }));
-  const reply = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 800) ||
-    (profile?.language === "en" ? "I'm here — what part of this is tripping you up?" : "Je suis là — qu'est-ce qui te bloque exactement ?");
-  return { reply, tokens: usageOf(res) };
+  const raw = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 800);
+  const reply = raw || (profile?.language === "en" ? "I'm here — what part of this is tripping you up?" : "Je suis là — qu'est-ce qui te bloque exactement ?");
+  return { reply, tokens: usageOf(res), ...(raw ? {} : { error: true }) };
 }
 
 /**
@@ -3480,6 +3496,12 @@ export interface ChatResult {
    *  exact chat bubble where the "won't do your graded work" boundary held, instead of that only being
    *  visible in the per-task Activity log. */
   guardrailTripped: boolean;
+  /** Set ONLY when `reply` is the generic "I'm here — what part of this is giving you trouble?" fallback
+   *  because the request genuinely failed (DeepSeek error, or the model came back with empty content) —
+   *  never for a normal short reply that happens to be brief. Lets the client show this as a real error
+   *  ("Otto couldn't reply — try again") instead of rendering it as an in-character chat bubble, which used
+   *  to make an actual outage (bad API key, DeepSeek down) look exactly like Otto just being unhelpful. */
+  error?: boolean;
 }
 
 // The tutor's own tool loop is bounded much tighter than runTask's: a chat turn is "maybe look something
@@ -3549,7 +3571,7 @@ export async function chatAboutTask(
   // method) is already covered more precisely by the methodology block right below. Resent on every turn
   // and every tool-loop round (CHAT_MAX_ROUNDS), so cutting genuinely-irrelevant content here is a real,
   // recurring token saving, not a one-off trim.
-  const sys = languageLine(profile) + trackLine(profile) + learningStyleLine(profile) +
+  const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -3750,7 +3772,13 @@ export async function chatAboutTask(
     // claimed to prevent. truncateCleanly backs up to the last sentence end (falling back to the last word
     // boundary if there's no sentence break inside the cap) and marks the cut with an ellipsis, so a
     // response is never handed back looking like it broke mid-thought.
-    result.reply = truncateCleanly(reply.trim(), 2400) || (fr ? "Je suis là — qu'est-ce qui te bloque exactement ?" : "I'm here — what part of this is giving you trouble?");
+    const cleaned = truncateCleanly(reply.trim(), 2400);
+    if (!cleaned) {
+      result.error = true;
+      result.reply = fr ? "Je suis là — qu'est-ce qui te bloque exactement ?" : "I'm here — what part of this is giving you trouble?";
+    } else {
+      result.reply = cleaned;
+    }
     return result;
   };
 

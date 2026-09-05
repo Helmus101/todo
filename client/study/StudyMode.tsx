@@ -10,7 +10,7 @@ import type {
   SessionStatus,
 } from "./StudyTypes.ts";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
-import { StudySetup, type PomodoroChoice, classifyUrl } from "./StudySetup.tsx";
+import { StudySetup, type PomodoroChoice } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
 import { ArtifactCanvas } from "./ArtifactCanvas.tsx";
 import { BottomBar } from "./BottomBar.tsx";
@@ -949,23 +949,24 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
             template={env.template}
             onClose={() => setOpenPanel(null)}
             onAddLink={(url) => {
-              // Lets a student open ANY link mid-session — a Google Doc, a PDF, a video, whatever — not
-              // just the materials StudySetup pre-loaded from the task. Reuses the same classification
-              // StudySetup's own "paste a link" flow uses (docs.google.com/Padlet -> document, etc.).
-              const kind = classifyUrl(url);
-              const type: ArtifactType = kind === "video" ? "video" : kind === "pdf" ? "pdf" : "document";
+              // Lets a student open a Google Doc/Sheet/Slides mid-session — not just the materials
+              // StudySetup pre-loaded from the task. ToolsDrawer already rejects anything that isn't a
+              // docs.google.com document/spreadsheet/presentation URL before this ever fires; re-checking
+              // here too (rather than trusting the caller) means this stays safe even if another caller is
+              // ever added later.
+              if (!/^https:\/\/docs\.google\.com\/(document|spreadsheets|presentation)\//i.test(url)) return;
               const label = (() => { try { return new URL(url).hostname; } catch { return url; } })();
               const newMaterial: StudyMaterial = {
                 id: crypto.randomUUID(),
                 label,
-                type: kind === "link" ? "link" : kind,
+                type: "document",
                 url,
                 source: "link",
               };
               updateEnv({ materials: [...env.materials, newMaterial] });
               const newArtifact: ArtifactState = {
                 id: crypto.randomUUID(),
-                type,
+                type: "document",
                 title: label,
                 x: 15, y: 15,
                 width: 60, height: 75,
@@ -986,10 +987,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
               const newArtifact: ArtifactState = {
                 id: crypto.randomUUID(),
                 type,
-                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : type === "citation" ? "Citation" : "Notes",
+                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : type === "citation" ? "Citation" : type === "task" ? task.title : "Notes",
                 x: 20, y: 15,
-                width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : type === "citation" ? 40 : 40,
-                height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : type === "citation" ? 65 : 50,
+                width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : type === "citation" ? 40 : type === "task" ? 45 : 40,
+                height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : type === "citation" ? 65 : type === "task" ? 70 : 50,
                 zIndex: 100,
                 minimized: false,
                 maximized: false,

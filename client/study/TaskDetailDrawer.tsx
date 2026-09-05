@@ -1,5 +1,5 @@
 import type { WebTask } from "../../shared/types.ts";
-import { withInlineLinks, stripStrayMarkdown } from "../ui.tsx";
+import { withInlineLinks, stripStrayMarkdown, stripHtml } from "../ui.tsx";
 
 interface TaskDetailDrawerProps {
   task: WebTask;
@@ -26,7 +26,7 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps) {
         {task.sourceDetail && (
           <div className="sm-task-detail-section">
             <h4>Instructions</h4>
-            <p>{stripStrayMarkdown(task.sourceDetail)}</p>
+            <p>{stripStrayMarkdown(stripHtml(task.sourceDetail))}</p>
           </div>
         )}
         {task.context && (

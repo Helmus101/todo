@@ -53,6 +53,12 @@ export interface Profile {
                           // marker (survives restarts; source of truth for the once-per-local-day guarantee)
   lastForcedAt?: string;  // ISO stamp of the last time the sweep FORCED a "daily minimum" task (when it would
                           // otherwise have surfaced nothing) — so we guarantee at most one forced task per local day
+  // ISO stamp of the last SUPPLEMENTARY sweep (tasks.ts's "SUPPLEMENTARY SWEEP" — the one OPEN-ENDED agentic
+  // pass over non-Google toolkits, e.g. Notion). Unlike the deterministic Gmail/Calendar pipeline this is an
+  // uncapped tool-calling loop, so it's throttled to once every few days (SUPPLEMENTARY_SWEEP_INTERVAL_DAYS
+  // in tasks.ts) rather than every daily sweep — real AI spend, not worth re-running that often for a source
+  // that changes slowly compared to email/calendar.
+  lastSupplementarySweepAt?: string;
   // Daily cap on AUTOMATIC task execution (sweep's own auto-run-top-3 AND the kick loop's catch-up, see
   // server/jobs.ts's autoRunBudgetLeft/recordAutoRuns) — a real per-day ceiling on passive AI spend that
   // happens with zero user interaction, distinct from the monthly $ budget (which is too coarse to catch
@@ -172,6 +178,7 @@ export function normalizeProfile(p: any): Profile {
     pausedAt: typeof p?.pausedAt === "string" ? p.pausedAt : undefined,
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
     lastForcedAt: typeof p?.lastForcedAt === "string" ? p.lastForcedAt : undefined,
+    lastSupplementarySweepAt: typeof p?.lastSupplementarySweepAt === "string" ? p.lastSupplementarySweepAt : undefined,
     autoRunDay: typeof p?.autoRunDay === "string" ? p.autoRunDay : undefined,
     autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
@@ -634,6 +641,11 @@ export interface WebTask {
    *  future analysis/a future bandit target on nudging/ordering strategy. */
   shownAt?: string;
   firstActionAt?: string;
+  /** Which step-granularity bandit arm (server/bandit.ts's GRANULARITY_ARMS) generated THIS task's steps —
+   *  set at run time, scored against shownAt->firstActionAt latency the first time the student acts on it
+   *  (see stampFirstAction in server/index.ts). Undefined for tasks predating this or run before any arm
+   *  was chosen — simply never scored, not treated as a failure. */
+  granularityArmId?: string;
 }
 
 export interface TaskNote {

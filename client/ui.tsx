@@ -165,6 +165,21 @@ export function autoOpenTaskDocs(links?: { url: string }[]): void {
 // asterisks/hashes showing up in task titles and step text. Strip the delimiters (keep the wrapped text)
 // rather than the whole match, and only at the START of a line for heading/bullet markers so a genuine
 // "3 * 4" or a mid-sentence "#2" survives untouched.
+// Pronote's homework "description" is genuinely HTML from the school's own editor — server/pronote.ts now
+// strips it at the source for anything fetched from here on, but existing accounts already have raw
+// `<div>...&quot;...<br></div>`-style text stored in sourceDetail from before that fix. Defensive
+// client-side strip so already-saved tasks display correctly too, not just newly-fetched ones.
+export function stripHtml(text: string): string {
+  return text
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/(p|div|li)>/gi, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ").trim();
+}
+
 export function stripStrayMarkdown(text: string): string {
   return text
     .replace(/\*\*([^*]+)\*\*/g, "$1")

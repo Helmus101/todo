@@ -141,6 +141,23 @@ export function computeCardReward(netBoxDelta: number): number {
   return normalizeBoxDelta(netBoxDelta);
 }
 
+/** Third bandit target: task step granularity. "standard" is today's normal step breakdown; "granular"
+ *  appends an instruction asking the generator to split work into smaller, more numerous steps — the
+ *  concrete "if it took a while, try smaller steps" behavior. Reward is the procrastination-latency signal
+ *  (WebTask.shownAt -> firstActionAt, see shared/types.ts) already collected for exactly this purpose. */
+export interface GranularityArm { id: "standard" | "granular" }
+export const GRANULARITY_ARMS: GranularityArm[] = [{ id: "standard" }, { id: "granular" }];
+
+/** Shorter time-to-first-action -> higher reward. 6 hours+ is treated as "so slow it may as well be zero"
+ *  rather than picking a razor-thin threshold — a student's first free moment after seeing a task can
+ *  legitimately be hours later for reasons that have nothing to do with step size, so the curve is
+ *  deliberately gentle/wide, not a tight pass/fail cutoff. A simple, revisitable constant, same posture as
+ *  computeReward's own weighting. */
+export function computeLatencyReward(latencySeconds: number): number {
+  const SLOW_CEILING_SECONDS = 6 * 3600;
+  return Math.max(0, Math.min(1, 1 - latencySeconds / SLOW_CEILING_SECONDS));
+}
+
 /** Update one cell's posterior for the arm that was actually served, given the observed reward — mapped to
  *  a Bernoulli success via a simple 0.5 threshold (the standard, most robust reduction for Beta-Bernoulli
  *  Thompson Sampling at this data volume; a continuous reward model would need far more data per cell than

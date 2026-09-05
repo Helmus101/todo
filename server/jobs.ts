@@ -17,6 +17,7 @@ import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPr
 import type { AcademicContext } from "./claude.ts";
 import { replanMilestones } from "./milestones.ts";
 import { computeWorkload } from "./workload.ts";
+import { contextKey as banditContextKey, chooseArm, GRANULARITY_ARMS } from "./bandit.ts";
 import { reportError } from "./sentry.ts";
 
 /** Live Pronote homework/exams for a task's own run/chat context — best-effort, never blocks execution. */
@@ -299,7 +300,15 @@ async function processExecuteTask(job: store.Job): Promise<string> {
   const idsBefore = new Set(list.map((x) => x.id)); // to detect follow-up tasks the run spins off
   try {
     const academic = await loadAcademicContext(email);
-    const updated = await tasks.runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : undefined, academic);
+    // Third bandit target (see server/bandit.ts) — best-effort, never blocks the run itself: a fresh task
+    // gets its step granularity biased by whichever arm this student's procrastination-latency history
+    // currently favors (see stampFirstAction in index.ts for where the outcome gets scored back).
+    let granularityArm: string | undefined;
+    try {
+      const banditState = await store.loadBanditState(email, "granularity");
+      granularityArm = chooseArm(GRANULARITY_ARMS, banditState, banditContextKey(new Date(), profile)).arm.id;
+    } catch { /* best-effort — the run proceeds with standard granularity */ }
+    const updated = await tasks.runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : undefined, academic, granularityArm);
     // Live artifact verification: read every claimed draft/event/doc back from the real account before the
     // user sees it — anything the API confirms missing is pruned and logged to the task's timeline.
     if (updated && (updated.links?.length || updated.sendables?.length)) {

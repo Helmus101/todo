@@ -370,6 +370,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     // Keep the MOST RECENT sweep marker across devices/instances (a stale copy must never reset it).
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
+    lastSupplementarySweepAt: (Date.parse(p2.lastSupplementarySweepAt || "") || 0) >= (Date.parse(p1.lastSupplementarySweepAt || "") || 0) ? (p2.lastSupplementarySweepAt ?? p1.lastSupplementarySweepAt) : (p1.lastSupplementarySweepAt ?? p2.lastSupplementarySweepAt),
     // The daily auto-run cap MUST merge conservatively (never under-count) — this is a spend guard, not a
     // display value, so losing count across a merge would silently let two devices/instances each think
     // they have the full daily budget left. Same day on both sides → sum stays capped by taking the higher
@@ -588,6 +589,18 @@ export function forcedDueToday(profile: Profile, now: Date = new Date()): boolea
   return localDayOf(profile.lastForcedAt, tz) !== localDayOf(now.toISOString(), tz);
 }
 
+// The supplementary sweep (non-Google toolkits, e.g. Notion) is the one OPEN-ENDED agentic call in an
+// otherwise cheap/deterministic daily sweep — the model decides how many tool calls to make, unlike the
+// fixed-shape classification pass. A source like Notion changes slowly compared to email/calendar, so
+// re-running this every single day was real AI spend for little marginal recall. Every 3 days is enough to
+// still catch new items promptly without paying for it daily.
+const SUPPLEMENTARY_SWEEP_INTERVAL_DAYS = 3;
+export function supplementarySweepDue(profile: Profile, now: Date = new Date()): boolean {
+  if (!profile.lastSupplementarySweepAt) return true;
+  const elapsedMs = now.getTime() - (Date.parse(profile.lastSupplementarySweepAt) || 0);
+  return elapsedMs >= SUPPLEMENTARY_SWEEP_INTERVAL_DAYS * 86_400_000;
+}
+
 // A real ceiling on PASSIVE AI spend — tasks that start themselves with zero user click (the sweep's own
 // auto-run-top-N, and the kick loop's catch-up for anything the sweep didn't get to — see
 // server/jobs.ts's enqueueDueTasks). Before this, the kick loop's per-call cap (3) reset on EVERY kick, not
@@ -691,11 +704,12 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
             const kit = /^\[(\w+)\]/.exec(t.description || "")?.[1]?.toLowerCase();
             return kit && !DETERMINISTIC_KITS.has(kit);
           });
-          if (otherTools.length) {
+          if (otherTools.length && supplementarySweepDue(profile)) {
             try {
               const otherActive = result.filter((t) => t.status !== "done" && t.status !== "dismissed").map((t) => ({ title: t.title, anchorKey: t.anchorKey }));
               const gen2 = await generateTasks(profile, readOnly({ tools: otherTools, call: extras.call, connected: extras.connected }), handled, otherActive);
               addUsage(profile, gen2.tokens, "sweep");
+              profile.lastSupplementarySweepAt = new Date().toISOString();
               for (const u of gen2.profileUpdates) applyProfileUpdate(profile, u);
               if (gen2.tasks.length) result = foldGenerated(result, gen2.tasks, profile.highPriorityPeople || []);
             } catch (e: any) { console.warn("[tasks] supplementary non-Google sweep failed:", e?.message || e); }
@@ -880,16 +894,21 @@ export function unionArtifacts(prior: Artifact[] | undefined, fresh: Artifact[])
   return all.length ? all : undefined;
 }
 
-export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string, academic?: AcademicContext): Promise<WebTask | undefined> {
+const GRANULAR_STEPS_HINT = "Break the work into MORE, SMALLER steps than you normally would — this student has been slow to start tasks recently, and shorter, more concrete first steps are being tried to see if that helps them get moving.";
+
+export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string, academic?: AcademicContext, granularityArm?: string): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   if (!task) return undefined;
   if (canonStatus(task.status) === "executing") return task; // already in flight — never double-run
   task.status = "executing";
   task.autoRan = true; // set before the await so concurrent auto-runs skip it (pendingAutoRun checks !autoRan)
+  if (granularityArm) task.granularityArmId = granularityArm;
   // A user revision: they reviewed a draft and asked for a change before sending → re-run with that instruction.
-  const focus = revision?.trim()
+  const revisionHint = revision?.trim()
     ? `The user reviewed your previous draft/output for this task and wants this CHANGE before they send it: "${revision.trim()}". Redo the task incorporating it — UPDATE the existing draft/doc (don't create a new copy) and re-offer it as a sendable.`
     : undefined;
+  const granularHint = granularityArm === "granular" ? GRANULAR_STEPS_HINT : undefined;
+  const focus = [revisionHint, granularHint].filter(Boolean).join(" ") || undefined;
   try {
     // Rerun/revision: Otto may UPDATE the artifacts it made for this task (never the user's own docs) —
     // that's what turns "redo" into an edit instead of a duplicate. MUST happen BEFORE scopeTools: the

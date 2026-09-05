@@ -16,7 +16,8 @@ export type ArtifactType =
   | "flashcard"
   | "quiz"
   | "citation"
-  | "chat";
+  | "chat"
+  | "task";
 
 export type DockSide = "none" | "left" | "right" | "fullscreen";
 

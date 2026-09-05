@@ -14,7 +14,7 @@ import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidT
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateMonthlyStudyDeck } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome } from "./store.ts";
-import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, POMODORO_ARMS, FLASHCARD_ARMS } from "./bandit.ts";
+import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS } from "./bandit.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -185,9 +185,26 @@ async function findTaskOrReload(req: express.Request, id: string): Promise<WebTa
 }
 
 // Write-once "the student actually acted on this" stamp (see shared/types.ts's own doc comment) — called
-// from confirm/step-done/step-run, the three places a student genuinely starts engaging with a task.
-function stampFirstAction(task: WebTask): void {
-  if (!task.firstActionAt) task.firstActionAt = new Date().toISOString();
+// from confirm/step-done/step-run, the three places a student genuinely starts engaging with a task. Also
+// where the granularity bandit (server/bandit.ts) gets its reward: shownAt->firstActionAt IS the
+// procrastination-latency signal the plan called for, and this is the only place both timestamps are known
+// at once. Best-effort — a bandit hiccup must never block marking a step/task done.
+function stampFirstAction(task: WebTask, email?: string, profile?: Profile): void {
+  if (task.firstActionAt) return;
+  task.firstActionAt = new Date().toISOString();
+  if (email && task.shownAt && task.granularityArmId) {
+    const latencySeconds = (new Date(task.firstActionAt).getTime() - new Date(task.shownAt).getTime()) / 1000;
+    const armId = task.granularityArmId;
+    void (async () => {
+      try {
+        const key = banditContextKey(new Date(), profile);
+        const reward = computeLatencyReward(Math.max(0, latencySeconds));
+        const state = await loadBanditState(email, "granularity");
+        await saveBanditState(email, "granularity", updatePosterior(state, key, armId, reward));
+        void recordSessionOutcome({ userEmail: email, decisionKey: "granularity", arm: armId, context: key, reward, at: new Date().toISOString() });
+      } catch { /* best-effort */ }
+    })();
+  }
 }
 
 // Express 4 does NOT auto-catch a rejected promise from an async route handler — a route that forgets
@@ -783,6 +800,12 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       { stepIndex, materials, extras },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
+    // A genuine failure (DeepSeek error / empty completion) used to get silently saved into the thread as
+    // the generic "I'm here — what part of this is giving you trouble?" line — indistinguishable from Otto
+    // actually being unhelpful. Surface it as a real error instead: nothing gets written to the chat
+    // history (the student's own message stays unanswered, not answered-with-a-lie), and the client shows
+    // an actual "couldn't reply" state with a retry, not an in-character bubble.
+    if (out.error) { res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
     const now = new Date().toISOString();
     // Accumulate this turn's artifacts onto the task exactly like a run does (same ARTIFACT_CAP), and
     // reference them from the assistant's own message so the thread can render an inline chip — the
@@ -841,6 +864,9 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(asy
   const out = await studyHelp(card, history, message, req.session.profile);
   addUsage(req.session.profile ||= emptyProfile(), out.tokens, "chat");
   await commit(req);
+  // Same fix as the main task chat route above — a real failure must surface as an error, not as the
+  // generic "I'm here" line rendered like a normal hint.
+  if (out.error) { res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
   res.json({ reply: out.reply });
 }));
 
@@ -915,7 +941,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
   try {
     const task = await findTaskOrReload(req, id);
     if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
-    stampFirstAction(task);
+    stampFirstAction(task, req.session.user, req.session.profile);
     task.status = "done";
     task.updatedAt = new Date().toISOString();
     await commit(req);
@@ -962,7 +988,7 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), a
   try {
     const job = await enqueueJob(req.session.user!, "execute_step", id, { index, ...(answer ? { answer } : {}) });
     if (job.type !== "execute_step") { res.status(409).json({ error: "Otto is still working on this task — try again in a moment." }); return; }
-    stampFirstAction(task);
+    stampFirstAction(task, req.session.user, req.session.profile);
     if (!isInFlight(task.status)) task.status = "queued";
     task.updatedAt = new Date().toISOString();
     await commit(req);
@@ -980,7 +1006,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
     const task = await findTaskOrReload(req, id);
     const step = task?.steps?.[index];
     if (!task || !step) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
-    if (done) stampFirstAction(task);
+    if (done) stampFirstAction(task, req.session.user, req.session.profile);
     step.done = done;
     step.doneAt = done ? new Date().toISOString() : undefined;
     if (result !== undefined) step.result = result;

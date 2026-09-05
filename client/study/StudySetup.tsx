@@ -3,6 +3,7 @@ import type { WebTask } from "../../shared/types.ts";
 import type { StudyEnvironment, StudyMaterial } from "./StudyTypes.ts";
 import { extractPdfText } from "./pdfText.ts";
 import { api } from "../api.ts";
+import { stripHtml } from "../ui.tsx";
 
 export interface PomodoroChoice { enabled: boolean; workMinutes: number; breakMinutes: number; armId: string }
 
@@ -85,7 +86,7 @@ function buildTaskMaterials(task: WebTask): StudyMaterial[] {
       label: "Task instructions",
       type: "note",
       source: task.source || "task",
-      text: task.sourceDetail,
+      text: stripHtml(task.sourceDetail),
     });
   }
 
