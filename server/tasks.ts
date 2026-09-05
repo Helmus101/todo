@@ -903,9 +903,12 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, scoped, academic);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
-    // A manually-added task's raw title gets tightened as a side effect of THIS run (no separate "clean
-    // up" pass before it) — only for manual tasks, and only when the model actually returned one.
-    if (task.source === "manual" && out.title) task.title = out.title;
+    // A raw/placeholder title gets tightened as a side effect of THIS run (no separate "clean up" pass
+    // before it) — manual (the user's own rough note) AND pronote (forceWeekCoverage's fallback titles are
+    // just the bare subject name, e.g. "Français", set BEFORE any real research happened — see
+    // forceWeekCoverage's own comment) both start from a title that's known-generic, not the classifier's
+    // own carefully-written one. Only applied when the model actually returned a tightened one.
+    if ((task.source === "manual" || task.source === "pronote") && out.title) task.title = out.title;
     task.context = out.context;
     task.synthesis = out.synthesis;
     task.did = out.did?.length ? out.did : undefined;

@@ -2364,6 +2364,12 @@ export async function runTask(task: { title: string; why: string; source?: strin
       `behind it BEFORE acting. If the raw title is vague, sloppy, or could be tighter (e.g. "milk" → "Buy milk", ` +
       `"wharton comp" → "Prepare for the Wharton Investment Competition"), also set submit's "title" to a crisp, ` +
       `specific imperative (≤9 words, name the real subject you found) — omit it if the title is already fine.`
+    : task.source === "pronote"
+    ? `\nThis title is a PLACEHOLDER (just the bare subject/class name, e.g. "Français") set BEFORE any real ` +
+      `research — a safety-net fallback, not a carefully-written title. Once you've read the actual assignment ` +
+      `(sourceDetail below, or whatever you find), set submit's "title" to name the SPECIFIC thing (the book/` +
+      `chapter/exercise/topic), not just the subject — e.g. "Français" → "Read Chapter 3 of L'Étranger" or ` +
+      `"Prepare for the Molière oral exam", never left as just the class name once you actually know what it is.`
     : "";
   // Artifacts this task already produced on a previous run — the agent MUST reuse + UPDATE these, never make
   // a fresh copy (this is what stops "5 road-trip packing lists"). A deterministic anti-duplication signal.

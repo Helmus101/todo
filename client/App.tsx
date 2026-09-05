@@ -1883,6 +1883,9 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
       const fresh = list.find((t) => t.logDate === `week:${monday}`) || null;
       setSummary(fresh);
       saveWeekCache(monday, { days, summary: fresh });
+      // Open it immediately — leaving the student to notice a button's label silently changed to "View
+      // summary" and click it a SECOND time read as "nothing happened" after a real wait for generation.
+      if (fresh?.flashcards?.length) setOpenDeckFor("summary");
     } catch (e: any) { notify(e?.message || (en ? "Couldn't build the week summary — try again." : "Impossible de créer le résumé — réessaie."), "error"); }
     finally { setGenBusy(false); }
   };
@@ -1925,6 +1928,7 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
       const fresh = list.find((t) => t.logDate === `month:${month}`) || null;
       setMonthSummary(fresh);
       saveMonthCache(month, { weeks: monthWeeks, summary: fresh });
+      if (fresh?.flashcards?.length) setOpenDeckFor("month");
     } catch (e: any) { notify(e?.message || (en ? "Couldn't build the month summary — try again." : "Impossible de créer le résumé mensuel — réessaie."), "error"); }
     finally { setMonthGenBusy(false); }
   };
