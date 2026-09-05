@@ -1703,45 +1703,68 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
     const client = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const spacedBlock = spacedRepetitionBlock(boxBreakdown, "THIS WEEK'S DAILY DECKS");
-    const res = await retryRequest(() => client.chat.completions.create({
+    const entriesBlock = days.map((d) => `— ${d.date}:\n"""\n${d.logText.slice(0, 2000)}\n"""`).join("\n\n");
+    const makeReq = (maxTokens: number, concise: boolean) => retryRequest(() => client.chat.completions.create({
       model,
-      max_tokens: OUT.studylog,
+      max_tokens: maxTokens,
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
-          `You build a WEEK-END-REVIEW flashcard deck from a student's own daily "what I learned" entries. This ` +
-          `is a SUMMARY across the whole week, not a re-dump of every daily card verbatim — merge near-duplicate ` +
-          `ideas from different days into one card, connect genuinely related concepts across days. THIS DECK ` +
-          `SHOULD BE LARGER THAN ANY SINGLE DAY'S — it spans up to 5 days of material, so on average it should ` +
-          `run noticeably longer than one day's deck, not come out similar in size; a week with real content ` +
-          `across several days that produces a SHORT summary has under-covered it. Cover every distinct concept ` +
-          `the week actually contained, up to 50 cards (a hard technical ceiling on this reply's token budget, ` +
-          `not a product opinion) — aim for full coverage, not a "highlights" selection. WITHIN that coverage, ` +
-          `WEIGHT HEAVILY toward what's in the spaced-repetition signal below as never-tested-or-wrong (box ` +
-          `0-1): those concepts should make up a CLEARLY LARGER share of the deck than partially-solid or ` +
-          `well-retained ones — re-tested a genuinely different way each time, not copy-pasted — since the ` +
-          `whole point of a week-end review is catching what didn't stick the first time, not re-visiting ` +
-          `everything evenly. ${CARD_STYLE_RULE}\n\n` +
-          `ALSO decide if a companion QUIZ is warranted: if this week's material has concepts students commonly ` +
-          `confuse with each other, or that genuinely need discriminating between similar-looking answers ` +
-          `(not just recalling one fact), include a "quiz" object with 4-10 multiple-choice questions on ` +
-          `exactly those concepts (never duplicate what a flashcard already tests the same way). If nothing ` +
-          `this week actually calls for that format, omit "quiz" entirely (or set it null) — it is NOT a ` +
-          `default add-on, only include it when it genuinely helps. ${QUIZ_STYLE_RULE}` },
+          (concise
+            ? `Build a CONCISE week-end-review flashcard deck from a student's daily "what I learned" entries — ` +
+              `merge near-duplicate ideas across days, cover the week's distinct concepts, short precise backs, ` +
+              `no worked solutions, no quiz. At most 25 cards. ${CARD_STYLE_RULE}`
+            : `You build a WEEK-END-REVIEW flashcard deck from a student's own daily "what I learned" entries. ` +
+              `This is a SUMMARY across the whole week, not a re-dump of every daily card verbatim — merge near-` +
+              `duplicate ideas from different days into one card, connect genuinely related concepts across days. ` +
+              `THIS DECK SHOULD BE LARGER THAN ANY SINGLE DAY'S — it spans up to 5 days of material, so on ` +
+              `average it should run noticeably longer than one day's deck, not come out similar in size; a week ` +
+              `with real content across several days that produces a SHORT summary has under-covered it. Cover ` +
+              `every distinct concept the week actually contained, up to 50 cards (a hard technical ceiling on ` +
+              `this reply's token budget, not a product opinion) — aim for full coverage, not a "highlights" ` +
+              `selection. WITHIN that coverage, WEIGHT HEAVILY toward what's in the spaced-repetition signal ` +
+              `below as never-tested-or-wrong (box 0-1): those concepts should make up a CLEARLY LARGER share of ` +
+              `the deck than partially-solid or well-retained ones — re-tested a genuinely different way each ` +
+              `time, not copy-pasted — since the whole point of a week-end review is catching what didn't stick ` +
+              `the first time, not re-visiting everything evenly. ${CARD_STYLE_RULE}\n\n` +
+              `ALSO decide if a companion QUIZ is warranted: if this week's material has concepts students ` +
+              `commonly confuse with each other, or that genuinely need discriminating between similar-looking ` +
+              `answers (not just recalling one fact), include a "quiz" object with 4-10 multiple-choice ` +
+              `questions on exactly those concepts (never duplicate what a flashcard already tests the same ` +
+              `way). If nothing this week actually calls for that format, omit "quiz" entirely (or set it null) ` +
+              `— it is NOT a default add-on, only include it when it genuinely helps. ${QUIZ_STYLE_RULE}`) },
         { role: "user", content:
-          `THIS WEEK'S DAILY ENTRIES:\n${days.map((d) => `— ${d.date}:\n"""\n${d.logText.slice(0, 2000)}\n"""`).join("\n\n")}` +
-          spacedBlock +
-          `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", ` +
-          `"back": "..."}, ...], "quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], ` +
-          `"correct": 0, "why": "..."}, ...]} or null}.` },
+          `THIS WEEK'S DAILY ENTRIES:\n${entriesBlock}` +
+          (concise ? "" : spacedBlock) +
+          (concise
+            ? `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.`
+            : `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", ` +
+              `"back": "..."}, ...], "quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], ` +
+              `"correct": 0, "why": "..."}, ...]} or null}.`) },
       ],
     }));
-    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
-    const result = makeDeck(out);
-    if (!("deck" in result)) return null;
-    const tokens = usageOf(res);
+    const res = await makeReq(OUT.studylog, false);
+    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
+    let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
+    let tokens = usageOf(res);
+    // FALLBACK: same reasoning as generateDailyStudyCards — an ambitious single JSON response (full week
+    // coverage + heavy weak-focus reweighting + an optional quiz, up to 50 cards) can run long enough to get
+    // cut off before its closing brace, which loses the WHOLE deck, not just the tail. Retry ONCE with a
+    // much smaller, quiz-free ask so "generate week summary" reliably produces something.
+    if (!("deck" in result)) {
+      console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: first attempt unparseable, retrying with a smaller ask`);
+      const res2 = await makeReq(5000, true);
+      out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res2.choices[0]?.message?.content || "");
+      result = out ? makeDeck(out) : { error: "no parseable JSON in the retry either" };
+      const t2 = usageOf(res2);
+      tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
+      if (!("deck" in result)) {
+        console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: FAILED after fallback — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
+        return null;
+      }
+    }
     let quiz: TaskQuiz | undefined;
     if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
       const qr = makeQuiz(out.quiz);
@@ -1749,7 +1772,10 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
     }
     console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: ${days.length} day(s), ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
     return { deck: result.deck, quiz, tokens };
-  } catch { return null; }
+  } catch (e: any) {
+    console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: EXCEPTION — ${e?.message || e}`);
+    return null;
+  }
 }
 
 /** Month-end summary: synthesizes across that month's WEEKLY decks (not the raw daily entries — by the
@@ -1764,38 +1790,59 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
     const client = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const spacedBlock = spacedRepetitionBlock(boxBreakdown, "THIS MONTH'S WEEKLY DECKS");
-    const res = await retryRequest(() => client.chat.completions.create({
+    const weeksBlock = nonEmpty.map((w) => `— ${w.label}:\n${w.cards.map((c) => `  Q: ${c.front}\n  A: ${c.back}`).join("\n")}`).join("\n\n");
+    const makeReq = (maxTokens: number, concise: boolean) => retryRequest(() => client.chat.completions.create({
       model,
-      max_tokens: OUT.studylog,
+      max_tokens: maxTokens,
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
-          `You build a MONTH-END-REVIEW flashcard deck from a student's own weekly summary decks. Merge ` +
-          `near-duplicate cards that show up across different weeks into one, and weight the space each concept ` +
-          `gets using the spaced-repetition signal below, NOT evenly — but otherwise keep FULL coverage of the ` +
-          `month's distinct concepts, don't shrink down to a "highlights only" selection. A month with many ` +
-          `weeks of real material should produce a correspondingly large deck, up to 50 cards (a hard technical ` +
-          `ceiling on this reply's token budget, not a product opinion). ${CARD_STYLE_RULE}\n\n` +
-          `ALSO decide if a companion QUIZ is warranted: if this month's material has concepts students commonly ` +
-          `confuse with each other, or that genuinely need discriminating between similar-looking answers (not ` +
-          `just recalling one fact), include a "quiz" object with 4-10 multiple-choice questions on exactly ` +
-          `those concepts (never duplicate what a flashcard already tests the same way). If nothing this month ` +
-          `actually calls for that format, omit "quiz" entirely (or set it null) — it is NOT a default add-on, ` +
-          `only include it when it genuinely helps. ${QUIZ_STYLE_RULE}` },
+          (concise
+            ? `Build a CONCISE month-end-review flashcard deck from a student's weekly summary decks — merge ` +
+              `near-duplicates across weeks, cover the month's distinct concepts, short precise backs, no ` +
+              `worked solutions, no quiz. At most 30 cards. ${CARD_STYLE_RULE}`
+            : `You build a MONTH-END-REVIEW flashcard deck from a student's own weekly summary decks. Merge ` +
+              `near-duplicate cards that show up across different weeks into one, and weight the space each ` +
+              `concept gets using the spaced-repetition signal below, NOT evenly — but otherwise keep FULL ` +
+              `coverage of the month's distinct concepts, don't shrink down to a "highlights only" selection. A ` +
+              `month with many weeks of real material should produce a correspondingly large deck, up to 50 ` +
+              `cards (a hard technical ceiling on this reply's token budget, not a product opinion). ` +
+              `${CARD_STYLE_RULE}\n\n` +
+              `ALSO decide if a companion QUIZ is warranted: if this month's material has concepts students ` +
+              `commonly confuse with each other, or that genuinely need discriminating between similar-looking ` +
+              `answers (not just recalling one fact), include a "quiz" object with 4-10 multiple-choice ` +
+              `questions on exactly those concepts (never duplicate what a flashcard already tests the same ` +
+              `way). If nothing this month actually calls for that format, omit "quiz" entirely (or set it ` +
+              `null) — it is NOT a default add-on, only include it when it genuinely helps. ${QUIZ_STYLE_RULE}`) },
         { role: "user", content:
-          `THIS MONTH'S WEEKLY DECKS:\n${nonEmpty.map((w) => `— ${w.label}:\n${w.cards.map((c) => `  Q: ${c.front}\n  A: ${c.back}`).join("\n")}`).join("\n\n")}` +
-          spacedBlock +
-          `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", ` +
-          `"back": "..."}, ...], "quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], ` +
-          `"correct": 0, "why": "..."}, ...]} or null}.` },
+          `THIS MONTH'S WEEKLY DECKS:\n${weeksBlock}` +
+          (concise ? "" : spacedBlock) +
+          (concise
+            ? `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.`
+            : `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", ` +
+              `"back": "..."}, ...], "quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], ` +
+              `"correct": 0, "why": "..."}, ...]} or null}.`) },
       ],
     }));
-    const out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
-    const result = makeDeck(out);
-    if (!("deck" in result)) return null;
-    const tokens = usageOf(res);
+    const res = await makeReq(OUT.studylog, false);
+    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
+    let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
+    let tokens = usageOf(res);
+    // FALLBACK: same reasoning as generateDailyStudyCards/generateWeeklyStudyDeck.
+    if (!("deck" in result)) {
+      console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: first attempt unparseable, retrying with a smaller ask`);
+      const res2 = await makeReq(5000, true);
+      out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res2.choices[0]?.message?.content || "");
+      result = out ? makeDeck(out) : { error: "no parseable JSON in the retry either" };
+      const t2 = usageOf(res2);
+      tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
+      if (!("deck" in result)) {
+        console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: FAILED after fallback — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
+        return null;
+      }
+    }
     let quiz: TaskQuiz | undefined;
     if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
       const qr = makeQuiz(out.quiz);
@@ -1803,7 +1850,10 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
     }
     console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: ${nonEmpty.length} week(s), ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
     return { deck: result.deck, quiz, tokens };
-  } catch { return null; }
+  } catch (e: any) {
+    console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: EXCEPTION — ${e?.message || e}`);
+    return null;
+  }
 }
 
 // Manual-add and sweep-generated tasks are both planned by the single `runTask()` agent below (see
