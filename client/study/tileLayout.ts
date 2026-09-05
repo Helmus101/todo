@@ -63,3 +63,27 @@ export function tileLayout(n: number): TileRect[] {
 export function isTileable(a: { minimized: boolean; maximized: boolean; dockSide: string }): boolean {
   return !a.minimized && !a.maximized && a.dockSide === "none";
 }
+
+/** Re-tile the freeform artifacts WITHIN whatever horizontal band is left after docked left/right panels
+ *  (ArtifactCanvas.tsx pins those to the true canvas edge at their own width%, independent of x/y) have
+ *  claimed their slice — tiling across the full 0-100% width regardless would place freeform tiles UNDER a
+ *  docked panel instead of actually making room for it. Vertical docking doesn't exist in this app (only
+ *  left/right), so only width is reserved. */
+export function tileWithinBounds(all: ArtifactState[]): Map<string, TileRect> {
+  const tileable = all.filter(isTileable);
+  const leftReserved = all.filter((a) => !a.minimized && a.dockSide === "left").reduce((sum, a) => sum + a.width, 0);
+  const rightReserved = all.filter((a) => !a.minimized && a.dockSide === "right").reduce((sum, a) => sum + a.width, 0);
+  const availWidth = Math.max(20, 100 - leftReserved - rightReserved); // floor so a heavily-docked desk still gets a usable strip
+  const scale = availWidth / 100;
+  const rects = tileLayout(tileable.length);
+  const map = new Map<string, TileRect>();
+  tileable.forEach((a, i) => {
+    const r = rects[i];
+    map.set(a.id, { x: leftReserved + r.x * scale, y: r.y, width: r.width * scale, height: r.height });
+  });
+  return map;
+}
+
+// Minimal shape tileWithinBounds needs — avoids importing the full ArtifactState type here (this module is
+// deliberately dependency-free) while still being structurally compatible with it.
+interface ArtifactState { id: string; minimized: boolean; maximized: boolean; dockSide: string; width: number; }

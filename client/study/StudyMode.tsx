@@ -22,7 +22,7 @@ import { EndSessionModal } from "./EndSessionModal.tsx";
 import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
 import { api } from "../api.ts";
 import { NoisePlayer, type NoiseType } from "./noise.ts";
-import { tileLayout, isTileable } from "./tileLayout.ts";
+import { tileWithinBounds } from "./tileLayout.ts";
 import { extractPdfText } from "./pdfText.ts";
 
 interface StudyModeProps {
@@ -504,7 +504,16 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const startSession = useCallback((materials: StudyMaterial[], pomodoro: PomodoroChoice) => {
     const envId = crypto.randomUUID();
     const template = detectTemplate(task);
-    const artifacts = buildInitialArtifacts(template, envId, task.id, materials);
+    const rawArtifacts = buildInitialArtifacts(template, envId, task.id, materials);
+    // buildInitialArtifacts's per-template x/y/w/h are hand-picked and, on at least a couple of templates,
+    // actually overlap (or overflow the canvas) once you account for both panes' real width — re-tile the
+    // freeform ones the same way adding a tool later does, so the very first thing a student sees is
+    // already a clean, non-overlapping desk, not just every artifact added AFTER the first one.
+    const initialRects = tileWithinBounds(rawArtifacts);
+    const artifacts = rawArtifacts.map((a) => {
+      const r = initialRects.get(a.id);
+      return r ? { ...a, x: r.x, y: r.y, width: r.width, height: r.height } : a;
+    });
     const newEnv: StudyEnvironment = {
       id: envId,
       taskId: task.id,
@@ -643,10 +652,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     // Auto-arrange on add: re-tile every artifact in "normal" freeform placement (see isTileable) so a new
     // tool never just lands on top of what's already open — the whole desk reflows to make room instead of
     // the student having to manually drag things apart every time. Minimized/maximized/docked artifacts are
-    // a deliberate placement and are left exactly where they are.
-    const tileable = withNew.filter(isTileable);
-    const rects = tileLayout(tileable.length);
-    const rectById = new Map(tileable.map((a, i) => [a.id, rects[i]]));
+    // a deliberate placement and are left exactly where they are; tileWithinBounds tiles the freeform ones
+    // into whatever band is left AFTER a docked left/right panel's own reserved width, so they never end up
+    // placed underneath it.
+    const rectById = tileWithinBounds(withNew);
     const arranged = withNew.map((a) => {
       const r = rectById.get(a.id);
       return r ? { ...a, x: r.x, y: r.y, width: r.width, height: r.height } : a;

@@ -40,9 +40,12 @@ export function PDFArtifact({ artifact, onChange }: PDFArtifactProps) {
       </div>
       {url ? (
         <>
-          {/* No allow-top-navigation — an external PDF's own content (or a link inside it) must never be
-              able to redirect the outer Otto tab. */}
-          <iframe className="sm-embed" src={src} title={artifact.title} sandbox="allow-scripts allow-same-origin" />
+          {/* NO sandbox here — Chrome's own built-in PDF viewer refuses to render at all inside a sandboxed
+              iframe ("This page has been blocked by Chrome"), unlike a real embedded web app. A static PDF
+              (blob: for an upload, or an external link) doesn't run arbitrary navigating scripts the way
+              Padlet/Desmos/Spotify's iframes do, so the top-navigation risk sandboxing guards against there
+              doesn't really apply here the same way. */}
+          <iframe className="sm-embed" src={src} title={artifact.title} />
           {/* Our own CSP allows this (server/index.ts's frame-src), but a THIRD-PARTY PDF host can still
               refuse to be framed via its own X-Frame-Options/CSP — invisible to JS (no onError fires), so
               the student would otherwise be stuck looking at a blank/blocked pane with no way out. */}
