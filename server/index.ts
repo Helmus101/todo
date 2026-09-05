@@ -1269,9 +1269,15 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
 // YYYY-MM of the month containing `dateStr` — used to group weekly decks (keyed by their Monday) into a
 // month-end summary without any formal calendar-month task list of its own.
 function monthOf(dateStr: string): string { return dateStr.slice(0, 7); }
+// The client (client/App.tsx's `month` = `monday.slice(0, 7)`) only ever sends a bare "YYYY-MM" to these two
+// routes — NEVER a full date — so validating against DATE_RE (which requires "YYYY-MM-DD") rejected every
+// single call with a 400, unconditionally. Both month endpoints were broken 100% of the time, not
+// intermittently. `monthOf()` on a value that's already "YYYY-MM" is a harmless no-op (slice(0,7) of a
+// 7-char string returns itself), so accepting either shape here is safe.
+const MONTH_RE = /^\d{4}-\d{2}$/;
 app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
   const start = String(req.query.start || "");
-  if (!DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
+  if (!MONTH_RE.test(start) && !DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
   const month = monthOf(start);
   const list = req.session.tasks || [];
   const weeks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month)
@@ -1284,7 +1290,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
   const monthStart = String(req.body?.monthStart || "");
-  if (!DATE_RE.test(monthStart)) { res.status(400).json({ error: "Invalid date." }); return; }
+  if (!MONTH_RE.test(monthStart) && !DATE_RE.test(monthStart)) { res.status(400).json({ error: "Invalid date." }); return; }
   const month = monthOf(monthStart);
   const list = req.session.tasks || [];
   const weekTasks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month && x.flashcards?.length);

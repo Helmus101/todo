@@ -3800,20 +3800,18 @@ export async function chatAboutTask(
       let res: any;
       try {
         // Fewer/faster retries than the default (3 attempts, 1s+ backoff) — this is a live chat turn, not
-        // a background sweep, and CHAT_DEADLINE_MS below is the real backstop anyway. One retry, short
-        // delay: worth it for a genuine blip, not worth burning seconds of the user's wait on a repeat.
-        // retryRequest's loop exits when `i === retries - 1`, so `retries: 1` was actually giving ZERO
-        // retries (threw immediately on the first failure) despite this comment always having said "one
-        // retry" — a transient blip (a momentary rate limit, a brief network hiccup) went straight to the
-        // generic "I'm here — what part of this is giving you trouble?" fallback with no second attempt at
-        // all. `retries: 2` is what actually produces one retry.
+        // a background sweep, and CHAT_DEADLINE_MS below is the real backstop anyway. retryRequest's loop
+        // exits when `i === retries - 1`, so `retries: N` gives N-1 actual retries. `retries: 3` (two
+        // retries) rather than the earlier `retries: 2` (one retry) — a real DeepSeek blip (a momentary
+        // rate limit, a brief network hiccup) going straight to the generic fallback after a SINGLE retry
+        // was still common enough to report; the deadline (120s) has ample room for one more attempt.
         res = await retryRequest(() => client.chat.completions.create({
           model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
           messages: apiMessages,
           // The chat tool set is deliberately in-app only (CREATE_*/web_search) — NEVER Composio. A tutoring
           // chat must not be able to touch the student's connected accounts, unlike runTask's tool set.
           ...(lastRound ? {} : { tools: tools.map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
-        }), 2, 400);
+        }), 3, 400);
       } catch (e: any) {
         // This used to swallow the real error completely — the ONLY visible symptom was every chat
         // message (even "hello") silently landing on the generic fallback line, with nothing in server
@@ -3826,7 +3824,27 @@ export async function chatAboutTask(
       }
       { const u = usageOf(res); result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn; }
       const toolCalls = res.choices?.[0]?.message?.tool_calls || [];
-      const textContent = res.choices?.[0]?.message?.content || "";
+      let textContent = res.choices?.[0]?.message?.content || "";
+      if (!toolCalls.length && !textContent.trim()) {
+        // Genuinely empty completion, no tool call either — DeepSeek v4's hidden reasoning tokens ate the
+        // WHOLE max_tokens budget before a single reply token came out (the same trap documented on OUT/
+        // studyHelp above), not a real "nothing to say". This used to fall straight to the generic fallback
+        // line on the very first empty response; retry ONCE with tools stripped (nothing left to reason
+        // about calling) and a plain instruction — the same fallback-retry pattern used for flashcards/
+        // studylog generation — before actually giving up. Only fires on the rare empty response, so it
+        // never adds latency/cost to the normal path.
+        console.log(`${new Date().toISOString()} [chat] round ${round}: empty completion, retrying once with tools stripped`);
+        try {
+          const retryRes: any = await retryRequest(() => client.chat.completions.create({
+            model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+            messages: [...apiMessages, { role: "user" as const, content: "Reply in plain words now — no tool use." }],
+          }), 1, 400);
+          const u = usageOf(retryRes);
+          result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn;
+          textContent = retryRes.choices?.[0]?.message?.content || "";
+        } catch (e: any) { console.error(`[chat] empty-completion retry also failed: ${e?.message || e}`); }
+        return finish(textContent);
+      }
       if (!toolCalls.length) return finish(textContent);
       messages.push({ role: "assistant", content: textContent, tool_calls: toolCalls });
       for (const tc of toolCalls) {
