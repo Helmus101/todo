@@ -84,7 +84,7 @@ const CSP = [
   // just the Spotify origin (as this first did) silently broke every other embed, including the student's
   // own files, with Chrome's generic "This content is blocked" — so 'self' and blob: must be listed here
   // explicitly, not assumed to still apply.
-  "frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://www.youtube-nocookie.com https://www.desmos.com",
+  "frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://www.youtube-nocookie.com https://www.desmos.com https://*.padlet.com https://*.padlet.org",
   "font-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",

@@ -54,7 +54,14 @@ export function ArtifactCanvas({
 }: ArtifactCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
-  const resizeRef = useRef<{ id: string; startX: number; startY: number; origW: number; origH: number; origX: number; origY: number } | null>(null);
+  const resizeRef = useRef<{
+    id: string; startX: number; startY: number; origW: number; origH: number; origX: number; origY: number;
+    // The tile immediately to the right/below, sharing that edge — if the resize is shrinking/growing INTO
+    // them, they get the opposite delta so the two stay flush with no gap and no overlap, instead of the
+    // student having to separately drag the neighbor afterward to fix the desk back up.
+    rightNeighbor?: { id: string; origX: number; origW: number };
+    bottomNeighbor?: { id: string; origY: number; origH: number };
+  } | null>(null);
 
   // Bring artifact to front
   const bringToFront = useCallback((id: string) => {
@@ -97,19 +104,38 @@ export function ArtifactCanvas({
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     const art = artifacts.find(a => a.id === id);
     if (!art) return;
-    resizeRef.current = { id, startX: e.clientX, startY: e.clientY, origW: art.width, origH: art.height, origX: art.x, origY: art.y };
+    // A "touching" edge allows a couple of percent of slack — tiles placed by tileLayout.ts are exact, but
+    // ones the student has since nudged by hand won't line up to the pixel, and this should still feel like
+    // a shared edge rather than silently doing nothing.
+    const EPS = 2;
+    const overlaps1D = (aStart: number, aEnd: number, bStart: number, bEnd: number) => aStart < bEnd - 0.5 && bStart < aEnd - 0.5;
+    const other = artifacts.filter(o => o.id !== id && !o.minimized && !o.maximized && o.dockSide === "none");
+    const right = other.find(o => Math.abs(o.x - (art.x + art.width)) < EPS && overlaps1D(art.y, art.y + art.height, o.y, o.y + o.height));
+    const bottom = other.find(o => Math.abs(o.y - (art.y + art.height)) < EPS && overlaps1D(art.x, art.x + art.width, o.x, o.x + o.width));
+    resizeRef.current = {
+      id, startX: e.clientX, startY: e.clientY, origW: art.width, origH: art.height, origX: art.x, origY: art.y,
+      rightNeighbor: right ? { id: right.id, origX: right.x, origW: right.width } : undefined,
+      bottomNeighbor: bottom ? { id: bottom.id, origY: bottom.y, origH: bottom.height } : undefined,
+    };
 
+    const MIN_W = 18, MIN_H = 24;
     const onMove = (ev: PointerEvent) => {
       if (!resizeRef.current || !canvasRef.current) return;
       const cw = canvasRef.current.offsetWidth;
       const ch = canvasRef.current.offsetHeight;
-      const dw = ((ev.clientX - resizeRef.current.startX) / cw) * 100;
-      const dh = ((ev.clientY - resizeRef.current.startY) / ch) * 100;
-      const maxW = 100 - resizeRef.current.origX;
-      const maxH = 100 - resizeRef.current.origY;
-      const nw = Math.max(18, Math.min(maxW, resizeRef.current.origW + dw));
-      const nh = Math.max(24, Math.min(maxH, resizeRef.current.origH + dh));
+      let dw = ((ev.clientX - resizeRef.current.startX) / cw) * 100;
+      let dh = ((ev.clientY - resizeRef.current.startY) / ch) * 100;
+      const { origW, origH, origX, origY, rightNeighbor: rn, bottomNeighbor: bn } = resizeRef.current;
+      // Bound dw/dh so NEITHER this artifact NOR the neighbor it's pushing into ever goes below its own
+      // minimum size — a shared edge, one delta, two rectangles kept in sync (no neighbor → just clamp to
+      // the canvas edge, the original behavior).
+      dw = Math.max(MIN_W - origW, Math.min(rn ? rn.origW - MIN_W : 100 - origX - origW, dw));
+      dh = Math.max(MIN_H - origH, Math.min(bn ? bn.origH - MIN_H : 100 - origY - origH, dh));
+      const nw = origW + dw;
+      const nh = origH + dh;
       onUpdateArtifact(resizeRef.current.id, { width: nw, height: nh });
+      if (rn) onUpdateArtifact(rn.id, { x: rn.origX + dw, width: rn.origW - dw });
+      if (bn) onUpdateArtifact(bn.id, { y: bn.origY + dh, height: bn.origH - dh });
     };
     const onUp = () => {
       resizeRef.current = null;

@@ -100,6 +100,9 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
               allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
               loading="lazy"
               title="Spotify player"
+              // No allow-top-navigation — the widget (or a link inside it, e.g. an artist/album page) must
+              // never be able to redirect the outer Otto tab to open.spotify.com or anywhere else.
+              sandbox="allow-scripts allow-same-origin allow-popups"
             />
           )}
         </div>

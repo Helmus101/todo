@@ -48,12 +48,15 @@ export function WorkspaceIframe({ url, title, style, className }: WorkspaceIfram
   }
 
   return (
+    // No allow-top-navigation — this embeds an ARBITRARY external URL (only a small blocklist above), so
+    // the embedded page (or any link inside it) must never be able to redirect the outer Otto tab.
     <iframe
       src={url}
       className={className}
       style={style}
       title={title || "Workspace Content"}
       allowFullScreen
+      sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
     />
   );
 }

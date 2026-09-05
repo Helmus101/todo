@@ -40,7 +40,9 @@ export function PDFArtifact({ artifact, onChange }: PDFArtifactProps) {
       </div>
       {url ? (
         <>
-          <iframe className="sm-embed" src={src} title={artifact.title} />
+          {/* No allow-top-navigation — an external PDF's own content (or a link inside it) must never be
+              able to redirect the outer Otto tab. */}
+          <iframe className="sm-embed" src={src} title={artifact.title} sandbox="allow-scripts allow-same-origin" />
           {/* Our own CSP allows this (server/index.ts's frame-src), but a THIRD-PARTY PDF host can still
               refuse to be framed via its own X-Frame-Options/CSP — invisible to JS (no onError fires), so
               the student would otherwise be stuck looking at a blank/blocked pane with no way out. */}

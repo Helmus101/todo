@@ -23,7 +23,9 @@ function getYouTubeId(url: string): string | null {
 function classifyUrl(url: string): "video" | "document" | "pdf" | "link" {
   if (getYouTubeId(url)) return "video";
   if (url.match(/\.pdf($|\?)/i)) return "pdf";
-  if (url.match(/docs\.google\.com/)) return "document";
+  // Padlet boards embed the same way Google Docs do (DocumentArtifact.tsx handles both) — without this a
+  // Padlet link fell through to plain "link" and never reached the iframe embed at all.
+  if (url.match(/docs\.google\.com|:\/\/([a-z0-9-]+\.)?padlet\.(com|org)\//i)) return "document";
   return "link";
 }
 

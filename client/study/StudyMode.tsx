@@ -22,6 +22,7 @@ import { EndSessionModal } from "./EndSessionModal.tsx";
 import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
 import { api } from "../api.ts";
 import { NoisePlayer, type NoiseType } from "./noise.ts";
+import { tileLayout, isTileable } from "./tileLayout.ts";
 
 interface StudyModeProps {
   task: WebTask;
@@ -611,7 +612,19 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const addArtifact = useCallback((artifact: ArtifactState) => {
     if (!env) return;
     const nextZ = Math.max(0, ...env.artifacts.map(a => a.zIndex)) + 1;
-    const updated: StudyEnvironment = { ...env, artifacts: [...env.artifacts, { ...artifact, zIndex: nextZ }], lastSavedAt: new Date().toISOString() };
+    const withNew = [...env.artifacts, { ...artifact, zIndex: nextZ }];
+    // Auto-arrange on add: re-tile every artifact in "normal" freeform placement (see isTileable) so a new
+    // tool never just lands on top of what's already open — the whole desk reflows to make room instead of
+    // the student having to manually drag things apart every time. Minimized/maximized/docked artifacts are
+    // a deliberate placement and are left exactly where they are.
+    const tileable = withNew.filter(isTileable);
+    const rects = tileLayout(tileable.length);
+    const rectById = new Map(tileable.map((a, i) => [a.id, rects[i]]));
+    const arranged = withNew.map((a) => {
+      const r = rectById.get(a.id);
+      return r ? { ...a, x: r.x, y: r.y, width: r.width, height: r.height } : a;
+    });
+    const updated: StudyEnvironment = { ...env, artifacts: arranged, lastSavedAt: new Date().toISOString() };
     setEnv(updated);
     persistEnv(updated);
   }, [env, persistEnv]);
