@@ -6,11 +6,12 @@ import { api } from "../api.ts";
 import { stripHtml } from "../ui.tsx";
 
 export interface PomodoroChoice { enabled: boolean; workMinutes: number; breakMinutes: number; armId: string }
+export interface AudioChoice { audioType: "silence" | "brown" | "pink" | "white"; armId?: string }
 
 interface StudySetupProps {
   task: WebTask;
   existingEnv: StudyEnvironment | null;
-  onStart: (materials: StudyMaterial[], pomodoro: PomodoroChoice) => void;
+  onStart: (materials: StudyMaterial[], pomodoro: PomodoroChoice, audio: AudioChoice) => void;
   onResume?: () => void;
   onExit: () => void;
 }
@@ -116,6 +117,8 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
   const [pomodoroEnabled, setPomodoroEnabled] = useState(existingEnv?.pomodoroEnabled ?? false);
   const [workMinutes, setWorkMinutes] = useState(existingEnv?.pomodoroWorkMinutes ?? 25);
   const [breakMinutes, setBreakMinutes] = useState(existingEnv?.pomodoroBreakMinutes ?? 5);
+  const [audioChoice, setAudioChoice] = useState<AudioChoice>({ audioType: "silence" });
+  const suggestionRef = useRef<{ enabled: boolean; workMinutes: number; breakMinutes: number } | null>(null);
   useEffect(() => {
     // Only for a genuinely FRESH session — resuming an existing environment means the student already
     // made (and is relying on) their own choice; the bandit must never override that.
@@ -124,7 +127,11 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
       setPomodoroEnabled(s.enabled);
       setWorkMinutes(s.workMinutes);
       setBreakMinutes(s.breakMinutes);
+      suggestionRef.current = { enabled: s.enabled, workMinutes: s.workMinutes, breakMinutes: s.breakMinutes };
     }).catch(() => {}); // best-effort — the picker's own hardcoded defaults (25/5, off) already cover this
+    void api.audioSuggestion().then((s) => {
+      setAudioChoice({ audioType: s.audioType, armId: s.audioType });
+    }).catch(() => {}); // best-effort — the desk's own hardcoded default (silence) already covers this
   }, [existingEnv]);
   // Whatever arm this session ACTUALLY runs under, whether that's the suggestion left untouched or
   // something the student changed by hand — matches server/bandit.ts's POMODORO_ARMS id scheme when it
@@ -159,6 +166,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
     setMaterials(prev => [...prev, mat]);
     setLinkInput("");
     setLinkLabel("");
+    void api.recordMetric("study_material_added", 1, type);
   };
 
   const handleFiles = (files: FileList | null) => {
@@ -176,6 +184,8 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
         size: file.size,
       };
       setMaterials(prev => [...prev, mat]);
+      void api.recordMetric("study_material_added", 1, type);
+      if (type === "pdf") void api.recordMetric("study_pdf_uploaded", 1);
       // Best-effort, async, non-blocking: the material is already usable (viewable in PDFArtifact) the
       // instant it's added above — this just fills in `text` a moment later so the chat can reference the
       // PDF's actual content (see pdfText.ts). A scanned/image-only PDF or extraction failure just leaves
@@ -316,7 +326,13 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
 
         {/* Start button */}
         <div className="sm-setup-footer">
-          <button className="sm-btn sm-btn-primary sm-btn-lg" onClick={() => onStart(materials, { enabled: pomodoroEnabled, workMinutes, breakMinutes, armId })}>
+          <button className="sm-btn sm-btn-primary sm-btn-lg" onClick={() => {
+            const sugg = suggestionRef.current;
+            if (sugg && (sugg.enabled !== pomodoroEnabled || sugg.workMinutes !== workMinutes || sugg.breakMinutes !== breakMinutes)) {
+              void api.recordMetric("pomodoro_manually_overridden", 1);
+            }
+            onStart(materials, { enabled: pomodoroEnabled, workMinutes, breakMinutes, armId }, audioChoice);
+          }}>
             {existingEnv ? "Start new session" : "Start studying"}
           </button>
           <p className="sm-setup-footer-hint">

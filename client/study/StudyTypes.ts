@@ -94,6 +94,10 @@ export interface StudyEnvironment {
    *  "25/5", "none", etc.), so endSession can report the outcome against the right arm. Undefined for an
    *  older/resumed environment predating this — endSession simply skips reporting in that case. */
   pomodoroArmId?: string;
+  /** Which bandit arm (server/bandit.ts's AUDIO_ARMS) this session's ambience choice corresponds to — only
+   *  set when the choice was one of the built-in noise presets (a custom upload or Spotify link isn't a
+   *  bandit arm, see AUDIO_ARMS's own comment). Undefined for those or for an older/resumed environment. */
+  audioArmId?: string;
   /** Running total of seconds spent idle (StudyMode.tsx's chromeIdle signal) while the session was
    *  "active" — the concentration/focus proxy the bandit's reward is partly built from. */
   idleSecondsTotal?: number;

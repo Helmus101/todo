@@ -148,6 +148,16 @@ export function computeCardReward(netBoxDelta: number): number {
 export interface GranularityArm { id: "standard" | "granular" }
 export const GRANULARITY_ARMS: GranularityArm[] = [{ id: "standard" }, { id: "granular" }];
 
+/** Fourth bandit target: the desk's background ambience — the "pre-configured environment" the user asked
+ *  for ("if trends emerge in study mode, pre-build that environment... automatically queuing up a playlist
+ *  if the user always listens to it"). Rather than a separate frequency-counting system, this reuses the
+ *  EXACT same machinery as the other three: an ambience choice IS a repeated decision with an observable
+ *  outcome (did the session run its full length, how idle was the student), so it converges the same way
+ *  Pomodoro length does. Custom uploads and Spotify links aren't arms here — those are the student's own
+ *  explicit pick each time, not a small enumerable menu; this only learns among the built-in noise presets. */
+export interface AudioArm { id: "silence" | "brown" | "pink" | "white" }
+export const AUDIO_ARMS: AudioArm[] = [{ id: "silence" }, { id: "brown" }, { id: "pink" }, { id: "white" }];
+
 /** Shorter time-to-first-action -> higher reward. 6 hours+ is treated as "so slow it may as well be zero"
  *  rather than picking a razor-thin threshold — a student's first free moment after seeing a task can
  *  legitimately be hours later for reasons that have nothing to do with step size, so the curve is

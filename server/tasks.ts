@@ -371,6 +371,10 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
     lastSupplementarySweepAt: (Date.parse(p2.lastSupplementarySweepAt || "") || 0) >= (Date.parse(p1.lastSupplementarySweepAt || "") || 0) ? (p2.lastSupplementarySweepAt ?? p1.lastSupplementarySweepAt) : (p1.lastSupplementarySweepAt ?? p2.lastSupplementarySweepAt),
+    // Same MAX-per-bucket reasoning as usage counters above — monotonic, so a stale copy can't reset it.
+    activityHours: (p1.activityHours || p2.activityHours)
+      ? Array.from({ length: 24 }, (_, h) => Math.max(p1.activityHours?.[h] || 0, p2.activityHours?.[h] || 0))
+      : undefined,
     // The daily auto-run cap MUST merge conservatively (never under-count) — this is a spend guard, not a
     // display value, so losing count across a merge would silently let two devices/instances each think
     // they have the full daily budget left. Same day on both sides → sum stays capped by taking the higher

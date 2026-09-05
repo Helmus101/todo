@@ -5,10 +5,10 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningS
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
-import { POMODORO_ARMS, FLASHCARD_ARMS, contextKey, chooseArm, computeReward, computeCardReward, updatePosterior } from "../server/bandit.ts";
+import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior } from "../server/bandit.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -510,6 +510,15 @@ check("swept yesterday → NOT due today at 10:00 (before 4pm)", !sweepDue({ ...
 // Timezone-aware: 19:00 UTC is 15:00 in New York (EDT, UTC-4) — still before 4pm THERE.
 check("19:00 UTC is only 15:00 in New York → NOT due yet", !sweepDue({ ...nyProfile }, new Date("2026-07-20T19:00:00Z")));
 check("20:00 UTC is 16:00 in New York → due", sweepDue({ ...nyProfile }, new Date("2026-07-20T20:00:00Z")));
+
+// Learned productive hour (shared/types.ts) can move the floor EARLIER, never later — an account with a
+// real, trusted history of being active at 8am shouldn't wait until the fixed 4pm default.
+const earlyBirdHours = new Array(24).fill(1); earlyBirdHours[8] = 30; // clearly peaks at 8am, well over minTotal
+check("learned 8am-peak account is due at 9am (earlier than the fixed 4pm default)", sweepDue({ ...utcProfile, activityHours: earlyBirdHours }, new Date("2026-07-20T09:00:00Z")));
+check("learned 8am-peak account is still NOT due before its own peak hour (7am)", !sweepDue({ ...utcProfile, activityHours: earlyBirdHours }, new Date("2026-07-20T07:00:00Z")));
+const lateBirdHours = new Array(24).fill(1); lateBirdHours[22] = 30; // peaks at 10pm, LATER than the 4pm default
+check("a learned peak LATER than the fixed default never delays the floor past 4pm", sweepDue({ ...utcProfile, activityHours: lateBirdHours }, new Date("2026-07-20T16:00:00Z")));
+check("too little history (below minTotal) falls back to the fixed 4pm default, not a noisy guess", !sweepDue({ ...utcProfile, activityHours: (() => { const h = new Array(24).fill(0); h[8] = 3; return h; })() }, new Date("2026-07-20T09:00:00Z")));
 
 // ── Cron catch-all: offline auto-run + stuck-queued recovery ──────────────────
 section("cron enqueue + stuck-queued recovery");
@@ -1197,6 +1206,45 @@ section("bandit.ts — contextual bandit (Thompson Sampling) for Pomodoro person
   for (let i = 0; i < 50; i++) { if (chooseArm(FLASHCARD_ARMS, cardState, key, rng2).arm.id === "thorough") picksThorough++; }
   check("flashcard bandit also converges on the reinforced arm", picksThorough >= 40);
   check("a fresh flashcard context is a genuine cold start", chooseArm(FLASHCARD_ARMS, {}, key, seeded(3)).coldStart === true);
+
+  // Third bandit target: task step granularity (GRANULARITY_ARMS) — reward is procrastination latency
+  // (shownAt -> firstActionAt), so shorter latency must score higher, longer must score lower, and it must
+  // stay bounded even for pathological inputs (a task nobody ever acted on, or acted on instantly).
+  check("computeLatencyReward(0) — acted on instantly — is the max", computeLatencyReward(0) === 1);
+  check("computeLatencyReward falls as latency grows", computeLatencyReward(3600) > computeLatencyReward(3600 * 5));
+  check("computeLatencyReward is clamped to [0, 1] even for extreme latency", computeLatencyReward(1e9) === 0 && computeLatencyReward(-100) <= 1);
+
+  let granState = {};
+  for (let i = 0; i < 60; i++) granState = updatePosterior(granState, key, "granular", computeLatencyReward(0));
+  for (let i = 0; i < 60; i++) granState = updatePosterior(granState, key, "standard", computeLatencyReward(3600 * 24));
+  let picksGranular = 0;
+  const rng3 = seeded(17);
+  for (let i = 0; i < 50; i++) { if (chooseArm(GRANULARITY_ARMS, granState, key, rng3).arm.id === "granular") picksGranular++; }
+  check("granularity bandit also converges on the reinforced arm", picksGranular >= 40);
+
+  // Fourth bandit target: desk ambience (AUDIO_ARMS) — reuses computeReward (session completion + idle
+  // ratio) exactly like Pomodoro does, just a different arm menu/decision key.
+  let audioState = {};
+  for (let i = 0; i < 60; i++) audioState = updatePosterior(audioState, key, "brown", computeReward({ completedPlanned: true, idleRatio: 0 }));
+  for (let i = 0; i < 60; i++) audioState = updatePosterior(audioState, key, "silence", computeReward({ completedPlanned: false, idleRatio: 1 }));
+  let picksBrown = 0;
+  const rng4 = seeded(23);
+  for (let i = 0; i < 50; i++) { if (chooseArm(AUDIO_ARMS, audioState, key, rng4).arm.id === "brown") picksBrown++; }
+  check("audio bandit also converges on the reinforced arm", picksBrown >= 40);
+  check("a fresh audio context is a genuine cold start", chooseArm(AUDIO_ARMS, {}, key, seeded(11)).coldStart === true);
+}
+
+section("bumpActivityHour / learnedProductiveHour — the 'when am I actually working' signal");
+{
+  const p = { timezone: "UTC" };
+  check("no history yet → null (cold start, never a confident guess)", learnedProductiveHour(p) === null);
+  for (let i = 0; i < 25; i++) bumpActivityHour(p, new Date("2026-07-20T09:00:00Z")); // 9am UTC, 25 times
+  for (let i = 0; i < 3; i++) bumpActivityHour(p, new Date("2026-07-20T22:00:00Z")); // 10pm, only 3 times
+  check("learns the hour with the most engagement", learnedProductiveHour(p) === 9);
+  check("bumpActivityHour is additive, not overwriting", p.activityHours[9] === 25 && p.activityHours[22] === 3);
+  const sparse = { timezone: "UTC" };
+  bumpActivityHour(sparse, new Date("2026-07-20T09:00:00Z"));
+  check("below minTotal (default 20) stays null even with a clear single bump", learnedProductiveHour(sparse) === null);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

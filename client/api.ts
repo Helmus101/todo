@@ -130,8 +130,15 @@ export const api = {
   // caller's side too: a failure here should never block starting or ending a study session.
   pomodoroSuggestion: (): Promise<{ enabled: boolean; workMinutes: number; breakMinutes: number; coldStart: boolean }> =>
     req("/api/study/pomodoro-suggestion").then(j),
-  submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number): Promise<{ ok: boolean }> =>
-    post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta }),
+  // Fourth bandit target: desk ambience — see AUDIO_ARMS in server/bandit.ts.
+  audioSuggestion: (): Promise<{ audioType: "silence" | "brown" | "pink" | "white"; coldStart: boolean }> =>
+    req("/api/study/audio-suggestion").then(j),
+  submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number, audioArmId?: string): Promise<{ ok: boolean }> =>
+    post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta, audioArmId }),
+  // Flexible, open-ended metric logging (server/store.ts's recordMetric) — `name` is any short label the
+  // caller invents; nothing here needs a new endpoint or schema change to add a new signal later.
+  recordMetric: (name: string, value: number, bucket?: string, context?: string): Promise<{ ok: boolean }> =>
+    post("/api/metrics", { name, value, bucket, context }).catch(() => ({ ok: false })),
   addExam: (subject: string, deadline: string): Promise<Profile> => post("/api/profile/exam", { subject, deadline }).then(normalizeProfile),
   deleteExam: (id: string): Promise<Profile> => req(`/api/profile/exam/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),

@@ -59,6 +59,12 @@ export interface Profile {
   // in tasks.ts) rather than every daily sweep — real AI spend, not worth re-running that often for a source
   // that changes slowly compared to email/calendar.
   lastSupplementarySweepAt?: string;
+  // 24-length count of genuine engagement (task actions, chat, flashcard review, journal save, a study
+  // session) by LOCAL hour-of-day — see bumpActivityHour/learnedProductiveHour below. This is the "when am I
+  // actually working" signal the personalization ask wanted: not a fixed profile timezone bucket, a real
+  // learned histogram from this student's own activity, used to autonomously time when Otto surfaces work
+  // (see sweepDue in server/jobs.ts) instead of a one-size-fits-all fixed hour for every account.
+  activityHours?: number[];
   // Daily cap on AUTOMATIC task execution (sweep's own auto-run-top-3 AND the kick loop's catch-up, see
   // server/jobs.ts's autoRunBudgetLeft/recordAutoRuns) — a real per-day ceiling on passive AI spend that
   // happens with zero user interaction, distinct from the monthly $ budget (which is too coarse to catch
@@ -179,6 +185,9 @@ export function normalizeProfile(p: any): Profile {
     lastSweepAt: typeof p?.lastSweepAt === "string" ? p.lastSweepAt : undefined,
     lastForcedAt: typeof p?.lastForcedAt === "string" ? p.lastForcedAt : undefined,
     lastSupplementarySweepAt: typeof p?.lastSupplementarySweepAt === "string" ? p.lastSupplementarySweepAt : undefined,
+    activityHours: Array.isArray(p?.activityHours) && p.activityHours.length === 24
+      ? p.activityHours.map((n: unknown) => Math.max(0, Number(n) || 0))
+      : undefined,
     autoRunDay: typeof p?.autoRunDay === "string" ? p.autoRunDay : undefined,
     autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
@@ -264,6 +273,39 @@ export function isValidTz(tz: string): boolean {
 /** The user's timezone for all "local day" math — their captured zone, else UTC. */
 export function tzOf(profile?: Profile | null): string {
   return profile?.timezone || "UTC";
+}
+
+/** The LOCAL hour (0-23) `now` falls in, in the given timezone — no library, matches the Intl-based local-
+ *  day math elsewhere in this file (localDay in server/jobs.ts uses the same approach). */
+function localHourOf(tz: string, now: Date): number {
+  try { return Number(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false }).format(now)) % 24; }
+  catch { return now.getUTCHours(); }
+}
+
+/** Record one genuine engagement (a task action, a chat message, a flashcard review, a journal save, a
+ *  study session) against the student's own local hour-of-day. Mutates in place, same posture as addUsage —
+ *  called from wherever real engagement already happens, never a new tracked event of its own. Pure/no I/O
+ *  by design (like everything else in this file); persistence is just "this profile gets saved" like any
+ *  other profile field. */
+export function bumpActivityHour(profile: Profile, now: Date = new Date()): void {
+  const hours = profile.activityHours?.length === 24 ? [...profile.activityHours] : new Array(24).fill(0);
+  const h = localHourOf(tzOf(profile), now);
+  hours[h] = (hours[h] || 0) + 1;
+  profile.activityHours = hours;
+}
+
+/** This student's own learned "most active" local hour, or null when there isn't enough history to trust
+ *  yet (cold start must fall back to a fixed default, never a confident guess off a handful of data points).
+ *  `minTotal` is deliberately small (20) — engagement events are frequent enough (every task click, every
+ *  chat turn) that a real pattern shows up well before a month of use. */
+export function learnedProductiveHour(profile: Profile | undefined, minTotal = 20): number | null {
+  const hours = profile?.activityHours;
+  if (!hours || hours.length !== 24) return null;
+  const total = hours.reduce((s, n) => s + (n || 0), 0);
+  if (total < minTotal) return null;
+  let best = 0;
+  for (let h = 1; h < 24; h++) if ((hours[h] || 0) > (hours[best] || 0)) best = h;
+  return best;
 }
 
 /** DeepSeek's peak-pricing windows (UTC): 01:00-04:00 and 06:00-10:00 — every billing item costs 2x during

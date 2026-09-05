@@ -306,6 +306,19 @@ export async function recordSessionOutcome(o: SessionOutcome): Promise<void> {
   if (memOutcomes.length > 1000) memOutcomes.splice(0, memOutcomes.length - 1000);
 }
 
+/** General-purpose metric point, reusing the SAME table as bandit outcomes above (it's already the right
+ *  shape: a labeled decision/metric name, a bucket, freeform context, and a number) rather than adding a
+ *  new table per new signal — deliberately kept flexible so a new metric is "call this with a name", not a
+ *  schema change. `name` is the metric ("task_lateness_hours", "flashcard_struggle", "study_exit_early", ...
+ *  — an open string, not a fixed enum, so new call sites can invent one without touching this file), `bucket`
+ *  is a coarse label for that metric (e.g. the task's source, or "n/a"), `value` is whatever number the
+ *  metric represents (hours late, seconds elapsed, correct-rate — the caller documents its own unit),
+ *  `context` is a short freeform string for anything else worth keeping (a card's front, a task id).
+ *  Best-effort, same posture as recordSessionOutcome — a metrics hiccup must never affect the real feature. */
+export async function recordMetric(email: string, name: string, value: number, bucket = "n/a", context = ""): Promise<void> {
+  return recordSessionOutcome({ userEmail: email, decisionKey: `metric:${name}`, arm: bucket, context, reward: value, at: new Date().toISOString() });
+}
+
 /** Every account email with saved state — the cron sweeper iterates these to work while users are offline. */
 export async function listAccountEmails(limit = 200): Promise<string[]> {
   if (!client) return [];

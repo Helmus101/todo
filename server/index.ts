@@ -10,11 +10,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome } from "./store.ts";
-import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS } from "./bandit.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "./store.ts";
+import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS } from "./bandit.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -190,8 +190,17 @@ async function findTaskOrReload(req: express.Request, id: string): Promise<WebTa
 // procrastination-latency signal the plan called for, and this is the only place both timestamps are known
 // at once. Best-effort — a bandit hiccup must never block marking a step/task done.
 function stampFirstAction(task: WebTask, email?: string, profile?: Profile): void {
+  // "When am I actually working" signal (shared/types.ts's activityHours/learnedProductiveHour) — bumped on
+  // every genuine action this function is called for (confirm/step-run/step-done), not gated by the
+  // write-once firstActionAt check below, since a rich hourly histogram needs every engagement, not just
+  // the first one per task.
+  if (profile) bumpActivityHour(profile);
   if (task.firstActionAt) return;
   task.firstActionAt = new Date().toISOString();
+  if (email && task.shownAt) {
+    const latencySeconds = (new Date(task.firstActionAt).getTime() - new Date(task.shownAt).getTime()) / 1000;
+    void recordMetric(email, "task_time_to_first_action_seconds", latencySeconds, task.source || "n/a");
+  }
   if (email && task.shownAt && task.granularityArmId) {
     const latencySeconds = (new Date(task.firstActionAt).getTime() - new Date(task.shownAt).getTime()) / 1000;
     const armId = task.granularityArmId;
@@ -419,6 +428,7 @@ app.get("/integrations/:app/connect", requireAuth, async (req, res) => {
     const { redirectUrl, connectionId } = await integrations.initiateConnection(app2, req.session.user!, callbackUrl);
     (req.session.integrations ||= {})[app2] = connectionId;
     integrations.invalidateTools(req.session.user!);
+    void recordMetric(req.session.user!, "integration_connected", 1, app2);
     req.session.save(() => res.redirect(redirectUrl));
   } catch (e: any) { res.status(500).send("Couldn't start the connection: " + (e?.message || e)); }
 });
@@ -439,6 +449,7 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
   try {
     const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
     if (result.ok) pronoteSvc.invalidatePronoteStatus(req.session.user!); // else /api/status's cache keeps reporting "not connected" for up to 60s
+    if (result.ok) void recordMetric(req.session.user!, "pronote_sync", 1);
     // Pull grades right away on a fresh connect — otherwise a student wouldn't see any until the next daily
     // sweep or a manual "Sync from Pronote" click, and "I just connected Pronote" is exactly the moment
     // grades should already be there. Best-effort: never fails the connect itself.
@@ -505,6 +516,7 @@ app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
     const result = integrations.integrationsReady() ? await integrations.disconnect(app2, req.session.user!) : { ok: true };
     if (req.session.integrations) delete req.session.integrations[app2];
     integrations.invalidateTools(req.session.user!);
+    void recordMetric(req.session.user!, "integration_disconnected", 1, app2);
     await saveSession(req);
     res.json(result);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
@@ -591,6 +603,7 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
     p.paused = req.body?.paused === true;
     p.pausedAt = new Date().toISOString();
     void recordEvent(req.session.user!, "settings_changed", { message: p.paused ? "AI paused" : "AI resumed" });
+    void recordMetric(req.session.user!, "ai_paused_toggled", p.paused ? 1 : 0);
     await commit(req);
     res.json(p);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
@@ -695,6 +708,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     req.session.tasks = tasks.addManual(req.session.tasks || [], title, refined, !ready, explicitWhen, clientId);
     const added = req.session.tasks[0];
     if (ready) added.status = "queued";
+    if (req.session.user) { void recordMetric(req.session.user, "task_manual_added", 1); void recordMetric(req.session.user, "task_created", 1, "manual"); }
     // Persist the task to the cloud BEFORE enqueuing its execution job. The job runner reads task state from
     // the cloud (jobs.ts loadUser); enqueuing first opened a race where a concurrent drainer (another tab's
     // kick, or a cron tick) could claim the job before the commit landed and get "task not found" — which
@@ -800,12 +814,20 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       { stepIndex, materials, extras },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
+    bumpActivityHour(profile);
+    void recordMetric(req.session.user!, "chat_message_sent", 1);
+    void recordMetric(req.session.user!, "chat_message_length_chars", message.length);
     // A genuine failure (DeepSeek error / empty completion) used to get silently saved into the thread as
     // the generic "I'm here — what part of this is giving you trouble?" line — indistinguishable from Otto
     // actually being unhelpful. Surface it as a real error instead: nothing gets written to the chat
     // history (the student's own message stays unanswered, not answered-with-a-lie), and the client shows
     // an actual "couldn't reply" state with a retry, not an in-character bubble.
-    if (out.error) { res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+    if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+    if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
+    for (const n of out.notes) void recordMetric(req.session.user!, "chat_artifact_created", 1, "note");
+    for (const f of out.flashcards) void recordMetric(req.session.user!, "chat_artifact_created", 1, "deck");
+    for (const q of out.quizzes) void recordMetric(req.session.user!, "chat_artifact_created", 1, "quiz");
+    if (stepIndex != null) void recordMetric(req.session.user!, "chat_help_requested_on_step", 1);
     const now = new Date().toISOString();
     // Accumulate this turn's artifacts onto the task exactly like a run does (same ARTIFACT_CAP), and
     // reference them from the assistant's own message so the thread can render an inline chip — the
@@ -866,7 +888,7 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(asy
   await commit(req);
   // Same fix as the main task chat route above — a real failure must surface as an error, not as the
   // generic "I'm here" line rendered like a normal hint.
-  if (out.error) { res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+  if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
   res.json({ reply: out.reply });
 }));
 
@@ -931,6 +953,7 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req
   if (!note) { res.status(400).json({ error: "note required" }); return; }
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to revise tasks." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (req.session.user) void recordMetric(req.session.user, "task_revision_requested", 1);
   await runViaJob(req, res, "revise", { note });
 });
 
@@ -946,6 +969,17 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
     task.updatedAt = new Date().toISOString();
     await commit(req);
     void recordEvent(req.session.user!, "confirmed", { taskId: id, message: "You marked it done" });
+    // Lateness relative to deadline — one of the metrics the personalization ask named directly. sourceDue
+    // (Pronote's own ISO date, when present) is more precise than `when`'s free-text estimate; deadlineEpoch
+    // already exists for exactly this "resolve a deadline to a comparable time" job (used for task sorting).
+    // Skipped for tasks with no deadline at all rather than recording a meaningless 0.
+    const deadlineMs = task.sourceDue ? Date.parse(task.sourceDue) : deadlineEpoch(task.when);
+    if (Number.isFinite(deadlineMs) && deadlineMs > 0) {
+      const latenessHours = (Date.now() - deadlineMs) / 3_600_000;
+      void recordMetric(req.session.user!, "task_lateness_hours", latenessHours, task.source || "n/a");
+    }
+    void recordMetric(req.session.user!, "task_completed", 1, task.source || "n/a");
+    if (task.shownAt) void recordMetric(req.session.user!, "task_time_to_completion_seconds", (Date.now() - Date.parse(task.shownAt)) / 1000, task.source || "n/a");
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't confirm that task — try again." }); }
 });
@@ -968,6 +1002,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
     task.updatedAt = new Date().toISOString();
     await commit(req);
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
+    void recordMetric(req.session.user!, "task_dismissed", 1, task.source || "n/a");
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't dismiss that task — try again." }); }
 });
@@ -1011,6 +1046,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
     step.doneAt = done ? new Date().toISOString() : undefined;
     if (result !== undefined) step.result = result;
     task.updatedAt = new Date().toISOString();
+    if (done && req.session.user) void recordMetric(req.session.user, "task_step_completed", 1, task.source || "n/a");
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't update the step — try again." }); }
@@ -1032,7 +1068,15 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   card.review = { seen: (prev?.seen || 0) + 1, correct: (prev?.correct || 0) + (correct ? 1 : 0), lastAt: new Date().toISOString(), dueAt, box };
   deck!.lastReviewedAt = new Date().toISOString();
   task.updatedAt = new Date().toISOString();
+  if (req.session.profile) bumpActivityHour(req.session.profile);
+  void recordMetric(req.session.user!, "flashcard_review", correct ? 1 : 0, task.source || "n/a");
   await commit(req);
+  // "How often you go back and redo flashcards" signal — a card seen several times with a low correct-rate
+  // is exactly the "you might need to study this material more" case from the personalization ask. 3+ seen
+  // avoids flagging normal early misses; the correct-rate itself is the metric value (bucketed by the
+  // card's own front so it's identifiable later without storing the whole card text as structured data).
+  const seen = card.review.seen, ok = card.review.correct;
+  if (seen >= 3) void recordMetric(req.session.user!, "flashcard_struggle", ok / seen, task.source || "n/a", card.front.slice(0, 120));
   res.json(req.session.tasks || []);
 }));
 // Record one quiz attempt (a full pass through the quiz, not per-question) — mirrors the flashcard review
@@ -1051,6 +1095,7 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   if (!task || !quiz) { res.status(404).json({ error: "Quiz not found — it may have already changed elsewhere." }); return; }
   quiz.attempts = [...(quiz.attempts || []), { at: new Date().toISOString(), score, total, ...(wrong?.length ? { wrong } : {}) }].slice(-QUIZ_ATTEMPT_CAP);
   task.updatedAt = new Date().toISOString();
+  void recordMetric(req.session.user!, "quiz_attempt_score_ratio", score / total, task.source || "n/a");
   await commit(req);
   res.json(req.session.tasks || []);
 }));
@@ -1069,6 +1114,8 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
   const correct = practiceAnswerMatches(answer, problem.answer);
   problem.attempt = { answer, correct, at: new Date().toISOString() };
   task.updatedAt = new Date().toISOString();
+  void recordMetric(req.session.user!, "practice_problem_attempted", 1);
+  void recordMetric(req.session.user!, "practice_problem_correct", correct ? 1 : 0);
   await commit(req);
   res.json(req.session.tasks || []);
 }));
@@ -1161,6 +1208,9 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   // (flashcards still empty after a real try) also always retries, same as before.
   const textChanged = t.logText !== text;
   t.logText = text;
+  if (req.session.profile) bumpActivityHour(req.session.profile);
+  void recordMetric(req.session.user!, "journal_entry_saved", 1);
+  void recordMetric(req.session.user!, "journal_entry_length_chars", text.length);
   if (t.flashcards?.length && !textChanged) {
     t.updatedAt = new Date().toISOString();
     await commit(req);
@@ -1193,6 +1243,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     const result = await generateDailyStudyCards(text, req.session.profile, flashcardArmId);
     if (result) addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
     t.flashcards = result ? [result.deck] : [];
+    if (result) void recordMetric(req.session.user!, "flashcard_deck_created", result.deck.cards.length, "daily");
     // No quiz from the daily call any more (see generateDailyStudyCards's own comment) — leave t.quizzes
     // untouched rather than clobbering it either way.
     t.title = result?.deck.title || date;
@@ -1260,6 +1311,8 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
     t.title = deck.title;
     t.flashcards = [deck];
     t.updatedAt = now;
+    void recordMetric(req.session.user!, "journal_week_summary_generated", deck.cards.length);
+    void recordMetric(req.session.user!, "flashcard_deck_created", deck.cards.length, "weekly");
     // Quiz is a separate, best-effort call now (see generateWeeklyQuiz's own comment) — a slow/failed quiz
     // attempt must never cost the deck the student is actually waiting on, which is why this runs AFTER the
     // deck is already saved rather than blocking it.
@@ -1267,6 +1320,7 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
       const qr = await generateWeeklyQuiz(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), req.session.profile);
       addUsage(req.session.profile ||= emptyProfile(), qr.tokens, "studylog");
       t.quizzes = qr.quiz ? [qr.quiz] : [];
+      if (qr.quiz) void recordMetric(req.session.user!, "quiz_created", qr.quiz.questions.length, "weekly");
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req);
     res.json(req.session.tasks || []);
@@ -1329,6 +1383,8 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
     t.title = deck.title;
     t.flashcards = [deck];
     t.updatedAt = now;
+    void recordMetric(req.session.user!, "journal_month_summary_generated", deck.cards.length);
+    void recordMetric(req.session.user!, "flashcard_deck_created", deck.cards.length, "monthly");
     // Quiz is a separate, best-effort call now — see the week-summary route's identical comment above.
     try {
       const qr = await generateMonthlyQuiz(
@@ -1337,6 +1393,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
       );
       addUsage(req.session.profile ||= emptyProfile(), qr.tokens, "studylog");
       t.quizzes = qr.quiz ? [qr.quiz] : [];
+      if (qr.quiz) void recordMetric(req.session.user!, "quiz_created", qr.quiz.questions.length, "monthly");
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req);
     res.json(req.session.tasks || []);
@@ -1391,6 +1448,18 @@ app.get("/api/study/pomodoro-suggestion", requireAuth, ah(async (req, res) => {
     res.json({ enabled: false, workMinutes: 25, breakMinutes: 5, coldStart: true });
   }
 }));
+// Fourth bandit target: desk ambience (see AUDIO_ARMS in bandit.ts) — "if trends emerge in study mode,
+// pre-build that environment" from the personalization ask. Same shape as pomodoro-suggestion above.
+app.get("/api/study/audio-suggestion", requireAuth, ah(async (req, res) => {
+  try {
+    const key = banditContextKey(new Date(), req.session.profile);
+    const state = await loadBanditState(req.session.user!, "audio");
+    const { arm, coldStart } = chooseArm(AUDIO_ARMS, state, key);
+    res.json({ audioType: arm.id, coldStart });
+  } catch {
+    res.json({ audioType: "silence", coldStart: true });
+  }
+}));
 app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
   try {
     const armId = String(req.body?.armId || "");
@@ -1405,8 +1474,32 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
     const state = await loadBanditState(email, "pomodoro");
     await saveBanditState(email, "pomodoro", updatePosterior(state, key, armId, reward));
     void recordSessionOutcome({ userEmail: email, decisionKey: "pomodoro", arm: armId, context: key, reward, at: new Date().toISOString() });
+    if (req.session.profile) bumpActivityHour(req.session.profile);
+    // Audio arm is optional (a custom upload or Spotify link has no arm — see AUDIO_ARMS's own comment) —
+    // scored with the SAME reward as Pomodoro when present, since it's the same underlying session outcome.
+    const audioArmId = req.body?.audioArmId ? String(req.body.audioArmId) : undefined;
+    if (audioArmId && AUDIO_ARMS.some((a) => a.id === audioArmId)) {
+      const audioState = await loadBanditState(email, "audio");
+      await saveBanditState(email, "audio", updatePosterior(audioState, key, audioArmId, reward));
+      void recordSessionOutcome({ userEmail: email, decisionKey: "audio", arm: audioArmId, context: key, reward, at: new Date().toISOString() });
+    }
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't record that — it won't affect your session." }); }
+}));
+
+// Generic, flexible metrics ingestion — deliberately an open `name` string (not a fixed enum route per
+// signal) so a new data point (task lateness, flashcard struggle, study exit-early, journal consistency,
+// whatever comes up next) is "call this with a name" from wherever it happens, never a new endpoint. Nothing
+// reads these back automatically yet beyond what's wired below — this is the flexible collection point the
+// personalization ask for "capture every relevant metric" needs, ahead of specific uses being built for it.
+app.post("/api/metrics", requireAuth, rateLimit(60, 60_000), ah(async (req, res) => {
+  const name = String(req.body?.name || "").slice(0, 60);
+  const value = Number(req.body?.value);
+  if (!name || !Number.isFinite(value)) { res.status(400).json({ error: "name and numeric value required." }); return; }
+  const bucket = req.body?.bucket ? String(req.body.bucket).slice(0, 60) : "n/a";
+  const context = req.body?.context ? String(req.body.context).slice(0, 200) : "";
+  void recordMetric(req.session.user!, name, value, bucket, context);
+  res.json({ ok: true });
 }));
 
 // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.

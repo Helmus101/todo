@@ -10,7 +10,7 @@ import type {
   SessionStatus,
 } from "./StudyTypes.ts";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
-import { StudySetup, type PomodoroChoice } from "./StudySetup.tsx";
+import { StudySetup, type PomodoroChoice, type AudioChoice } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
 import { ArtifactCanvas } from "./ArtifactCanvas.tsx";
 import { BottomBar } from "./BottomBar.tsx";
@@ -495,6 +495,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     await saveFile(id, file);
     if (oldId) void deleteFile(oldId).catch(() => {});
     updateEnv({ backgroundImageFileId: id, backgroundImageName: file.name });
+    void api.recordMetric("study_background_image_set", 1);
   }, [env?.backgroundImageFileId, updateEnv]);
 
   const clearBackgroundImage = useCallback(() => {
@@ -512,7 +513,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   useEffect(() => () => { noiseRef.current?.stop(); stopCustomAudio(); }, [stopCustomAudio]);
 
   // ── Start session (from setup screen) ────────────────────────────────────
-  const startSession = useCallback((materials: StudyMaterial[], pomodoro: PomodoroChoice) => {
+  const startSession = useCallback((materials: StudyMaterial[], pomodoro: PomodoroChoice, audio: AudioChoice) => {
     const envId = crypto.randomUUID();
     const template = detectTemplate(task);
     const rawArtifacts = buildInitialArtifacts(template, envId, task.id, materials);
@@ -532,9 +533,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       artifacts,
       notes: "",
       scratchpad: "",
-      audioType: "silence",
+      audioType: audio.audioType,
       audioVolume: 50,
-      audioPlaying: false,
+      audioPlaying: audio.audioType !== "silence",
+      audioArmId: audio.armId,
       currentSubtaskIndex: doneSteps,
       timerElapsed: 0,
       sessionStatus: "active",
@@ -565,6 +567,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       submittedWork: [],
     });
     persistEnv(newEnv);
+    void api.recordMetric("study_session_started", 1, template);
   }, [task, doneSteps, persistEnv, enterFullscreen]);
 
   // ── Resume saved session ──────────────────────────────────────────────────
@@ -575,6 +578,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     setPhase("session"); // was missing — clicking "Resume" flipped status but left the setup screen on-screen
     updateEnv({ sessionStatus: "active" });
     enterFullscreen(); // called synchronously from the Resume button's click
+    void api.recordMetric("study_session_resumed", 1);
   }, [env, updateEnv, enterFullscreen]);
 
   // ── Break ─────────────────────────────────────────────────────────────────
@@ -615,11 +619,22 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       // constant, not something to over-engineer before real outcome data exists to tune it against) —
       // at least one full Pomodoro cycle when enabled, else a plain 10-minute floor as "not an immediate
       // bail". Skipped entirely for a resumed/older environment with no recorded arm.
+      const idleRatioAtEnd = elapsedSeconds > 0 ? Math.min(1, idleSecondsRef.current / elapsedSeconds) : 0;
       if (env.pomodoroArmId) {
         const completedPlanned = env.pomodoroEnabled ? (env.pomodoroCycles || 0) >= 1 : elapsedSeconds >= 600;
-        const idleRatio = elapsedSeconds > 0 ? Math.min(1, idleSecondsRef.current / elapsedSeconds) : 0;
-        void api.submitSessionOutcome(env.pomodoroArmId, completedPlanned, idleRatio).catch(() => {});
+        void api.submitSessionOutcome(env.pomodoroArmId, completedPlanned, idleRatioAtEnd, undefined, env.audioArmId).catch(() => {});
       }
+      void api.recordMetric("study_idle_ratio", idleRatioAtEnd, env.template);
+      // How often a session ends WITHOUT ever completing the planned length — a coarse distraction/focus
+      // proxy (see the personalization ask's "how often you exit study mode, to measure focus and
+      // concentration") independent of which Pomodoro arm was running, so it's collected even for a
+      // resumed/older environment with no recorded arm at all.
+      void api.recordMetric("study_exit_early", (env.pomodoroEnabled ? (env.pomodoroCycles || 0) >= 1 : elapsedSeconds >= 600) ? 0 : 1, task.source);
+      void api.recordMetric("study_session_duration_seconds", elapsedSeconds, env.template);
+      void api.recordMetric("study_session_break_seconds", breakSeconds, env.template);
+      if (env.pomodoroCycles) void api.recordMetric("study_pomodoro_cycles_completed", env.pomodoroCycles, env.pomodoroArmId || "n/a");
+      if (review) void api.recordMetric("study_review_submitted", 1);
+      void api.recordMetric("study_desk_artifact_count", env.artifacts.length, env.template);
     }
     onExit();
   }, [env, elapsedSeconds, breakSeconds, sessionLog, updateEnv, onExit, exitFullscreen, stopCustomAudio]);
@@ -694,6 +709,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     const updated: StudyEnvironment = { ...env, artifacts: arranged, lastSavedAt: new Date().toISOString() };
     setEnv(updated);
     persistEnv(updated);
+    void api.recordMetric("study_artifact_added", 1, artifact.type);
   }, [env, persistEnv]);
 
   // A tutor turn can create a note/deck/quiz and reference it as a chip in the chat thread (same as
@@ -955,6 +971,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
               // here too (rather than trusting the caller) means this stays safe even if another caller is
               // ever added later.
               if (!/^https:\/\/docs\.google\.com\/(document|spreadsheets|presentation)\//i.test(url)) return;
+              void api.recordMetric("study_gdoc_opened", 1);
               const label = (() => { try { return new URL(url).hostname; } catch { return url; } })();
               const newMaterial: StudyMaterial = {
                 id: crypto.randomUUID(),

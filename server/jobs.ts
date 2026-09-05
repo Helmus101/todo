@@ -8,7 +8,7 @@
  * serverless instance can execute a task end to end. The DB job row is the lock and the retry ledger.
  */
 import type { WebTask, Profile, TaskStatus } from "../shared/types.ts";
-import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, overInteractiveBudget, addUsage } from "../shared/types.ts";
+import { emptyProfile, canonStatus, isHandled, isInFlight, tzOf, overMonthlyBudget, overInteractiveBudget, addUsage, learnedProductiveHour, bumpActivityHour } from "../shared/types.ts";
 import * as store from "./store.ts";
 import * as tasks from "./tasks.ts";
 import * as integrations from "./integrations.ts";
@@ -57,12 +57,17 @@ export function sweepDueForDay(lastSweepAt: string | undefined, profile: Profile
 const SWEEP_HOUR = 16; // 4pm local time (per-account timezone) — see localHour below (defined further down,
 // shared with the quiet-hours email-timing logic — same Intl-based local-hour math, no need for a second copy)
 
-/** Is the automatic sweep due? Due once per local calendar day, and only from SWEEP_HOUR (16:00) onward —
- *  never before, even if nothing has run yet today. A sweep that already landed today (any hour) is not
- *  due again until tomorrow, regardless of how many times cron/kick fires. */
+/** Is the automatic sweep due? Due once per local calendar day, from either SWEEP_HOUR (16:00, the fixed
+ *  default) OR this student's own LEARNED productive hour, whichever is EARLIER — once real history exists
+ *  (learnedProductiveHour, shared/types.ts), a student who's consistently active at 8am shouldn't have their
+ *  daily task sit unsurfaced until 4pm just because that's the one-size-fits-all default. Never LATER than
+ *  the fixed default — this only lets personalization surface work sooner for an early-active student, never
+ *  delays it past what every account already gets. Cold start (no history yet) is unaffected. */
 export function sweepDue(profile: Profile, now: Date = new Date()): boolean {
   if (!sweepDueForDay(profile.lastSweepAt, profile, now)) return false;
-  return localHour(tzOf(profile), now) >= SWEEP_HOUR;
+  const learned = learnedProductiveHour(profile);
+  const floorHour = learned !== null ? Math.min(SWEEP_HOUR, learned) : SWEEP_HOUR;
+  return localHour(tzOf(profile), now) >= floorHour;
 }
 
 /** Which tasks the cron catch-all should enqueue for execution (bounded, cron's offline auto-run):
@@ -297,6 +302,7 @@ async function processExecuteTask(job: store.Job): Promise<string> {
     primaryAccounts: profile.primaryAccounts,
   });
   t.autoRan = true; // whether this attempt succeeds or not, don't loop on it automatically
+  void store.recordMetric(email, "task_auto_run", 1, t.source || "n/a");
   const idsBefore = new Set(list.map((x) => x.id)); // to detect follow-up tasks the run spins off
   try {
     const academic = await loadAcademicContext(email);
