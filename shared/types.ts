@@ -194,6 +194,13 @@ export function normalizeProfile(p: any): Profile {
       monthKey: typeof p.usage.monthKey === "string" ? p.usage.monthKey : undefined,
       monthIn: Number(p.usage.monthIn) || 0, monthOut: Number(p.usage.monthOut) || 0,
       monthCost: Number(p.usage.monthCost) || 0,
+      // Was missing entirely here — normalizeProfile runs on every load, so the per-category cost breakdown
+      // (see addUsage below) was being silently wiped on every single load even though the total (monthCost)
+      // survived right above it. That's why Settings could show "≈ $0.80 of $3.00" with an empty breakdown
+      // underneath: the categorized data never made it past the very next normalize.
+      monthByCategory: p.usage.monthByCategory && typeof p.usage.monthByCategory === "object"
+        ? Object.fromEntries(Object.entries(p.usage.monthByCategory).filter(([, v]) => typeof v === "number" && Number.isFinite(v)))
+        : undefined,
     } : undefined,
     primaryAccounts: p?.primaryAccounts && typeof p.primaryAccounts === "object"
       ? Object.fromEntries(Object.entries(p.primaryAccounts).filter((e): e is [string, string] => typeof e[1] === "string"))
