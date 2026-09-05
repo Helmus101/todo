@@ -89,6 +89,13 @@ export interface StudyEnvironment {
   pomodoroWorkMinutes?: number;  // default 25
   pomodoroBreakMinutes?: number; // default 5
   pomodoroCycles?: number;       // completed work→break cycles this session, for the "Cycle N" display
+  /** Which bandit arm this session's Pomodoro choice corresponds to (see server/bandit.ts's POMODORO_ARMS —
+   *  "25/5", "none", etc.), so endSession can report the outcome against the right arm. Undefined for an
+   *  older/resumed environment predating this — endSession simply skips reporting in that case. */
+  pomodoroArmId?: string;
+  /** Running total of seconds spent idle (StudyMode.tsx's chromeIdle signal) while the session was
+   *  "active" — the concentration/focus proxy the bandit's reward is partly built from. */
+  idleSecondsTotal?: number;
   currentSubtaskIndex: number;
   timerElapsed: number;   // seconds elapsed
   sessionStatus: "idle" | "active" | "paused" | "break" | "completed" | "ended";

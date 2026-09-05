@@ -13,7 +13,8 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } f
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateMonthlyStudyDeck } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome } from "./store.ts";
+import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, POMODORO_ARMS } from "./bandit.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -181,6 +182,12 @@ async function findTaskOrReload(req: express.Request, id: string): Promise<WebTa
     await saveSession(req);
   } catch { /* fall through to the final lookup — a failed reload just means we still 404 below */ }
   return (req.session.tasks || []).find((t) => t.id === id);
+}
+
+// Write-once "the student actually acted on this" stamp (see shared/types.ts's own doc comment) — called
+// from confirm/step-done/step-run, the three places a student genuinely starts engaging with a task.
+function stampFirstAction(task: WebTask): void {
+  if (!task.firstActionAt) task.firstActionAt = new Date().toISOString();
 }
 
 // Express 4 does NOT auto-catch a rejected promise from an async route handler — a route that forgets
@@ -595,7 +602,14 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       void saveSession(req);
     }
   } catch { /* best-effort — fall back to the session copy */ }
-  if (req.session.tasks) tasks.applyDeadlineUrgency(req.session.tasks);
+  if (req.session.tasks) {
+    tasks.applyDeadlineUrgency(req.session.tasks);
+    // Procrastination-latency signal (see shared/types.ts's own doc comment + server/bandit.ts) — stamped
+    // the first time a live task is actually returned to the client, i.e. genuinely about to be shown.
+    // Write-once: never overwritten once set, so this stays "time of first exposure".
+    const now = new Date().toISOString();
+    for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
+  }
   res.json(req.session.tasks || []);
 });
 
@@ -901,6 +915,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
   try {
     const task = await findTaskOrReload(req, id);
     if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+    stampFirstAction(task);
     task.status = "done";
     task.updatedAt = new Date().toISOString();
     await commit(req);
@@ -947,6 +962,7 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), a
   try {
     const job = await enqueueJob(req.session.user!, "execute_step", id, { index, ...(answer ? { answer } : {}) });
     if (job.type !== "execute_step") { res.status(409).json({ error: "Otto is still working on this task — try again in a moment." }); return; }
+    stampFirstAction(task);
     if (!isInFlight(task.status)) task.status = "queued";
     task.updatedAt = new Date().toISOString();
     await commit(req);
@@ -964,6 +980,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
     const task = await findTaskOrReload(req, id);
     const step = task?.steps?.[index];
     if (!task || !step) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
+    if (done) stampFirstAction(task);
     step.done = done;
     step.doneAt = done ? new Date().toISOString() : undefined;
     if (result !== undefined) step.result = result;
@@ -1288,6 +1305,39 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   req.session.tasks = list;
   await commit(req);
   res.json(req.session.tasks || []);
+}));
+
+// ── Personalization bandit (see server/bandit.ts + the approved plan) ──────────────────────────────────
+// v1 target: Pomodoro work/break length. Best-effort in both directions — a bandit hiccup must never block
+// starting or ending a study session, so both routes degrade to a safe default/no-op on any failure rather
+// than surfacing an error the student would have to do anything about.
+app.get("/api/study/pomodoro-suggestion", requireAuth, ah(async (req, res) => {
+  try {
+    const key = banditContextKey(new Date(), req.session.profile);
+    const state = await loadBanditState(req.session.user!, "pomodoro");
+    const { arm, coldStart } = chooseArm(state, key);
+    res.json({ enabled: arm.enabled, workMinutes: arm.workMinutes, breakMinutes: arm.breakMinutes, coldStart });
+  } catch {
+    // Safe, non-personalized default — must never regress the plain "pick your own Pomodoro" experience.
+    res.json({ enabled: false, workMinutes: 25, breakMinutes: 5, coldStart: true });
+  }
+}));
+app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+  try {
+    const armId = String(req.body?.armId || "");
+    if (!POMODORO_ARMS.some((a) => a.id === armId)) { res.status(400).json({ error: "Unknown arm." }); return; }
+    const completedPlanned = !!req.body?.completedPlanned;
+    const idleRatio = Number(req.body?.idleRatio);
+    const netBoxDelta = req.body?.netBoxDelta !== undefined ? Number(req.body.netBoxDelta) : undefined;
+    if (!Number.isFinite(idleRatio)) { res.status(400).json({ error: "Invalid idleRatio." }); return; }
+    const reward = computeReward({ completedPlanned, idleRatio, netBoxDelta: Number.isFinite(netBoxDelta) ? netBoxDelta : undefined });
+    const key = banditContextKey(new Date(), req.session.profile);
+    const email = req.session.user!;
+    const state = await loadBanditState(email, "pomodoro");
+    await saveBanditState(email, "pomodoro", updatePosterior(state, key, armId, reward));
+    void recordSessionOutcome({ userEmail: email, decisionKey: "pomodoro", arm: armId, context: key, reward, at: new Date().toISOString() });
+    res.json({ ok: true });
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't record that — it won't affect your session." }); }
 }));
 
 // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.

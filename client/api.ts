@@ -126,6 +126,12 @@ export const api = {
     req(`/api/studylog/month?start=${encodeURIComponent(start)}`).then(j),
   studyLogMonthSummary: (monthStart: string): Promise<WebTask[]> => post("/api/studylog/month-summary", { monthStart }),
   studyFreeSession: (): Promise<WebTask[]> => post("/api/study/free", {}),
+  // Personalization bandit (see server/bandit.ts) — v1 target: Pomodoro length. Both best-effort from the
+  // caller's side too: a failure here should never block starting or ending a study session.
+  pomodoroSuggestion: (): Promise<{ enabled: boolean; workMinutes: number; breakMinutes: number; coldStart: boolean }> =>
+    req("/api/study/pomodoro-suggestion").then(j),
+  submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number): Promise<{ ok: boolean }> =>
+    post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta }),
   addExam: (subject: string, deadline: string): Promise<Profile> => post("/api/profile/exam", { subject, deadline }).then(normalizeProfile),
   deleteExam: (id: string): Promise<Profile> => req(`/api/profile/exam/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),

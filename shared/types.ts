@@ -626,6 +626,14 @@ export interface WebTask {
    *  synthetic zeroth step would shift every other step's index and silently corrupt any TaskStep.dependsOn
    *  already pointing at them on an existing task. */
   firstAction?: { text: string; minutes?: number };
+  /** Procrastination-latency signal for the personalization/bandit work (see server/bandit.ts): `shownAt`
+   *  is stamped the first time this task is returned to the client in a "live" (not done/dismissed) state
+   *  (GET /api/tasks), `firstActionAt` the first time the student actually acts on it (confirm, tick a
+   *  step, or run one). Both write-once — never overwritten once set, so this stays "time of the FIRST
+   *  exposure/action", not the most recent one. Collection only for now: nothing reads these yet beyond
+   *  future analysis/a future bandit target on nudging/ordering strategy. */
+  shownAt?: string;
+  firstActionAt?: string;
 }
 
 export interface TaskNote {

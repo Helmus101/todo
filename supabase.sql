@@ -113,6 +113,34 @@ create index if not exists weave_web_ratelimits_updated on weave_web_ratelimits 
 alter table weave_web_ratelimits enable row level security;
 drop policy if exists "weave_web_ratelimits server access" on weave_web_ratelimits;
 
+-- ── Personalization bandit (server/bandit.ts) ─────────────────────────────────────────────────
+-- One current posterior per (account, decision) — small, overwritten in place as it learns. `state` is the
+-- BanditState JSON shape from server/bandit.ts: { [contextKey]: { [armId]: {a,b} } }.
+create table if not exists weave_web_bandit (
+  email text not null,
+  decision_key text not null,               -- e.g. "pomodoro" — the specific decision this posterior is for
+  state jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now(),
+  primary key (email, decision_key)
+);
+alter table weave_web_bandit enable row level security;
+drop policy if exists "weave_web_bandit server access" on weave_web_bandit;
+
+-- Append-only log of every (context, arm, reward) tuple — kept for auditability and so the reward
+-- formula's weights (server/bandit.ts's computeReward) can be revisited later without re-collecting data.
+create table if not exists weave_web_session_outcomes (
+  id bigint generated always as identity primary key,
+  email text not null,
+  decision_key text not null,
+  arm text not null,
+  context text not null,
+  reward real not null,
+  at timestamptz not null default now()
+);
+create index if not exists weave_web_session_outcomes_user on weave_web_session_outcomes (email, decision_key, at desc);
+alter table weave_web_session_outcomes enable row level security;
+drop policy if exists "weave_web_session_outcomes server access" on weave_web_session_outcomes;
+
 -- ── DEV ONLY — local setups running with the ANON key (no service key) ────────────────────────
 -- DO NOT run this in production. These permissive policies let the semi-public anon key read/write the
 -- secret tables (password hashes, OAuth tokens) — acceptable only on a throwaway local project. In
@@ -124,3 +152,5 @@ drop policy if exists "weave_web_ratelimits server access" on weave_web_ratelimi
 --   create policy "weave_web_jobs server access"       on weave_web_jobs       for all using (true) with check (true);
 --   create policy "weave_web_job_events server access" on weave_web_job_events for all using (true) with check (true);
 --   create policy "weave_web_ratelimits server access"  on weave_web_ratelimits for all using (true) with check (true);
+--   create policy "weave_web_bandit server access"  on weave_web_bandit  for all using (true) with check (true);
+--   create policy "weave_web_session_outcomes server access" on weave_web_session_outcomes for all using (true) with check (true);

@@ -285,6 +285,16 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     };
   }, [phase, sessionStatus, openPanel]);
 
+  // Concentration/focus proxy for the personalization bandit (see server/bandit.ts + the approved plan) —
+  // accumulated in a ref rather than persisted to env every tick (this would otherwise fire an IndexedDB
+  // write once a second for no benefit; endSession reads the final total directly).
+  const idleSecondsRef = useRef(0);
+  useEffect(() => {
+    if (!chromeIdle || sessionStatus !== "active") return;
+    const id = window.setInterval(() => { idleSecondsRef.current += 1; }, 1000);
+    return () => clearInterval(id);
+  }, [chromeIdle, sessionStatus]);
+
   const doneSteps = task.steps?.filter(s => s.done).length ?? 0;
   const totalSteps = task.steps?.length ?? 0;
 
@@ -533,6 +543,8 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       pomodoroWorkMinutes: pomodoro.workMinutes,
       pomodoroBreakMinutes: pomodoro.breakMinutes,
       pomodoroCycles: 0,
+      pomodoroArmId: pomodoro.armId,
+      idleSecondsTotal: 0,
     };
     setEnv(newEnv);
     setSessionStatus("active");
@@ -596,6 +608,17 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
         review,
       };
       await saveSession(finalLog);
+      // Report this session's outcome to the personalization bandit (see server/bandit.ts) — best-effort,
+      // fire-and-forget: this must never delay actually leaving the session. "Completed planned length"
+      // is a simple heuristic on purpose (see the approved plan: the reward FORMULA is a revisitable
+      // constant, not something to over-engineer before real outcome data exists to tune it against) —
+      // at least one full Pomodoro cycle when enabled, else a plain 10-minute floor as "not an immediate
+      // bail". Skipped entirely for a resumed/older environment with no recorded arm.
+      if (env.pomodoroArmId) {
+        const completedPlanned = env.pomodoroEnabled ? (env.pomodoroCycles || 0) >= 1 : elapsedSeconds >= 600;
+        const idleRatio = elapsedSeconds > 0 ? Math.min(1, idleSecondsRef.current / elapsedSeconds) : 0;
+        void api.submitSessionOutcome(env.pomodoroArmId, completedPlanned, idleRatio).catch(() => {});
+      }
     }
     onExit();
   }, [env, elapsedSeconds, breakSeconds, sessionLog, updateEnv, onExit, exitFullscreen, stopCustomAudio]);

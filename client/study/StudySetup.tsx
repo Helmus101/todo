@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import type { StudyEnvironment, StudyMaterial } from "./StudyTypes.ts";
 import { extractPdfText } from "./pdfText.ts";
+import { api } from "../api.ts";
 
-export interface PomodoroChoice { enabled: boolean; workMinutes: number; breakMinutes: number }
+export interface PomodoroChoice { enabled: boolean; workMinutes: number; breakMinutes: number; armId: string }
 
 interface StudySetupProps {
   task: WebTask;
@@ -114,6 +115,22 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
   const [pomodoroEnabled, setPomodoroEnabled] = useState(existingEnv?.pomodoroEnabled ?? false);
   const [workMinutes, setWorkMinutes] = useState(existingEnv?.pomodoroWorkMinutes ?? 25);
   const [breakMinutes, setBreakMinutes] = useState(existingEnv?.pomodoroBreakMinutes ?? 5);
+  useEffect(() => {
+    // Only for a genuinely FRESH session — resuming an existing environment means the student already
+    // made (and is relying on) their own choice; the bandit must never override that.
+    if (existingEnv) return;
+    void api.pomodoroSuggestion().then((s) => {
+      setPomodoroEnabled(s.enabled);
+      setWorkMinutes(s.workMinutes);
+      setBreakMinutes(s.breakMinutes);
+    }).catch(() => {}); // best-effort — the picker's own hardcoded defaults (25/5, off) already cover this
+  }, [existingEnv]);
+  // Whatever arm this session ACTUALLY runs under, whether that's the suggestion left untouched or
+  // something the student changed by hand — matches server/bandit.ts's POMODORO_ARMS id scheme when it
+  // lands on one of the fixed options; a genuinely custom value just won't match a known arm server-side
+  // and that outcome report is quietly ignored later (expected, not an error — the bandit only tracks the
+  // fixed menu it actually offers).
+  const armId = pomodoroEnabled ? `${workMinutes}/${breakMinutes}` : "none";
 
   const steps = task.steps || [];
   const currentStep = steps.find(s => !s.done);
@@ -298,7 +315,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
 
         {/* Start button */}
         <div className="sm-setup-footer">
-          <button className="sm-btn sm-btn-primary sm-btn-lg" onClick={() => onStart(materials, { enabled: pomodoroEnabled, workMinutes, breakMinutes })}>
+          <button className="sm-btn sm-btn-primary sm-btn-lg" onClick={() => onStart(materials, { enabled: pomodoroEnabled, workMinutes, breakMinutes, armId })}>
             {existingEnv ? "Start new session" : "Start studying"}
           </button>
           <p className="sm-setup-footer-hint">

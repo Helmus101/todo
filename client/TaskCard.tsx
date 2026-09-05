@@ -191,8 +191,10 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           <span aria-hidden="true">{leaving && leaveKind === "confirm" ? "✓" : ""}</span>
         </button>
       ) : null}
-      {/* Study Mode button - only for active tasks with steps */}
-      {!isDone && (task.steps || []).length > 0 && onEnterStudyMode && (
+      {/* Study Mode button — any active task, not just ones that already have steps: it's a general
+          workspace (materials, notes, chat with Otto) useful even before a plan exists yet, not something
+          that should stay hidden while a task is still being generated/refined. */}
+      {!isDone && onEnterStudyMode && (
         <button type="button" className="card-study" title={L("Mode étude", "Study Mode")} aria-label={L(`Mode étude pour : ${task.title}`, `Study Mode for: ${task.title}`)} disabled={leaving} onClick={(e) => { e.stopPropagation(); onEnterStudyMode(); }}>
           <BookOpen aria-hidden="true" size={16} />
         </button>
@@ -449,7 +451,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           {/* Study Mode entry point — the collapsed row already has one (.card-study); the expanded
               detail view had none at all, so opening a task and wanting to study it meant closing the
               modal and going back to find the row's tiny icon button. */}
-          {!isDone && steps.length > 0 && onEnterStudyMode && (
+          {!isDone && onEnterStudyMode && (
             <button type="button" className="tf-study-btn" onClick={onEnterStudyMode}>
               <BookOpen aria-hidden="true" size={16} /> {L("Mode étude", "Study Mode")}
             </button>

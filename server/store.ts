@@ -5,6 +5,7 @@ import type { WebTask, Profile, StudySession, StudyProfile } from "../shared/typ
 import { emptyProfile, normalizeProfile } from "../shared/types.ts";
 import { encryptSecret, decryptSecret } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
+import type { BanditState } from "./bandit.ts";
 
 /** A persisted Google connection for an account (incl. the refresh token, so it stays connected). */
 export interface StoredGoogle { tokens: Credentials; email?: string; }
@@ -255,6 +256,54 @@ export async function saveState(email: string | undefined, state: AccountState):
   const { error } = await withRetry("save", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
   if (error) { console.warn("[store] save failed:", error.message); reportError("save-state", error, { email }); }
+}
+
+// ── Personalization bandit (see server/bandit.ts for the pure Thompson-Sampling math) ──────────────────
+// Two tables: `weave_web_bandit` holds the CURRENT posterior per (email, decision_key) — small, overwritten
+// in place; `weave_web_session_outcomes` is an append-only log of every (arm, context, reward) tuple, kept
+// for auditability and so the reward formula's weights can be revisited later without re-collecting data.
+// Same posture as the rest of this file: best-effort, in-memory fallback, NEVER throws into the request
+// path — a bandit hiccup must not be able to block starting or ending a study session.
+const BANDIT = "weave_web_bandit";
+const OUTCOMES = "weave_web_session_outcomes";
+const memBandit = new Map<string, BanditState>(); // key: `${email}:${decisionKey}`
+export interface SessionOutcome { userEmail: string; decisionKey: string; arm: string; context: string; reward: number; at: string; }
+const memOutcomes: SessionOutcome[] = [];
+
+export async function loadBanditState(email: string, decisionKey: string): Promise<BanditState> {
+  const memKey = `${email}:${decisionKey}`;
+  if (!client) return memBandit.get(memKey) || {};
+  try {
+    const { data, error } = await client.from(BANDIT).select("state").eq("email", email).eq("decision_key", decisionKey).maybeSingle();
+    if (error) throw error;
+    return (data as any)?.state || {};
+  } catch { return memBandit.get(memKey) || {}; }
+}
+
+export async function saveBanditState(email: string, decisionKey: string, state: BanditState): Promise<void> {
+  const memKey = `${email}:${decisionKey}`;
+  memBandit.set(memKey, state); // set locally regardless — a durable-write failure shouldn't lose it for THIS process's lifetime
+  if (!client) return;
+  try {
+    const { error } = await client.from(BANDIT).upsert(
+      { email, decision_key: decisionKey, state, updated_at: new Date().toISOString() },
+      { onConflict: "email,decision_key" },
+    );
+    if (error) throw error;
+  } catch (e: any) { console.warn("[store] saveBanditState failed (kept in-memory only):", e?.message || e); }
+}
+
+/** Append one (context, arm, reward) tuple — best-effort, in-memory-capped fallback so a missing table
+ *  (before supabase.sql has been run) degrades to "not durable" rather than breaking session end. */
+export async function recordSessionOutcome(o: SessionOutcome): Promise<void> {
+  if (client) {
+    try {
+      const { error } = await client.from(OUTCOMES).insert({ email: o.userEmail, decision_key: o.decisionKey, arm: o.arm, context: o.context, reward: o.reward, at: o.at });
+      if (!error) return;
+    } catch { /* fall through to memory */ }
+  }
+  memOutcomes.push(o);
+  if (memOutcomes.length > 1000) memOutcomes.splice(0, memOutcomes.length - 1000);
 }
 
 /** Every account email with saved state — the cron sweeper iterates these to work while users are offline. */

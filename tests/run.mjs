@@ -8,6 +8,7 @@ import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToIt
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
+import { POMODORO_ARMS, contextKey, chooseArm, computeReward, updatePosterior } from "../server/bandit.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -1132,6 +1133,54 @@ section("looksLikeStem / makePracticeProblem — daily practice-problem generati
   check("valid problem+answer is accepted", "problem" in okProblem);
   check("missing answer is rejected", "error" in makePracticeProblem({ problem: "Solve for x: 2x = 6" }));
   check("missing problem is rejected", "error" in makePracticeProblem({ answer: "3" }));
+}
+
+section("bandit.ts — contextual bandit (Thompson Sampling) for Pomodoro personalization");
+{
+  // Deterministic seeded RNG (mulberry32) so sampling is reproducible in tests, per the plan's own
+  // "seeded for determinism" note in bandit.ts.
+  function seeded(seed) {
+    let t = seed >>> 0;
+    return () => {
+      t = (t + 0x6D2B79F5) >>> 0;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  check("contextKey is stable for the same inputs", contextKey(new Date("2026-01-05T09:00:00")) === contextKey(new Date("2026-01-05T09:30:00")));
+  check("contextKey distinguishes weekday vs weekend", contextKey(new Date("2026-01-05T09:00:00")) !== contextKey(new Date("2026-01-04T09:00:00"))); // Mon vs Sun
+  check("contextKey distinguishes time-of-day buckets", contextKey(new Date("2026-01-05T09:00:00")) !== contextKey(new Date("2026-01-05T20:00:00")));
+  check("contextKey folds in track", contextKey(new Date("2026-01-05T09:00:00"), { track: "ib" }) !== contextKey(new Date("2026-01-05T09:00:00"), { track: "bac" }));
+
+  const key = contextKey(new Date("2026-01-05T09:00:00"));
+  const cold = chooseArm({}, key, seeded(1));
+  check("cold start (no prior data) is flagged as such", cold.coldStart === true);
+  check("cold start still returns a real, known arm", POMODORO_ARMS.some((a) => a.id === cold.arm.id));
+
+  check("reward is 1 for a fully-completed, fully-engaged session", computeReward({ completedPlanned: true, idleRatio: 0 }) === 1);
+  check("reward is 0 for an abandoned, fully-idle session", computeReward({ completedPlanned: false, idleRatio: 1 }) === 0);
+  check("reward is always clamped to [0, 1]", computeReward({ completedPlanned: true, idleRatio: -5 }) <= 1 && computeReward({ completedPlanned: false, idleRatio: 5 }) >= 0);
+  check("a strong positive Leitner delta pulls reward up", computeReward({ completedPlanned: true, idleRatio: 0, netBoxDelta: 3 }) >= computeReward({ completedPlanned: true, idleRatio: 0 }));
+  check("a strong negative Leitner delta pulls reward down", computeReward({ completedPlanned: true, idleRatio: 0, netBoxDelta: -3 }) <= computeReward({ completedPlanned: true, idleRatio: 0 }));
+
+  // Repeatedly rewarding ONE arm at this context should make the bandit converge on serving it — the whole
+  // point of the learning loop the user asked for ("keeps learning from reward, reinforces what helps").
+  let state = {};
+  for (let i = 0; i < 60; i++) state = updatePosterior(state, key, "90/20", 1);
+  for (let i = 0; i < 60; i++) state = updatePosterior(state, key, "25/5", 0);
+  const rng = seeded(42);
+  let picks90 = 0;
+  for (let i = 0; i < 50; i++) { if (chooseArm(state, key, rng).arm.id === "90/20") picks90++; }
+  check("after 60 rewarded trials, the reinforced arm is served the clear majority of the time", picks90 >= 40);
+  check("a never-updated context key stays at its own independent cold-start prior", chooseArm(state, "afternoon|weekday|other", seeded(7)).coldStart === true);
+
+  const before = updatePosterior({}, key, "25/5", 1);
+  check("a successful outcome increments alpha, not beta", before[key]["25/5"].a === 2 && before[key]["25/5"].b === 1);
+  const after = updatePosterior(before, key, "25/5", 0);
+  check("a failed outcome increments beta, not alpha", after[key]["25/5"].a === 2 && after[key]["25/5"].b === 2);
+  check("updatePosterior is pure — never mutates the input state", before[key]["25/5"].b === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
