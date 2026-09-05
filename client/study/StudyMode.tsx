@@ -621,14 +621,21 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   }, [env, totalSteps, updateEnv]);
 
   // ── Update artifacts ──────────────────────────────────────────────────────
+  // Re-tile is ONLY triggered by a state change that actually frees or claims space (minimized/maximized/
+  // docked toggling) — NOT by a plain drag or resize, which is the student positioning something
+  // themselves and must never get silently fought/overridden the instant they let go of it. That's also
+  // exactly why the coupled-neighbor resize in ArtifactCanvas.tsx calls onUpdateArtifact directly rather
+  // than going through a re-tile pass — a manual resize is real, addressed intent.
+  const RETILE_TRIGGERS = ["minimized", "maximized", "dockSide"] as const;
   const updateArtifact = useCallback((id: string, patch: Partial<ArtifactState>) => {
     setEnv(prev => {
       if (!prev) return prev;
-      const updated = {
-        ...prev,
-        artifacts: prev.artifacts.map(a => a.id === id ? { ...a, ...patch } : a),
-        lastSavedAt: new Date().toISOString(),
-      };
+      let artifacts = prev.artifacts.map(a => a.id === id ? { ...a, ...patch } : a);
+      if (RETILE_TRIGGERS.some((k) => k in patch)) {
+        const rects = tileWithinBounds(artifacts);
+        artifacts = artifacts.map((a) => { const r = rects.get(a.id); return r ? { ...a, x: r.x, y: r.y, width: r.width, height: r.height } : a; });
+      }
+      const updated = { ...prev, artifacts, lastSavedAt: new Date().toISOString() };
       persistEnv(updated);
       return updated;
     });
@@ -708,7 +715,12 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
       if (!prev) return prev;
-      const updated = { ...prev, artifacts: prev.artifacts.filter(a => a.id !== id), lastSavedAt: new Date().toISOString() };
+      // Closing one tool frees its share of the desk — auto-enlarge the remaining freeform ones to fill
+      // it, the same tiling pass as adding one, just shrinking the tile count by one instead of growing it.
+      const remaining = prev.artifacts.filter(a => a.id !== id);
+      const rects = tileWithinBounds(remaining);
+      const artifacts = remaining.map((a) => { const r = rects.get(a.id); return r ? { ...a, x: r.x, y: r.y, width: r.width, height: r.height } : a; });
+      const updated = { ...prev, artifacts, lastSavedAt: new Date().toISOString() };
       persistEnv(updated);
       return updated;
     });
