@@ -359,6 +359,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
           if (env?.pomodoroEnabled && next >= (env.pomodoroWorkMinutes || 25) * 60) {
             setSessionStatus("break");
             setBreakSeconds(0);
+            pauseMusicForBreak();
             updateEnv({ sessionStatus: "break", pomodoroCycles: (env.pomodoroCycles || 0) + 1 });
             return 0;
           }
@@ -377,6 +378,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
             const next = s + 1;
             if (env?.pomodoroEnabled && next >= (env.pomodoroBreakMinutes || 5) * 60) {
               setSessionStatus("active");
+              resumeMusicAfterBreak();
               updateEnv({ sessionStatus: "active" });
               return 0;
             }
@@ -441,6 +443,28 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     }
     updateEnv({ audioType: type, audioVolume: volume, audioPlaying: playing });
   }, [updateEnv, env?.audioPlaying, env?.audioType, env?.customAudioFileId, stopCustomAudio, playCustomBlob]);
+
+  // Music should stop for a break, then pick back up once you're back to studying — noise/custom audio are
+  // held in refs OUTSIDE the render tree (see their own comments above), so they keep playing straight
+  // through the break screen unless explicitly paused here; Spotify's iframe already stops on its own since
+  // BreakScreen replaces the whole shell it lives in, unmounting it. Deliberately does NOT touch
+  // env.audioPlaying/persistEnv — this is a temporary pause, not the student turning their music off, so the
+  // stored "what should be playing" state must survive the break untouched for resumeMusicAfterBreak to use.
+  const pauseMusicForBreak = useCallback(() => {
+    noiseRef.current?.stop();
+    customAudioRef.current?.pause();
+  }, []);
+  const resumeMusicAfterBreak = useCallback(() => {
+    if (!env?.audioPlaying) return;
+    if (env.audioType === "custom" && env.customAudioFileId) {
+      void getFile(env.customAudioFileId).then((blob) => { if (blob) playCustomBlob(blob, env.audioVolume ?? 50); });
+    } else if (AUDIO_OPTIONS.some((o) => o.id === env.audioType)) {
+      (noiseRef.current ||= new NoisePlayer()).play(env.audioType as NoiseType, env.audioVolume ?? 50);
+    }
+    // Spotify: nothing to resume programmatically — the iframe remounts (StudyMode.tsx renders it again
+    // once sessionStatus leaves "break") showing the same track, paused, same as if the student had left
+    // and come back to any other tab with an embedded Spotify player; a click on it resumes normally.
+  }, [env, playCustomBlob]);
 
   // A fresh upload replaces whatever track was previously stored for this task (one custom track at a
   // time keeps this simple, and avoids silently accumulating orphaned blobs in IndexedDB).
@@ -536,14 +560,16 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     setSessionStatus("break");
     setBreakSeconds(0);
     setPhaseSeconds(0); // manual break — don't let a stale pomodoro phase count trigger another transition right away
+    pauseMusicForBreak();
     updateEnv({ sessionStatus: "break", timerElapsed: elapsedSeconds });
-  }, [elapsedSeconds, updateEnv]);
+  }, [elapsedSeconds, updateEnv, pauseMusicForBreak]);
 
   const endBreak = useCallback(() => {
     setSessionStatus("active");
     setPhaseSeconds(0);
+    resumeMusicAfterBreak();
     updateEnv({ sessionStatus: "active" });
-  }, [updateEnv]);
+  }, [updateEnv, resumeMusicAfterBreak]);
 
   // ── End session ───────────────────────────────────────────────────────────
   const endSession = useCallback(async (review?: { finished?: string; confusing?: string; nextStep?: string }) => {
