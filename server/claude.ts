@@ -1730,7 +1730,7 @@ export async function generateDailyPracticeProblem(logText: string, profile?: Pr
  *  companion multiple-choice quiz would genuinely help — concepts easily confused with each other, or that
  *  need discrimination between similar options, test better as MCQ than recall flashcards — and includes
  *  one only when the material calls for it, never as a default add-on. */
-export async function generateWeeklyStudyDeck(entries: { date: string; logText: string }[], boxBreakdown: { front: string; box: number }[], profile?: Profile): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
+export async function generateWeeklyStudyDeck(entries: { date: string; logText: string }[], boxBreakdown: { front: string; box: number }[], profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const days = entries.filter((e) => e.logText?.trim());
   if (!days.length) return null;
   try {
@@ -1762,31 +1762,26 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
               `below as never-tested-or-wrong (box 0-1): those concepts should make up a CLEARLY LARGER share of ` +
               `the deck than partially-solid or well-retained ones — re-tested a genuinely different way each ` +
               `time, not copy-pasted — since the whole point of a week-end review is catching what didn't stick ` +
-              `the first time, not re-visiting everything evenly. ${CARD_STYLE_RULE}\n\n` +
-              `ALSO decide if a companion QUIZ is warranted: if this week's material has concepts students ` +
-              `commonly confuse with each other, or that genuinely need discriminating between similar-looking ` +
-              `answers (not just recalling one fact), include a "quiz" object with 4-10 multiple-choice ` +
-              `questions on exactly those concepts (never duplicate what a flashcard already tests the same ` +
-              `way). If nothing this week actually calls for that format, omit "quiz" entirely (or set it null) ` +
-              `— it is NOT a default add-on, only include it when it genuinely helps. ${QUIZ_STYLE_RULE}`) },
+              `the first time, not re-visiting everything evenly. ${CARD_STYLE_RULE}`) },
         { role: "user", content:
           `THIS WEEK'S DAILY ENTRIES:\n${entriesBlock}` +
           (concise ? "" : spacedBlock) +
-          (concise
-            ? `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.`
-            : `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", ` +
-              `"back": "..."}, ...], "quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], ` +
-              `"correct": 0, "why": "..."}, ...]} or null}.`) },
+          `\n\nReturn JSON: {"title": short label for the week's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
     const res = await makeReq(OUT.studylog, false);
-    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
+    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
     let tokens = usageOf(res);
     // FALLBACK: same reasoning as generateDailyStudyCards — an ambitious single JSON response (full week
-    // coverage + heavy weak-focus reweighting + an optional quiz, up to 50 cards) can run long enough to get
-    // cut off before its closing brace, which loses the WHOLE deck, not just the tail. Retry ONCE with a
-    // much smaller, quiz-free ask so "generate week summary" reliably produces something.
+    // coverage + heavy weak-focus reweighting, up to 50 cards) can run long enough to get cut off before its
+    // closing brace, which loses the WHOLE deck, not just the tail. Retry ONCE with a much smaller ask so
+    // "generate week summary" reliably produces something. (The quiz used to be bundled into this same
+    // call — split out into generateWeeklyQuiz below, a separate best-effort call, exactly like
+    // generateDailyPracticeProblem is kept separate from generateDailyStudyCards: bundling it in made the
+    // ONE ask more likely to blow its token budget before finishing the deck, which is what actually
+    // mattered — reproduced live as decks landing at only ~10 cards because two ambitious/bundled attempts
+    // kept failing and every summary was quietly falling all the way to the tiny last-resort tier below.)
     if (!("deck" in result)) {
       console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: first attempt unparseable, retrying with a smaller ask`);
       const res2 = await makeReq(5000, true);
@@ -1802,13 +1797,20 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
         // account. Strip the instruction down to the bare minimum (no style rules, no spaced-repetition
         // weighting, explicitly told to skip deliberation) so there's as little for the model to reason
         // ABOUT before writing JSON — a small, plain deck beats a third silent failure.
+        // Preserve EVERY day here, just with each one trimmed harder (500 chars vs the primary ask's 2000)
+        // — the earlier version sliced the already-joined block to 3000 chars total, which in practice
+        // meant only the FIRST day or two survived at all. That's the direct cause of "only one or two days
+        // covered": the one fallback tier that was actually succeeding was silently dropping the rest of
+        // the week. Cap raised 10 → 20 cards too, since a genuinely 5-day week deserves more than a token deck.
+        const lastResortBlock = days.map((d) => `— ${d.date}: ${d.logText.slice(0, 500)}`).join("\n");
         const res3 = await retryRequest(() => client.chat.completions.create({
-          model, max_tokens: 2500, temperature: 0.2, response_format: { type: "json_object" },
+          model, max_tokens: 3000, temperature: 0.2, response_format: { type: "json_object" },
           messages: [
             { role: "system", content: languageLine(profile) +
-              `Output a small flashcard deck directly — no analysis, no reasoning out loud, just the JSON. At ` +
-              `most 10 cards, short front/back pairs covering the week's main topics.` },
-            { role: "user", content: `${entriesBlock.slice(0, 3000)}\n\nReturn ONLY: {"title": "...", "cards": [{"front": "...", "back": "..."}, ...]}.` },
+              `Output a flashcard deck directly — no analysis, no reasoning out loud, just the JSON. Cover ` +
+              `EVERY day listed below, at least one card each — do not skip any day. Up to 20 cards total, ` +
+              `short front/back pairs.` },
+            { role: "user", content: `${lastResortBlock}\n\nReturn ONLY: {"title": "...", "cards": [{"front": "...", "back": "..."}, ...]}.` },
           ],
         }));
         out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res3.choices[0]?.message?.content || "");
@@ -1821,16 +1823,46 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
         }
       }
     }
-    let quiz: TaskQuiz | undefined;
-    if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
-      const qr = makeQuiz(out.quiz);
-      if ("quiz" in qr) quiz = qr.quiz;
-    }
-    console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: ${days.length} day(s), ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
-    return { deck: result.deck, quiz, tokens };
+    console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: ${days.length} day(s), ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
+    // Quiz is now a separate, best-effort call (see generateWeeklyQuiz) — never bundled into the deck ask
+    // above, so a quiz failure/timeout can never cost the deck the student is actually waiting on.
+    return { deck: result.deck, tokens };
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] generateWeeklyStudyDeck: EXCEPTION — ${e?.message || e}`);
     return null;
+  }
+}
+
+/** Companion quiz for the week-end deck — split out from generateWeeklyStudyDeck (see that function's own
+ *  comment) so an ambitious/slow quiz ask can never cost the deck itself. Best-effort: returns undefined on
+ *  any failure or when the week's material doesn't genuinely call for MCQ-style testing, never throws. */
+export async function generateWeeklyQuiz(entries: { date: string; logText: string }[], profile?: Profile): Promise<{ quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } }> {
+  const days = entries.filter((e) => e.logText?.trim());
+  const empty = { tokens: { in: 0, out: 0, cachedIn: 0 } };
+  if (!days.length) return empty;
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const entriesBlock = days.map((d) => `— ${d.date}:\n"""\n${d.logText.slice(0, 1500)}\n"""`).join("\n\n");
+    const res = await retryRequest(() => client.chat.completions.create({
+      model, max_tokens: 4000, temperature: 0.3, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: languageLine(profile) +
+          `Decide if a multiple-choice quiz is warranted for this week's material: only when there are ` +
+          `concepts students commonly confuse with each other, or that genuinely need discriminating between ` +
+          `similar-looking answers (not just recalling one fact). If nothing calls for that format, output ` +
+          `{"quiz": null} — it is NOT a default add-on. Otherwise 4-10 questions. ${QUIZ_STYLE_RULE}` },
+        { role: "user", content: `THIS WEEK'S DAILY ENTRIES:\n${entriesBlock}\n\nReturn JSON: {"quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], "correct": 0, "why": "..."}, ...]} | null}.` },
+      ],
+    }));
+    const out = firstJson<{ quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
+    const tokens = usageOf(res);
+    if (!out?.quiz) return { tokens };
+    const qr = makeQuiz(out.quiz);
+    return { quiz: "quiz" in qr ? qr.quiz : undefined, tokens };
+  } catch (e: any) {
+    console.log(`${new Date().toISOString()} [ai] generateWeeklyQuiz: EXCEPTION — ${e?.message || e}`);
+    return empty;
   }
 }
 
@@ -1839,7 +1871,7 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
  *  entry again would just re-spend tokens re-deriving what the weekly pass already figured out). Weighted
  *  by the same real Leitner spaced-repetition signal as weekly (spacedRepetitionBlock), and can likewise
  *  include a companion quiz when the month's material genuinely calls for discrimination-style testing. */
-export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { front: string; back: string }[] }[], boxBreakdown: { front: string; box: number }[], profile?: Profile): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
+export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { front: string; back: string }[] }[], boxBreakdown: { front: string; box: number }[], profile?: Profile): Promise<{ deck: TaskFlashcards; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const nonEmpty = weeks.filter((w) => w.cards.length);
   if (!nonEmpty.length) return null;
   try {
@@ -1865,28 +1897,20 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
               `coverage of the month's distinct concepts, don't shrink down to a "highlights only" selection. A ` +
               `month with many weeks of real material should produce a correspondingly large deck, up to 50 ` +
               `cards (a hard technical ceiling on this reply's token budget, not a product opinion). ` +
-              `${CARD_STYLE_RULE}\n\n` +
-              `ALSO decide if a companion QUIZ is warranted: if this month's material has concepts students ` +
-              `commonly confuse with each other, or that genuinely need discriminating between similar-looking ` +
-              `answers (not just recalling one fact), include a "quiz" object with 4-10 multiple-choice ` +
-              `questions on exactly those concepts (never duplicate what a flashcard already tests the same ` +
-              `way). If nothing this month actually calls for that format, omit "quiz" entirely (or set it ` +
-              `null) — it is NOT a default add-on, only include it when it genuinely helps. ${QUIZ_STYLE_RULE}`) },
+              `${CARD_STYLE_RULE}`) },
         { role: "user", content:
           `THIS MONTH'S WEEKLY DECKS:\n${weeksBlock}` +
           (concise ? "" : spacedBlock) +
-          (concise
-            ? `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.`
-            : `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", ` +
-              `"back": "..."}, ...], "quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], ` +
-              `"correct": 0, "why": "..."}, ...]} or null}.`) },
+          `\n\nReturn JSON: {"title": short label for the month's deck (≤8 words), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
     const res = await makeReq(OUT.studylog, false);
-    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[]; quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
+    let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
     let tokens = usageOf(res);
-    // FALLBACK: same reasoning as generateDailyStudyCards/generateWeeklyStudyDeck.
+    // FALLBACK: same reasoning as generateDailyStudyCards/generateWeeklyStudyDeck. Quiz split out into
+    // generateMonthlyQuiz below — see generateWeeklyStudyDeck's own comment for why bundling it in was
+    // making decks land small.
     if (!("deck" in result)) {
       console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: first attempt unparseable, retrying with a smaller ask`);
       const res2 = await makeReq(5000, true);
@@ -1896,14 +1920,18 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
       tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
       if (!("deck" in result)) {
         console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: second attempt also unparseable — ${("error" in result ? result.error : "unknown")}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
-        // Same last-resort tier as generateWeeklyStudyDeck — see its own comment for why.
+        // Preserve EVERY week here (500 chars/card-pair budget instead of slicing the joined block, which
+        // in practice meant only the first week or two survived) — see generateWeeklyStudyDeck's identical
+        // fix for why. Cap raised 10 → 20 cards.
+        const lastResortBlock = nonEmpty.map((w) => `— ${w.label}: ${w.cards.slice(0, 8).map((c) => c.front).join("; ").slice(0, 500)}`).join("\n");
         const res3 = await retryRequest(() => client.chat.completions.create({
-          model, max_tokens: 2500, temperature: 0.2, response_format: { type: "json_object" },
+          model, max_tokens: 3000, temperature: 0.2, response_format: { type: "json_object" },
           messages: [
             { role: "system", content: languageLine(profile) +
-              `Output a small flashcard deck directly — no analysis, no reasoning out loud, just the JSON. At ` +
-              `most 10 cards, short front/back pairs covering the month's main topics.` },
-            { role: "user", content: `${weeksBlock.slice(0, 3000)}\n\nReturn ONLY: {"title": "...", "cards": [{"front": "...", "back": "..."}, ...]}.` },
+              `Output a flashcard deck directly — no analysis, no reasoning out loud, just the JSON. Cover ` +
+              `EVERY week listed below, at least one card each — do not skip any week. Up to 20 cards total, ` +
+              `short front/back pairs.` },
+            { role: "user", content: `${lastResortBlock}\n\nReturn ONLY: {"title": "...", "cards": [{"front": "...", "back": "..."}, ...]}.` },
           ],
         }));
         out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res3.choices[0]?.message?.content || "");
@@ -1916,16 +1944,42 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
         }
       }
     }
-    let quiz: TaskQuiz | undefined;
-    if (out?.quiz && Array.isArray(out.quiz.questions) && out.quiz.questions.length) {
-      const qr = makeQuiz(out.quiz);
-      if ("quiz" in qr) quiz = qr.quiz;
-    }
-    console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: ${nonEmpty.length} week(s), ${result.deck.cards.length} cards${quiz ? ` + quiz (${quiz.questions.length}q)` : ""}, ${tokens.in} in / ${tokens.out} out tokens`);
-    return { deck: result.deck, quiz, tokens };
+    console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: ${nonEmpty.length} week(s), ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { deck: result.deck, tokens };
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: EXCEPTION — ${e?.message || e}`);
     return null;
+  }
+}
+
+/** Companion quiz for the month-end deck — same split-out reasoning as generateWeeklyQuiz. */
+export async function generateMonthlyQuiz(weeks: { label: string; cards: { front: string; back: string }[] }[], profile?: Profile): Promise<{ quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } }> {
+  const nonEmpty = weeks.filter((w) => w.cards.length);
+  const empty = { tokens: { in: 0, out: 0, cachedIn: 0 } };
+  if (!nonEmpty.length) return empty;
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const weeksBlock = nonEmpty.map((w) => `— ${w.label}:\n${w.cards.map((c) => `  Q: ${c.front}\n  A: ${c.back}`).join("\n")}`).join("\n\n");
+    const res = await retryRequest(() => client.chat.completions.create({
+      model, max_tokens: 4000, temperature: 0.3, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: languageLine(profile) +
+          `Decide if a multiple-choice quiz is warranted for this month's material: only when there are ` +
+          `concepts students commonly confuse with each other, or that genuinely need discriminating between ` +
+          `similar-looking answers. If nothing calls for that format, output {"quiz": null} — it is NOT a ` +
+          `default add-on. Otherwise 4-10 questions. ${QUIZ_STYLE_RULE}` },
+        { role: "user", content: `THIS MONTH'S WEEKLY DECKS:\n${weeksBlock}\n\nReturn JSON: {"quiz": {"title": "...", "questions": [{"q": "...", "options": ["...", ...], "correct": 0, "why": "..."}, ...]} | null}.` },
+      ],
+    }));
+    const out = firstJson<{ quiz?: { title?: string; questions?: any[] } | null }>(res.choices[0]?.message?.content || "");
+    const tokens = usageOf(res);
+    if (!out?.quiz) return { tokens };
+    const qr = makeQuiz(out.quiz);
+    return { quiz: "quiz" in qr ? qr.quiz : undefined, tokens };
+  } catch (e: any) {
+    console.log(`${new Date().toISOString()} [ai] generateMonthlyQuiz: EXCEPTION — ${e?.message || e}`);
+    return empty;
   }
 }
 

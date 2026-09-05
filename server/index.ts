@@ -12,7 +12,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateMonthlyStudyDeck } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome } from "./store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS } from "./bandit.ts";
 import * as tasks from "./tasks.ts";
@@ -1259,8 +1259,15 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
     }
     t.title = deck.title;
     t.flashcards = [deck];
-    t.quizzes = result.quiz ? [result.quiz] : [];
     t.updatedAt = now;
+    // Quiz is a separate, best-effort call now (see generateWeeklyQuiz's own comment) — a slow/failed quiz
+    // attempt must never cost the deck the student is actually waiting on, which is why this runs AFTER the
+    // deck is already saved rather than blocking it.
+    try {
+      const qr = await generateWeeklyQuiz(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), req.session.profile);
+      addUsage(req.session.profile ||= emptyProfile(), qr.tokens, "studylog");
+      t.quizzes = qr.quiz ? [qr.quiz] : [];
+    } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the week summary — try again." }); }
@@ -1321,8 +1328,16 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
     }
     t.title = deck.title;
     t.flashcards = [deck];
-    t.quizzes = result.quiz ? [result.quiz] : [];
     t.updatedAt = now;
+    // Quiz is a separate, best-effort call now — see the week-summary route's identical comment above.
+    try {
+      const qr = await generateMonthlyQuiz(
+        weekTasks.map((wt) => ({ label: wt.logDate!.slice(5), cards: (wt.flashcards![0]?.cards || []).map((c) => ({ front: c.front, back: c.back })) })),
+        req.session.profile,
+      );
+      addUsage(req.session.profile ||= emptyProfile(), qr.tokens, "studylog");
+      t.quizzes = qr.quiz ? [qr.quiz] : [];
+    } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the month summary — try again." }); }

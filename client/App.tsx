@@ -2105,17 +2105,28 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             <span className="lbl">{L("Détail des coûts", "Cost breakdown")}</span>
             <span className="val">
               {(() => {
-                const labels: Record<string, [string, string]> = {
-                  sweep: [L("Scan quotidien", "Daily scan"), ""],
-                  autorun: [L("Tâches auto-exécutées", "Auto-run tasks"), ""],
-                  chat: [L("Chat", "Chat"), ""],
-                  manual_refine: [L("Tâches ajoutées", "Added tasks"), ""],
-                  studylog: [L("Journal d'apprentissage", "Study journal"), ""],
-                  other: [L("Autre", "Other"), ""],
+                // Three buckets a student actually thinks in, not the six internal accounting categories
+                // addUsage tracks (sweep/autorun/manual_refine are all "Otto finding and doing tasks on its
+                // own or on a click" from the reader's point of view — splitting those three into separate
+                // rows just made the list longer without answering "what's costing money" any better).
+                const GROUPS: Record<string, "chat" | "studylog" | "tasks"> = {
+                  chat: "chat",
+                  studylog: "studylog",
+                  sweep: "tasks", autorun: "tasks", manual_refine: "tasks", other: "tasks",
                 };
+                const labels: Record<string, string> = {
+                  chat: L("Chat", "Chat"),
+                  studylog: L("Journal d'apprentissage", "Study journal"),
+                  tasks: L("Génération et exécution des tâches", "Task generation & execution"),
+                };
+                const grouped: Partial<Record<string, number>> = {};
+                for (const [k, v] of Object.entries(usage.byCategory)) {
+                  const bucket = GROUPS[k] || "tasks";
+                  grouped[bucket] = (grouped[bucket] || 0) + (v || 0);
+                }
                 // Sorted highest-cost-first, so "what's actually costing the most" is answerable at a glance
                 // instead of a fixed-order list the reader has to scan and compare themselves.
-                const entries = (Object.entries(usage.byCategory) as [string, number | undefined][])
+                const entries = (Object.entries(grouped) as [string, number | undefined][])
                   .filter(([, v]) => (v || 0) > 0)
                   .sort((a, b) => (b[1] || 0) - (a[1] || 0));
                 const total = entries.reduce((s, [, v]) => s + (v || 0), 0) || 1;
@@ -2125,7 +2136,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                       const pct = Math.round(((v || 0) / total) * 100);
                       return (
                         <li key={k} className={i === 0 ? "usage-breakdown-top" : ""}>
-                          <span className="usage-breakdown-label">{labels[k]?.[0] || k}{i === 0 ? L(" — le plus coûteux", " — costs the most") : ""}</span>
+                          <span className="usage-breakdown-label">{labels[k] || k}{i === 0 ? L(" — le plus coûteux", " — costs the most") : ""}</span>
                           <span className="usage-breakdown-bar-track"><span className="usage-breakdown-bar" style={{ width: `${pct}%` }} /></span>
                           <span className="usage-breakdown-amount">{fmtEur(v || 0)} ({pct}%)</span>
                         </li>
