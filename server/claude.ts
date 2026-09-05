@@ -1573,7 +1573,15 @@ function spacedRepetitionBlock(boxBreakdown: { front: string; box: number }[], p
  *  strict transcript of it. One-shot, no tool loop (same shape as refineManualTask above): the log text is
  *  the starting point/signal for what to study, not a ceiling on what the deck may contain. Reuses
  *  makeDeck() for the same validation every other deck-producing path already gets. */
-export async function generateDailyStudyCards(logText: string, profile?: Profile): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
+// Bandit-controlled verbosity bias (server/bandit.ts's FLASHCARD_ARMS) — layered ON TOP of CARD_STYLE_RULE's
+// own content-dependent length rule (rule 3), not replacing it: "concise"/"thorough" nudge the overall bias,
+// they don't override a genuinely short fact getting a short back or a genuine derivation getting a long one.
+const FLASHCARD_STYLE_TEXT: Record<string, string> = {
+  concise: " Lean toward the SHORTER end of what CARD_STYLE_RULE allows — prefer more, punchier cards over fewer dense ones.",
+  thorough: " Lean toward the more THOROUGH end of what CARD_STYLE_RULE allows — don't hesitate to include worked steps/context where it genuinely helps recall.",
+};
+
+export async function generateDailyStudyCards(logText: string, profile?: Profile, styleArm?: string): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const raw = String(logText || "").trim();
   if (!raw) return null;
   // DELIBERATELY SIMPLE: this call runs on every single daily save (the most frequent AI action in the
@@ -1605,7 +1613,7 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `detours. However many cards the entry genuinely supports — a short one-topic entry might be 5-10, a ` +
           `dense multi-subject day can go up to 50; don't pad to hit a number, and don't artificially cap a day ` +
           `that really has more to cover either.` +
-          (concise ? " Keep it SHORT and reliable this time: short precise backs, no worked solutions, at most 15 cards." : ` ${CARD_STYLE_RULE}`) },
+          (concise ? " Keep it SHORT and reliable this time: short precise backs, no worked solutions, at most 15 cards." : ` ${CARD_STYLE_RULE}${FLASHCARD_STYLE_TEXT[styleArm || ""] || ""}`) },
         { role: "user", content:
           `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
           `Return JSON: {"title": short label (≤8 words, name the actual topic(s)), "cards": [{"front": "...", "back": "..."}, ...]}.` },
@@ -1638,6 +1646,7 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
       }
     }
     console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: ${result.deck.cards.length} cards, ${tokens.in} in / ${tokens.out} out tokens`);
+    if (styleArm) result.deck.styleArmId = styleArm;
     return { deck: result.deck, tokens };
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: EXCEPTION — ${e?.message || e}`);

@@ -3776,6 +3776,16 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   letter-spacing: 0.08em;
 }
 .sm-bg-row { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+.sm-link-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  background: var(--surface-1);
+  color: var(--ink-1);
+}
 .sm-bg-filename { font-size: var(--text-xs); color: var(--ink-3); margin-top: var(--space-1); }
 /* Fills the "chat" artifact's body (ArtifactCanvas.tsx) — a flex column so the message list grows/shrinks
    with the artifact's own drag-resize instead of being capped at a fixed height like the old fixed-drawer

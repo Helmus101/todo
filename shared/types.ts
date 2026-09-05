@@ -669,6 +669,11 @@ export interface TaskFlashcards {
   }[];
   createdAt: string;
   lastReviewedAt?: string;
+  /** Which bandit arm (server/bandit.ts's FLASHCARD_ARMS — "concise"/"standard"/"thorough") biased this
+   *  deck's generation prompt, so a later deck's generation can score THIS deck's review outcomes (Leitner
+   *  box movement) against the arm that produced it. Undefined for decks predating this — those are simply
+   *  never scored, not treated as a failure. */
+  styleArmId?: string;
 }
 
 /** A drillable multiple-choice quiz attached to a task. Deliberately NOT the same thing as a flashcard

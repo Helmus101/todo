@@ -14,7 +14,7 @@ import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidT
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateMonthlyStudyDeck } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome } from "./store.ts";
-import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, POMODORO_ARMS } from "./bandit.ts";
+import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, POMODORO_ARMS, FLASHCARD_ARMS } from "./bandit.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -1141,8 +1141,30 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     res.json(req.session.tasks || []);
     return;
   }
+  // Score the OUTGOING deck (if any) against the flashcard-style bandit before it's replaced — its Leitner
+  // review history is the only point this signal exists, so this is the one place it can be captured. Then
+  // pick the arm for the NEW deck about to be generated. Both best-effort: a bandit hiccup must never block
+  // the flashcards the student is actually waiting on (same posture as the Pomodoro routes above).
+  let flashcardArmId: string | undefined;
   try {
-    const result = await generateDailyStudyCards(text, req.session.profile);
+    const email = req.session.user!;
+    const banditKey = banditContextKey(new Date(), req.session.profile);
+    let banditState = await loadBanditState(email, "flashcards");
+    const outgoing = t.flashcards?.[0];
+    if (outgoing?.styleArmId) {
+      const reviewed = outgoing.cards.filter((c) => (c.review?.seen || 0) > 0 && c.review?.box);
+      if (reviewed.length) {
+        const avgBoxProgress = reviewed.reduce((s, c) => s + ((c.review!.box || 1) - 1), 0) / reviewed.length;
+        const reward = computeCardReward(avgBoxProgress);
+        banditState = updatePosterior(banditState, banditKey, outgoing.styleArmId, reward);
+        await saveBanditState(email, "flashcards", banditState);
+        void recordSessionOutcome({ userEmail: email, decisionKey: "flashcards", arm: outgoing.styleArmId, context: banditKey, reward, at: new Date().toISOString() });
+      }
+    }
+    flashcardArmId = chooseArm(FLASHCARD_ARMS, banditState, banditKey).arm.id;
+  } catch { /* best-effort — generation below still proceeds with the default style */ }
+  try {
+    const result = await generateDailyStudyCards(text, req.session.profile, flashcardArmId);
     if (result) addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
     t.flashcards = result ? [result.deck] : [];
     // No quiz from the daily call any more (see generateDailyStudyCards's own comment) — leave t.quizzes
@@ -1315,7 +1337,7 @@ app.get("/api/study/pomodoro-suggestion", requireAuth, ah(async (req, res) => {
   try {
     const key = banditContextKey(new Date(), req.session.profile);
     const state = await loadBanditState(req.session.user!, "pomodoro");
-    const { arm, coldStart } = chooseArm(state, key);
+    const { arm, coldStart } = chooseArm(POMODORO_ARMS, state, key);
     res.json({ enabled: arm.enabled, workMinutes: arm.workMinutes, breakMinutes: arm.breakMinutes, coldStart });
   } catch {
     // Safe, non-personalized default — must never regress the plain "pick your own Pomodoro" experience.

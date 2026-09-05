@@ -6,10 +6,11 @@ import type {
   WorkspaceTemplate,
   SessionLog,
   ArtifactState,
+  ArtifactType,
   SessionStatus,
 } from "./StudyTypes.ts";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
-import { StudySetup, type PomodoroChoice } from "./StudySetup.tsx";
+import { StudySetup, type PomodoroChoice, classifyUrl } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
 import { ArtifactCanvas } from "./ArtifactCanvas.tsx";
 import { BottomBar } from "./BottomBar.tsx";
@@ -947,6 +948,40 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
           <ToolsDrawer
             template={env.template}
             onClose={() => setOpenPanel(null)}
+            onAddLink={(url) => {
+              // Lets a student open ANY link mid-session — a Google Doc, a PDF, a video, whatever — not
+              // just the materials StudySetup pre-loaded from the task. Reuses the same classification
+              // StudySetup's own "paste a link" flow uses (docs.google.com/Padlet -> document, etc.).
+              const kind = classifyUrl(url);
+              const type: ArtifactType = kind === "video" ? "video" : kind === "pdf" ? "pdf" : "document";
+              const label = (() => { try { return new URL(url).hostname; } catch { return url; } })();
+              const newMaterial: StudyMaterial = {
+                id: crypto.randomUUID(),
+                label,
+                type: kind === "link" ? "link" : kind,
+                url,
+                source: "link",
+              };
+              updateEnv({ materials: [...env.materials, newMaterial] });
+              const newArtifact: ArtifactState = {
+                id: crypto.randomUUID(),
+                type,
+                title: label,
+                x: 15, y: 15,
+                width: 60, height: 75,
+                zIndex: 100,
+                minimized: false,
+                maximized: false,
+                dockSide: "none",
+                contentState: {},
+                source: url,
+                sourceLabel: label,
+                taskId: task.id,
+                environmentId: env.id,
+              };
+              addArtifact(newArtifact);
+              setOpenPanel(null);
+            }}
             onAddTool={(type) => {
               const newArtifact: ArtifactState = {
                 id: crypto.randomUUID(),

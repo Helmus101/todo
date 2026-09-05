@@ -21,7 +21,7 @@ function getYouTubeId(url: string): string | null {
   return m ? m[1] : null;
 }
 
-function classifyUrl(url: string): "video" | "document" | "pdf" | "link" {
+export function classifyUrl(url: string): "video" | "document" | "pdf" | "link" {
   if (getYouTubeId(url)) return "video";
   if (url.match(/\.pdf($|\?)/i)) return "pdf";
   // Padlet boards embed the same way Google Docs do (DocumentArtifact.tsx handles both) — without this a

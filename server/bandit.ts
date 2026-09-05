@@ -18,6 +18,19 @@ export const POMODORO_ARMS: PomodoroArm[] = [
   { id: "90/20", enabled: true, workMinutes: 90, breakMinutes: 20 },
 ];
 
+/** Second bandit target: flashcard deck verbosity/length — same Thompson Sampling machinery, a different
+ *  arm menu and decision key ("flashcards" vs "pomodoro"). "concise" biases generateDailyStudyCards toward
+ *  short backs and fewer cards; "thorough" toward longer backs/worked solutions and more cards; "standard"
+ *  is today's default (CARD_STYLE_RULE, unmodified). Reward comes from Leitner box movement on THAT deck's
+ *  cards (see computeCardReward) — scored the next time a deck is generated for this student, since review
+ *  activity only accumulates after the deck exists. */
+export interface FlashcardArm { id: "concise" | "standard" | "thorough" }
+export const FLASHCARD_ARMS: FlashcardArm[] = [
+  { id: "concise" },
+  { id: "standard" },
+  { id: "thorough" },
+];
+
 /** Per-arm Beta posterior. `a`/`b` start at 1/1 (uniform prior — no assumption about what works before any
  *  data exists, which is the correct, safe cold-start default rather than guessing a favorite). */
 export interface BetaPosterior { a: number; b: number }
@@ -78,11 +91,11 @@ function sampleBeta(a: number, b: number, rng: () => number): number {
  *  in production; tests pass a seeded generator for determinism. Returns the arm plus whether this cell had
  *  ANY prior data — a cold-start pick (uniform prior everywhere) should be shown to the student as a
  *  default, not a confident "Otto recommends this", since it genuinely isn't one yet. */
-export function chooseArm(state: BanditState, key: string, rng: () => number = Math.random): { arm: PomodoroArm; coldStart: boolean } {
+export function chooseArm<T extends { id: string }>(arms: T[], state: BanditState, key: string, rng: () => number = Math.random): { arm: T; coldStart: boolean } {
   const cell = getCell(state, key);
   const coldStart = Object.keys(cell).length === 0;
-  let best = POMODORO_ARMS[0], bestSample = -1;
-  for (const arm of POMODORO_ARMS) {
+  let best = arms[0], bestSample = -1;
+  for (const arm of arms) {
     const { a, b } = getPosterior(cell, arm.id);
     const sample = sampleBeta(a, b, rng);
     if (sample > bestSample) { bestSample = sample; best = arm; }
@@ -106,11 +119,26 @@ export function computeReward(input: {
 }): number {
   const terms: number[] = [input.completedPlanned ? 1 : 0, 1 - Math.max(0, Math.min(1, input.idleRatio))];
   if (input.netBoxDelta !== undefined) {
-    // Normalize: ±3 net box moves in one session is already a strong signal either way.
-    terms.push(Math.max(0, Math.min(1, 0.5 + input.netBoxDelta / 6)));
+    terms.push(normalizeBoxDelta(input.netBoxDelta));
   }
   const reward = terms.reduce((s, t) => s + t, 0) / terms.length;
   return Math.max(0, Math.min(1, reward));
+}
+
+/** ±3 net Leitner box moves in one batch of reviews is already a strong signal either way — shared between
+ *  the Pomodoro reward (a session that included some review activity) and the flashcard-style reward below
+ *  (which is ENTIRELY this signal, since a deck has no session length/idle-ratio of its own). */
+function normalizeBoxDelta(delta: number): number {
+  return Math.max(0, Math.min(1, 0.5 + delta / 6));
+}
+
+/** Reward for the flashcard-style arm: purely how well that deck's cards actually got retained, i.e. net
+ *  Leitner box movement across its cards since creation (reviews that advanced a card's box minus reviews
+ *  that reset one to box 1). Unlike Pomodoro's reward, there's no session-length/idle signal to blend in —
+ *  a deck IS its review outcomes. `undefined` (no reviews yet) means "don't score this deck" — the caller
+ *  should skip the posterior update entirely rather than treating no data as a bad outcome. */
+export function computeCardReward(netBoxDelta: number): number {
+  return normalizeBoxDelta(netBoxDelta);
 }
 
 /** Update one cell's posterior for the arm that was actually served, given the observed reward — mapped to

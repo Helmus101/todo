@@ -1,10 +1,11 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { ArtifactType, WorkspaceTemplate } from "./StudyTypes.ts";
 
 interface ToolsDrawerProps {
   template: WorkspaceTemplate;
   onClose: () => void;
   onAddTool: (type: ArtifactType) => void;
+  onAddLink: (url: string) => void;
   backgroundImageName?: string;
   onSetBackground: (file: File) => void;
   onClearBackground: () => void;
@@ -21,10 +22,18 @@ const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: W
   { type: "citation", label: "Citation", icon: "❞", templates: ["WRITING", "RESEARCH", "PROJECT"] },
 ];
 
-export function ToolsDrawer({ template, onClose, onAddTool, backgroundImageName, onSetBackground, onClearBackground }: ToolsDrawerProps) {
+export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroundImageName, onSetBackground, onClearBackground }: ToolsDrawerProps) {
   const recommended = ALL_TOOLS.filter(t => t.templates.includes(template));
   const others = ALL_TOOLS.filter(t => !t.templates.includes(template));
   const bgInputRef = useRef<HTMLInputElement>(null);
+  const [linkUrl, setLinkUrl] = useState("");
+
+  const submitLink = () => {
+    const url = linkUrl.trim();
+    if (!url) return;
+    onAddLink(url);
+    setLinkUrl("");
+  };
 
   return (
     <div className="sm-drawer">
@@ -33,6 +42,20 @@ export function ToolsDrawer({ template, onClose, onAddTool, backgroundImageName,
         <button className="sm-drawer-close" onClick={onClose}>×</button>
       </div>
       <div className="sm-drawer-body">
+        <div className="sm-tools-divider">Open a link</div>
+        <div className="sm-bg-row">
+          <input
+            type="text"
+            className="sm-link-input"
+            placeholder="Paste a Google Doc, PDF, video, or any link…"
+            value={linkUrl}
+            onChange={(e) => setLinkUrl(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submitLink(); }}
+          />
+          <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkUrl.trim()}>Open</button>
+        </div>
+
+        <div className="sm-tools-divider">Add a tool</div>
         <div className="sm-tools-grid">
           {recommended.map(tool => (
             <button

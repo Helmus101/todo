@@ -8,7 +8,7 @@ import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToIt
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
-import { POMODORO_ARMS, contextKey, chooseArm, computeReward, updatePosterior } from "../server/bandit.ts";
+import { POMODORO_ARMS, FLASHCARD_ARMS, contextKey, chooseArm, computeReward, computeCardReward, updatePosterior } from "../server/bandit.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -1155,7 +1155,7 @@ section("bandit.ts — contextual bandit (Thompson Sampling) for Pomodoro person
   check("contextKey folds in track", contextKey(new Date("2026-01-05T09:00:00"), { track: "ib" }) !== contextKey(new Date("2026-01-05T09:00:00"), { track: "bac" }));
 
   const key = contextKey(new Date("2026-01-05T09:00:00"));
-  const cold = chooseArm({}, key, seeded(1));
+  const cold = chooseArm(POMODORO_ARMS, {}, key, seeded(1));
   check("cold start (no prior data) is flagged as such", cold.coldStart === true);
   check("cold start still returns a real, known arm", POMODORO_ARMS.some((a) => a.id === cold.arm.id));
 
@@ -1172,15 +1172,31 @@ section("bandit.ts — contextual bandit (Thompson Sampling) for Pomodoro person
   for (let i = 0; i < 60; i++) state = updatePosterior(state, key, "25/5", 0);
   const rng = seeded(42);
   let picks90 = 0;
-  for (let i = 0; i < 50; i++) { if (chooseArm(state, key, rng).arm.id === "90/20") picks90++; }
+  for (let i = 0; i < 50; i++) { if (chooseArm(POMODORO_ARMS, state, key, rng).arm.id === "90/20") picks90++; }
   check("after 60 rewarded trials, the reinforced arm is served the clear majority of the time", picks90 >= 40);
-  check("a never-updated context key stays at its own independent cold-start prior", chooseArm(state, "afternoon|weekday|other", seeded(7)).coldStart === true);
+  check("a never-updated context key stays at its own independent cold-start prior", chooseArm(POMODORO_ARMS, state, "afternoon|weekday|other", seeded(7)).coldStart === true);
 
   const before = updatePosterior({}, key, "25/5", 1);
   check("a successful outcome increments alpha, not beta", before[key]["25/5"].a === 2 && before[key]["25/5"].b === 1);
   const after = updatePosterior(before, key, "25/5", 0);
   check("a failed outcome increments beta, not alpha", after[key]["25/5"].a === 2 && after[key]["25/5"].b === 2);
   check("updatePosterior is pure — never mutates the input state", before[key]["25/5"].b === 1);
+
+  // Second bandit target: flashcard deck verbosity (FLASHCARD_ARMS) — same generic chooseArm/updatePosterior
+  // machinery, proven independently so a future third target (e.g. nudging strategy on shownAt/firstActionAt)
+  // can reuse it with confidence too.
+  check("computeCardReward(0) — a card reviewed once, no progress yet — sits at the midpoint", computeCardReward(0) === 0.5);
+  check("computeCardReward rewards real box progression", computeCardReward(3) > computeCardReward(0));
+  check("computeCardReward is clamped to [0, 1]", computeCardReward(100) === 1 && computeCardReward(-100) === 0);
+
+  let cardState = {};
+  for (let i = 0; i < 60; i++) cardState = updatePosterior(cardState, key, "thorough", computeCardReward(3));
+  for (let i = 0; i < 60; i++) cardState = updatePosterior(cardState, key, "concise", computeCardReward(-3));
+  let picksThorough = 0;
+  const rng2 = seeded(99);
+  for (let i = 0; i < 50; i++) { if (chooseArm(FLASHCARD_ARMS, cardState, key, rng2).arm.id === "thorough") picksThorough++; }
+  check("flashcard bandit also converges on the reinforced arm", picksThorough >= 40);
+  check("a fresh flashcard context is a genuine cold start", chooseArm(FLASHCARD_ARMS, {}, key, seeded(3)).coldStart === true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
