@@ -33,7 +33,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "express-session": "^1.18.1",
-    "googleapis": "^144.0.0",
+    "googleapis": "^178.0.0",
     "lucide-react": "^0.468.0",
     "openai": "^6.45.0",
     "pdfjs-dist": "^6.3.289",
