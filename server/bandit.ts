@@ -158,6 +158,17 @@ export const GRANULARITY_ARMS: GranularityArm[] = [{ id: "standard" }, { id: "gr
 export interface AudioArm { id: "silence" | "brown" | "pink" | "white" }
 export const AUDIO_ARMS: AudioArm[] = [{ id: "silence" }, { id: "brown" }, { id: "pink" }, { id: "white" }];
 
+/** Fifth bandit target: overall UI density — the "adapt background/borders/rounding/text size" ask from the
+ *  personalization plan. "cozy" is today's default (unchanged tokens); "compact" and "spacious" are two
+ *  hand-written, bounded token overrides (client/styles.css's [data-density] rules) that re-scale spacing,
+ *  type, and corner radius together — never generated/mutated CSS, just a different pre-written stylesheet
+ *  variant picked the same way Pomodoro length is. Reward reuses computeReward (session completion + idle
+ *  ratio) exactly like audio does — a layout a student is comfortable in should show up as more focused
+ *  sessions, not a bespoke metric. A student's own manual choice in Settings always overrides this and is
+ *  never silently changed back (see StudySetup's identical posture for Pomodoro/audio). */
+export interface DensityArm { id: "cozy" | "compact" | "spacious" }
+export const DENSITY_ARMS: DensityArm[] = [{ id: "cozy" }, { id: "compact" }, { id: "spacious" }];
+
 /** Shorter time-to-first-action -> higher reward. 6 hours+ is treated as "so slow it may as well be zero"
  *  rather than picking a razor-thin threshold — a student's first free moment after seeing a task can
  *  legitimately be hours later for reasons that have nothing to do with step size, so the curve is

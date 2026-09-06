@@ -616,6 +616,35 @@ function loadQuizProgress(quizId: string): { i: number; right: number[]; wrongId
     return { i: p.i, right: p.right, wrongIdx: p.wrongIdx, order: Array.isArray(p.order) ? p.order : null };
   } catch { return null; }
 }
+function QuizMistakeNote({ taskId, quizTitle, wrongCount }: { taskId: string; quizTitle: string; wrongCount: number }) {
+  const L = useLang();
+  const [text, setText] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  if (saved) return <p className="settings-hint">{L("Note enregistrée — retrouvable dans « Ce qu'Otto a préparé ».", "Note saved — find it under \"What Otto prepared\".")}</p>;
+  const save = async () => {
+    if (!text.trim()) return;
+    setSaving(true);
+    try {
+      await api.addNote(taskId, L(`Erreurs — ${quizTitle}`, `Mistakes — ${quizTitle}`), text.trim());
+      setSaved(true);
+    } catch { /* best-effort — losing this note isn't worth blocking the quiz result screen over */ }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className="quiz-mistake-note">
+      <label className="settings-hint" htmlFor="quiz-mistake-text">
+        {L(`Note ce que tu as retenu de tes ${wrongCount} erreur${wrongCount > 1 ? "s" : ""} (optionnel) :`, `Note what to remember from your ${wrongCount} mistake${wrongCount > 1 ? "s" : ""} (optional):`)}
+      </label>
+      <textarea id="quiz-mistake-text" className="quiz-mistake-textarea" value={text} onChange={(e) => setText(e.target.value)}
+        placeholder={L("Ex. : j'ai confondu vitesse et accélération…", "E.g., I mixed up velocity and acceleration…")} rows={2} />
+      <button type="button" className="btn xs ghost" disabled={!text.trim() || saving} onClick={() => void save()}>
+        {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer la note", "Save note")}
+      </button>
+    </div>
+  );
+}
+
 export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }) {
   const L = useLang();
   const saved = useRef(loadQuizProgress(quiz.id)).current;
@@ -690,6 +719,11 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
           {wrongIdx.length > 0 && <button className="btn ghost" onClick={() => restart(true)}>{L(`Revoir mes ${wrongIdx.length} erreurs`, `Review my ${wrongIdx.length} mistake${wrongIdx.length > 1 ? "s" : ""}`)}</button>}
           <button className="btn primary" onClick={() => restart(false)}>{L("Recommencer", "Restart")}</button>
         </div>
+        {/* A quick, low-friction place to write down what actually went wrong and why — the point isn't
+            re-reading the question again later, it's capturing the STUDENT'S OWN read on their mistake
+            while it's fresh. Only offered when there's something to write about; saved as a plain note
+            (no AI call), so it shows up as a normal chip in "What Otto prepared" for review later. */}
+        {wrongIdx.length > 0 && taskId ? <QuizMistakeNote taskId={taskId} quizTitle={quiz.title} wrongCount={wrongIdx.length} /> : null}
       </div>
     );
   }

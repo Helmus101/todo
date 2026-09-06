@@ -103,6 +103,25 @@
   }
 }
 
+/* ─── Density variants — the personalization ask's "adapt background, borders, rounding, text size" ───────
+   Deliberately a SMALL, HAND-WRITTEN, BOUNDED set of token overrides (never generated/mutated CSS — see the
+   plan discussion on why literal code-mutation was rejected). Only re-scales the SAME tokens every component
+   already reads (--space-*, --text-*, --radius*) — no component needs to know a variant exists. Picked once
+   (a 5th personalization bandit, "density" — see server/bandit.ts's DENSITY_ARMS) from real session-focus
+   outcomes, exactly like Pomodoro length; the student can always override it manually in Settings, and a
+   manual choice always wins and never gets silently changed back — auto-changing a layout under someone
+   mid-use would be the opposite of "calm". Applied via [data-density] on <html> (client/App.tsx). */
+[data-density="compact"] {
+  --space-1: 3px; --space-2: 6px; --space-3: 9px; --space-4: 12px; --space-5: 15px; --space-6: 21px; --space-7: 27px; --space-8: 36px;
+  --text-xs: 10px; --text-sm: 11.5px; --text-base: 12.5px; --text-md: 13.5px; --text-lg: 15px; --text-xl: 18px; --text-2xl: 21px;
+  --radius: 10px; --radius-sm: 7px; --radius-xs: 5px;
+}
+[data-density="spacious"] {
+  --space-1: 5px; --space-2: 10px; --space-3: 15px; --space-4: 20px; --space-5: 25px; --space-6: 34px; --space-7: 44px; --space-8: 58px;
+  --text-xs: 12px; --text-sm: 13.5px; --text-base: 14.5px; --text-md: 16.5px; --text-lg: 18px; --text-xl: 22px; --text-2xl: 27px;
+  --radius: 18px; --radius-sm: 12px; --radius-xs: 8px;
+}
+
 /* ─── Base ─────────────────────────────────────────────────────────────────── */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
@@ -839,6 +858,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-face-text { font-size: 18px; line-height: 1.5; max-height: 190px; overflow-y: auto; white-space: pre-wrap; }
 .deck-hint { font-size: 12px; color: var(--ink-3); margin: 12px 0; }
 .deck-acts { display: flex; gap: var(--space-2); justify-content: center; margin-top: var(--space-1); }
+.quiz-mistake-note { margin-top: var(--space-3); text-align: left; }
+.quiz-mistake-note label { display: block; margin-bottom: 6px; }
+.quiz-mistake-textarea {
+  width: 100%; resize: vertical; padding: var(--space-2); border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm); font-size: var(--text-sm); background: var(--surface-1); color: var(--ink-1);
+  margin-bottom: 6px; font-family: inherit;
+}
 .deck-btn-back { display: block; margin: var(--space-2) auto 0; }
 .study-help { margin-top: var(--space-3); border-top: 1px solid var(--line-soft); padding-top: var(--space-2); }
 .study-help-toggle { display: block; margin: 0 auto; }
@@ -1425,6 +1451,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .settings-sec h3 { font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); margin: 0 0 14px; }
 .settings-hint { font-size: var(--text-sm); color: var(--ink-2); line-height: 1.55; margin-bottom: 6px; }
 .modal-row-usage-breakdown { align-items: flex-start; }
+.density-picker { display: flex; gap: 6px; }
 .usage-breakdown-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .usage-breakdown-list li { display: grid; grid-template-columns: minmax(0, 1fr) 80px auto; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--ink-2); }
 .usage-breakdown-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -413,6 +413,7 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         track: side.track ?? fallback.track,
         yearLevel: side.yearLevel ?? fallback.yearLevel,
         voiceChat: side.voiceChat ?? fallback.voiceChat,
+        uiDensity: side.uiDensity ?? fallback.uiDensity,
         preferencesUpdatedAt: side.preferencesUpdatedAt ?? fallback.preferencesUpdatedAt,
       };
     })(),

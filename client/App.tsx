@@ -193,6 +193,33 @@ export function App() {
   // one place the whole app's active language is decided (the LangContext.Provider value below), so it's
   // the right place to keep the document attribute in sync with it.
   useEffect(() => { document.documentElement.lang = status?.language === "en" ? "en" : "fr"; }, [status?.language]);
+  // Fifth bandit target (see DENSITY_ARMS, server/bandit.ts) — fetched ONCE per app load, applied as
+  // [data-density] on <html> (client/styles.css's variant tokens). Deliberately not re-fetched or re-applied
+  // mid-session: an auto-changing layout under someone while they're using the app would be the opposite of
+  // "calm", so this is a one-time-per-load pick, same posture as Pomodoro/audio being decided once at
+  // Study Mode's Start rather than continuously. Signed-out visitors (status null) get no density call at
+  // all — the landing page has no profile to suggest anything from yet.
+  useEffect(() => {
+    if (!status) return;
+    void api.densitySuggestion().then((d) => {
+      if (d.density !== "cozy") document.documentElement.setAttribute("data-density", d.density);
+      else document.documentElement.removeAttribute("data-density");
+      // Cached so StudyMode.tsx can report which arm was actually showing when a session ends, without
+      // needing its own round-trip or prop-drilling this all the way down — a cheap, non-critical read.
+      try { localStorage.setItem("otto-density-arm", d.manual ? "" : d.density); } catch { /* ignore */ }
+    }).catch(() => {});
+  }, [!!status]);
+  // AI-personalized theme (opt-in, see Settings) — applied as inline custom-property overrides on <html>,
+  // never a stylesheet swap. Re-applies whenever status refreshes so a change made in one tab/device shows
+  // up here too, and clears cleanly (removeProperty) when customTheme is unset — e.g. after Reset.
+  useEffect(() => {
+    const root = document.documentElement;
+    const keys = ["--bg", "--surface", "--bg-2", "--radius", "--radius-sm", "--radius-xs"] as const;
+    for (const k of keys) {
+      const v = status?.customTheme?.[k];
+      if (v) root.style.setProperty(k, v); else root.style.removeProperty(k);
+    }
+  }, [status?.customTheme]);
   // The landing page and login/signup screen render BEFORE any account exists, so they have no
   // status.language to read (the server always answers "fr" for a signed-out session) — every L()/useLang()
   // call in them silently fell back to LangContext's hardcoded "fr" default, regardless of the visitor's
@@ -1985,6 +2012,14 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
             </div>
           ) : (
             <>
+              {/* Quick entry for a REAL test taken at school (paper, in class) — not an in-app quiz. Just
+                  inserts a template into today's entry; saving it runs through the exact same flashcard
+                  generation as any other journal entry, so "what I got wrong on today's test" becomes a
+                  reviewable deck automatically — no separate "mistakes" system needed, this already covers
+                  what a dedicated one would do, and one save button instead of two things to remember. */}
+              <button type="button" className="btn xs ghost" onClick={() => setText((t) => `${t}${t.trim() ? "\n\n" : ""}${L("Contrôle — ", "Test — ")}${L("matière", "subject")} :\nCe que j'ai eu faux :\n- `)}>
+                {L("Noter les erreurs d'un contrôle", "Log mistakes from a test")}
+              </button>
               <textarea className="studylog-textarea" rows={8}
                 placeholder={L("Aujourd'hui, j'ai appris…", "Today I learned…")}
                 value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
@@ -2061,6 +2096,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [showKnows, setShowKnows] = useState(false);
   const [showTrustLog, setShowTrustLog] = useState(false);
   const [showErrorLog, setShowErrorLog] = useState(false);
+  const [themeBusy, setThemeBusy] = useState(false);
   const [errorLog, setErrorLog] = useState(() => getErrors());
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
@@ -2156,6 +2192,53 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             </span>
           </div>
         ) : null}
+        {/* Manual override for the density bandit (DENSITY_ARMS) — Otto suggests one from real session
+            outcomes, but this always wins the moment it's touched, and never gets silently changed back.
+            Three plain buttons, not a slider or a settings wall — this is a rare, low-stakes choice. */}
+        <div className="modal-row">
+          <span className="lbl">{L("Densité de l'interface", "Interface density")}</span>
+          <span className="val">
+            <div className="density-picker">
+              {(["cozy", "compact", "spacious"] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className={`btn xs ${profile?.uiDensity === d || (!profile?.uiDensity && d === "cozy") ? "primary" : "ghost"}`}
+                  onClick={() => void api.setProfilePreference("uiDensity", d).then((p) => {
+                    setProfile(p);
+                    if (d !== "cozy") document.documentElement.setAttribute("data-density", d);
+                    else document.documentElement.removeAttribute("data-density");
+                    try { localStorage.setItem("otto-density-arm", ""); } catch { /* ignore */ }
+                  }).catch(() => notify(L("Impossible de changer ça pour l'instant.", "Couldn't change that right now."), "error"))}
+                >
+                  {d === "cozy" ? L("Confortable", "Cozy") : d === "compact" ? L("Compacte", "Compact") : L("Spacieuse", "Spacious")}
+                </button>
+              ))}
+            </div>
+          </span>
+        </div>
+        {/* Explicitly opt-in, rare (rate-limited server-side), never automatic — see generateThemeTokens's
+            own doc comment (server/claude.ts) for the full safety story: a small fixed allowlist of colors/
+            radii, strictly re-validated (format + contrast) before it's ever saved. One click, one small AI
+            call, reversible with Reset — not something that changes on its own. */}
+        <div className="modal-row">
+          <span className="lbl">{L("Thème personnalisé (IA)", "Personalized theme (AI)")}</span>
+          <span className="val">
+            <button type="button" className="btn xs ghost" disabled={themeBusy} onClick={async () => {
+              setThemeBusy(true);
+              try { await api.personalizeTheme(); onChanged(); }
+              catch (e: any) { notify(e?.message || L("Impossible de personnaliser le thème pour l'instant.", "Couldn't personalize the theme right now."), "error"); }
+              finally { setThemeBusy(false); }
+            }}>
+              {themeBusy ? L("Création…", "Creating…") : status.customTheme ? L("Réessayer", "Try another") : L("Laisser Otto personnaliser mon thème", "Let Otto personalize my theme")}
+            </button>
+            {status.customTheme ? (
+              <button type="button" className="btn xs ghost" onClick={() => void api.resetTheme().then(onChanged)}>
+                {L("Réinitialiser", "Reset")}
+              </button>
+            ) : null}
+          </span>
+        </div>
         {/* Quiet by default (collapsed, count only) — a diagnostics drawer, not something to surface
             unprompted on a page meant to feel calm. Client-side only (see errorLog.ts): the last things
             that actually went wrong on THIS device, so a confusing toast that vanished in 12s can be

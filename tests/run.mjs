@@ -5,10 +5,10 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningS
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
-import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior } from "../server/bandit.ts";
+import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior } from "../server/bandit.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -1232,6 +1232,32 @@ section("bandit.ts — contextual bandit (Thompson Sampling) for Pomodoro person
   for (let i = 0; i < 50; i++) { if (chooseArm(AUDIO_ARMS, audioState, key, rng4).arm.id === "brown") picksBrown++; }
   check("audio bandit also converges on the reinforced arm", picksBrown >= 40);
   check("a fresh audio context is a genuine cold start", chooseArm(AUDIO_ARMS, {}, key, seeded(11)).coldStart === true);
+
+  // Fifth bandit target: UI density (DENSITY_ARMS) — same machinery again, proving the pattern generalizes
+  // to a fifth independent target with zero new code beyond the arm list itself.
+  let densityState = {};
+  for (let i = 0; i < 60; i++) densityState = updatePosterior(densityState, key, "compact", computeReward({ completedPlanned: true, idleRatio: 0 }));
+  for (let i = 0; i < 60; i++) densityState = updatePosterior(densityState, key, "cozy", computeReward({ completedPlanned: false, idleRatio: 1 }));
+  let picksCompact = 0;
+  const rng5 = seeded(31);
+  for (let i = 0; i < 50; i++) { if (chooseArm(DENSITY_ARMS, densityState, key, rng5).arm.id === "compact") picksCompact++; }
+  check("density bandit also converges on the reinforced arm", picksCompact >= 40);
+  check("a fresh density context is a genuine cold start", chooseArm(DENSITY_ARMS, {}, key, seeded(13)).coldStart === true);
+}
+
+section("validateThemeTokens — AI-personalized theme safety allowlist");
+{
+  check("accepts a valid light color + radius", (() => {
+    const t = validateThemeTokens({ "--bg": "#F5F3EE", "--radius": "12px" });
+    return t["--bg"] === "#f5f3ee" && t["--radius"] === "12px";
+  })());
+  check("rejects a dark/low-contrast background (fails WCAG check against fixed ink)", !("--bg" in validateThemeTokens({ "--bg": "#101010" })));
+  check("rejects a non-hex color string", !("--bg" in validateThemeTokens({ "--bg": "red" })));
+  check("rejects a color value carrying a CSS injection attempt", !("--bg" in validateThemeTokens({ "--bg": "#fff; } body { display:none" })));
+  check("rejects an out-of-range radius", !("--radius" in validateThemeTokens({ "--radius": "999px" })));
+  check("rejects a radius with a unit other than px", !("--radius" in validateThemeTokens({ "--radius": "12rem" })));
+  check("ignores unknown keys entirely (not on the allowlist)", Object.keys(validateThemeTokens({ "--evil": "javascript:alert(1)", "color": "red" })).length === 0);
+  check("non-object input returns empty, never throws", Object.keys(validateThemeTokens(null)).length === 0 && Object.keys(validateThemeTokens("not an object")).length === 0);
 }
 
 section("bumpActivityHour / learnedProductiveHour — the 'when am I actually working' signal");

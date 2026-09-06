@@ -115,6 +115,9 @@ export const api = {
   recordQuizAttempt: (taskId: string, quizId: string, score: number, total: number, wrong?: number[]): Promise<WebTask[]> =>
     post(`/api/tasks/${taskId}/quiz/${quizId}/attempt`, { score, total, wrong }),
   submitPracticeAnswer: (taskId: string, answer: string): Promise<WebTask[]> => post(`/api/tasks/${taskId}/practice-problem/attempt`, { answer }),
+  // A student's own hand-written note — "what I got wrong, what to remember" — no AI call, lands in the
+  // same task.notes the AI's own fiches use so it shows up as a normal chip in "What Otto prepared".
+  addNote: (taskId: string, title: string, body: string): Promise<WebTask[]> => post(`/api/tasks/${taskId}/notes`, { title, body }),
   reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] }> => req("/api/reviews/due").then(j),
   // Study log: daily "what I learned today" → auto flashcards (see server/index.ts's /api/studylog/*).
   // Saving empty text clears that day's entry+deck; non-empty text (re)generates the deck server-side.
@@ -133,8 +136,17 @@ export const api = {
   // Fourth bandit target: desk ambience — see AUDIO_ARMS in server/bandit.ts.
   audioSuggestion: (): Promise<{ audioType: "silence" | "brown" | "pink" | "white"; coldStart: boolean }> =>
     req("/api/study/audio-suggestion").then(j),
-  submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number, audioArmId?: string): Promise<{ ok: boolean }> =>
-    post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta, audioArmId }),
+  // Fifth bandit target: overall UI density — see DENSITY_ARMS in server/bandit.ts. `manual` is true once
+  // the student has picked one explicitly in Settings (profile.uiDensity) — this then just confirms that
+  // choice rather than suggesting anything.
+  densitySuggestion: (): Promise<{ density: "cozy" | "compact" | "spacious"; manual: boolean; coldStart?: boolean }> =>
+    req("/api/ui/density-suggestion").then(j),
+  // AI-personalized theme (server/claude.ts's generateThemeTokens) — explicitly opt-in, a Settings button
+  // click, never automatic. See that function's own doc comment for the validation/safety story.
+  personalizeTheme: (): Promise<{ customTheme: Record<string, string> }> => post("/api/ui/theme-personalize", {}),
+  resetTheme: (): Promise<{ ok: boolean }> => post("/api/ui/theme-reset", {}),
+  submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number, audioArmId?: string, densityArmId?: string): Promise<{ ok: boolean }> =>
+    post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta, audioArmId, densityArmId }),
   // Flexible, open-ended metric logging (server/store.ts's recordMetric) — `name` is any short label the
   // caller invents; nothing here needs a new endpoint or schema change to add a new signal later.
   recordMetric: (name: string, value: number, bucket?: string, context?: string): Promise<{ ok: boolean }> =>

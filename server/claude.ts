@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens } from "../shared/types.ts";
+import { validateThemeTokens } from "../shared/types.ts";
 import { dedupeFacts, sameFact } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
@@ -637,7 +638,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // mid-JSON, firstJson() returned null on the unbalanced braces, and the whole thing silently produced NO
 // deck with a 200-success response — see the fix at generateDailyStudyCards' own prompt (capped at 40, not
 // "no cap") and the route-level error surfacing this budget bump pairs with.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 500 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -1979,6 +1980,47 @@ export async function generateMonthlyQuiz(weeks: { label: string; cards: { front
     return { quiz: "quiz" in qr ? qr.quiz : undefined, tokens };
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] generateMonthlyQuiz: EXCEPTION — ${e?.message || e}`);
+    return empty;
+  }
+}
+
+// ── AI-personalized theme tokens ────────────────────────────────────────────────────────────────────────
+// Explicitly requested despite the safety pushback in the approved plan ("never let an autonomous agent
+// mutate live code/CSS") — the compromise that keeps the spirit of the request without the actual risk: the
+// model NEVER writes or touches a stylesheet. It only proposes values for a small, fixed ALLOWLIST of CSS
+// custom properties (colors as hex, radii/sizes as bounded px numbers) as plain JSON. Every value is
+// strictly re-validated server-side against format AND range before it's ever stored (see
+// validateThemeTokens) — a value that fails validation for ANY reason is dropped silently, never applied
+// partially-trusted. Nothing here can inject a selector, a URL, a script, or any CSS beyond "this token
+// equals this color/number". Rare and opt-in by design (a Settings button click, not automatic/periodic) —
+// this is exactly the kind of one-off interactive action OUT.theme's tiny budget and cost profile suit.
+/** One-shot, opt-in, best-effort: propose a small personalized palette from a short account summary. Empty
+ *  result (never throws) on ANY failure — the caller falls back to the current theme unchanged. */
+export async function generateThemeTokens(summary: string, profile?: Profile): Promise<{ tokens: ThemeTokens; tokensUsed: { in: number; out: number; cachedIn: number } }> {
+  const empty = { tokens: {}, tokensUsed: { in: 0, out: 0, cachedIn: 0 } };
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model, max_tokens: OUT.theme, temperature: 0.5, response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content:
+          trackLine(profile) +
+          `Propose a small personalized color/shape palette for a calm, minimal study app, based on this ` +
+          `student's own usage pattern. Output ONLY hex colors and pixel radii for these exact keys — nothing ` +
+          `else, no explanation: "--bg" (page background, hex), "--surface" (card background, hex, close in ` +
+          `lightness to --bg — this is a subtle, not a loud, distinction), "--bg-2" (a third subtle fill), ` +
+          `"--radius" (main corner radius, 8-20px), "--radius-sm" (6-14px), "--radius-xs" (4-9px). Keep colors ` +
+          `LIGHT and desaturated (this is a light-mode paper/ink aesthetic, not a dark or vivid theme) — think ` +
+          `subtle warm/cool off-whites, never a saturated or dark color. Do not explain your reasoning.` },
+        { role: "user", content: `Student's recent usage pattern:\n${summary.slice(0, 800)}\n\nReturn JSON: {"--bg": "#......", "--surface": "#......", "--bg-2": "#......", "--radius": "..px", "--radius-sm": "..px", "--radius-xs": "..px"}.` },
+      ],
+    }));
+    const raw = firstJson<Record<string, string>>(res.choices[0]?.message?.content || "");
+    const tokens = validateThemeTokens(raw);
+    return { tokens, tokensUsed: usageOf(res) };
+  } catch (e: any) {
+    console.log(`${new Date().toISOString()} [ai] generateThemeTokens: EXCEPTION — ${e?.message || e}`);
     return empty;
   }
 }

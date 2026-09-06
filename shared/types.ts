@@ -80,6 +80,17 @@ export interface Profile {
   genPerDay?: number;
   // Structured preferences for autonomous behavior
   responseStyle?: "concise" | "detailed" | "casual" | "formal"; // how AI should draft responses
+  // Manual override for the UI density bandit (server/bandit.ts's DENSITY_ARMS) — set the moment the student
+  // picks one explicitly in Settings, and ALWAYS wins over the bandit's own suggestion from then on (see
+  // DENSITY_ARMS's own comment on why an auto-changing layout would be the opposite of "calm"). Undefined
+  // means "still following the bandit's suggestion" — the normal, no-preference-yet state.
+  uiDensity?: "cozy" | "compact" | "spacious";
+  // AI-proposed personalized theme tokens (server/claude.ts's generateThemeTokens) — a small, strictly
+  // validated set of CSS custom-property overrides (colors as hex, radii as bounded px), opt-in via a
+  // Settings click. Re-validated again on every normalize (defense in depth: validateThemeTokens already
+  // filters server-side before this is ever saved, but a value must survive BOTH checks to ever reach a
+  // stylesheet). Unset = the default theme.
+  customTheme?: Partial<Record<"--bg" | "--surface" | "--bg-2" | "--radius" | "--radius-sm" | "--radius-xs", string>>;
   autoApprove?: string[]; // categories of actions AI can do without approval (e.g., ["schedule_meetings_under_30min", "archive_newsletters"])
   highPriorityPeople?: string[]; // people whose messages get higher priority
   autoArchivePatterns?: string[]; // email patterns to auto-archive (e.g., ["newsletter", "promotions"])
@@ -194,6 +205,8 @@ export function normalizeProfile(p: any): Profile {
     timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
     // Structured preferences
     responseStyle: ["concise", "detailed", "casual", "formal"].includes(p?.responseStyle) ? p.responseStyle : undefined,
+    uiDensity: ["cozy", "compact", "spacious"].includes(p?.uiDensity) ? p.uiDensity : undefined,
+    customTheme: p?.customTheme ? (Object.keys(validateThemeTokens(p.customTheme)).length ? validateThemeTokens(p.customTheme) : undefined) : undefined,
     autoApprove: Array.isArray(p?.autoApprove) ? p.autoApprove.map(String) : undefined,
     highPriorityPeople: Array.isArray(p?.highPriorityPeople) ? p.highPriorityPeople.map(String) : undefined,
     autoArchivePatterns: Array.isArray(p?.autoArchivePatterns) ? p.autoArchivePatterns.map(String) : undefined,
@@ -781,6 +794,48 @@ export interface DailyPracticeProblem {
   attempt?: { answer: string; correct: boolean; at: string };
 }
 
+// ── AI-personalized theme token validation ─────────────────────────────────────────────────────────────
+// Pure, no I/O — shared between server/claude.ts (validates the model's raw output before ever saving it)
+// and this file's own normalizeProfile (re-validates on every load, so a value can never reach a stylesheet
+// without surviving the SAME check twice). See generateThemeTokens's own doc comment in server/claude.ts for
+// why this exists and what it deliberately can't do (no selectors, no URLs, no script — colors and bounded
+// pixel radii only).
+export const THEME_COLOR_KEYS = ["--bg", "--surface", "--bg-2"] as const;
+export const THEME_RADIUS_KEYS = ["--radius", "--radius-sm", "--radius-xs"] as const;
+export type ThemeTokens = Partial<Record<typeof THEME_COLOR_KEYS[number] | typeof THEME_RADIUS_KEYS[number], string>>;
+
+/** Relative luminance (WCAG) of a hex color, for a contrast check against the app's fixed ink color — the
+ *  model can propose a new background, but never gets to also change the text color, so a background this
+ *  dark/saturated would make body text unreadable; reject it instead of shipping a broken theme. */
+function relLuminance(hex: string): number {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrastRatio(hex1: string, hex2: string): number {
+  const l1 = relLuminance(hex1) + 0.05, l2 = relLuminance(hex2) + 0.05;
+  return l1 > l2 ? l1 / l2 : l2 / l1;
+}
+const THEME_INK_FIXED = "#101317"; // matches :root's --ink in client/styles.css — never itself overridable
+const THEME_HEX_RE = /^#[0-9a-f]{6}$/i;
+export function validateThemeTokens(raw: unknown): ThemeTokens {
+  const out: ThemeTokens = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const k of THEME_COLOR_KEYS) {
+    const v = (raw as any)[k];
+    if (typeof v === "string" && THEME_HEX_RE.test(v) && contrastRatio(v, THEME_INK_FIXED) >= 4.5) (out as any)[k] = v.toLowerCase();
+  }
+  for (const k of THEME_RADIUS_KEYS) {
+    const v = (raw as any)[k];
+    const m = typeof v === "string" ? /^(\d{1,2})px$/.exec(v) : null;
+    if (m && Number(m[1]) >= 0 && Number(m[1]) <= 32) (out as any)[k] = `${m[1]}px`;
+  }
+  return out;
+}
+
 // Loose equality for a typed free-response answer against the stored correct one — NOT exact string
 // equality, which would fail on trivial, meaningless differences (extra spaces, "3.0" vs "3", "X=4" vs "4").
 // Two paths: if both sides parse as a real number, compare numerically (small epsilon for float noise);
@@ -812,6 +867,7 @@ export interface ConnectionStatus {
   highPriorityPeople?: string[]; // used ONLY to break ranking ties (VIP's task sorts first) — no UI of its own
   genPerDay?: number;         // how many times/day Otto scans for new tasks (1–4) — drives the client sweep cadence
   timezone?: string;          // the account's captured IANA timezone (client compares to detect a change)
+  customTheme?: ThemeTokens;  // AI-personalized theme override, if the student opted in (see validateThemeTokens)
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"

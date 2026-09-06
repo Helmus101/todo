@@ -622,7 +622,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       const idleRatioAtEnd = elapsedSeconds > 0 ? Math.min(1, idleSecondsRef.current / elapsedSeconds) : 0;
       if (env.pomodoroArmId) {
         const completedPlanned = env.pomodoroEnabled ? (env.pomodoroCycles || 0) >= 1 : elapsedSeconds >= 600;
-        void api.submitSessionOutcome(env.pomodoroArmId, completedPlanned, idleRatioAtEnd, undefined, env.audioArmId).catch(() => {});
+        // Density arm cached by App.tsx's own once-per-load suggestion fetch — empty string means "student
+        // has a manual override" (see the cache-write's own comment), so pass undefined rather than "".
+        let densityArmId: string | undefined;
+        try { densityArmId = localStorage.getItem("otto-density-arm") || undefined; } catch { /* ignore */ }
+        void api.submitSessionOutcome(env.pomodoroArmId, completedPlanned, idleRatioAtEnd, undefined, env.audioArmId, densityArmId).catch(() => {});
       }
       void api.recordMetric("study_idle_ratio", idleRatioAtEnd, env.template);
       // How often a session ends WITHOUT ever completing the planned length — a coarse distraction/focus

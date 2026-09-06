@@ -10,11 +10,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "./store.ts";
-import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS } from "./bandit.ts";
+import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS } from "./bandit.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -573,6 +573,7 @@ app.get("/api/status", ah(async (req, res) => {
     unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
     voiceChat: !!req.session.profile?.voiceChat,
+    customTheme: req.session.profile?.customTheme,
   };
   res.json(s);
 }));
@@ -1099,6 +1100,25 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   await commit(req);
   res.json(req.session.tasks || []);
 }));
+// A student's OWN note, written by hand right after a quiz/flashcard mistake — "what I got wrong and what
+// to remember" — not an AI-generated fiche. Deterministic, no AI call: this is exactly the kind of thing
+// that shouldn't cost anything or take a round-trip to write. Lands in the same task.notes the AI's own
+// CREATE_NOTE tool writes to, so it shows up as a normal chip in "What Otto prepared" — one place to find
+// everything worth reviewing later, not a separate, siloed "mistakes" screen.
+app.post("/api/tasks/:id/notes", requireAuth, rateLimit(60, 60_000), ah(async (req, res) => {
+  const id = String(req.params.id);
+  const title = String(req.body?.title || "").trim().slice(0, 90) || "Note";
+  const body = String(req.body?.body || "").trim().slice(0, 4000);
+  if (!body) { res.status(400).json({ error: "Write something first." }); return; }
+  const task = await findTaskOrReload(req, id);
+  if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+  const note = { id: randomUUID(), title, body, createdAt: new Date().toISOString() };
+  task.notes = [...(task.notes || []), note].slice(-tasks.ARTIFACT_CAP);
+  task.updatedAt = new Date().toISOString();
+  void recordMetric(req.session.user!, "chat_artifact_created", 1, "manual_note");
+  await commit(req);
+  res.json(req.session.tasks || []);
+}));
 // Check a typed answer against a daily practice problem (see DailyPracticeProblem/practiceAnswerMatches in
 // shared/types.ts) — deterministic, no AI call, same "instant, no round-trip surprise" posture as the
 // flashcard/quiz recording routes above. The comparison itself (loose but not fuzzy — formatting-tolerant,
@@ -1460,6 +1480,52 @@ app.get("/api/study/audio-suggestion", requireAuth, ah(async (req, res) => {
     res.json({ audioType: "silence", coldStart: true });
   }
 }));
+// Fifth bandit target: overall UI density (see DENSITY_ARMS in bandit.ts) — app-wide, not Study-Mode-scoped,
+// so this lives under /api/ui rather than /api/study. Never suggested at all once the student has picked one
+// manually (profile.uiDensity) — a manual choice always wins and this route becomes a no-op confirmation of
+// it, never silently overriding it.
+app.get("/api/ui/density-suggestion", requireAuth, ah(async (req, res) => {
+  try {
+    if (req.session.profile?.uiDensity) { res.json({ density: req.session.profile.uiDensity, manual: true }); return; }
+    const key = banditContextKey(new Date(), req.session.profile);
+    const state = await loadBanditState(req.session.user!, "density");
+    const { arm, coldStart } = chooseArm(DENSITY_ARMS, state, key);
+    res.json({ density: arm.id, manual: false, coldStart });
+  } catch {
+    res.json({ density: "cozy", manual: false, coldStart: true });
+  }
+}));
+// AI-personalized theme — explicitly opt-in (a Settings button click, never automatic/periodic) and rare
+// (rate-limited hard). See generateThemeTokens's own doc comment in claude.ts for the full safety story:
+// the model proposes values for a small fixed allowlist only, every value is independently re-validated
+// (format + WCAG contrast) before it's ever stored, and normalizeProfile re-checks it again on every load.
+app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to personalize your theme." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  try {
+    const profile = req.session.profile ||= emptyProfile();
+    // A short, factual summary — no free text from the student goes into this prompt, just already-computed
+    // signals, so there's nothing here for a prompt-injection attempt to even ride in on.
+    const density = profile.uiDensity || (learnedProductiveHour(profile) !== null ? "cozy (learned)" : "cozy (default)");
+    const peakHour = learnedProductiveHour(profile);
+    const summary = `Preferred UI density: ${density}. ${peakHour !== null ? `Most active around ${peakHour}:00 local time.` : "Not enough activity history yet for a time-of-day pattern."} Track: ${profile.track || "unknown"}.`;
+    const result = await generateThemeTokens(summary, profile);
+    addUsage(profile, result.tokensUsed, "other");
+    if (!Object.keys(result.tokens).length) { res.status(502).json({ error: "Couldn't come up with a theme just now — try again." }); return; }
+    profile.customTheme = result.tokens;
+    profile.preferencesUpdatedAt = new Date().toISOString();
+    await commit(req);
+    res.json({ customTheme: profile.customTheme });
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't personalize your theme — try again." }); }
+}));
+app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
+  const profile = req.session.profile ||= emptyProfile();
+  profile.customTheme = undefined;
+  profile.preferencesUpdatedAt = new Date().toISOString();
+  await commit(req);
+  res.json({ ok: true });
+}));
 app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
   try {
     const armId = String(req.body?.armId || "");
@@ -1482,6 +1548,15 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
       const audioState = await loadBanditState(email, "audio");
       await saveBanditState(email, "audio", updatePosterior(audioState, key, audioArmId, reward));
       void recordSessionOutcome({ userEmail: email, decisionKey: "audio", arm: audioArmId, context: key, reward, at: new Date().toISOString() });
+    }
+    // Density is scored from the SAME session outcome (a student comfortable in their layout should show up
+    // as a more focused session, same reasoning as audio) — but ONLY while still on the bandit's own
+    // suggestion; a manual Settings choice stops learning here entirely, it's already decided.
+    const densityArmId = req.body?.densityArmId ? String(req.body.densityArmId) : undefined;
+    if (densityArmId && !req.session.profile?.uiDensity && DENSITY_ARMS.some((a) => a.id === densityArmId)) {
+      const densityState = await loadBanditState(email, "density");
+      await saveBanditState(email, "density", updatePosterior(densityState, key, densityArmId, reward));
+      void recordSessionOutcome({ userEmail: email, decisionKey: "density", arm: densityArmId, context: key, reward, at: new Date().toISOString() });
     }
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't record that — it won't affect your session." }); }
@@ -1762,6 +1837,11 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
     // comment in shared/types.ts for the full "settings aren't the same everywhere" failure mode this fixes.
     if (key === "responseStyle" && ["concise", "detailed", "casual", "formal"].includes(value)) {
       p.responseStyle = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "uiDensity" && ["cozy", "compact", "spacious"].includes(value)) {
+      // A manual pick here ALWAYS wins over the density bandit's own suggestion from now on — see
+      // DENSITY_ARMS's doc comment (server/bandit.ts) for why an auto-changing layout would undermine the
+      // "calm" goal the rest of this app is built around.
+      p.uiDensity = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "autoApprove" && Array.isArray(value)) {
       p.autoApprove = value.map(String); p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "genPerDay") {
