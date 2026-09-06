@@ -527,11 +527,13 @@ export function applyQualityBar<T extends { anchorKey?: string; when?: string; u
 const WEEK_COVERAGE_DAYS = 7;
 
 /**
- * Guarantee: every Pronote homework/test due within WEEK_COVERAGE_DAYS gets a task card, independent of the
- * AI classifier's judgment. The classifier (classifyCandidates) is DELIBERATELY selective — right for a
+ * Guarantee: every Pronote homework/test due within WEEK_COVERAGE_DAYS (7) gets a task card, independent of
+ * the AI classifier's judgment. The classifier (classifyCandidates) is DELIBERATELY selective — right for a
  * noisy inbox, wrong here: computeWorkload (workload.ts) builds the "This week" widget straight from raw
- * Pronote homework/tests with no AI filtering at all, so without this, a test the classifier didn't pick
- * could show in "This week" while never existing as an actual task anywhere else in the app.
+ * Pronote homework/tests with no AI filtering at all, so a test the classifier didn't pick could show in
+ * "This week" while never existing as an actual task anywhere else in the app. Deliberately scoped to next
+ * week only, not pronoteHomework's full pull horizon (21 days) — something due 3 weeks out shouldn't
+ * necessarily get a task card yet just because Pronote already knows about it.
  *
  * Only fills the GAP — candidates already covered by a classified-and-kept task (matched by anchorKey) are
  * left alone, so this never creates a duplicate alongside a richer AI-written task for the same assignment.
@@ -565,7 +567,12 @@ export function forceWeekCoverage(
       title: (isTest
         ? (en ? `Start reviewing for the ${c.subject || "class"} test` : `Commencer à réviser pour le contrôle de ${c.subject || "la matière"}`)
         : (en ? `${c.subject || "Homework"}` : `${c.subject || "Devoir"}`)).slice(0, 120),
-      why: en ? "Due this week — from Pronote." : "À faire cette semaine — vu sur Pronote.",
+      // "Due this week" used to be hardcoded here even for items up to 21 days out once daysAhead was
+      // widened past WEEK_COVERAGE_DAYS — genuinely misleading for something 3 weeks away. Phrase off the
+      // real daysLeft instead: still "this week" language when it actually is, a plain due-date line otherwise.
+      why: daysLeft <= 7
+        ? (en ? "Due this week — from Pronote." : "À faire cette semaine — vu sur Pronote.")
+        : (en ? "From Pronote — not marked done yet." : "Vu sur Pronote — pas encore marqué comme fait."),
       when: c.timestamp,
       source: "pronote", risk: "low", urgency, importance,
       anchorKey: c.anchorKey,
@@ -668,10 +675,13 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
         // Model suggests scores; CODE decides what clears the bar (VIPs + deadline'd commitments always do).
         const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
-        // Safety net: anything the classifier skipped or the quality bar dropped, but is due THIS WEEK per
-        // Pronote, gets a task anyway — see forceWeekCoverage's own comment for why (the "This week" widget
-        // has no such filter, so it must never show something with no task behind it). coveredAnchors spans
-        // both prior sweeps (existing) and this sweep's own classified picks (kept), so nothing doubles up.
+        // Safety net: ANY not-yet-done Pronote item due within the next WEEK_COVERAGE_DAYS (7) that the
+        // classifier skipped or the quality bar dropped still gets a task — deliberately scoped to next
+        // week only (per explicit instruction), not the full pronoteHomework() pull horizon (21 days):
+        // something due 3 weeks out shouldn't necessarily become a task card yet just because Pronote
+        // already knows about it. coveredAnchors spans both prior sweeps (existing) and this sweep's own
+        // classified picks (kept), so nothing already-turned-into-a-task (done, dismissed, or still ready)
+        // ever gets a second copy.
         const weekCovered = forceWeekCoverage(
           candidates, [...existing.map((t) => t.anchorKey), ...kept.map((k) => k.anchorKey)],
           { en: profile.language === "en" },

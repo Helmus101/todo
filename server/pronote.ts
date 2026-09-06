@@ -279,7 +279,11 @@ export interface PronoteHomeworkItem { id: string; subject: string; description:
 // should already be starting on (a long essay, a project) — widened so nothing due within ~3 weeks is
 // silently invisible to Otto. Urgency/importance still scale with proximity in classify (claude.ts), so
 // a far-off deadline doesn't crowd out what's actually due soon.
-const HOMEWORK_DAYS_AHEAD = 21;
+// How far ahead pronoteHomework() pulls not-yet-done homework. Not the same window the AI classifier's
+// forceWeekCoverage safety net (tasks.ts) guarantees a task for — that's deliberately narrower
+// (WEEK_COVERAGE_DAYS, 7 days): something due 3 weeks out is still visible/read here, but doesn't
+// necessarily get a task card until it's closer.
+export const HOMEWORK_DAYS_AHEAD = 21;
 
 /** Homework due in the next `daysAhead` days, not yet marked done. */
 // Pronote's assignment `description` is genuinely HTML (the school's own rich-text editor output) — e.g.
