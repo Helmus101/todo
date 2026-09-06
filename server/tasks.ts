@@ -628,17 +628,20 @@ export function supplementarySweepDue(profile: Profile, now: Date = new Date()):
   return elapsedMs >= SUPPLEMENTARY_SWEEP_INTERVAL_DAYS * 86_400_000;
 }
 
-// Explicitly REMOVED per direct instruction ("it shouldn't have limit on tasks it can execute") — this used
-// to be a real ceiling on PASSIVE AI spend (tasks that start themselves with zero user click: the sweep's
-// own auto-run-top-N, and the kick loop's catch-up for anything the sweep didn't get to), capped at 3/day.
-// A ready task now waits at most until the next daily sweep/kick cycle, never additionally throttled by a
-// count. The monthly $ budget (overMonthlyBudget/overInteractiveBudget, shared/types.ts) is the ONE
-// remaining spend backstop — it still hard-stops background work account-wide once the month's cap is hit,
-// same as before; only the extra daily-count ceiling on top of it is gone. autoRunBudgetLeft/recordAutoRuns
-// are kept as thin pass-throughs (rather than ripping out every call site) so this can be reintroduced by
-// restoring a finite cap here alone if spend patterns ever call for it.
-export function autoRunBudgetLeft(_profile: Profile, _now: Date = new Date()): number {
-  return Infinity;
+// A real ceiling on PASSIVE AI spend — tasks that start themselves with zero user click (the sweep's own
+// auto-run-top-N, and the kick loop's catch-up for anything the sweep didn't get to). Was 3/day, briefly
+// removed entirely per direct instruction ("it shouldn't have limit on tasks it can execute"), then raised
+// back to a real but much higher ceiling (7/day) per direct instruction again right after — a backlog-heavy
+// day no longer gets stuck behind a low count, but there's still SOME bound on unattended spend independent
+// of the monthly $ budget (which only catches runaway spend after a whole month, not the day it happens).
+const AUTO_RUN_DAILY_CAP = 7;
+/** How many more tasks may auto-start today, across every trigger (sweep + kick) combined. 0 once the cap
+ *  is hit; resets to the full cap at local midnight. */
+export function autoRunBudgetLeft(profile: Profile, now: Date = new Date()): number {
+  const tz = tzOf(profile);
+  const today = localDayOf(now.toISOString(), tz);
+  if (profile.autoRunDay !== today) return AUTO_RUN_DAILY_CAP;
+  return Math.max(0, AUTO_RUN_DAILY_CAP - (profile.autoRunCount || 0));
 }
 /** Record that `n` more tasks were just auto-started today — mutates `profile` in place (same pattern as
  *  applyRememberFact/applyProfileUpdate), so the caller's own commit/saveState persists it. */
