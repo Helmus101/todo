@@ -179,17 +179,17 @@ async function processSweep(job: store.Job): Promise<string> {
   for (const t of found) void store.recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
   for (const t of toRun) { await store.enqueueJob(email, "execute_task", t.id); void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" }); }
 
-  // Every fresh task from this sweep gets an email — best-effort, non-blocking: a failed/skipped send
-  // (no Gmail connected, Composio hiccup) never fails the sweep itself, same posture the old daily
-  // briefing had. Sent via the same system-email path (sendSystemEmail), not the agent's gated toolset.
-  if (found.length) void notifyNewTasks(email, found, profile, next).catch(() => {});
+  // Deliberately NO email here anymore — per direct instruction, the student should hear from Otto once it's
+  // actually DONE something with a task, not the moment a bare "ready" card is discovered (which could still
+  // be an empty title with zero synthesis, hours before it's even auto-run). See notifyTaskExecuted below,
+  // fired from processExecuteTask on a genuinely finished run instead.
 
   return `swept: ${found.length} new task${found.length === 1 ? "" : "s"}, ${toRun.length} queued${learned.length ? `, learned ${learned.length} fact${learned.length === 1 ? "" : "s"}` : ""}`;
 }
 
-// Task titles/why come from the model or the student's own typed input and land straight in an HTML
-// email body (notifyNewTasks below) — unescaped, a title like `<img src=x onerror=...>` would execute in
-// the recipient's mail client. Exported so tests/run.mjs can pin this without a network-calling send.
+// Task titles/why/synthesis come from the model or the student's own typed input and land straight in an
+// HTML email body (notifyTaskExecuted below) — unescaped, a title like `<img src=x onerror=...>` would
+// execute in the recipient's mail client. Exported so tests/run.mjs can pin this without a network-calling send.
 export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] || c));
 
 // Local hour (0-23) in a given IANA timezone — used only to keep the task-alert email out of the
@@ -207,28 +207,27 @@ function localWeekday(tz: string, now: Date = new Date()): number {
 }
 const QUIET_HOURS_START = 22, QUIET_HOURS_END = 7; // 22:00–07:00 local — no email, task still lands in-app
 
-/** New-task email alert — one email per sweep that found something, listing every fresh task with its
- *  "why" so the subject line alone tells the student something real happened, not just "check the app". */
-async function notifyNewTasks(email: string, found: WebTask[], profile: Profile, list: WebTask[]): Promise<void> {
+/** Task-EXECUTED email alert — fires once a task has genuinely been run (real synthesis/steps ready), not
+ *  the moment it's merely discovered/generated. Was previously sent per-sweep for every freshly-found
+ *  "ready" card, often hours before (or entirely instead of) it ever got auto-run — a bare, contentless
+ *  notification. Moved to processExecuteTask's own success path per direct instruction: "only notify user
+ *  of task after the task is executed not when generated." */
+async function notifyTaskExecuted(email: string, task: WebTask, profile: Profile, list: WebTask[]): Promise<void> {
   if (!(await integrations.connectionStatusesCached(email, ["gmail"]))["gmail"]) return; // no Gmail, nothing to send through
-  // A student who opens the app at midnight (or has generation cadence turned up) could otherwise get
-  // "you have new homework" pinged in the middle of the night — the task itself still shows up in-app
-  // immediately; only the EMAIL nudge waits. Skipped, not queued — the next sweep that finds something
-  // (or the student just opening the app) covers it, so nothing is silently lost.
+  // A student who's asleep when an overnight auto-run finishes could otherwise get pinged at 3am — the task
+  // itself still shows up in-app immediately; only the EMAIL nudge waits. Skipped, not queued — the next
+  // execution (or the student just opening the app) covers it, nothing is silently lost.
   const h = localHour(tzOf(profile));
   if (h >= QUIET_HOURS_START || h < QUIET_HOURS_END) {
-    void store.recordEvent(email, "task_alert_sent", { message: `Skipped: quiet hours (${h}:00 local)` });
+    void store.recordEvent(email, "task_alert_sent", { taskId: task.id, message: `Skipped: quiet hours (${h}:00 local)` });
     return;
   }
   const appUrl = process.env.PUBLIC_URL || "https://hiotto.vercel.app";
-  // Pile-up detection (server/workload.ts) was PULL-only — real, but the student had to open the app's
-  // "This week" popup to see a heavy day coming. This reuses the ALREADY-throttled once-daily new-task
-  // email (rather than a second notification channel) to also mention the heaviest upcoming day, when it's
-  // genuinely a pile-up — best-effort, never blocks the email if Pronote is unreachable.
   // System-sent notification emails (this one included) are Otto's OWN voice, not a drafted reply mirroring
   // a thread — so unlike a drafted email (which correctly mirrors the recipient's/thread's language), THIS
   // one must follow the account's own language setting, same as every other user-facing string in the app.
   const en = profile.language === "en";
+  // Pile-up detection (server/workload.ts) — best-effort, never blocks the email if Pronote is unreachable.
   let pileUpLine = "";
   try {
     const [homework, tests] = (await pronoteConnected(email)).connected
@@ -238,9 +237,6 @@ async function notifyNewTasks(email: string, found: WebTask[], profile: Profile,
     const { days } = computeWorkload({ homework, tests: allTests, tasks: list.filter((t) => !isHandled(t.status)), grades: profile.grades, timezone: tzOf(profile) });
     const busy = days.map((d) => d.totalEffort).filter((e) => e > 0).sort((a, b) => a - b);
     const median = busy[Math.floor(busy.length / 2)] || 0;
-    // Same "pileUp" heuristic as WeekLoad's client-side one (client/App.tsx) — kept in sync deliberately,
-    // not re-derived independently, so "heavy" means the same thing whether the student sees it in-app or
-    // in this email.
     const heavy = days.find((d, i) => i > 0 && d.totalEffort > 0 && (busy.length < 2 ? d.totalEffort >= 3 : d.totalEffort >= median * 1.6));
     if (heavy) {
       const dow = new Date(`${heavy.date}T00:00:00`).toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long" });
@@ -248,19 +244,17 @@ async function notifyNewTasks(email: string, found: WebTask[], profile: Profile,
         ? `<p>${dow} is looking busy — ${heavy.items.length} thing${heavy.items.length > 1 ? "s" : ""} planned.</p>`
         : `<p>${dow} s'annonce chargé — ${heavy.items.length} chose${heavy.items.length > 1 ? "s" : ""} prévue${heavy.items.length > 1 ? "s" : ""}.</p>`;
     }
-  } catch { /* best-effort — never blocks the new-task email */ }
-  const subject = en
-    ? (found.length === 1 ? `Otto — new task: ${found[0].title}` : `Otto — ${found.length} new tasks`)
-    : (found.length === 1 ? `Otto — nouvelle tâche : ${found[0].title}` : `Otto — ${found.length} nouvelles tâches`);
-  const items = found.slice(0, 10).map((t) => `<li><b>${escapeHtml(t.title)}</b>${t.why ? ` — ${escapeHtml(t.why)}` : ""}</li>`).join("");
-  // Second person, like Otto's actually telling you — not a system log announcing what it "found."
+  } catch { /* best-effort — never blocks the email */ }
+  const subject = en ? `Otto — ready: ${task.title}` : `Otto — prêt : ${task.title}`;
+  const summary = task.synthesis?.slice(0, 300) || task.why;
+  // Second person, like Otto's actually telling you what it DID — not a system log announcing what it found.
   const intro = en
-    ? `<p>Hey — ${found.length === 1 ? "you've got a new one" : `you've got ${found.length} new ones`}:</p>`
-    : `<p>Salut — ${found.length === 1 ? "tu as une nouvelle tâche" : `tu as ${found.length} nouvelles tâches`} :</p>`;
+    ? `<p>Hey — Otto just finished working on this one:</p><p><b>${escapeHtml(task.title)}</b>${summary ? ` — ${escapeHtml(summary)}` : ""}</p>`
+    : `<p>Salut — Otto vient de terminer celle-ci :</p><p><b>${escapeHtml(task.title)}</b>${summary ? ` — ${escapeHtml(summary)}` : ""}</p>`;
   const openLine = en ? `<p><a href="${appUrl}/tasks">Take a look →</a></p>` : `<p><a href="${appUrl}/tasks">Jette un œil →</a></p>`;
-  const body = `${intro}<ul>${items}</ul>${pileUpLine}${openLine}`;
+  const body = `${intro}${pileUpLine}${openLine}`;
   const result = await integrations.sendSystemEmail(email, { to: email, subject, body, primaryAccounts: profile.primaryAccounts });
-  void store.recordEvent(email, "task_alert_sent", { message: result.ok ? `Emailed ${found.length} new task${found.length === 1 ? "" : "s"}` : `Skipped: ${result.error || "send failed"}` });
+  void store.recordEvent(email, "task_alert_sent", { taskId: task.id, message: result.ok ? "Emailed: task executed" : `Skipped: ${result.error || "send failed"}` });
 }
 
 /** Set ONE task's status in the durable copy (used for the queued transition so the UI can show it). */
@@ -404,6 +398,10 @@ async function processExecuteTask(job: store.Job): Promise<string> {
     const done = updated?.steps?.length ? `${updated.steps.filter((s) => !s.done).length} step(s) need you` : "fully handled";
     const cost = updated?.lastRunTokens ? ` (${Math.round(updated.lastRunTokens.in / 1000)}k tokens)` : "";
     await store.recordEvent(email, "run_succeeded", { taskId, jobId: job.id, message: (updated?.synthesis?.slice(0, 200) || done) + cost });
+    // Email nudge ONLY for a genuinely AUTOMATIC run (no click from the student) — a manual run/revision is
+    // interactive (see `interactive` above), the student is already watching it happen in the app, so an
+    // email here would just be a redundant ping about something they themselves just triggered.
+    if (updated && !interactive && !isHandled(updated.status)) void notifyTaskExecuted(email, updated, profile, list).catch(() => {});
     return updated?.synthesis || "executed";
   } catch (e: any) {
     // PERSIST the failure — the old in-memory-only autoRan meant a crashed offline run left the task
