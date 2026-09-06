@@ -206,7 +206,7 @@ export function emptyProfile(): Profile { return { about: "", preferences: [], p
  *  cleaning up whatever's already stored so an already-affected account self-heals on its very next load
  *  rather than waiting on a fresh cross-device merge to happen to fix it. Keeps only the newest Pronote row
  *  per subject; manual entries are untouched (those are genuinely separate historical data points). */
-function dedupePronoteGrades<T extends { subject: string; source: "pronote" | "manual"; updatedAt: string }>(grades: T[]): T[] {
+function dedupePronoteGrades<T extends { id: string; subject: string; grade: number; scale: number; updatedAt: string; source?: "pronote" | "manual" }>(grades: T[]): T[] {
   const newestPronote = new Map<string, T>();
   const manual: T[] = [];
   for (const g of grades) {

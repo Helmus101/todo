@@ -5,7 +5,7 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningS
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior } from "../server/bandit.ts";
@@ -1398,6 +1398,24 @@ section("bandit.ts — sixth/seventh targets (ordering, chat style) + discounted
   check("total evidence for the non-served arm shrinks under discounting", (aAfter.a + aAfter.b) < (aBefore.a + aBefore.b));
   const rateB = flip["ctx"]["B"].a / (flip["ctx"]["B"].a + flip["ctx"]["B"].b);
   check("the currently-reinforced arm's own posterior reflects its own strong recent success", rateB > 0.9);
+}
+
+section("normalizeProfile — self-heals duplicated Pronote grade rows (the '40 grades' bug)");
+{
+  // Simulates ~40 days of a sync bug generating a fresh random id each time instead of reusing one —
+  // exactly the reported live symptom ("Anglais · 40 grades"). normalizeProfile must collapse these down to
+  // ONE row (the newest) per subject on the very next load, without touching genuinely separate manual entries.
+  const dupedGrades = [];
+  for (let i = 0; i < 40; i++) {
+    dupedGrades.push({ id: `random-${i}`, subject: "Anglais", grade: 8, scale: 20, updatedAt: new Date(2026, 0, 1 + i).toISOString(), source: "pronote" });
+  }
+  dupedGrades.push({ id: "manual-1", subject: "Anglais", grade: 9, scale: 20, updatedAt: "2026-01-05T00:00:00Z", source: "manual" });
+  const cleaned = normalizeProfile({ grades: dupedGrades }).grades;
+  const pronoteRows = cleaned.filter((g) => g.source === "pronote" && g.subject === "Anglais");
+  check("collapses 40 duplicate Pronote rows for one subject down to exactly one", pronoteRows.length === 1);
+  check("keeps the NEWEST Pronote row (by updatedAt), not an arbitrary one", pronoteRows[0].id === "random-39");
+  check("never touches a genuinely separate manual entry for the same subject", cleaned.some((g) => g.source === "manual" && g.id === "manual-1"));
+  check("a normal, already-clean grade list is untouched", normalizeProfile({ grades: [{ id: "a", subject: "Maths", grade: 15, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "pronote" }] }).grades.length === 1);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
