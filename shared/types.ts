@@ -196,6 +196,27 @@ function newId(): string {
   return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 export function emptyProfile(): Profile { return { about: "", preferences: [], people: [], projects: [], courses: [] }; }
+
+/** Self-heals an already-duplicated grade history on every normalize — a Pronote sync is meant to keep ONE
+ *  live row per subject (see applyPronoteGrades, server/pronote.ts), but a bug there used to generate a
+ *  fresh random id whenever a sync ran against a profile copy that didn't already contain the prior day's
+ *  row, so two different ids for the same subject never collapsed and just kept accumulating — reported
+ *  live as "Anglais · 40 grades" after roughly 40 days of daily syncs. That's fixed at the SOURCE now
+ *  (deterministic id) and at MERGE time (mergeProfileStates, server/tasks.ts) — this is the third layer,
+ *  cleaning up whatever's already stored so an already-affected account self-heals on its very next load
+ *  rather than waiting on a fresh cross-device merge to happen to fix it. Keeps only the newest Pronote row
+ *  per subject; manual entries are untouched (those are genuinely separate historical data points). */
+function dedupePronoteGrades<T extends { subject: string; source: "pronote" | "manual"; updatedAt: string }>(grades: T[]): T[] {
+  const newestPronote = new Map<string, T>();
+  const manual: T[] = [];
+  for (const g of grades) {
+    if (g.source !== "pronote") { manual.push(g); continue; }
+    const key = g.subject.toLowerCase();
+    const prev = newestPronote.get(key);
+    if (!prev || Date.parse(g.updatedAt) >= Date.parse(prev.updatedAt)) newestPronote.set(key, g);
+  }
+  return [...manual, ...newestPronote.values()];
+}
 export function normalizeProfile(p: any): Profile {
   const arr = (v: any): string[] => Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
   return {
@@ -251,14 +272,14 @@ export function normalizeProfile(p: any): Profile {
     languageSetAt: typeof p?.languageSetAt === "string" ? p.languageSetAt : undefined,
     preferencesUpdatedAt: typeof p?.preferencesUpdatedAt === "string" ? p.preferencesUpdatedAt : undefined,
     grades: Array.isArray(p?.grades)
-      ? p.grades.map((g: any) => ({
+      ? dedupePronoteGrades(p.grades.map((g: any) => ({
           id: typeof g?.id === "string" && g.id ? g.id : newId(),
           subject: String(g?.subject || "").trim().slice(0, 60),
           grade: Number(g?.grade) || 0,
           scale: Number(g?.scale) > 0 ? Number(g.scale) : 20,
           updatedAt: typeof g?.updatedAt === "string" ? g.updatedAt : new Date().toISOString(),
           source: g?.source === "pronote" ? "pronote" as const : "manual" as const,
-        })).filter((g: { subject: string }) => g.subject).slice(0, 200)
+        })).filter((g: { subject: string }) => g.subject)).slice(0, 200)
       : undefined,
     manualExams: Array.isArray(p?.manualExams)
       ? p.manualExams.map((e: any) => ({

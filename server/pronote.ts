@@ -365,7 +365,17 @@ export function applyPronoteGrades(profile: Profile, fromPronote: PronoteGradeIt
     // subject). A manually-logged grade for the same subject is a separate historical data point and is
     // never touched here — see the type comment on Profile.grades for why the two sources don't merge.
     const i = list.findIndex((x) => x.subject.toLowerCase() === g.subject.toLowerCase() && x.source === "pronote");
-    const entry = { id: i >= 0 ? list[i].id : randomUUID(), subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now, source: "pronote" as const };
+    // A DETERMINISTIC id (not randomUUID()) for Pronote-sourced rows — this is what actually guarantees "one
+    // live value per subject" instead of just hoping findIndex matches every time. It didn't always: a sync
+    // running against a profile copy that (for any reason — a race with another sync, a stale cloud-merge
+    // snapshot) doesn't yet contain the prior day's row generated a FRESH random id, and mergeProfileStates
+    // (tasks.ts) keys its union by id — so two different random ids for the same subject never collapsed
+    // into one and just kept accumulating, one more every sync. Reported live as "Anglais · 40 grades" after
+    // roughly 40 days of daily syncs. A stable id makes every sync — no matter which stale/fresh copy it ran
+    // against — collide on the SAME key and actually overwrite, closing the bug at the source rather than
+    // relying on findIndex's best-effort match.
+    const id = i >= 0 ? list[i].id : `pronote:${g.subject.toLowerCase()}`;
+    const entry = { id, subject: g.subject, grade: g.average, scale: g.outOf, updatedAt: now, source: "pronote" as const };
     if (i >= 0) list[i] = entry; else list.push(entry);
   }
 }

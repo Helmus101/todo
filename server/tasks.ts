@@ -446,7 +446,12 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     grades: (p1.grades?.length || p2.grades?.length) ? (() => {
       const map = new Map<string, NonNullable<Profile["grades"]>[number]>();
       for (const g of [...(p1.grades || []), ...(p2.grades || [])]) {
-        const key = g.id || `${g.subject}:${g.source || "manual"}`; // legacy entries without an id: best-effort key
+        // Pronote-sourced rows are keyed by subject, NEVER by their own id — even with applyPronoteGrades
+        // now using a deterministic id (see its own comment), this merge is what actually COLLAPSES any
+        // already-stored duplicates from before that fix (different random ids for the same subject,
+        // accumulated one per sync — the "Anglais · 40 grades" bug). Manual entries keep their own id as
+        // the key, since those genuinely are separate historical data points that must all survive.
+        const key = g.source === "pronote" ? `pronote:${g.subject.toLowerCase()}` : (g.id || `${g.subject}:manual`);
         const prev = map.get(key);
         if (!prev || Date.parse(g.updatedAt) >= Date.parse(prev.updatedAt)) map.set(key, g);
       }
