@@ -8,7 +8,8 @@ import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToIt
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
-import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior } from "../server/bandit.ts";
+import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior } from "../server/bandit.ts";
+import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, predictNextTasks, subjectFrequency, orderingBoost } from "../server/patterns.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -1188,7 +1189,11 @@ section("bandit.ts — contextual bandit (Thompson Sampling) for Pomodoro person
   const before = updatePosterior({}, key, "25/5", 1);
   check("a successful outcome increments alpha, not beta", before[key]["25/5"].a === 2 && before[key]["25/5"].b === 1);
   const after = updatePosterior(before, key, "25/5", 0);
-  check("a failed outcome increments beta, not alpha", after[key]["25/5"].a === 2 && after[key]["25/5"].b === 2);
+  // Approximate, not exact — updatePosterior now discounts toward the uniform prior on every call (see
+  // FORGETTING_FACTOR, bandit.ts) for non-stationarity, so a's prior value (2) becomes slightly less than 2
+  // before beta's increment lands. Still unambiguously "alpha stayed ~flat, beta grew", which is the actual
+  // invariant this test protects.
+  check("a failed outcome increments beta, not alpha", Math.abs(after[key]["25/5"].a - 2) < 0.05 && after[key]["25/5"].b === 2);
   check("updatePosterior is pure — never mutates the input state", before[key]["25/5"].b === 1);
 
   // Second bandit target: flashcard deck verbosity (FLASHCARD_ARMS) — same generic chooseArm/updatePosterior
@@ -1271,6 +1276,128 @@ section("bumpActivityHour / learnedProductiveHour — the 'when am I actually wo
   const sparse = { timezone: "UTC" };
   bumpActivityHour(sparse, new Date("2026-07-20T09:00:00Z"));
   check("below minTotal (default 20) stays null even with a clear single bump", learnedProductiveHour(sparse) === null);
+}
+
+section("server/patterns.ts — pattern recognition (predict the student's next move)");
+{
+  // predictNextEngagement — 2026-07-20 is a Monday (weekday 1).
+  const p = { timezone: "UTC" };
+  check("no history yet -> null, same cold-start posture as learnedProductiveHour", predictNextEngagement(p) === null);
+  for (let i = 0; i < 25; i++) bumpActivityHour(p, new Date("2026-07-20T18:00:00Z")); // Monday 18:00, 25 times
+  for (let i = 0; i < 3; i++) bumpActivityHour(p, new Date("2026-07-21T09:00:00Z")); // Tuesday 09:00, only 3
+  const pred = predictNextEngagement(p);
+  check("learns the (weekday, hour) cell with the most engagement", pred?.weekday === 1 && pred?.hour === 18);
+
+  // predictWeakSubjects
+  const signals = [
+    { subject: "Maths", correctRate: 0.4, attempts: 10 },   // weak, enough attempts
+    { subject: "Physique", correctRate: 0.55, attempts: 5 }, // weak, enough attempts
+    { subject: "Histoire", correctRate: 0.9, attempts: 10 }, // strong -> excluded
+    { subject: "SVT", correctRate: 0.2, attempts: 2 },       // weak but too few attempts -> excluded
+  ];
+  const weak = predictWeakSubjects(signals);
+  check("flags genuinely weak, well-attested subjects only", weak.includes("Maths") && weak.includes("Physique"));
+  check("excludes a strong subject", !weak.includes("Histoire"));
+  check("excludes a weak subject with too few attempts (not a real pattern yet)", !weak.includes("SVT"));
+  check("ranks the weakest subject first", weak[0] === "Maths");
+
+  // aggregateSubjectSignals — reads real task data (flashcard reviews + quiz attempts), no metrics-log query
+  const tasksForAgg = [
+    {
+      sourceSubject: "Maths",
+      flashcards: [{ cards: [
+        { front: "a", back: "b", review: { seen: 4, correct: 1 } },
+        { front: "c", back: "d", review: { seen: 2, correct: 2 } },
+      ] }],
+    },
+    { sourceSubject: "Histoire", quizzes: [{ attempts: [{ score: 2, total: 10 }, { score: 9, total: 10 }] }] }, // only LAST attempt counts
+  ];
+  const agg = aggregateSubjectSignals(tasksForAgg);
+  const maths = agg.find((s) => s.subject === "Maths");
+  const histoire = agg.find((s) => s.subject === "Histoire");
+  check("aggregates flashcard review correct/seen across cards for a subject", maths?.attempts === 6 && Math.abs((maths?.correctRate || 0) - 3 / 6) < 1e-9);
+  check("uses only the LATEST quiz attempt, not a sum across attempts", histoire?.attempts === 10 && histoire?.correctRate === 0.9);
+
+  // weakSubjectBoost / predictNextTasks
+  check("boosts a task in a weak subject", weakSubjectBoost({ sourceSubject: "Maths" }, ["Maths"]) > 0);
+  check("no boost for a subject not flagged weak", weakSubjectBoost({ sourceSubject: "Anglais" }, ["Maths"]) === 0);
+  check("no boost for a task with no subject at all", weakSubjectBoost({}, ["Maths"]) === 0);
+  const ranked = predictNextTasks(
+    [{ id: "a", score: 0.5, sourceSubject: "Anglais" }, { id: "b", score: 0.5, sourceSubject: "Maths" }],
+    ["Maths"],
+  );
+  check("predictNextTasks ranks the weak-subject task first when base scores tie", ranked[0].id === "b");
+
+  // predictNextEngagement now returns a confidence score alongside (weekday, hour).
+  const confP = { timezone: "UTC" };
+  for (let i = 0; i < 80; i++) bumpActivityHour(confP, new Date("2026-07-20T18:00:00Z")); // heavily concentrated
+  const confPred = predictNextEngagement(confP);
+  check("a heavily concentrated history yields high confidence", confPred && confPred.confidence > 0.5);
+  const noisyP = { timezone: "UTC" };
+  for (let i = 0; i < 24; i++) bumpActivityHour(noisyP, new Date(`2026-07-${20 + (i % 5)}T${(i % 24).toString().padStart(2, "0")}:00:00Z`));
+  const noisyPred = predictNextEngagement(noisyP);
+  check("a spread-out (low-concentration) history yields lower confidence than a concentrated one", !noisyPred || noisyPred.confidence < (confPred?.confidence ?? 1));
+
+  // Trend-aware weak-subject detection.
+  const trendTasks = [
+    { sourceSubject: "Maths", quizzes: [{ attempts: [{ score: 3, total: 10 }, { score: 3, total: 10 }, { score: 8, total: 10 }] }] }, // improving
+    { sourceSubject: "Physique", quizzes: [{ attempts: [{ score: 8, total: 10 }, { score: 8, total: 10 }, { score: 4, total: 10 }] }] }, // declining
+  ];
+  const trendAgg = aggregateSubjectSignals(trendTasks);
+  const mathsTrend = trendAgg.find((s) => s.subject === "Maths");
+  const physique = trendAgg.find((s) => s.subject === "Physique");
+  check("detects an improving trend from quiz-attempt history", mathsTrend?.trend === "up");
+  check("detects a declining trend from quiz-attempt history", physique?.trend === "down");
+  // Physique's raw correctRate (8+8+4)/30 = 0.667 is ABOVE the default 0.6 threshold, but its declining trend
+  // should still flag it (the whole point of tracking trend, not just a snapshot).
+  const trendWeak = predictWeakSubjects(trendAgg);
+  check("a declining trend flags a subject even above the static threshold", trendWeak.includes("Physique"));
+
+  // subjectFrequency / orderingBoost (ORDERING_ARMS)
+  const freq = subjectFrequency([{ sourceSubject: "Maths" }, { sourceSubject: "Maths" }, { sourceSubject: "Anglais" }]);
+  check("subjectFrequency counts per subject", freq["Maths"] === 2 && freq["Anglais"] === 1);
+  check("quick-wins-first boosts a task with fewer steps", orderingBoost({ steps: [1] }, "quick-wins-first", {}) > orderingBoost({ steps: [1, 2, 3, 4, 5] }, "quick-wins-first", {}));
+  check("subject-balanced boosts an under-represented subject over an over-represented one", orderingBoost({ sourceSubject: "Anglais" }, "subject-balanced", freq) > orderingBoost({ sourceSubject: "Maths" }, "subject-balanced", freq));
+  check("urgency-first (the default arm) applies no boost at all", orderingBoost({ sourceSubject: "Maths", steps: [] }, "urgency-first", freq) === 0);
+}
+
+section("bandit.ts — sixth/seventh targets (ordering, chat style) + discounted (non-stationary) updates");
+{
+  const seeded2 = (seed) => { let t = seed >>> 0; return () => { t = (t + 0x6D2B79F5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r; return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; };
+  const key = contextKey(new Date("2026-01-05T09:00:00"));
+
+  let orderState = {};
+  for (let i = 0; i < 60; i++) orderState = updatePosterior(orderState, key, "quick-wins-first", 1);
+  for (let i = 0; i < 60; i++) orderState = updatePosterior(orderState, key, "urgency-first", 0);
+  let picksQuick = 0;
+  const rngO = seeded2(41);
+  for (let i = 0; i < 50; i++) { if (chooseArm(ORDERING_ARMS, orderState, key, rngO).arm.id === "quick-wins-first") picksQuick++; }
+  check("ordering bandit converges on the reinforced arm", picksQuick >= 40);
+
+  let styleState = {};
+  for (let i = 0; i < 60; i++) styleState = updatePosterior(styleState, key, "socratic", 1);
+  for (let i = 0; i < 60; i++) styleState = updatePosterior(styleState, key, "concise", 0);
+  let picksSocratic = 0;
+  const rngS = seeded2(53);
+  for (let i = 0; i < 50; i++) { if (chooseArm(CHAT_STYLE_ARMS, styleState, key, rngS).arm.id === "socratic") picksSocratic++; }
+  check("chat-style bandit converges on the reinforced arm", picksSocratic >= 40);
+
+  // Non-stationarity: an arm that WAS winning should lose its edge once evidence flips, and should do so
+  // FASTER under the discounted update than it would if evidence just accumulated forever.
+  let flip = {};
+  for (let i = 0; i < 100; i++) flip = updatePosterior(flip, "ctx", "A", 1); // A wins big, historically
+  const aBefore = flip["ctx"]["A"];
+  for (let i = 0; i < 40; i++) flip = updatePosterior(flip, "ctx", "B", 1); // now B is what's actually winning
+  const aAfter = flip["ctx"]["A"];
+  check("discounting pulls a non-served arm's posterior back toward the uniform prior over time", aAfter.a < aBefore.a);
+  // The point of discounting is REDUCED CONFIDENCE in stale evidence (so a competing arm's samples can win
+  // more often via Thompson Sampling's own variance), not a collapsed point-estimate — b for an
+  // always-succeeding arm stays pinned near 1, so a/(a+b) barely moves even as `a` itself decays. The real,
+  // checkable invariant is total evidence (a+b) shrinking, which is what actually returns the arm toward
+  // "uncertain" rather than "permanently proven."
+  check("total evidence for the non-served arm shrinks under discounting", (aAfter.a + aAfter.b) < (aBefore.a + aBefore.b));
+  const rateB = flip["ctx"]["B"].a / (flip["ctx"]["B"].a + flip["ctx"]["B"].b);
+  check("the currently-reinforced arm's own posterior reflects its own strong recent success", rateB > 0.9);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

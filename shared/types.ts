@@ -65,6 +65,16 @@ export interface Profile {
   // learned histogram from this student's own activity, used to autonomously time when Otto surfaces work
   // (see sweepDue in server/jobs.ts) instead of a one-size-fits-all fixed hour for every account.
   activityHours?: number[];
+  // 168-length (7 weekdays × 24 hours, index = weekday*24+hour, weekday 0=Sunday matching Date#getDay) —
+  // the finer-grained sibling of activityHours, feeding server/patterns.ts's predictNextEngagement ("most
+  // likely to open Otto around Tuesday 18:00", not just "sometime in the evening"). Bumped alongside
+  // activityHours by the same bumpActivityHour calls — no separate instrumentation needed.
+  activityWeekdayHours?: number[];
+  // ISO stamp of the last time bumpActivityHour halved both grids above for recency-weighting — habits
+  // should be able to drift, not accumulate forever into a stale average. See bumpActivityHour's own
+  // comment for why a periodic halving is used instead of per-event timestamps (the grids are running
+  // counters, not a log; halving is the cheap approximation of "recent activity counts more").
+  activityDecayedAt?: string;
   // Daily cap on AUTOMATIC task execution (sweep's own auto-run-top-3 AND the kick loop's catch-up, see
   // server/jobs.ts's autoRunBudgetLeft/recordAutoRuns) — a real per-day ceiling on passive AI spend that
   // happens with zero user interaction, distinct from the monthly $ budget (which is too coarse to catch
@@ -148,6 +158,12 @@ export interface Profile {
   // reporting a small `PronoteTestItem`, `subject`, and `deadline` is the same low-friction pattern as the
   // `grades` self-report above, not a new mechanism.
   manualExams?: { id: string; subject: string; deadline: string }[];
+  // A student-maintained log of specific mistakes — "what question, what I got wrong, what to do about it
+  // next time" — grouped by subject (see errorLogBySubject below). Distinct from journal flashcards
+  // (client/App.tsx's StudyLogPage): a flashcard is "review this fact again"; an error-log entry is "here's
+  // the exact gap in my reasoning and the fix", closer to an error journal used for exam prep. Accumulates
+  // like grades/manualExams above — never overwritten, only appended to and individually deletable.
+  errorLog?: { id: string; subject: string; question: string; mistake: string; fix: string; createdAt: string }[];
   // Which track this student is on — drives AI vocabulary (isBigIbProject/trackLine in claude.ts) and
   // unlocks the milestone/big-project breakdown for IB (EE/IA/TOK/CAS). Set from Settings.
   track?: "ib" | "bac" | "other";
@@ -199,6 +215,10 @@ export function normalizeProfile(p: any): Profile {
     activityHours: Array.isArray(p?.activityHours) && p.activityHours.length === 24
       ? p.activityHours.map((n: unknown) => Math.max(0, Number(n) || 0))
       : undefined,
+    activityWeekdayHours: Array.isArray(p?.activityWeekdayHours) && p.activityWeekdayHours.length === 168
+      ? p.activityWeekdayHours.map((n: unknown) => Math.max(0, Number(n) || 0))
+      : undefined,
+    activityDecayedAt: typeof p?.activityDecayedAt === "string" ? p.activityDecayedAt : undefined,
     autoRunDay: typeof p?.autoRunDay === "string" ? p.autoRunDay : undefined,
     autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
@@ -247,6 +267,16 @@ export function normalizeProfile(p: any): Profile {
           deadline: typeof e?.deadline === "string" ? e.deadline : "",
         })).filter((e: { subject: string; deadline: string }) => e.subject && e.deadline).slice(0, 100)
       : undefined,
+    errorLog: Array.isArray(p?.errorLog)
+      ? p.errorLog.map((e: any) => ({
+          id: typeof e?.id === "string" && e.id ? e.id : newId(),
+          subject: String(e?.subject || "").trim().slice(0, 60),
+          question: String(e?.question || "").trim().slice(0, 500),
+          mistake: String(e?.mistake || "").trim().slice(0, 500),
+          fix: String(e?.fix || "").trim().slice(0, 500),
+          createdAt: typeof e?.createdAt === "string" ? e.createdAt : new Date().toISOString(),
+        })).filter((e: { subject: string; question: string }) => e.subject && e.question).slice(0, 500)
+      : undefined,
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
@@ -279,6 +309,21 @@ export function gradesBySubject(grades: NonNullable<Profile["grades"]> | undefin
   }).sort((a, b) => a.avg20 - b.avg20); // weakest subject first — same "needs attention" ordering as the grades list
 }
 
+/** Group the error log by subject, newest entry first within each subject, subjects with the MOST entries
+ *  first (that's the subject the mistakes are piling up in — the one to actually review before an exam). */
+export interface SubjectErrorLog { subject: string; entries: NonNullable<Profile["errorLog"]>; }
+export function errorLogBySubject(log: NonNullable<Profile["errorLog"]> | undefined): SubjectErrorLog[] {
+  const map = new Map<string, NonNullable<Profile["errorLog"]>>();
+  for (const e of log || []) {
+    const key = e.subject.toLowerCase();
+    (map.get(key) || map.set(key, []).get(key)!).push(e);
+  }
+  return [...map.values()].map((entries) => ({
+    subject: entries[0].subject,
+    entries: [...entries].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+  })).sort((a, b) => b.entries.length - a.entries.length);
+}
+
 /** Is this a resolvable IANA timezone? (Intl throws on an unknown zone.) */
 export function isValidTz(tz: string): boolean {
   try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
@@ -294,17 +339,40 @@ function localHourOf(tz: string, now: Date): number {
   try { return Number(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false }).format(now)) % 24; }
   catch { return now.getUTCHours(); }
 }
+/** The LOCAL weekday (0=Sunday..6=Saturday, matching Date#getDay) `now` falls in, in the given timezone. */
+function localWeekdayOf(tz: string, now: Date): number {
+  try {
+    const short = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now);
+    return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(short);
+  } catch { return now.getUTCDay(); }
+}
+const ACTIVITY_DECAY_INTERVAL_MS = 30 * 86_400_000;
 
 /** Record one genuine engagement (a task action, a chat message, a flashcard review, a journal save, a
- *  study session) against the student's own local hour-of-day. Mutates in place, same posture as addUsage —
- *  called from wherever real engagement already happens, never a new tracked event of its own. Pure/no I/O
- *  by design (like everything else in this file); persistence is just "this profile gets saved" like any
- *  other profile field. */
+ *  study session) against the student's own local hour-of-day (and weekday×hour cell — see
+ *  activityWeekdayHours). Mutates in place, same posture as addUsage — called from wherever real engagement
+ *  already happens, never a new tracked event of its own. Pure/no I/O by design (like everything else in
+ *  this file); persistence is just "this profile gets saved" like any other profile field. Periodically
+ *  halves both grids (see ACTIVITY_DECAY_INTERVAL_MS) so old habits fade rather than accumulating forever —
+ *  the cheap approximation of recency-weighting for a running counter that has no per-event timestamps. */
 export function bumpActivityHour(profile: Profile, now: Date = new Date()): void {
-  const hours = profile.activityHours?.length === 24 ? [...profile.activityHours] : new Array(24).fill(0);
-  const h = localHourOf(tzOf(profile), now);
+  let hours = profile.activityHours?.length === 24 ? [...profile.activityHours] : new Array(24).fill(0);
+  let grid = profile.activityWeekdayHours?.length === 168 ? [...profile.activityWeekdayHours] : new Array(168).fill(0);
+  const lastDecay = Date.parse(profile.activityDecayedAt || "") || 0;
+  if (lastDecay && now.getTime() - lastDecay >= ACTIVITY_DECAY_INTERVAL_MS) {
+    hours = hours.map((n) => n / 2);
+    grid = grid.map((n) => n / 2);
+    profile.activityDecayedAt = now.toISOString();
+  } else if (!lastDecay) {
+    profile.activityDecayedAt = now.toISOString();
+  }
+  const tz = tzOf(profile);
+  const h = localHourOf(tz, now);
+  const wd = localWeekdayOf(tz, now);
   hours[h] = (hours[h] || 0) + 1;
+  grid[wd * 24 + h] = (grid[wd * 24 + h] || 0) + 1;
   profile.activityHours = hours;
+  profile.activityWeekdayHours = grid;
 }
 
 /** This student's own learned "most active" local hour, or null when there isn't enough history to trust
@@ -708,6 +776,10 @@ export interface WebTask {
    *  (see stampFirstAction in server/index.ts). Undefined for tasks predating this or run before any arm
    *  was chosen — simply never scored, not treated as a failure. */
   granularityArmId?: string;
+  /** Which dashboard-ordering bandit arm (server/bandit.ts's ORDERING_ARMS) was in effect the first time
+   *  this task was shown — stamped alongside `shownAt`, scored alongside `granularityArmId` at the same
+   *  stampFirstAction call site (server/index.ts) using the same procrastination-latency reward. */
+  orderingArmId?: string;
 }
 
 export interface TaskNote {
@@ -801,8 +873,15 @@ export interface DailyPracticeProblem {
 // why this exists and what it deliberately can't do (no selectors, no URLs, no script — colors and bounded
 // pixel radii only).
 export const THEME_COLOR_KEYS = ["--bg", "--surface", "--bg-2"] as const;
+// Widened by DEGREE, not by KIND (per the "next level, still bounded" plan) — --line is the hairline border
+// color used throughout the app; still a plain hex color, still independently re-validated, just a second
+// color role alongside backgrounds. Deliberately NOT --accent (the one-accent brand rule stays absolute —
+// see validateThemeTokens's own contrast logic; nothing here ever lets a proposal touch it) and NOT
+// --line-soft (an rgba() value in :root, a different format that would need its own parser to validate
+// safely — not worth the added surface for one more subtle divider color).
+export const THEME_BORDER_KEYS = ["--line"] as const;
 export const THEME_RADIUS_KEYS = ["--radius", "--radius-sm", "--radius-xs"] as const;
-export type ThemeTokens = Partial<Record<typeof THEME_COLOR_KEYS[number] | typeof THEME_RADIUS_KEYS[number], string>>;
+export type ThemeTokens = Partial<Record<typeof THEME_COLOR_KEYS[number] | typeof THEME_BORDER_KEYS[number] | typeof THEME_RADIUS_KEYS[number], string>>;
 
 /** Relative luminance (WCAG) of a hex color, for a contrast check against the app's fixed ink color — the
  *  model can propose a new background, but never gets to also change the text color, so a background this
@@ -827,6 +906,13 @@ export function validateThemeTokens(raw: unknown): ThemeTokens {
   for (const k of THEME_COLOR_KEYS) {
     const v = (raw as any)[k];
     if (typeof v === "string" && THEME_HEX_RE.test(v) && contrastRatio(v, THEME_INK_FIXED) >= 4.5) (out as any)[k] = v.toLowerCase();
+  }
+  for (const k of THEME_BORDER_KEYS) {
+    // A border only needs to be visibly distinct from the page, not pass BODY-TEXT contrast — 1.4:1 against
+    // the fixed ink is enough to reject something that'd disappear entirely (e.g. near-white on near-white),
+    // without forcing a hairline divider to be as dark as real text.
+    const v = (raw as any)[k];
+    if (typeof v === "string" && THEME_HEX_RE.test(v) && contrastRatio(v, THEME_INK_FIXED) >= 1.4) (out as any)[k] = v.toLowerCase();
   }
   for (const k of THEME_RADIUS_KEYS) {
     const v = (raw as any)[k];

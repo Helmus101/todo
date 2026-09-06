@@ -2010,10 +2010,16 @@ export async function generateThemeTokens(summary: string, profile?: Profile): P
           `student's own usage pattern. Output ONLY hex colors and pixel radii for these exact keys — nothing ` +
           `else, no explanation: "--bg" (page background, hex), "--surface" (card background, hex, close in ` +
           `lightness to --bg — this is a subtle, not a loud, distinction), "--bg-2" (a third subtle fill), ` +
-          `"--radius" (main corner radius, 8-20px), "--radius-sm" (6-14px), "--radius-xs" (4-9px). Keep colors ` +
-          `LIGHT and desaturated (this is a light-mode paper/ink aesthetic, not a dark or vivid theme) — think ` +
-          `subtle warm/cool off-whites, never a saturated or dark color. Do not explain your reasoning.` },
-        { role: "user", content: `Student's recent usage pattern:\n${summary.slice(0, 800)}\n\nReturn JSON: {"--bg": "#......", "--surface": "#......", "--bg-2": "#......", "--radius": "..px", "--radius-sm": "..px", "--radius-xs": "..px"}.` },
+          `"--line" (hairline border/divider color, hex — subtle, a touch more visible than --bg but still ` +
+          `quiet, never a strong outline), "--radius" (main corner radius, 8-20px), "--radius-sm" (6-14px), ` +
+          `"--radius-xs" (4-9px). Keep colors LIGHT and desaturated (this is a light-mode paper/ink aesthetic, ` +
+          `not a dark or vivid theme) — think subtle warm/cool off-whites, never a saturated or dark color. ` +
+          `If the summary mentions the student is mostly active in the evening/night, you may lean the palette ` +
+          `subtly cooler/dimmer WITHIN that same light constraint (never actually dark) — a small, tasteful ` +
+          `nod, not a different theme. If it mentions weak/struggling subjects, prefer LOWER contrast-variance ` +
+          `between --bg/--surface/--bg-2 (a calmer, less busy-feeling desk) rather than a more energetic one. ` +
+          `Do not explain your reasoning.` },
+        { role: "user", content: `Student's recent usage pattern:\n${summary.slice(0, 800)}\n\nReturn JSON: {"--bg": "#......", "--surface": "#......", "--bg-2": "#......", "--line": "#......", "--radius": "..px", "--radius-sm": "..px", "--radius-xs": "..px"}.` },
       ],
     }));
     const raw = firstJson<Record<string, string>>(res.choices[0]?.message?.content || "");
@@ -3664,7 +3670,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -3706,7 +3712,15 @@ export async function chatAboutTask(
   // method) is already covered more precisely by the methodology block right below. Resent on every turn
   // and every tool-loop round (CHAT_MAX_ROUNDS), so cutting genuinely-irrelevant content here is a real,
   // recurring token saving, not a one-off trim.
-  const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) +
+  // Seventh bandit target (server/bandit.ts's CHAT_STYLE_ARMS) — a small bias on TOP of the methodology
+  // below, not a replacement for it (rule 1's diagnose-first step still always applies). "concise" adds
+  // nothing (today's default); the other two lean the reply's SHAPE one way once the diagnosis is done.
+  const styleLine = opts?.styleArm === "socratic"
+    ? "\nSTYLE THIS TURN: lean HARDER into questions than usual — even after diagnosing, prefer one more good question over explaining, only explain once they're genuinely stuck on the question itself.\n"
+    : opts?.styleArm === "worked-example"
+    ? "\nSTYLE THIS TURN: once diagnosis is done, prefer leading with a PARALLEL worked example (same method, different numbers/case) before asking them to try their own — concrete before abstract.\n"
+    : "";
+  const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + styleLine +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +

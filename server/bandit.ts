@@ -169,6 +169,22 @@ export const AUDIO_ARMS: AudioArm[] = [{ id: "silence" }, { id: "brown" }, { id:
 export interface DensityArm { id: "cozy" | "compact" | "spacious" }
 export const DENSITY_ARMS: DensityArm[] = [{ id: "cozy" }, { id: "compact" }, { id: "spacious" }];
 
+/** Sixth bandit target: dashboard ORDERING strategy, layered on top of (never replacing) the existing
+ *  Eisenhower sort (sortWithinQuadrant, shared/types.ts). "urgency-first" is today's plain behavior;
+ *  "quick-wins-first" nudges low-effort tasks up (momentum); "subject-balanced" spreads picks across
+ *  subjects instead of one subject's tasks dominating the top of the list. Applied ambiently — the list
+ *  just quietly orders better, no visible control for the student to fiddle with. */
+export interface OrderingArm { id: "urgency-first" | "quick-wins-first" | "subject-balanced" }
+export const ORDERING_ARMS: OrderingArm[] = [{ id: "urgency-first" }, { id: "quick-wins-first" }, { id: "subject-balanced" }];
+
+/** Seventh bandit target: tutor chat style bias, folded into chatAboutTask's system prompt (server/claude.ts).
+ *  "concise" is today's default tone; "socratic" leans harder into question-first (the methodology block
+ *  already asks for this somewhat — this arm decides HOW MUCH); "worked-example" leans toward a parallel
+ *  worked example before asking the student to try. Reward: does the student send a follow-up (real
+ *  engagement) rather than the guardrail tripping or the thread just going quiet. */
+export interface ChatStyleArm { id: "concise" | "socratic" | "worked-example" }
+export const CHAT_STYLE_ARMS: ChatStyleArm[] = [{ id: "concise" }, { id: "socratic" }, { id: "worked-example" }];
+
 /** Shorter time-to-first-action -> higher reward. 6 hours+ is treated as "so slow it may as well be zero"
  *  rather than picking a razor-thin threshold — a student's first free moment after seeing a task can
  *  legitimately be hours later for reasons that have nothing to do with step size, so the curve is
@@ -179,14 +195,33 @@ export function computeLatencyReward(latencySeconds: number): number {
   return Math.max(0, Math.min(1, 1 - latencySeconds / SLOW_CEILING_SECONDS));
 }
 
+// Forgetting factor applied to EVERY arm's posterior (including the one just updated, before its own
+// increment) on each update — pulls old evidence gently back toward the uniform prior (a=1,b=1) so a habit
+// that was reinforced last term can't permanently dominate once it's stopped being true. This is what makes
+// Thompson Sampling here "discounted"/non-stationary rather than accumulating forever — the standard fix for
+// a bandit that needs to keep adapting across a long deployment (a school year), not converge once and stop
+// listening. Small (1%) so it's invisible on the timescale of days/weeks (tens of updates) and only actually
+// matters over hundreds of updates (a real shift in behavior over months) — verified by the "an arm that WAS
+// winning loses its edge after enough contradicting evidence, faster than un-discounted" test in tests/run.mjs.
+const FORGETTING_FACTOR = 0.99;
+function discountToward1(n: number): number {
+  return 1 + (n - 1) * FORGETTING_FACTOR;
+}
+
 /** Update one cell's posterior for the arm that was actually served, given the observed reward — mapped to
  *  a Bernoulli success via a simple 0.5 threshold (the standard, most robust reduction for Beta-Bernoulli
  *  Thompson Sampling at this data volume; a continuous reward model would need far more data per cell than
- *  exists here to fit safely). Returns a NEW state object (pure) — the caller persists it. */
+ *  exists here to fit safely). Every arm in the cell is discounted toward the uniform prior first (see
+ *  FORGETTING_FACTOR) — non-stationary, so old evidence fades rather than permanently dominating. Returns a
+ *  NEW state object (pure) — the caller persists it. */
 export function updatePosterior(state: BanditState, key: string, armId: string, reward: number): BanditState {
   const cell = getCell(state, key);
-  const prev = getPosterior(cell, armId);
+  const discountedCell: Record<string, BetaPosterior> = {};
+  for (const [id, post] of Object.entries(cell)) {
+    discountedCell[id] = { a: discountToward1(post.a), b: discountToward1(post.b) };
+  }
+  const prev = discountedCell[armId] || getPosterior(cell, armId);
   const success = reward >= 0.5;
   const next: BetaPosterior = success ? { a: prev.a + 1, b: prev.b } : { a: prev.a, b: prev.b + 1 };
-  return { ...state, [key]: { ...cell, [armId]: next } };
+  return { ...state, [key]: { ...discountedCell, [armId]: next } };
 }

@@ -14,7 +14,8 @@ import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidT
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "./store.ts";
-import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS } from "./bandit.ts";
+import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS } from "./bandit.ts";
+import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -211,6 +212,22 @@ function stampFirstAction(task: WebTask, email?: string, profile?: Profile): voi
         const state = await loadBanditState(email, "granularity");
         await saveBanditState(email, "granularity", updatePosterior(state, key, armId, reward));
         void recordSessionOutcome({ userEmail: email, decisionKey: "granularity", arm: armId, context: key, reward, at: new Date().toISOString() });
+      } catch { /* best-effort */ }
+    })();
+  }
+  // Ordering bandit's reward — the SAME procrastination-latency signal, scored back to whichever ordering
+  // arm was in effect the first time this task was shown (see ORDERING_ARMS in bandit.ts + orderingArmId's
+  // own comment). A task the ordering strategy surfaced well should get acted on sooner.
+  if (email && task.shownAt && task.orderingArmId) {
+    const latencySeconds = (new Date(task.firstActionAt).getTime() - new Date(task.shownAt).getTime()) / 1000;
+    const armId = task.orderingArmId;
+    void (async () => {
+      try {
+        const key = banditContextKey(new Date(), profile);
+        const reward = computeLatencyReward(Math.max(0, latencySeconds));
+        const state = await loadBanditState(email, "ordering");
+        await saveBanditState(email, "ordering", updatePosterior(state, key, armId, reward));
+        void recordSessionOutcome({ userEmail: email, decisionKey: "ordering", arm: armId, context: key, reward, at: new Date().toISOString() });
       } catch { /* best-effort */ }
     })();
   }
@@ -639,10 +656,37 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
     // the first time a live task is actually returned to the client, i.e. genuinely about to be shown.
     // Write-once: never overwritten once set, so this stays "time of first exposure".
     const now = new Date().toISOString();
-    for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
+    // Sixth bandit target: dashboard ordering (see ORDERING_ARMS in bandit.ts) — a small score nudge layered
+    // on top of the existing Eisenhower sort, never replacing it. Best-effort: a bandit hiccup must never
+    // block the task list itself.
+    try {
+      const live = req.session.tasks.filter((t) => !isHandled(t.status));
+      const orderingKey = banditContextKey(new Date(), req.session.profile);
+      const orderingState = await loadBanditState(req.session.user!, "ordering");
+      const orderingArm = chooseArm(ORDERING_ARMS, orderingState, orderingKey).arm.id;
+      const subjectFreq = subjectFrequency(live);
+      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, orderingArm, subjectFreq);
+      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; } }
+    } catch {
+      for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
+    }
   }
   res.json(req.session.tasks || []);
 });
+
+// Pattern recognition (server/patterns.ts) — predicts the student's next likely move from data already on
+// the account: when they're likely to engage next, and which subject's flashcards/quizzes show a genuine
+// struggle pattern. Read-only, synchronous (no metrics-log query — reads the same task data the student's
+// own decks already show), so this is cheap enough to compute on every call, no caching needed.
+app.get("/api/patterns/summary", requireAuth, ah(async (req, res) => {
+  const profile = req.session.profile;
+  const signals = aggregateSubjectSignals(req.session.tasks || []);
+  const weakSubjects = predictWeakSubjects(signals);
+  res.json({
+    predictedEngagement: predictNextEngagement(profile),
+    weakSubjects,
+  });
+}));
 
 // Sweeps run through the DURABLE JOB QUEUE (jobs.ts): this route enqueues + drains inline so the
 // interactive path stays synchronous for the client, while the exact same queue is drained by
@@ -806,13 +850,21 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // just means chat runs without account access this turn, not a broken chat.
     const rawExtras = await toolsFor(req);
     const extras = rawExtras ? integrations.readOnly(rawExtras) : undefined;
+    // Seventh bandit target (CHAT_STYLE_ARMS) — chosen once per turn, best-effort (a bandit hiccup must
+    // never block the chat reply itself).
+    let chatStyleArm: string | undefined;
+    try {
+      const styleKey = banditContextKey(new Date(), profile);
+      const styleState = await loadBanditState(req.session.user!, "chatstyle");
+      chatStyleArm = chooseArm(CHAT_STYLE_ARMS, styleState, styleKey).arm.id;
+    } catch { /* best-effort — the reply below still proceeds with the default (concise) style */ }
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials, extras },
+      { stepIndex, materials, extras, styleArm: chatStyleArm },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile);
@@ -825,6 +877,20 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // an actual "couldn't reply" state with a retry, not an in-character bubble.
     if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
     if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
+    // Score the chat-style arm: the only IMMEDIATELY observable outcome of one turn is whether the guardrail
+    // held (a genuinely unhelpful/off-boundary reply) — a richer "did they send a follow-up" reward would
+    // need waiting on a future request, which this best-effort, fire-and-forget scoring deliberately avoids.
+    if (chatStyleArm) {
+      void (async () => {
+        try {
+          const key = banditContextKey(new Date(), profile);
+          const reward = out.guardrailTripped ? 0 : 1;
+          const state = await loadBanditState(req.session.user!, "chatstyle");
+          await saveBanditState(req.session.user!, "chatstyle", updatePosterior(state, key, chatStyleArm!, reward));
+          void recordSessionOutcome({ userEmail: req.session.user!, decisionKey: "chatstyle", arm: chatStyleArm!, context: key, reward, at: new Date().toISOString() });
+        } catch { /* best-effort */ }
+      })();
+    }
     for (const n of out.notes) void recordMetric(req.session.user!, "chat_artifact_created", 1, "note");
     for (const f of out.flashcards) void recordMetric(req.session.user!, "chat_artifact_created", 1, "deck");
     for (const q of out.quizzes) void recordMetric(req.session.user!, "chat_artifact_created", 1, "quiz");
@@ -1509,7 +1575,13 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(asyn
     // signals, so there's nothing here for a prompt-injection attempt to even ride in on.
     const density = profile.uiDensity || (learnedProductiveHour(profile) !== null ? "cozy (learned)" : "cozy (default)");
     const peakHour = learnedProductiveHour(profile);
-    const summary = `Preferred UI density: ${density}. ${peakHour !== null ? `Most active around ${peakHour}:00 local time.` : "Not enough activity history yet for a time-of-day pattern."} Track: ${profile.track || "unknown"}.`;
+    const engagement = predictNextEngagement(profile);
+    const weakSubjects = predictWeakSubjects(aggregateSubjectSignals(req.session.tasks || []));
+    const summary = `Preferred UI density: ${density}. ` +
+      (peakHour !== null ? `Most active around ${peakHour}:00 local time.` : "Not enough activity history yet for a time-of-day pattern.") +
+      (engagement && engagement.hour >= 20 ? " Frequently active in the evening/night." : "") +
+      (weakSubjects.length ? ` Currently showing a struggle pattern in ${weakSubjects.length} subject(s).` : "") +
+      ` Track: ${profile.track || "unknown"}.`;
     const result = await generateThemeTokens(summary, profile);
     addUsage(profile, result.tokensUsed, "other");
     if (!Object.keys(result.tokens).length) { res.status(502).json({ error: "Couldn't come up with a theme just now — try again." }); return; }
@@ -1940,6 +2012,31 @@ app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't remove that exam — try again." }); }
+});
+// Error log — a student-maintained record of specific mistakes (question / what went wrong / what to do
+// next), grouped by subject client-side (see errorLogBySubject, shared/types.ts). Same accumulate-forever,
+// union-by-id-on-merge, delete-persists-to-cloud-first shape as grades/manualExams above.
+app.post("/api/profile/errorlog", requireAuth, ah(async (req, res) => {
+  const p = (req.session.profile ||= emptyProfile());
+  const subject = String(req.body?.subject || "").trim().slice(0, 60);
+  const question = String(req.body?.question || "").trim().slice(0, 500);
+  const mistake = String(req.body?.mistake || "").trim().slice(0, 500);
+  const fix = String(req.body?.fix || "").trim().slice(0, 500);
+  if (!subject || !question) { res.status(400).json({ error: "subject and question are required" }); return; }
+  const list = (p.errorLog ||= []);
+  list.push({ id: randomUUID(), subject, question, mistake, fix, createdAt: new Date().toISOString() });
+  await commit(req);
+  res.json(p);
+}));
+app.delete("/api/profile/errorlog/:id", requireAuth, async (req, res) => {
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const id = decodeURIComponent(String(req.params.id || ""));
+    p.errorLog = (p.errorLog || []).filter((e) => e.id !== id);
+    if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't remove that entry — try again." }); }
 });
 // Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
 app.delete("/api/profile", requireAuth, async (req, res) => {

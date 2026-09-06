@@ -375,6 +375,11 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     activityHours: (p1.activityHours || p2.activityHours)
       ? Array.from({ length: 24 }, (_, h) => Math.max(p1.activityHours?.[h] || 0, p2.activityHours?.[h] || 0))
       : undefined,
+    // Same reasoning, 168-cell (7×24) sibling — see activityWeekdayHours's own comment in shared/types.ts.
+    activityWeekdayHours: (p1.activityWeekdayHours || p2.activityWeekdayHours)
+      ? Array.from({ length: 168 }, (_, i) => Math.max(p1.activityWeekdayHours?.[i] || 0, p2.activityWeekdayHours?.[i] || 0))
+      : undefined,
+    activityDecayedAt: (Date.parse(p2.activityDecayedAt || "") || 0) >= (Date.parse(p1.activityDecayedAt || "") || 0) ? (p2.activityDecayedAt ?? p1.activityDecayedAt) : (p1.activityDecayedAt ?? p2.activityDecayedAt),
     // The daily auto-run cap MUST merge conservatively (never under-count) — this is a spend guard, not a
     // display value, so losing count across a merge would silently let two devices/instances each think
     // they have the full daily budget left. Same day on both sides → sum stays capped by taking the higher
@@ -451,6 +456,11 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     // device must survive a merge against another device's copy that doesn't have it yet.
     manualExams: (p1.manualExams?.length || p2.manualExams?.length)
       ? [...new Map([...(p1.manualExams || []), ...(p2.manualExams || [])].map((e) => [e.id, e])).values()]
+      : undefined,
+    // Same union-by-id reasoning — an error-log entry added on one device must survive a merge against a
+    // copy that hasn't seen it yet.
+    errorLog: (p1.errorLog?.length || p2.errorLog?.length)
+      ? [...new Map([...(p1.errorLog || []), ...(p2.errorLog || [])].map((e) => [e.id, e])).values()]
       : undefined,
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).

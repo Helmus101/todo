@@ -18,6 +18,7 @@ import type { AcademicContext } from "./claude.ts";
 import { replanMilestones } from "./milestones.ts";
 import { computeWorkload } from "./workload.ts";
 import { contextKey as banditContextKey, chooseArm, GRANULARITY_ARMS } from "./bandit.ts";
+import { predictNextEngagement } from "./patterns.ts";
 import { reportError } from "./sentry.ts";
 
 /** Live Pronote homework/exams for a task's own run/chat context — best-effort, never blocks execution. */
@@ -57,16 +58,19 @@ export function sweepDueForDay(lastSweepAt: string | undefined, profile: Profile
 const SWEEP_HOUR = 16; // 4pm local time (per-account timezone) — see localHour below (defined further down,
 // shared with the quiet-hours email-timing logic — same Intl-based local-hour math, no need for a second copy)
 
-/** Is the automatic sweep due? Due once per local calendar day, from either SWEEP_HOUR (16:00, the fixed
- *  default) OR this student's own LEARNED productive hour, whichever is EARLIER — once real history exists
- *  (learnedProductiveHour, shared/types.ts), a student who's consistently active at 8am shouldn't have their
- *  daily task sit unsurfaced until 4pm just because that's the one-size-fits-all default. Never LATER than
- *  the fixed default — this only lets personalization surface work sooner for an early-active student, never
+/** Is the automatic sweep due? Due once per local calendar day, from whichever is EARLIEST of: SWEEP_HOUR
+ *  (16:00, the fixed default), the flat learned hour (learnedProductiveHour), or — when TODAY happens to be
+ *  this student's predicted peak weekday — the finer-grained weekday×hour prediction (predictNextEngagement,
+ *  server/patterns.ts), which is day-of-week aware, not just hour-of-day (a student who's consistently
+ *  active Tuesday mornings but otherwise afternoon-only shouldn't have Tuesdays flattened into their general
+ *  average). Never LATER than the fixed default — this only lets personalization surface work sooner, never
  *  delays it past what every account already gets. Cold start (no history yet) is unaffected. */
 export function sweepDue(profile: Profile, now: Date = new Date()): boolean {
   if (!sweepDueForDay(profile.lastSweepAt, profile, now)) return false;
   const learned = learnedProductiveHour(profile);
-  const floorHour = learned !== null ? Math.min(SWEEP_HOUR, learned) : SWEEP_HOUR;
+  let floorHour = learned !== null ? Math.min(SWEEP_HOUR, learned) : SWEEP_HOUR;
+  const predicted = predictNextEngagement(profile);
+  if (predicted && predicted.weekday === localWeekday(tzOf(profile), now)) floorHour = Math.min(floorHour, predicted.hour);
   return localHour(tzOf(profile), now) >= floorHour;
 }
 
@@ -194,6 +198,13 @@ function localHour(tz: string, now: Date = new Date()): number {
   try { return Number(new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false }).format(now).replace(/\D/g, "")) % 24; }
   catch { return now.getUTCHours(); }
 }
+// Local weekday (0=Sunday..6=Saturday, matching Date#getDay) — used only by sweepDue's weekday-aware floor.
+function localWeekday(tz: string, now: Date = new Date()): number {
+  try {
+    const short = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now);
+    return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(short);
+  } catch { return now.getUTCDay(); }
+}
 const QUIET_HOURS_START = 22, QUIET_HOURS_END = 7; // 22:00–07:00 local — no email, task still lands in-app
 
 /** New-task email alert — one email per sweep that found something, listing every fresh task with its
@@ -315,6 +326,7 @@ async function processExecuteTask(job: store.Job): Promise<string> {
       granularityArm = chooseArm(GRANULARITY_ARMS, banditState, banditContextKey(new Date(), profile)).arm.id;
     } catch { /* best-effort — the run proceeds with standard granularity */ }
     const updated = await tasks.runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : undefined, academic, granularityArm);
+    if (updated?.steps?.length) void store.recordMetric(email, "task_steps_count", updated.steps.length, updated.source || "n/a");
     // Live artifact verification: read every claimed draft/event/doc back from the real account before the
     // user sees it — anything the API confirms missing is pruned and logged to the task's timeline.
     if (updated && (updated.links?.length || updated.sendables?.length)) {

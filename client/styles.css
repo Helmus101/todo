@@ -1550,6 +1550,16 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .grade-average-label { font-size: var(--text-sm); color: var(--ink-2); font-weight: var(--weight-medium); }
 .grade-average-value { font-family: var(--mono, ui-monospace, monospace); font-size: 16px; font-weight: var(--weight-semibold); }
 .grade-average.low .grade-average-value { color: var(--accent); }
+.errorlog-addform { display: flex; flex-direction: column; gap: var(--space-2); max-width: 560px; margin-top: var(--space-3); }
+.errorlog-groups { display: flex; flex-direction: column; gap: var(--space-2); }
+.errorlog-group { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.errorlog-group-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); background: var(--surface); border: none; padding: 12px 14px; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.errorlog-group-head:hover { background: var(--bg-2); }
+.errorlog-entries { list-style: none; margin: 0; padding: 0 14px 12px; }
+.errorlog-entry { padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.errorlog-entry:first-child { border-top: none; }
+.errorlog-entry p { margin: 3px 0; font-size: var(--text-sm); line-height: 1.5; }
+.errorlog-entry-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .grade-list { list-style: none; margin: 4px 0 12px; }
 .grade-row { padding: 9px 0; }
 .grade-row + .grade-row { border-top: 1px solid var(--line-soft); }
@@ -4421,6 +4431,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 
 /* ── Study journal tab (daily log → auto flashcards + week summary) ── */
 .studylog-page { display: flex; flex-direction: column; gap: var(--space-3); }
+.studylog-tabs { display: flex; gap: var(--space-2); margin: var(--space-3) 0; }
 .studylog-weeknav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-2); }
 .studylog-weeklabel { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-2); }
 .studylog-days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
@@ -4435,7 +4446,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .studylog-day-btn.has-entry span:first-child::after { content: " •"; color: var(--accent); }
 .studylog-day-date { color: var(--ink-3); font-size: 11px; }
 .studylog-textarea {
-  width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
+  width: 100%; min-height: 260px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface);
   padding: 12px 14px; font-size: 14.5px; line-height: 1.6; font-family: inherit; resize: vertical;
 }
 .studylog-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }

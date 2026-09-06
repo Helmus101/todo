@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gradesBySubject, errorLogBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
@@ -12,7 +12,7 @@ import {
   LayoutDashboard,
   BookOpen,
   GraduationCap,
-  Layers,
+  AlertTriangle,
   Settings as SettingsIcon,
   Menu,
   X
@@ -193,6 +193,8 @@ export function App() {
   // one place the whole app's active language is decided (the LangContext.Provider value below), so it's
   // the right place to keep the document attribute in sync with it.
   useEffect(() => { document.documentElement.lang = status?.language === "en" ? "en" : "fr"; }, [status?.language]);
+  // Fired once per app load (not per status refresh) — only once we actually know an account is signed in.
+  useEffect(() => { if (status?.loggedIn) void api.recordMetric("app_session_started", 1); }, [status?.loggedIn]);
   // Fifth bandit target (see DENSITY_ARMS, server/bandit.ts) — fetched ONCE per app load, applied as
   // [data-density] on <html> (client/styles.css's variant tokens). Deliberately not re-fetched or re-applied
   // mid-session: an auto-changing layout under someone while they're using the app would be the opposite of
@@ -214,7 +216,7 @@ export function App() {
   // up here too, and clears cleanly (removeProperty) when customTheme is unset — e.g. after Reset.
   useEffect(() => {
     const root = document.documentElement;
-    const keys = ["--bg", "--surface", "--bg-2", "--radius", "--radius-sm", "--radius-xs"] as const;
+    const keys = ["--bg", "--surface", "--bg-2", "--line", "--radius", "--radius-sm", "--radius-xs"] as const;
     for (const k of keys) {
       const v = status?.customTheme?.[k];
       if (v) root.style.setProperty(k, v); else root.style.removeProperty(k);
@@ -735,12 +737,12 @@ export function App() {
             {status?.language === "en" ? "Study" : "Réviser"}
           </a>
           <a
-            className={`sidebar-item ${route === "flashcards" ? "active" : ""}`}
-            href="/flashcards"
+            className={`sidebar-item ${route === "errorlog" ? "active" : ""}`}
+            href="/errorlog"
             onClick={() => setSidebarOpen(false)}
           >
-            <Layers />
-            {status?.language === "en" ? "Flashcards" : "Cartes"}
+            <AlertTriangle />
+            {status?.language === "en" ? "Error log" : "Erreurs"}
           </a>
           <a
             className={`sidebar-item ${route === "settings" ? "active" : ""}`}
@@ -786,11 +788,11 @@ export function App() {
       {route === "settings" ? (
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} />
       ) : route === "log" ? (
-        <StudyLogPage lang={status?.language} />
+        <StudyLogPage lang={status?.language} tasks={tasks} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
-      ) : route === "flashcards" ? (
-        <FlashcardsLibraryPage lang={status?.language} tasks={tasks} />
+      ) : route === "errorlog" ? (
+        <MistakeLogPage lang={status?.language} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -1628,7 +1630,7 @@ const addDays = (dateStr: string, n: number): string => {
  *  every deck as it's created, so this is always populated even offline or if a task got pruned/merged
  *  server-side. Reviewing from here posts back to the deck's real owner (taskId) exactly like reviewing it
  *  from the task/journal itself — this is a second way IN, not a separate copy of the review state. */
-function FlashcardsLibraryPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
+function FlashcardsLibraryPage({ lang, tasks, embedded }: { lang?: "fr" | "en"; tasks: WebTask[]; embedded?: boolean }) {
   const L = useLang();
   const en = lang === "en";
   const [decks, setDecks] = useState(() => getAllLocalDecks());
@@ -1652,12 +1654,15 @@ function FlashcardsLibraryPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: Web
   // (FlashcardDeck/QuizPlayer track their own right/wrong regardless), it just can't sync anymore.
   const liveOwner = open ? tasks.find((t) => t.id === open.taskId && t.flashcards?.some((d) => d.id === open.deck.id)) : undefined;
   const liveQuizOwner = openQuiz ? tasks.find((t) => t.id === openQuiz.taskId && t.quizzes?.some((q) => q.id === openQuiz.quiz.id)) : undefined;
+  const Wrap = embedded ? "div" : "main";
   return (
-    <main className="list-wrap">
-      <div className="dash-head">
-        <h2>{L("Tes cartes", "Your flashcards")}</h2>
-        <p className="dash-line">{L("Toutes les cartes et quiz générés, accessibles à tout moment — même sans connexion.", "Every deck and quiz you've ever generated, accessible anytime — even offline.")}</p>
-      </div>
+    <Wrap className={embedded ? "" : "list-wrap"}>
+      {!embedded ? (
+        <div className="dash-head">
+          <h2>{L("Tes cartes", "Your flashcards")}</h2>
+          <p className="dash-line">{L("Toutes les cartes et quiz générés, accessibles à tout moment — même sans connexion.", "Every deck and quiz you've ever generated, accessible anytime — even offline.")}</p>
+        </div>
+      ) : null}
       {decks.length === 0 ? (
         <p className="muted small">{L("Pas encore de cartes — elles apparaissent ici dès qu'Otto (ou toi) en crée.", "No flashcards yet — they'll show up here as soon as Otto (or you) creates some.")}</p>
       ) : (
@@ -1713,6 +1718,100 @@ function FlashcardsLibraryPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: Web
           <QuizPlayer quiz={openQuiz.quiz} taskId={liveQuizOwner ? openQuiz.taskId : undefined} />
         </TaskModal>
       ) : null}
+    </Wrap>
+  );
+}
+
+/** Standalone "Error log" tab (route /errorlog) — a student-maintained record of specific mistakes: what
+ *  question tripped them up, what they got wrong, what to do next time. Separate from the journal's
+ *  flashcards (that's "review this fact again"); this is closer to an exam-prep error journal, grouped by
+ *  subject (errorLogBySubject, shared/types.ts — subjects with the most entries surface first, since that's
+ *  where mistakes are piling up). Fetches its own profile copy rather than threading one down from
+ *  Settings — this tab needs to work as a standalone destination, not only reachable via Settings. */
+function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
+  const L = useLang();
+  const notify = useNotify();
+  const en = lang === "en";
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [subject, setSubject] = useState("");
+  const [question, setQuestion] = useState("");
+  const [mistake, setMistake] = useState("");
+  const [fix, setFix] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [openSubject, setOpenSubject] = useState<string | null>(null);
+
+  useEffect(() => { void api.profile().then((p) => { setProfile(p); setLoaded(true); }).catch(() => setLoaded(true)); }, []);
+
+  const groups = errorLogBySubject(profile?.errorLog);
+  useEffect(() => { if (!openSubject && groups.length) setOpenSubject(groups[0].subject); }, [groups.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const add = async () => {
+    const s = subject.trim(), q = question.trim();
+    if (!s || !q) return;
+    setSaving(true);
+    try {
+      const p = await api.addErrorLogEntry(s, q, mistake.trim(), fix.trim());
+      setProfile(p); setQuestion(""); setMistake(""); setFix("");
+      setOpenSubject(s);
+    } catch (e: any) { notify(e?.message || L("Impossible d'ajouter cette erreur.", "Couldn't add that entry."), "error"); }
+    finally { setSaving(false); }
+  };
+  const remove = async (id: string) => {
+    try { setProfile(await api.deleteErrorLogEntry(id)); }
+    catch (e: any) { notify(e?.message || L("Impossible de supprimer cette entrée.", "Couldn't remove that entry."), "error"); }
+  };
+
+  return (
+    <main className="list-wrap">
+      <div className="dash-head">
+        <h2>{L("Journal d'erreurs", "Error log")}</h2>
+        <p className="dash-line">{L("Note tes erreurs précises — la question, ce que tu as eu faux, ce qu'il faut faire la prochaine fois. Classé par matière, pour réviser avant un contrôle.", "Log your specific mistakes — the question, what you got wrong, what to do next time. Grouped by subject, so you can review before a test.")}</p>
+      </div>
+
+      <div className="errorlog-addform">
+        <div className="addrow">
+          <input className="addinput sm" placeholder={L("Matière (ex : Physique)", "Subject (e.g. Physics)")} value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={60} />
+        </div>
+        <textarea className="studylog-textarea" rows={2} placeholder={L("Quelle était la question ?", "What was the question?")} value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={500} />
+        <textarea className="studylog-textarea" rows={2} placeholder={L("Qu'as-tu eu faux ?", "What did you get wrong?")} value={mistake} onChange={(e) => setMistake(e.target.value)} maxLength={500} />
+        <textarea className="studylog-textarea" rows={2} placeholder={L("Que faire la prochaine fois ?", "What to do next time?")} value={fix} onChange={(e) => setFix(e.target.value)} maxLength={500} />
+        <button type="button" className="btn primary" disabled={saving || !subject.trim() || !question.trim()} onClick={() => void add()}>
+          {saving ? L("Enregistrement…", "Saving…") : L("Ajouter au journal", "Add to log")}
+        </button>
+      </div>
+
+      {!loaded ? (
+        <p className="muted small">{L("Chargement…", "Loading…")}</p>
+      ) : groups.length === 0 ? (
+        <p className="muted small" style={{ marginTop: "var(--space-3)" }}>{L("Pas encore d'erreurs notées — ajoute la première ci-dessus.", "No mistakes logged yet — add your first one above.")}</p>
+      ) : (
+        <div className="errorlog-groups" style={{ marginTop: "var(--space-4)" }}>
+          {groups.map((g) => (
+            <div key={g.subject} className="errorlog-group">
+              <button type="button" className="errorlog-group-head" onClick={() => setOpenSubject(openSubject === g.subject ? null : g.subject)}>
+                <span className="card-title">{g.subject}</span>
+                <span className="card-sub">{g.entries.length} {g.entries.length === 1 ? L("erreur", "mistake") : L("erreurs", "mistakes")}</span>
+              </button>
+              {openSubject === g.subject ? (
+                <ul className="errorlog-entries">
+                  {g.entries.map((e) => (
+                    <li key={e.id} className="errorlog-entry">
+                      <div className="errorlog-entry-head">
+                        <span className="muted small">{new Date(e.createdAt).toLocaleDateString(en ? "en-GB" : "fr-FR", { day: "numeric", month: "short", year: "numeric" })}</span>
+                        <button className="x" title={L("Supprimer", "Remove")} onClick={() => void remove(e.id)}>×</button>
+                      </div>
+                      <p><strong>{L("Question : ", "Question: ")}</strong>{e.question}</p>
+                      {e.mistake ? <p><strong>{L("Erreur : ", "Mistake: ")}</strong>{e.mistake}</p> : null}
+                      {e.fix ? <p><strong>{L("À faire : ", "Next time: ")}</strong>{e.fix}</p> : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
     </main>
   );
 }
@@ -1806,10 +1905,14 @@ function richerTask(fresh: WebTask | null, cached: WebTask | null): WebTask | nu
   return fresh;
 }
 
-function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
+function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   const L = useLang();
   const notify = useNotify();
   const en = lang === "en";
+  // The flashcards library used to be its own top-level tab — folded in here instead, since every deck a
+  // student reviews (Journal-generated or task-generated) belongs next to where they're already studying,
+  // not one more thing in the sidebar to remember. Journal is the default view; Flashcards is a click away.
+  const [tab, setTab] = useState<"journal" | "flashcards">("journal");
   const [monday, setMonday] = useState(() => mondayOf(todayIso()));
   const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(mondayOf(todayIso()))?.days || [null, null, null, null, null]);
   const [summary, setSummary] = useState<WebTask | null>(() => loadWeekCache(mondayOf(todayIso()))?.summary || null);
@@ -1971,6 +2074,13 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
       <h1 className="list-head">{L("Journal d'apprentissage", "Study journal")}</h1>
       <p className="dash-line">{L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
 
+      <div className="studylog-tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === "journal"} className={`btn xs ${tab === "journal" ? "" : "ghost"}`} onClick={() => setTab("journal")}>{L("Journal", "Journal")}</button>
+        <button type="button" role="tab" aria-selected={tab === "flashcards"} className={`btn xs ${tab === "flashcards" ? "" : "ghost"}`} onClick={() => setTab("flashcards")}>{L("Cartes", "Flashcards")}</button>
+      </div>
+
+      {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded /> : (
+      <>
       <div className="studylog-weeknav">
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>
         <span className="studylog-weeklabel">{fmtDate(monday)} – {fmtDate(addDays(monday, 4))}</span>
@@ -2020,7 +2130,7 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
               <button type="button" className="btn xs ghost" onClick={() => setText((t) => `${t}${t.trim() ? "\n\n" : ""}${L("Contrôle — ", "Test — ")}${L("matière", "subject")} :\nCe que j'ai eu faux :\n- `)}>
                 {L("Noter les erreurs d'un contrôle", "Log mistakes from a test")}
               </button>
-              <textarea className="studylog-textarea" rows={8}
+              <textarea className="studylog-textarea" rows={14}
                 placeholder={L("Aujourd'hui, j'ai appris…", "Today I learned…")}
                 value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
               <div className="studylog-actions">
@@ -2081,6 +2191,8 @@ function StudyLogPage({ lang }: { lang?: "fr" | "en" }) {
       {openQuizFor === "month" && monthQuiz ? (
         <TaskModal onClose={() => setOpenQuizFor(null)} title={monthQuiz.title}><QuizPlayer quiz={monthQuiz} taskId={monthSummary?.id} /></TaskModal>
       ) : null}
+      </>
+      )}
     </main>
   );
 }
@@ -2096,7 +2208,10 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [showKnows, setShowKnows] = useState(false);
   const [showTrustLog, setShowTrustLog] = useState(false);
   const [showErrorLog, setShowErrorLog] = useState(false);
+  useEffect(() => { void api.recordMetric("settings_opened", 1); }, []);
   const [themeBusy, setThemeBusy] = useState(false);
+  const [patterns, setPatterns] = useState<{ predictedEngagement: { weekday: number; hour: number } | null; weakSubjects: string[] } | null>(null);
+  useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
   const [errorLog, setErrorLog] = useState(() => getErrors());
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
@@ -2239,6 +2354,27 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             ) : null}
           </span>
         </div>
+        {/* Pattern recognition (server/patterns.ts) — a plain, explainable observation from the student's
+            own activity/study data, not a new decision the student has to act on. Only rendered when there's
+            an actual signal (cold-start accounts see nothing here at all) — one quiet line, not a dashboard. */}
+        {patterns && (patterns.predictedEngagement || patterns.weakSubjects.length > 0) ? (
+          <div className="modal-row">
+            <span className="lbl">{L("Ce qu'Otto a remarqué", "What Otto's noticed")}</span>
+            <span className="val settings-hint">
+              {[
+                patterns.predictedEngagement
+                  ? L(
+                      `Tu es généralement le plus actif ${["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"][patterns.predictedEngagement.weekday]} vers ${patterns.predictedEngagement.hour}h.`,
+                      `You're usually most active around ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][patterns.predictedEngagement.weekday]} at ${patterns.predictedEngagement.hour}:00.`,
+                    )
+                  : null,
+                patterns.weakSubjects.length
+                  ? L(`Pourrait valoir une révision : ${patterns.weakSubjects.join(", ")}.`, `Might be worth reviewing: ${patterns.weakSubjects.join(", ")}.`)
+                  : null,
+              ].filter(Boolean).join(" ")}
+            </span>
+          </div>
+        ) : null}
         {/* Quiet by default (collapsed, count only) — a diagnostics drawer, not something to surface
             unprompted on a page meant to feel calm. Client-side only (see errorLog.ts): the last things
             that actually went wrong on THIS device, so a confusing toast that vanished in 12s can be

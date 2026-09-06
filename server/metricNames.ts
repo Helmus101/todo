@@ -25,7 +25,7 @@ export const METRIC_CATALOG: MetricDef[] = [
   { name: "task_lateness_hours", unit: "hours late (negative = early)", bucket: "source", wired: true, usedBy: "collected" },
   { name: "task_time_to_first_action_seconds", unit: "seconds, shownAt→firstActionAt", bucket: "source", wired: true, usedBy: "collected (also feeds the granularity bandit reward directly)" },
   { name: "task_time_to_completion_seconds", unit: "seconds, shownAt→done", bucket: "source", wired: true, usedBy: "collected" },
-  { name: "task_steps_count", unit: "count", bucket: "source", wired: false, usedBy: "planned — record at generation (runById)" },
+  { name: "task_steps_count", unit: "count", bucket: "source", wired: true, usedBy: "collected" },
   { name: "task_step_completed", unit: "count (1)", bucket: "source", wired: true, usedBy: "collected" },
   { name: "task_step_stuck_seconds", unit: "seconds a step sat un-done since the task's last run", bucket: "source", wired: false, usedBy: "planned — needs a per-step timestamp not currently stored" },
   { name: "task_revision_requested", unit: "count (1)", bucket: "n/a", wired: true, usedBy: "collected" },
@@ -77,10 +77,10 @@ export const METRIC_CATALOG: MetricDef[] = [
   { name: "chat_help_requested_on_step", unit: "count (1) — 'Aide' tapped on a specific step", bucket: "n/a", wired: true, usedBy: "collected" },
 
   // ── Engagement / account-level ───────────────────────────────────────────────────────────────────
-  { name: "settings_opened", unit: "count (1)", bucket: "n/a", wired: false, usedBy: "planned — needs a client-side call at the Settings page mount" },
+  { name: "settings_opened", unit: "count (1)", bucket: "n/a", wired: true, usedBy: "collected" },
   { name: "pomodoro_manually_overridden", unit: "count (1) — student changed the bandit's suggestion before starting", bucket: "n/a", wired: true, usedBy: "collected" },
   { name: "ai_paused_toggled", unit: "1=paused, 0=resumed", bucket: "n/a", wired: true, usedBy: "collected" },
-  { name: "app_session_started", unit: "count (1) — app opened/loaded", bucket: "n/a", wired: false, usedBy: "planned — needs a client-side call on initial app load" },
+  { name: "app_session_started", unit: "count (1) — app opened/loaded", bucket: "n/a", wired: true, usedBy: "collected" },
   { name: "integration_connected", unit: "count (1)", bucket: "app name", wired: true, usedBy: "collected" },
   { name: "integration_disconnected", unit: "count (1)", bucket: "app name", wired: true, usedBy: "collected" },
   { name: "pronote_sync", unit: "count (1)", bucket: "n/a", wired: true, usedBy: "collected" },

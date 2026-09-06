@@ -145,6 +145,10 @@ export const api = {
   // click, never automatic. See that function's own doc comment for the validation/safety story.
   personalizeTheme: (): Promise<{ customTheme: Record<string, string> }> => post("/api/ui/theme-personalize", {}),
   resetTheme: (): Promise<{ ok: boolean }> => post("/api/ui/theme-reset", {}),
+  // Pattern recognition (server/patterns.ts) — read-only prediction from the student's own activity/study
+  // data, never a new decision surface of its own; see Settings' quiet "Otto has noticed" line.
+  patternsSummary: (): Promise<{ predictedEngagement: { weekday: number; hour: number; confidence: number } | null; weakSubjects: string[] }> =>
+    req("/api/patterns/summary").then(j),
   submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number, audioArmId?: string, densityArmId?: string): Promise<{ ok: boolean }> =>
     post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta, audioArmId, densityArmId }),
   // Flexible, open-ended metric logging (server/store.ts's recordMetric) — `name` is any short label the
@@ -153,6 +157,9 @@ export const api = {
     post("/api/metrics", { name, value, bucket, context }).catch(() => ({ ok: false })),
   addExam: (subject: string, deadline: string): Promise<Profile> => post("/api/profile/exam", { subject, deadline }).then(normalizeProfile),
   deleteExam: (id: string): Promise<Profile> => req(`/api/profile/exam/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
+  addErrorLogEntry: (subject: string, question: string, mistake: string, fix: string): Promise<Profile> =>
+    post("/api/profile/errorlog", { subject, question, mistake, fix }).then(normalizeProfile),
+  deleteErrorLogEntry: (id: string): Promise<Profile> => req(`/api/profile/errorlog/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
   // Returns the fresh list + the sweep's own result line ("swept: 3 new tasks…" / "skipped: nothing
   // connected") so the UI reports what actually happened rather than inferring it.
