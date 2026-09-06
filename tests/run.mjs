@@ -480,19 +480,17 @@ check("forced YESTERDAY → due again today", forcedDueToday({ ...utcProfile, la
 // Timezone: 2026-07-20T02:00Z is still Jul 19 in NY, so a force the next NY day is due — the gate is per LOCAL day.
 check("force gate respects the user's timezone", forcedDueToday({ ...nyProfile, lastForcedAt: "2026-07-20T02:00:00Z" }, new Date("2026-07-20T13:00:00Z")));
 
-// ── Daily auto-run spend cap (sweep + kick loop share one budget) ─────────────
-section("autoRunBudgetLeft / recordAutoRuns — daily cap on passive AI spend");
+// ── Daily auto-run cap — REMOVED per direct instruction ("it shouldn't have limit on tasks it can
+// execute") — autoRunBudgetLeft is now a thin always-Infinity pass-through so every call site's own
+// `.slice(0, budget)` naturally becomes a no-op cap (slice(0, Infinity) returns the whole array) without
+// having to touch jobs.ts's call sites. The monthly $ budget remains the one real spend backstop.
+section("autoRunBudgetLeft / recordAutoRuns — daily auto-run cap removed, always unlimited");
 {
   const p = { ...utcProfile };
-  check("fresh day → full budget (3)", autoRunBudgetLeft(p, new Date("2026-07-20T08:00:00Z")) === 3);
-  recordAutoRuns(p, 1, new Date("2026-07-20T08:00:00Z"));
-  check("after spending 1 → 2 left", autoRunBudgetLeft(p, new Date("2026-07-20T09:00:00Z")) === 2);
-  recordAutoRuns(p, 2, new Date("2026-07-20T16:00:00Z"));
-  check("after spending 3 total → 0 left, same day", autoRunBudgetLeft(p, new Date("2026-07-20T20:00:00Z")) === 0);
-  recordAutoRuns(p, 5, new Date("2026-07-20T21:00:00Z")); // overspend attempt (bug elsewhere) never goes negative
-  check("budget floors at 0, never negative", autoRunBudgetLeft(p, new Date("2026-07-20T22:00:00Z")) === 0);
-  check("next local day → resets to full 3, ignoring yesterday's count", autoRunBudgetLeft(p, new Date("2026-07-21T08:00:00Z")) === 3);
-  check("recordAutoRuns(0) is a no-op", (() => { const q = { ...utcProfile, autoRunDay: "2026-07-20", autoRunCount: 1 }; recordAutoRuns(q, 0, new Date("2026-07-20T10:00:00Z")); return q.autoRunCount === 1; })());
+  check("always returns Infinity, regardless of profile state", autoRunBudgetLeft(p, new Date("2026-07-20T08:00:00Z")) === Infinity);
+  recordAutoRuns(p, 50, new Date("2026-07-20T08:00:00Z"));
+  check("still Infinity no matter how much was 'spent' — nothing throttles it anymore", autoRunBudgetLeft(p, new Date("2026-07-20T09:00:00Z")) === Infinity);
+  check("Array.slice(0, Infinity) — the actual mechanism every call site relies on — returns everything", [1, 2, 3, 4, 5].slice(0, Infinity).length === 5);
 }
 
 // ── Sweep cadence: once a day, fixed at 16:00 local ───────────────────────────
