@@ -266,8 +266,8 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   const cardEn = useContext(LangContext) === "en";
   const [running, setRunning] = useState(false);
   // One panel open at a time, so the page never grows past about a screen and a half.
-  const [openPanel, setOpenPanel] = useState<"steps" | "prepared" | null>(null);
-  const togglePanel = (p: "steps" | "prepared") => setOpenPanel((v) => (v === p ? null : p));
+  const [openPanel, setOpenPanel] = useState<"steps" | null>(null);
+  const togglePanel = (p: "steps") => setOpenPanel((v) => (v === p ? null : p));
   // Lifted: both the chat's artifact chips and the "Ce qu'Otto a préparé" panel open these popups.
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [openDeck, setOpenDeck] = useState<string | null>(null);
@@ -487,6 +487,16 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         </p>
       ) : null}
 
+      {/* "What Otto prepared" used to live behind a collapsed disclosure, same tier as "All steps" — easy to
+          miss entirely on a task that's mostly notable FOR what got made (a brief, a deck). It's not a big
+          new block, just the same quiet chip row as before, no longer needing a click to reveal — a calm
+          "here's what's ready" rather than a hidden drawer. */}
+      {preparedCount > 0 ? (
+        <div className="tf-prepared-inline">
+          <PreparedPanel task={task} onOpenNote={setOpenNote} onOpenDeck={setOpenDeck} onOpenQuiz={setOpenQuiz} />
+        </div>
+      ) : null}
+
       {/* (D) everything else — closed, counted, one open at a time. */}
       <div className="tf-panels">
         {steps.length > 0 ? (
@@ -495,12 +505,6 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
             <StepList task={task} steps={steps} decided={decided} setDecided={setDecided}
               onStepDone={markStepDone} onUndo={undoStep}
               onAsk={askAboutStep} onChange={onChange} onTask={onTask} onAnswer={answerStep} answering={answering} />
-          </Disclosure>
-        ) : null}
-        {preparedCount > 0 ? (
-          <Disclosure label={L("Ce qu'Otto a préparé", "What Otto prepared")} count={preparedCount}
-            open={openPanel === "prepared"} onToggle={() => togglePanel("prepared")}>
-            <PreparedPanel task={task} onOpenNote={setOpenNote} onOpenDeck={setOpenDeck} onOpenQuiz={setOpenQuiz} />
           </Disclosure>
         ) : null}
       </div>
@@ -673,12 +677,20 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
         {autoStarting ? (
           <p className="hero-sub">{L("Otto prépare ça…", "Otto is getting this ready…")}</p>
         ) : (
-          <div className="hero-acts">
-            {/* "Looks good" stays: a task Otto hasn't planned yet (or never needed a plan — already handled
-                elsewhere, a duplicate, a quick manual note) still needs SOME way to be marked done without
-                waiting for a run that isn't coming. */}
-            <button className="btn ghost" onClick={onConfirm}>{L("C'est bon", "Looks good")}</button>
-          </div>
+          <>
+            {/* This used to be silent — a plain "ready" task with no steps yet looked identical to one Otto
+                had already looked at and genuinely found nothing to prepare for, which read as broken
+                ("didn't prepare anything"). It's neither: it just hasn't had its turn in the once-daily
+                sweep yet (see the comment above autoStarting) — say so explicitly instead of leaving it
+                looking incomplete. */}
+            <p className="hero-sub">{L("Otto n'a pas encore préparé ça — ce sera fait lors du prochain passage quotidien.", "Otto hasn't prepared this yet — it'll get to it in the next daily check.")}</p>
+            <div className="hero-acts">
+              {/* "Looks good" stays: a task Otto hasn't planned yet (or never needed a plan — already handled
+                  elsewhere, a duplicate, a quick manual note) still needs SOME way to be marked done without
+                  waiting for a run that isn't coming. */}
+              <button className="btn ghost" onClick={onConfirm}>{L("C'est bon", "Looks good")}</button>
+            </div>
+          </>
         )}
       </div>
     );

@@ -1068,6 +1068,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 
 /* Counted, collapsed sections. The COUNT is what makes "closed" safe — the student sees that five steps
    exist without having to open anything, so nothing feels hidden behind a click. */
+/* No longer a collapsed disclosure — a calm, always-visible chip row directly below the hero/first-action,
+   same quiet chip styling as before, just not hidden behind a click. */
+.tf-prepared-inline { margin-top: var(--space-3); }
 .tf-panels { display: flex; flex-direction: column; margin-top: var(--space-3); }
 .disclosure { border-top: 1px solid var(--line-soft); }
 .disclosure:last-child { border-bottom: 1px solid var(--line-soft); }

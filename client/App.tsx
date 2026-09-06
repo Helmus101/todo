@@ -4,6 +4,7 @@ import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gra
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
+import { pushError, getErrors, clearErrors } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
@@ -244,6 +245,11 @@ export function App() {
     if (noteTimer.current) clearTimeout(noteTimer.current);
     // Errors linger longer (the user needs time to read + act); info auto-clears.
     if (msg) noteTimer.current = setTimeout(() => setNote(""), kind === "error" ? 12_000 : 7_000);
+    // Every error-kind toast app-wide flows through this ONE function (NotifyContext) — the single choke
+    // point to also keep a persistent, visible record (Settings' "Error log") instead of a toast that
+    // vanishes in 12s and is gone forever, which was the actual complaint: "sometimes it shows this, this
+    // doesn't make sense" with no way to go back and see what happened or report it precisely.
+    if (msg && kind === "error") pushError(msg);
   }, []);
   const dismissNote = useCallback(() => { if (noteTimer.current) clearTimeout(noteTimer.current); setNote(""); }, []);
   const [onboard, setOnboard] = useState(() => { try { return localStorage.getItem("otto-onboard") === "1"; } catch { return false; } });
@@ -2054,6 +2060,8 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "other", number>> } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
   const [showTrustLog, setShowTrustLog] = useState(false);
+  const [showErrorLog, setShowErrorLog] = useState(false);
+  const [errorLog, setErrorLog] = useState(() => getErrors());
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
   const [deletingAccount, setDeletingAccount] = useState(false);
@@ -2145,6 +2153,36 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                   </ul>
                 );
               })()}
+            </span>
+          </div>
+        ) : null}
+        {/* Quiet by default (collapsed, count only) — a diagnostics drawer, not something to surface
+            unprompted on a page meant to feel calm. Client-side only (see errorLog.ts): the last things
+            that actually went wrong on THIS device, so a confusing toast that vanished in 12s can be
+            revisited later instead of just "sometimes it shows this, doesn't make sense" with no trace. */}
+        {errorLog.length > 0 ? (
+          <div className="modal-row">
+            <span className="lbl">{L("Journal d'erreurs", "Error log")}</span>
+            <span className="val">
+              <button type="button" className="btn xs ghost audit-toggle" aria-expanded={showErrorLog} onClick={() => setShowErrorLog((v) => !v)}>
+                {L("Voir", "View")} ({errorLog.length})
+              </button>
+              {showErrorLog ? (
+                <>
+                  <ul className="audit-list">
+                    {errorLog.map((e, i) => (
+                      <li key={i} className="audit-other">
+                        <span className="audit-icon" aria-hidden="true">•</span>
+                        <span className="audit-label">{e.message}</span>
+                        <span className="audit-at">{new Date(e.at).toLocaleString(status.language === "en" ? "en-GB" : "fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button type="button" className="btn xs ghost" onClick={() => { clearErrors(); setErrorLog([]); }}>
+                    {L("Effacer", "Clear")}
+                  </button>
+                </>
+              ) : null}
             </span>
           </div>
         ) : null}
