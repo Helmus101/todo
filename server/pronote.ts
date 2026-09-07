@@ -50,49 +50,12 @@ function withPronoteTimeout<T>(label: string, p: Promise<T>): Promise<T> {
   ]);
 }
 
-// ── Dev-only mock (no real Pronote account needed) ──────────────────────────────────────────────────
-// Index Éducation's public demo instance has moved/changed URLs often enough that hardcoding one here
-// would just go stale again. This lets local dev/testing exercise the WHOLE pipeline (connect → discover
-// → classify → French task cards) without touching pawnote or any real school at all. Gated behind an env
-// var so it can never accidentally ship live — enable with PRONOTE_MOCK=1 in .env, then in the Connecter
-// Pronote form type "demo" as the URL (username/password can be anything non-empty).
-const MOCK_ENABLED = process.env.PRONOTE_MOCK === "1";
-const MOCK_URL = "mock://demo";
-// Deadlines are FIXED offsets from the moment the mock account was connected (mockConnectedAt) — NOT
-// recomputed from "now" on every fetch. Real Pronote's assignmentsFromIntervals/timetableFromIntervals only
-// ever return items inside a [now, now+daysAhead] window, so a real homework due yesterday simply stops
-// coming back once "now" passes it. If these were "N days from right now" on every call, every mock item
-// would be permanently un-passable — exactly the dynamic-expiry behavior this is meant to help test would
-// never actually trigger. Instead: fixed offset from a fixed anchor, then filtered like the real API filters.
-function mockHomework(anchor: string): PronoteHomeworkItem[] {
-  const at = (days: number) => new Date(Date.parse(anchor) + days * 86_400_000).toISOString();
-  const now = Date.now();
-  return [
-    { id: "mock-hw-1", subject: "Physique", description: "Exercices 12 à 15 p.87 — mécanique du point", deadline: at(2), done: false },
-    { id: "mock-hw-2", subject: "Anglais", description: "Rédiger un paragraphe (150 mots) sur l'essay set text", deadline: at(4), done: false },
-    { id: "mock-hw-3", subject: "SES", description: "Fiche de lecture chapitre 3 — la mondialisation", deadline: at(9), done: false },
-  ].filter((h) => Date.parse(h.deadline) >= now && Date.parse(h.deadline) <= now + HOMEWORK_DAYS_AHEAD * 86_400_000);
-}
-function mockTests(anchor: string): PronoteTestItem[] {
-  const at = (days: number) => new Date(Date.parse(anchor) + days * 86_400_000).toISOString();
-  const now = Date.now();
-  return [
-    { id: "mock-test-1", subject: "Maths", deadline: at(3) },
-    { id: "mock-test-2", subject: "Philosophie", deadline: at(12) },
-  ].filter((t) => Date.parse(t.deadline) >= now && Date.parse(t.deadline) <= now + TEST_DAYS_AHEAD * 86_400_000);
-}
-// Static (doesn't need the connection anchor — a grade average isn't a deadline that expires); deliberately
-// includes one clearly-weak subject (Anglais) and one strong one (SES) so the "prioritize the weak subject"
-// behavior (see profileBlock/classifyCandidates in claude.ts) has something real to demonstrate against.
-function mockGrades(): PronoteGradeItem[] {
-  return [
-    { subject: "Maths", average: 13.5, outOf: 20 },
-    { subject: "Physique", average: 11, outOf: 20 },
-    { subject: "Anglais", average: 8, outOf: 20 },
-    { subject: "SES", average: 16, outOf: 20 },
-    { subject: "Philosophie", average: 12, outOf: 20 },
-  ];
-}
+// A dev-only mock mode (PRONOTE_MOCK=1, a fake "demo" account) used to live here so local testing could
+// exercise the whole pipeline without a real school. Removed entirely — it caused real production
+// confusion (a real account got seeded with this fake data while the env var was mistakenly left on, and
+// the mock rows had no way to be told apart from real ones downstream). LEGACY_MOCK_URL below exists only
+// to detect and purge any already-stored mock connection from before this removal, not to keep the feature.
+const LEGACY_MOCK_URL = "mock://demo";
 
 /** Turn pawnote's typed errors into something a user can actually act on. */
 function humanizeError(e: unknown): string {
@@ -159,15 +122,9 @@ export async function connectPronote(email: string, opts: { url: string; usernam
   const rawUrl = opts.url.trim(), username = opts.username.trim();
   if (!rawUrl || !username || !opts.password) return { ok: false, error: "L'URL, l'identifiant et le mot de passe sont requis." };
   const kind = opts.kind === pronote.AccountKind.PARENT ? pronote.AccountKind.PARENT : pronote.AccountKind.STUDENT;
-  const url = rawUrl.toLowerCase() === "demo" ? rawUrl : normalizePronoteUrl(rawUrl, kind);
+  const url = normalizePronoteUrl(rawUrl, kind);
   const deviceUUID = randomUUID();
   return withPronoteLock(email, async () => {
-    if (MOCK_ENABLED && url.toLowerCase() === "demo") {
-      const stored: StoredPronote = { url: MOCK_URL, username, kind, token: "mock-token", deviceUUID, mockConnectedAt: new Date().toISOString() };
-      const current = await loadState(email);
-      await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored });
-      return { ok: true };
-    }
     try {
       const session = pronote.createSessionHandle();
       const refresh = await withPronoteTimeout("loginCredentials", pronote.loginCredentials(session, { url, kind, username, password: opts.password, deviceUUID }));
@@ -190,8 +147,16 @@ export async function disconnectPronote(email: string): Promise<void> {
 }
 
 export async function pronoteConnected(email: string): Promise<{ connected: boolean; username?: string; needsReconnect?: boolean }> {
-  const { pronote: stored } = await loadState(email);
+  const current = await loadState(email);
+  const stored = current.pronote;
   if (!stored) return { connected: false };
+  // Purge a leftover mock connection from before PRONOTE_MOCK was removed — an account that got seeded
+  // with fake demo data (e.g. the env var mistakenly left on) must never keep reporting "connected" with
+  // no real school behind it; clear it here so the student sees "not connected" and can do a real connect.
+  if (stored.url === LEGACY_MOCK_URL) {
+    await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: undefined });
+    return { connected: false };
+  }
   return { connected: true, username: stored.username, ...(stored.needsReconnect ? { needsReconnect: true } : {}) };
 }
 
@@ -302,7 +267,6 @@ function stripHtml(html: string): string {
 }
 
 export async function pronoteHomework(email: string, daysAhead = HOMEWORK_DAYS_AHEAD): Promise<PronoteHomeworkItem[]> {
-  if (MOCK_ENABLED) { const { pronote: stored } = await loadState(email); if (stored?.url === MOCK_URL) return mockHomework(stored.mockConnectedAt || new Date().toISOString()); }
   const out = await withPronoteSession(email, async (session) => {
     const now = new Date();
     const end = new Date(now.getTime() + daysAhead * 86_400_000);
@@ -333,7 +297,6 @@ const TEST_DAYS_AHEAD = 28;
  *  (discover.ts) is built from subject+date, not `id` alone — this "id" is only for display/de-dup within
  *  a single fetch. */
 export async function pronoteTests(email: string, daysAhead = TEST_DAYS_AHEAD): Promise<PronoteTestItem[]> {
-  if (MOCK_ENABLED) { const { pronote: stored } = await loadState(email); if (stored?.url === MOCK_URL) return mockTests(stored.mockConnectedAt || new Date().toISOString()); }
   const out = await withPronoteSession(email, async (session) => {
     const now = new Date();
     const end = new Date(now.getTime() + daysAhead * 86_400_000);
@@ -388,7 +351,6 @@ export interface PronoteGradeItem { subject: string; average: number; outOf: num
  *  exactly the "which subject needs attention" signal Otto's profile block wants, with no averaging logic
  *  duplicated here. */
 export async function pronoteGrades(email: string): Promise<PronoteGradeItem[]> {
-  if (MOCK_ENABLED) { const { pronote: stored } = await loadState(email); if (stored?.url === MOCK_URL) return mockGrades(); }
   const out = await withPronoteSession(email, async (session) => {
     const periods = session.instance.periods;
     if (!periods.length) return [];

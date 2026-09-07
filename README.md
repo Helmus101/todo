@@ -69,8 +69,6 @@ npm run dev          # ouvre http://localhost:5273
 
 Ça suffit pour tourner en local. Ajoute Supabase (voir plus bas) pour que ça survive à un redémarrage.
 
-**Tester sans compte Pronote réel :** mets `PRONOTE_MOCK=1` dans `.env`, puis dans le formulaire "Connecter mon Pronote" tape `demo` comme URL (identifiant/mot de passe : n'importe quoi de non-vide). Ça fait tourner tout le pipeline (connexion → lecture → classement → cartes) avec des devoirs/contrôles factices, sans jamais contacter un vrai Pronote. Jamais actif sans cette variable — à ne pas mettre en production.
-
 ## Variables d'environnement
 
 **Requises**
@@ -89,10 +87,11 @@ npm run dev          # ouvre http://localhost:5273
 | `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` | Persistance cloud (recommandé ; **requis en production**) |
 | `CREDENTIAL_ENCRYPTION_KEY` | Chiffre le jeton Pronote (AES-256-GCM) avant stockage. **Sans elle, la connexion Pronote refuse de démarrer** (`openssl rand -hex 32`) — les autres fonctionnalités continuent de marcher sans. |
 | `MONTHLY_AI_BUDGET_USD` | Plafond de dépense IA mensuel par compte (défaut `3`) |
-| `PRONOTE_MOCK` | `1` = active le compte Pronote factice (`demo`) pour tester sans vrai compte — dev uniquement |
 | `CRON_SECRET` | Protège `/api/cron/drain` (requis sur Vercel) |
 | `DEEPSEEK_MODEL` | Défaut `deepseek-v4-flash` (ou `deepseek-v4-pro` pour plus de raisonnement) |
 | `PORT` | Défaut `8788` |
+| `PLAID_CLIENT_ID` + `PLAID_SECRET` | Optionnel — active `/finance` (liaison bancaire). Clés **sandbox** gratuites sur https://dashboard.plaid.com/signup, aucune approbation business requise. Toujours forcé en sandbox côté serveur (jamais un vrai compte bancaire). |
+| `PLAID_MOCK` | `1` = active le mode démo entièrement hors-ligne de `/finance` (aucune clé requise, données factices) |
 
 Voir [`.env.example`](.env.example) pour la liste annotée complète.
 

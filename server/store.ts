@@ -25,10 +25,6 @@ export interface StoredPlaid { accessToken: string; itemId: string; institutionN
  *  encryption (server/crypto.ts) — this interface always holds the LIVE plaintext token in memory, only
  *  the DB row is encrypted. */
 export interface StoredPronote { url: string; username: string; kind: number; token: string; deviceUUID: string; navigatorIdentifier?: string;
-  /** PRONOTE_MOCK only: when the mock account was connected — the fixed anchor mock homework/test deadlines
-   *  are computed from, so they're real fixed dates that actually pass (and stop being returned) as time
-   *  goes on, instead of always being "N days from right now" on every fetch. */
-  mockConnectedAt?: string;
   /** Set when a session attempt fails with a genuinely dead token (SessionExpiredError/BadCredentialsError,
    *  not a transient network/portal blip) — without this, a dead token looks IDENTICAL to "no homework
    *  today" forever: pronoteConnected() only checks that a row exists, so the student sees an empty task

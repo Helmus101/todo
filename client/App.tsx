@@ -1546,10 +1546,14 @@ function GradesEditor({ profile, onChanged, pronoteConnected, onTasksChanged }: 
                       <li key={g.id} className="grade-entry">
                         <span className="grade-entry-value">{g.grade}/{g.scale}</span>
                         <span className="grade-entry-meta">{g.source === "pronote" ? L("Pronote", "Pronote") : new Date(g.updatedAt).toLocaleDateString()}</span>
-                        {g.source !== "pronote" ? <button className="x" title={L("Supprimer", "Remove")} onClick={async () => {
+                        {/* Deletable regardless of source — a Pronote-sourced row used to be un-removable on
+                            the theory that the next real sync would overwrite it anyway, but that assumption
+                            breaks for a stale/wrong entry (e.g. leftover PRONOTE_MOCK test data, or a school
+                            that's since disconnected) with no real sync coming to correct it. */}
+                        <button className="x" title={L("Supprimer", "Remove")} onClick={async () => {
                           try { onChanged?.(await api.deleteGrade(g.id)); }
                           catch (e: any) { notify(e?.message || L("Impossible de supprimer la note.", "Couldn't remove the grade."), "error"); }
-                        }}>×</button> : null}
+                        }}>×</button>
                       </li>
                     ))}
                   </ul>
