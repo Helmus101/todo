@@ -1864,7 +1864,11 @@ function FinancePage({ lang, notify }: { lang?: "fr" | "en"; notify: (msg: strin
     void api.plaidStatus().then((s) => {
       setStatus(s);
       if (s.connected) void api.financeSnapshot().then(setSnapshot).catch(() => {});
-    }).catch(() => {});
+    // A failed status load used to leave `status` at null forever — `!status ? null : ...` below then
+    // rendered NOTHING but the page header, with no button and no error, indistinguishable from "still
+    // loading". Fall back to an honest "not configured" shape instead, so there's always something to act
+    // on (or at least see) instead of a page that looks broken.
+    }).catch(() => setStatus({ connected: false, configured: false }));
   };
   useEffect(load, []);
 
