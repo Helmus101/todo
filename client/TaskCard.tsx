@@ -666,13 +666,15 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     );
   }
   if (steps.length === 0) {
-    // No "Start" button — a task never needs a click to begin. The daily 4pm sweep auto-runs its top few by
-    // score itself (server/jobs.ts's processSweep + tasks.autoRunBudgetLeft); anything left over just waits
-    // for the NEXT 4pm cycle rather than being clickable — AI spend is deliberately confined to that once-
-    // daily window (plus chat and Journal/Study Mode), not triggered by merely having a tab open. Reads
-    // task.status directly (isInFlight), NOT the local `running` state — that flag only ever gets set by
-    // THIS component's own onRun() click, which nothing calls here anymore now that there's no button; the
-    // task list refreshing (poll/kick) is what actually flips task.status once the sweep does run it.
+    // A task never NEEDS a click to begin — the daily 4pm sweep auto-runs its top few by score itself
+    // (server/jobs.ts's processSweep + tasks.autoRunBudgetLeft), so most of the time nothing here gets
+    // clicked at all. But that auto-run is capped per day, and a task past the cap just waited for tomorrow
+    // with zero way to jump the queue — the "Exécuter maintenant"/"Run now" button below exists for exactly
+    // that case (and for "I want this NOW", cap or no cap): it's a genuinely deliberate manual click, so it's
+    // exempt from the daily cap by design (see the button's own comment) the same way chat/Journal are.
+    // autoStarting reads task.status directly (isInFlight), NOT the local `running` state — that only
+    // reflects THIS click; the task list refreshing (poll/kick) is what flips task.status once a run, from
+    // either path, actually starts.
     const autoStarting = isInFlight(task.status);
     return (
       <div className="step-hero hero-empty">
@@ -688,6 +690,12 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
                 looking incomplete. */}
             <p className="hero-sub">{L("Otto n'a pas encore préparé ça — ce sera fait lors du prochain passage quotidien.", "Otto hasn't prepared this yet — it'll get to it in the next daily check.")}</p>
             <div className="hero-acts">
+              {/* The daily sweep only auto-runs up to a fixed number of tasks per day (tasks.autoRunBudgetLeft)
+                  — anything past that cap just waits, with no way to jump the queue since the old "Start"
+                  button was removed. This click hits the SAME /api/tasks/:id/run endpoint the sweep's own
+                  auto-run uses — that endpoint never checks the daily auto-run cap (it only exists to bound
+                  UNATTENDED spend), so a deliberate manual click here always works today, cap or no cap. */}
+              <button className="btn primary" disabled={running} onClick={() => onRun()}>{running ? L("En cours…", "Working…") : L("Exécuter maintenant", "Run now")}</button>
               {/* "Looks good" stays: a task Otto hasn't planned yet (or never needed a plan — already handled
                   elsewhere, a duplicate, a quick manual note) still needs SOME way to be marked done without
                   waiting for a run that isn't coming. */}
