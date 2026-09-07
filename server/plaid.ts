@@ -13,7 +13,16 @@
  * encrypted at the DB layer (server/crypto.ts) exactly like Pronote's token.
  */
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
+import { createHash } from "node:crypto";
 import { loadState, saveState, type StoredPlaid } from "./store.ts";
+
+// Plaid's client_user_id must be an opaque per-user identifier, NOT the email itself — Plaid's API rejects
+// a raw email with "should not contain sensitive information like an email" (a real 400, hit live). A
+// one-way hash keeps it stable/unique per account (same email → same id, so Plaid can dedupe/rate-limit
+// per real user) without ever sending the email itself to Plaid.
+function plaidUserId(email: string): string {
+  return createHash("sha256").update(email.toLowerCase()).digest("hex");
+}
 
 const PLAID_CLIENT_ID = process.env.PLAID_CLIENT_ID;
 const PLAID_SECRET = process.env.PLAID_SECRET;
@@ -79,14 +88,28 @@ export async function plaidConnected(email: string): Promise<{ connected: boolea
 /** Step 1 of Plaid Link — a short-lived token the CLIENT uses to open Plaid's own hosted Link modal. Never
  *  touches account credentials itself; Plaid Link handles the actual bank login entirely on Plaid's side. */
 export async function createLinkToken(email: string): Promise<{ linkToken: string }> {
-  const res = await client().linkTokenCreate({
-    user: { client_user_id: email },
-    client_name: "Otto",
-    products: [Products.Transactions],
-    country_codes: [CountryCode.Us, CountryCode.Fr],
-    language: "fr",
-  });
-  return { linkToken: res.data.link_token };
+  try {
+    const res = await client().linkTokenCreate({
+      user: { client_user_id: plaidUserId(email) },
+      client_name: "Otto",
+      products: [Products.Transactions],
+      // US only — a fresh Plaid developer account (sandbox included) only has US enabled by default; FR/EU
+      // country access has to be explicitly requested from Plaid and isn't granted automatically just by
+      // being in sandbox mode. Requesting a country the account isn't approved for is exactly what Plaid's
+      // API rejects with a plain 400 (INVALID_REQUEST / COUNTRY_NOT_SUPPORTED) — which surfaced client-side
+      // as an unhelpful generic "Request failed with status code 400" before this was caught and unwrapped
+      // below. Sandbox's fake test institutions (e.g. "Platypus Bank") are US-based anyway, so this doesn't
+      // lose anything for testing — see the file-level comment on why FR/EU isn't targeted yet regardless.
+      country_codes: [CountryCode.Us],
+      language: "en",
+    });
+    return { linkToken: res.data.link_token };
+  } catch (e: any) {
+    // Plaid's Node client wraps axios — the raw Error's .message is just "Request failed with status code
+    // 400", useless for figuring out WHY. The actual reason lives in the response body.
+    const detail = e?.response?.data?.error_message || e?.response?.data?.error_code;
+    throw new Error(detail || e?.message || "Couldn't start the Plaid connection.");
+  }
 }
 
 /** Step 2 — the client hands back Link's public_token after a successful bank login; exchange it for a
@@ -100,7 +123,7 @@ export async function exchangePublicToken(email: string, publicToken: string): P
     try {
       const item = await client().itemGet({ access_token: accessToken });
       if (item.data.item.institution_id) {
-        const inst = await client().institutionsGetById({ institution_id: item.data.item.institution_id, country_codes: [CountryCode.Us, CountryCode.Fr] });
+        const inst = await client().institutionsGetById({ institution_id: item.data.item.institution_id, country_codes: [CountryCode.Us] });
         institutionName = inst.data.institution.name;
       }
     } catch { /* best-effort — connection still succeeds without a display name */ }
