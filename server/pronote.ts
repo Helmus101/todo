@@ -270,13 +270,22 @@ export const HOMEWORK_DAYS_AHEAD = 21;
 // field (sourceDetail on WebTask, the "Instructions" panel, the AI prompt itself) treats it as plain text.
 // Nothing else in the pipeline ever strips tags/decodes entities, so without this the raw markup was showing
 // up verbatim to the student. `<br>`/block tags become a space (never silently glued two clauses together).
-function stripHtml(html: string): string {
+// Exported for tests (same precedent as pronoteToItems/normalizeAssignmentText in discover.ts).
+export function stripHtml(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, " ")
     .replace(/<\/(p|div|li)>/gi, " ")
     .replace(/<[^>]+>/g, "")
-    .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"').replace(/&apos;|&rsquo;|&lsquo;/g, "'")
+    .replace(/&nbsp;/g, " ").replace(/&hellip;/g, "…")
+    // Numeric entities generically — was only matching the exact 2-digit &#39; before, so a school's editor
+    // emitting the equally-valid zero-padded &#039; (observed live: literal "&#039;" showing up raw in a
+    // task's instructions, e.g. "group&#039;s document") slipped through untouched. Decimal (&#39;) and hex
+    // (&#x27;) forms both handled; any codepoint, not just apostrophe, so this doesn't need a new case every
+    // time a school's export uses a different punctuation entity.
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 
@@ -290,7 +299,13 @@ export async function pronoteHomework(email: string, daysAhead = HOMEWORK_DAYS_A
       .map((a): PronoteHomeworkItem => ({
         id: a.id,
         subject: a.subject?.name || "Homework",
-        description: stripHtml(String(a.description || "")).replace(/\s+/g, " ").trim().slice(0, 400),
+        // Was capped at 400 — far too short for a real assignment's full instructions (a teacher's actual
+        // énoncé regularly runs several paragraphs), and this is the one place that description gets cut
+        // BEFORE anything downstream (forceWeekCoverage's own sourceDetail cap, tasks.ts) ever sees it, so
+        // raising a cap further down the pipeline couldn't have fixed it — reported live: a real assignment's
+        // instructions cut off mid-sentence ("...answering all three...The three…"). 3000 comfortably covers
+        // any real assignment text a teacher would actually type into Pronote.
+        description: stripHtml(String(a.description || "")).replace(/\s+/g, " ").trim().slice(0, 3000),
         deadline: a.deadline.toISOString(),
         done: a.done,
         ...(a.attachments?.length ? { attachments: a.attachments.map((x) => ({ name: x.name, url: x.url })) } : {}),

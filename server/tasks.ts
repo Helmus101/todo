@@ -658,7 +658,9 @@ export function forceWeekCoverage(
       when: c.timestamp,
       source: "pronote", risk: "low", urgency, importance,
       anchorKey: c.anchorKey,
-      sourceDetail: hasAssignmentText(c.snippet) ? c.snippet.slice(0, 1200) : undefined,
+      // 1200 used to be the effective limit for the whole pipeline's own good — pronote.ts's own read now
+      // carries up to 3000, so this must be at least that or it becomes the new silent truncation point.
+      sourceDetail: hasAssignmentText(c.snippet) ? c.snippet.slice(0, 3000) : undefined,
       sourceSubject: c.subject,
       sourceDue: c.timestamp,
     });

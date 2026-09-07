@@ -122,6 +122,17 @@ export function calendarToItems(data: any, now: number = Date.now(), account?: {
 
 // Exported for tests (same precedent as calendarToItems) — the énoncé this carries is what makes every
 // downstream artifact specific, so it's worth pinning that `snippet`/`subject` survive.
+// Same instability pronoteTestsToItems already learned to work around for timetable lesson ids ("aren't
+// stable across re-fetches, so anchor on subject+date instead") — a live duplicate was reported for
+// homework too: a re-sweep picked up what looked like a brand-new assignment for a real one already
+// running/done, and auto-ran it a SECOND time. Assignment `a.id` apparently isn't guaranteed stable across
+// fetches either. Anchor on real, unchanging CONTENT instead (subject + due date + a slice of the actual
+// énoncé) — the same assignment always normalizes to the same anchor no matter what id pawnote hands back
+// this time, while two genuinely different assignments due the same day in the same subject (rare, but
+// possible) still get distinct anchors because their énoncé text differs.
+function normalizeAssignmentText(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 60);
+}
 export function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean; attachments?: { name: string; url: string }[] }[]): SourceItem[] {
   return items.map((a): SourceItem => {
     // A teacher-attached worksheet/link — until this, Otto had zero visibility that one even existed,
@@ -133,7 +144,7 @@ export function pronoteToItems(items: { id: string; subject: string; description
     return {
       sourceApp: "pronote",
       externalId: a.id,
-      anchorKey: `pronote:${a.id}`,
+      anchorKey: `pronote:${normalizeAssignmentText(a.subject)}:${a.deadline.slice(0, 10)}:${normalizeAssignmentText(a.description || "")}`,
       // No stable deep-link into a specific assignment — Pronote's read API doesn't expose one. An
       // attachment's own url is a different, real thing (a specific file/link the teacher gave), not a
       // fallback for that missing assignment permalink.

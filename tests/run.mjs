@@ -8,6 +8,7 @@ import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToIt
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
+import { stripHtml } from "../server/pronote.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, predictNextTasks, subjectFrequency, orderingBoost } from "../server/patterns.ts";
 
@@ -347,6 +348,13 @@ section("finalize run report");
 const docLink = { label: "Q3 budget doc", url: "https://docs.google.com/document/d/1xVdKvq8GjwskuuAmuAbCdEfGhIjKlMnOp/edit" };
 const fin1 = finalize({ context: "c", synthesis: "Created the budget doc.", steps: [], links: [docLink], sendables: [] }, "", []);
 check("links with no steps/sendables get a Review checklist", fin1.steps.length === 1 && fin1.steps[0].text.startsWith("Review") && fin1.steps[0].url === docLink.url);
+// Regression: the context schema promises "2-4 bullets" but finalize() kept only the first 2 lines and cut
+// at 380 chars total — a real assignment's context (subject/due-date/teacher-pointer/focus-questions, 4
+// genuine bullets) got silently gutted, reported live as a Pronote task's context cutting off mid-sentence.
+const fourBulletContext = "- Bullet one about the subject and deadline\n- Bullet two about the group document\n- Bullet three naming the three focus questions from class\n- Bullet four about how much of the group work to reuse";
+const finContext = finalize({ context: fourBulletContext, synthesis: "Created the budget doc.", steps: [], links: [docLink], sendables: [] }, "", []);
+check("finalize keeps all 4 promised context bullets, not just 2", finContext.context.split("\n").length === 4);
+check("finalize's context cap is generous enough not to gut a real 4-bullet context", finContext.context === fourBulletContext);
 // The model's own "is this big?" judgment (not a keyword guess) rides through finalize() so
 // writeStepsFromContext can use it even when the title never names an acronym — see RunOutput.isBigProject.
 const finBig = finalize({ context: "c", synthesis: "Gathered sources.", steps: [], links: [], sendables: [], isBigProject: true }, "", []);
@@ -813,6 +821,22 @@ const emptyHw = pronoteToItems([{ id: "hw2", subject: "Anglais", description: ""
 check("no description falls back to a bare due-date placeholder", /^Due /.test(emptyHw[0].snippet));
 const testItems = pronoteTestsToItems([{ id: "t1", subject: "Maths", deadline: "2026-09-03T08:00:00Z" }]);
 check("a test's snippet is a bare marker, not a real énoncé", testItems[0].snippet.startsWith("Test on"));
+// Two anchors for the SAME real content (subject + due date + énoncé) must collide even with different raw
+// ids — regression: pawnote's assignment id apparently isn't stable across re-fetches, and anchoring on it
+// directly meant a re-sweep could see what looked like a brand-new assignment for one already running/done,
+// auto-running it a second time (reported live).
+const hwSame1 = pronoteToItems([{ id: "id-from-fetch-1", subject: "Anglais", description: "Rewrite your paragraph on the Joel Pett cartoon", deadline: "2026-09-11T08:00:00Z", done: false }]);
+const hwSame2 = pronoteToItems([{ id: "id-from-fetch-2-rotated", subject: "Anglais", description: "Rewrite your paragraph on the Joel Pett cartoon", deadline: "2026-09-11T08:00:00Z", done: false }]);
+check("the same real assignment anchors identically even with a different/rotated raw id", hwSame1[0].anchorKey === hwSame2[0].anchorKey);
+const hwDifferent = pronoteToItems([{ id: "id3", subject: "Anglais", description: "A completely different assignment about Orwell", deadline: "2026-09-11T08:00:00Z", done: false }]);
+check("two genuinely different assignments (same subject/day) still get distinct anchors", hwSame1[0].anchorKey !== hwDifferent[0].anchorKey);
+
+section("stripHtml — decodes Pronote's rich-text export correctly");
+check("numeric zero-padded entity decodes (the real live bug: &#039; showing up raw)", stripHtml("group&#039;s document") === "group's document");
+check("the plain 2-digit numeric entity still works", stripHtml("group&#39;s document") === "group's document");
+check("hex numeric entity decodes", stripHtml("group&#x27;s document") === "group's document");
+check("common named entities still decode", stripHtml("&quot;quoted&quot; &amp; &lt;tag&gt;") === "\"quoted\" & <tag>");
+check("br/block tags become a space, not glued text", stripHtml("<div>Line one<br>Line two</div>").trim() === "Line one Line two");
 
 section("hasAssignmentText — real énoncé vs synthesized placeholder");
 check("real assignment text passes", hasAssignmentText("Exercices 12 à 15 p.87 — mécanique du point"));
@@ -883,6 +907,16 @@ check("an empty/whitespace-only note body is rejected (was silently accepted bef
 check("a real note body is accepted", "note" in makeNote({ title: "x", body: "a real fiche body with plenty of actual content in it, more than forty chars" }));
 check("a deck with at least one valid card is accepted", "deck" in makeDeck({ title: "D", cards: [{ front: "a", back: "b" }] }));
 check("a deck with no valid cards is rejected", "error" in makeDeck({ title: "D", cards: [{ front: "", back: "" }] }));
+// Regression: a note linked to a fabricated "otto.ai/note/<uuid>" URL — this app has no such domain/page at
+// all (everything is in-app SPA state) — reported live. Defense-in-depth strip, independent of the prompt
+// instruction: any markdown link whose host contains "otto" gets its href dropped, text kept.
+{
+  const withFakeLink = makeNote({ title: "x", body: "Voici ta fiche de révision, [clique ici](https://otto.ai/note/89a5535c-5542-41f9-b93f-a5fafc6a3330) pour la voir en entier." });
+  check("a fabricated self-referential link is stripped from the note body", "note" in withFakeLink && !withFakeLink.note.body.includes("otto.ai"));
+  check("the link's own text is kept, just de-linked", "note" in withFakeLink && withFakeLink.note.body.includes("clique ici"));
+  const withRealLink = makeNote({ title: "x", body: "Voici la source officielle : [le site du gouvernement](https://www.gouvernement.fr/some-real-page) pour plus de détails complets." });
+  check("a genuinely unrelated real link is left untouched", "note" in withRealLink && withRealLink.note.body.includes("gouvernement.fr"));
+}
 
 // ── Guardrails: the graded-work detector must catch the real thing without flagging legitimate tutoring
 section("CHAT_DOES_WORK / DOES_STUDENT_WORK — true positives without false positives");

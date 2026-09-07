@@ -969,7 +969,7 @@ const CREATE_NOTE_TOOL = {
   description: "Create a SHORT in-app brief/note attached to this task — a quick checklist, reference sheet, or outline the student opens in a popup right on the card. No account, no approval, nothing external. Use this by default for anything short; only create a real Google Doc/Sheet/Slides when the content is genuinely long-form or needs to leave the app.",
   input_schema: { type: "object", properties: {
     title: { type: "string", description: "short label shown on the button, e.g. 'Fiche de révision — Suites numériques'" },
-    body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists, and a GFM pipe table — `| col | col |` with a `|---|---|` separator row — when the content is naturally tabular, e.g. a timing/schedule breakdown) — this IS the brief, not a placeholder." },
+    body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists, and a GFM pipe table — `| col | col |` with a `|---|---|` separator row — when the content is naturally tabular, e.g. a timing/schedule breakdown) — this IS the brief, not a placeholder. NEVER include a markdown link whose URL you made up (this app has no domain of its own for notes/tasks — a link like otto.ai/... or similar is always fabricated, never real) — only ever a URL copied verbatim from an actual source (a task's own link/attachment, or a real web_search result). Plain text with no link is always fine when you don't have a real one." },
   }, required: ["title", "body"] },
 };
 
@@ -1030,9 +1030,17 @@ const CREATE_QUIZ_TOOL = {
  *  artifact-enforcement check in the run loop with nothing to show the student — a real hole in the chain.
  *  40 chars is comfortably below any genuine fiche and comfortably above "TODO". */
 const MIN_NOTE_BODY = 40;
+// Defense-in-depth against a fabricated self-referential link (observed live: a note linked to a fake
+// "otto.ai/note/<uuid>" URL — this app has no such domain and no public per-note page at all, everything is
+// in-app SPA state). The prompt (CREATE_NOTE_TOOL's own description) already forbids inventing a URL, but a
+// prompt instruction alone isn't a guarantee — strip any markdown link whose host contains "otto" down to
+// plain text (keep the label, drop the fake href) rather than trust the model never slips.
+function stripFakeSelfLinks(body: string): string {
+  return body.replace(/\[([^\]]*)\]\((https?:\/\/[^)]*otto[^)]*)\)/gi, "$1");
+}
 export function makeNote(input: any): { note: TaskNote } | { error: string } {
   const title = String(input?.title || "Note").trim().slice(0, 120) || "Note";
-  const body = String(input?.body || "").trim().slice(0, 8000);
+  const body = stripFakeSelfLinks(String(input?.body || "").trim().slice(0, 8000));
   if (body.length < MIN_NOTE_BODY) return { error: "ERROR: the note body is empty or too short — write the ACTUAL content (the real formulas/definitions/steps), not a placeholder or a title with nothing under it." };
   return { note: { id: randomUUID(), title, body, createdAt: new Date().toISOString() } };
 }
@@ -1398,7 +1406,10 @@ export async function classifyCandidates(
           // The source's OWN words + subject/date, carried through verbatim. This is the whole reason a
           // fiche can be about "mécanique du point" instead of about "Physique homework": before this,
           // the snippet was read by the classifier and then dropped right here, so the run never saw it.
-          sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 1200) : undefined,
+          // Raised 1200 → 3000 alongside pronote.ts's own read cap (400 → 3000, the actual bottleneck for a
+          // real assignment's full instructions) and forceWeekCoverage's matching cap in tasks.ts — all
+          // three have to move together or whichever is smallest silently truncates regardless of the others.
+          sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 3000) : undefined,
           sourceSubject: it.subject,
           sourceDue: it.timestamp,
         };
@@ -1499,7 +1510,7 @@ export async function pickOneTask(
       accountId: it.accountId,
       // Same verbatim source carry-through as classifyCandidates — the daily-minimum path must produce
       // just as specific an artifact as the normal one.
-      sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 1200) : undefined,
+      sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 3000) : undefined,
       sourceSubject: it.subject,
       sourceDue: it.timestamp,
     };
@@ -2531,12 +2542,12 @@ const RUN_TOOLS = [
       type: "array",
       description: "What's LEFT to finish, ordered, each ONE concrete action. Include (1) human-only steps (automatable=false) and (2) steps you can do but that are BLOCKED on a human step (automatable=true + dependsOn). NEVER list work you already did, or a doable + unblocked action (do that now). NEVER narrate one real action as a chain of its own sub-parts — 'draft the reply', 'create the Gmail draft', 'send it' is the SAME single action (draft it now with your tools, then it's one 'send'-type step, not three); don't manufacture a lookup/research step for something you could and should have just found yourself this run. Often empty.",
       items: { type: "object", properties: {
-        text: { type: "string", description: "ONE concrete action, ONE clause — imperative verb + the specific thing, ≤ 8 words, no hedging, cut every word that isn't load-bearing. NEVER stack multiple asks with a colon/semicolon/'and' into one step ('thank her, ask X, and mention Y' is THREE steps, not one) — split each into its own step instead. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief'. NEVER describe TONE/STYLE/FORMALITY in the step text itself ('short lowercase reply', 'casual message') — those are drafting instructions for when you actually WRITE the reply, not part of what the step is; name WHO and WHAT only, e.g. 'Reply to Miri about the exchange', never 'Write a short casual reply to Miri'. Exception: a step that GATES a later one (see dependsOn) may name a couple more words of what to capture for that later step, but still stays ONE short clause — never a run-on sentence." },
+        text: { type: "string", description: "ONE concrete action, ONE clause — imperative verb + the specific thing, ≤ 8 words, no hedging, cut every word that isn't load-bearing. NEVER stack multiple asks with a colon/semicolon/'and' into one step ('thank her, ask X, and mention Y' is THREE steps, not one) — split each into its own step instead. Same rule for a step that names a COUNT of sub-parts ('answering all three questions', 'covering parts a, b, and c', 'addressing each point in the rubric') — that's one step per part/question/point, not one step for the whole bundle; a 30-minute step that's secretly 4 separate things hides how much work is actually left. e.g. 'Send the draft to Sarah', 'Pick the offsite date', 'Approve & publish the brief', 'Answer question 1 on causes', 'Answer question 2 on effects'. NEVER describe TONE/STYLE/FORMALITY in the step text itself ('short lowercase reply', 'casual message') — those are drafting instructions for when you actually WRITE the reply, not part of what the step is; name WHO and WHAT only, e.g. 'Reply to Miri about the exchange', never 'Write a short casual reply to Miri'. Exception: a step that GATES a later one (see dependsOn) may name a couple more words of what to capture for that later step, but still stays ONE short clause — never a run-on sentence." },
         automatable: { type: "boolean", description: "true = OTTO can do it with its tools or by finding info (read/search, draft, create/update a doc/sheet/event/task, ENTER/FILL data, comment, research, open a page) — do it NOW unless it waits on a user step (then set dependsOn). false = needs the USER, ONLY for: a judgment/decision/approval, a credential you lack, a payment, or a physical act. NOT for being specific/numeric/tedious; sending a message is a one-click send, not a step." },
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
         url: { type: "string", description: "a link that puts the user ONE click from doing this step — directions (Google Maps dir link), a tel: number, the exact booking/payment/return page, a form. Include one whenever it exists or can be constructed; not just for 'open a page' steps." },
-        question: { type: "string", description: "LAST RESORT ONLY — one short, specific question, set ONLY when a detail is genuinely missing that you could NOT find in the apps OR infer from context, AND it materially changes the output. You must have searched (inbox/Drive/calendar/their profile/the web) AND been unable to make a reasonable assumption first. A question you could have answered yourself is a failure. NEVER ask them to pick the OUTPUT FORMAT/deliverable type (note vs doc vs flashcards vs email, etc.) — that's your own implementation choice to make from the task itself, never something to hand back to the student; a title like 'Reply to Denis' already tells you the deliverable is an email, full stop. Only ask about a FACT only they know (which thread, what was decided, a missing number). Keep automatable=true (you'll run it once they answer)." },
+        question: { type: "string", description: "LAST RESORT for most things — one short, specific question, set ONLY when a detail is genuinely missing that you could NOT find in the apps OR infer from context, AND it materially changes the output. You must have searched (inbox/Drive/calendar/their profile/the web) AND been unable to make a reasonable assumption first. A question you could have answered yourself is a failure. NEVER ask them to pick the OUTPUT FORMAT/deliverable type (note vs doc vs flashcards vs email, etc.) — that's your own implementation choice to make from the task itself, never something to hand back to the student; a title like 'Reply to Denis' already tells you the deliverable is an email, full stop. Only ask about a FACT only they know (which thread, what was decided, a missing number). ONE real exception where you should ask readily, not as a last resort: schoolwork that references specific source material you don't actually have (a worksheet's exact questions, a teacher's rubric/guide, 'the three questions' from a handout not in any attachment) — writing a vague one-size step assuming the student can fill in content you never saw is worse than asking them to paste it; ask for the actual text rather than guess at it. Keep automatable=true (you'll run it once they answer)." },
         options: { type: "array", items: { type: "string" }, description: "2-4 likely ANSWERS to 'question', your BEST inference FIRST — each one gets tapped AS-IS and run literally, so every option must be a real, complete answer you could act on if picked (e.g. '12 stores', 'This Friday', 'Skip it'). NEVER a meta-option like 'I'll type my own answer' / 'I have it, let me paste it' / 'Something else' — a free-text field is ALWAYS shown below the options already, so one of those does nothing but submit that literal sentence as if it were the answer. If free text is the realistic response, just omit 'options' entirely." },
         minutes: { type: "number", description: "realistic minutes this step takes (1-240) — a genuine estimate from what the step involves, omit if you can't judge one. See TIME ESTIMATES." },
       }, required: ["text", "automatable"] },
@@ -3723,7 +3734,12 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     ...(Number.isInteger(firstActionMinutes) && firstActionMinutes >= 1 && firstActionMinutes <= 10 ? { minutes: firstActionMinutes } : {}),
   } : undefined;
   return {
-    context: brief(String(out?.context || ""), 2, 380),
+    // The context schema promises "2-4 bullets" (RUN_TOOLS' own description above) but this kept only the
+    // first 2 lines and cut the total at 380 chars — silently dropping bullets 3-4 outright regardless of
+    // content, and chopping even 2 real bullets mid-sentence for anything substantive (reported live: a
+    // Pronote assignment's context cut off at "...The three…" losing the actual focus-questions bullet).
+    // 4 lines / 900 chars actually matches what was promised instead of quietly reneging on it.
+    context: brief(String(out?.context || ""), 4, 900),
     // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
     // neutral placeholder (never "Done." on a task that still needs the user — that would misread as finished).
     synthesis: synthesis || (!EXECUTION_ENABLED && steps.length ? "Gathered context and broke this into steps." : steps.some((s) => !s.done) ? "" : "Done."),
