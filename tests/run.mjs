@@ -4,7 +4,7 @@ import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergePr
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
-import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems } from "../server/discover.ts";
+import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
@@ -830,6 +830,26 @@ const hwSame2 = pronoteToItems([{ id: "id-from-fetch-2-rotated", subject: "Angla
 check("the same real assignment anchors identically even with a different/rotated raw id", hwSame1[0].anchorKey === hwSame2[0].anchorKey);
 const hwDifferent = pronoteToItems([{ id: "id3", subject: "Anglais", description: "A completely different assignment about Orwell", deadline: "2026-09-11T08:00:00Z", done: false }]);
 check("two genuinely different assignments (same subject/day) still get distinct anchors", hwSame1[0].anchorKey !== hwDifferent[0].anchorKey);
+
+section("mergePronoteHomeworkAndTests — the same real exam listed twice (a 'prepare for the test' homework entry AND the timetable test slot) becomes ONE candidate");
+{
+  const prepHomework = pronoteToItems([{ id: "hw1", subject: "Math Analysis and Approaches HL", description: "Révisez pour le contrôle de connaissances préalables", deadline: "2026-09-18T08:00:00Z", done: false }]);
+  const theTest = pronoteTestsToItems([{ id: "t1", subject: "Math Analysis and Approaches HL", deadline: "2026-09-18T08:00:00Z" }]);
+  const merged = mergePronoteHomeworkAndTests(prepHomework, theTest);
+  check("collapses to exactly one candidate, not two", merged.length === 1);
+  check("keeps the TEST candidate (its title template beats the homework's generic one)", merged[0].labels.includes("test"));
+  check("folds the homework's own real text into the surviving candidate's snippet", merged[0].snippet.includes("Révisez pour le contrôle"));
+
+  // A genuinely unrelated homework due the same day, different subject — must survive untouched.
+  const unrelatedHw = pronoteToItems([{ id: "hw2", subject: "French Literature", description: "Write the intro paragraph", deadline: "2026-09-18T08:00:00Z", done: false }]);
+  const mergedWithUnrelated = mergePronoteHomeworkAndTests([...prepHomework, ...unrelatedHw], theTest);
+  check("an unrelated same-day homework in a different subject is untouched", mergedWithUnrelated.some((c) => c.subject === "French Literature"));
+  check("still only one candidate for the Math test itself", mergedWithUnrelated.filter((c) => c.subject === "Math Analysis and Approaches HL").length === 1);
+
+  // No matching test at all — homework survives as its own candidate, same as before this fix existed.
+  const noTest = mergePronoteHomeworkAndTests(prepHomework, []);
+  check("a homework item with no matching test is left alone", noTest.length === 1 && noTest[0].labels.includes("homework"));
+}
 
 section("stripHtml — decodes Pronote's rich-text export correctly");
 check("numeric zero-padded entity decodes (the real live bug: &#039; showing up raw)", stripHtml("group&#039;s document") === "group's document");

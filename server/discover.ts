@@ -306,6 +306,27 @@ export function hasAssignmentText(snippet: string): boolean {
   return !/^(due|test on)\b/i.test(s);
 }
 
+// Pronote sometimes lists the SAME real exam twice: once as a "cahier de texte" homework entry (e.g. "révisez
+// pour le contrôle du 18/09") and once as the actual timetable test slot — two genuinely different records
+// at the API level, but the same real thing to a student, and each has its own distinct anchorKey (`pronote:
+// ...` vs `pronote-test:...`), so the normal anchor-based dedupe never catches this — reported live as two
+// separate task cards for the same test ("Prepare for Math AA HL prior knowledge test" AND a bare-subject-
+// titled "Math Analysis and Approaches HL", both due the same day). Collapse a homework item into its
+// matching test when they share the exact same subject + due date — keeping the TEST candidate (its title
+// template already reads as "start reviewing for the X test", the homework's bare/generic title never does)
+// and folding the homework's own text into the test's snippet so nothing the teacher wrote gets lost.
+export function mergePronoteHomeworkAndTests(homework: SourceItem[], tests: SourceItem[]): SourceItem[] {
+  const keyOf = (subject: string | undefined, timestamp: string | undefined) =>
+    `${(subject || "").toLowerCase().trim()}::${(timestamp || "").slice(0, 10)}`;
+  const testKeys = new Set(tests.map((t) => keyOf(t.subject, t.timestamp)));
+  const survivingHomework = homework.filter((h) => !testKeys.has(keyOf(h.subject, h.timestamp)));
+  const mergedTests = tests.map((t) => {
+    const dupHw = homework.find((h) => keyOf(h.subject, h.timestamp) === keyOf(t.subject, t.timestamp) && hasAssignmentText(h.snippet));
+    return dupHw ? { ...t, snippet: `${t.snippet} — ${dupHw.snippet}` } : t;
+  });
+  return [...survivingHomework, ...mergedTests];
+}
+
 /**
  * Pull candidates from the fixed Google sources. Per-source failures are tolerated (one bad call must
  * not kill the sweep); `attempted` reports whether ANY source responded, so the caller can fall back
@@ -367,8 +388,12 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
     // "not connected" check always succeeds — that would make `attempted` true for a user with NOTHING
     // connected at all (not even Pronote), wrongly skipping the agent-sweep fallback for them.
     ...(pronoteOn.connected ? [
-      grab(async () => pronoteToItems(await pronoteHomework(userEmail))),
-      grab(async () => pronoteTestsToItems(await pronoteTests(userEmail))),
+      // Homework and tests are fetched together (not two separate grab()s) specifically so they can be
+      // cross-checked against each other before either becomes a candidate — see mergePronoteHomeworkAndTests.
+      grab(async () => {
+        const [homework, tests] = await Promise.all([pronoteHomework(userEmail), pronoteTests(userEmail)]);
+        return mergePronoteHomeworkAndTests(pronoteToItems(homework), pronoteTestsToItems(tests));
+      }),
     ] : []),
     // Plaid (/finance, if connected) — the "additional proactive source" ask: recurring bills detected from
     // real transaction history become the SAME kind of candidate a Pronote assignment or a calendar event

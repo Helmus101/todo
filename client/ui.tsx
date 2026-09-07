@@ -258,6 +258,11 @@ function formatMath(text: string): string {
     // converted; the delimiters themselves are LaTeX plumbing a reader has no use for.
     .replace(/\\\[|\\\]|\\\(|\\\)/g, "")
     .replace(/\$\$?/g, "")
+    // \circ has no LATEX_SYMBOLS entry — reported live: "60^\circ" (an extremely common way to write a
+    // degree measure, e.g. cos(60°) in the Law of Cosines) came out as raw "^\circ" text. Handle the
+    // "^\circ" idiom directly as a plain degree symbol (no leftover caret) BEFORE the generic superscript
+    // pass below would otherwise grab just the backslash as a one-character "exponent" and mangle it.
+    .replace(/\^\\circ/g, "°").replace(/\\circ/g, "°")
     .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, "($1)/($2)") // \frac AND \dfrac/\tfrac
     // \sqrt[n]{x} (nth root) before the plain \sqrt{x} case, or the `[n]` would be left dangling.
     .replace(/\\sqrt\[([^\]]*)\]\{([^{}]*)\}/g, (_, n, g) => `${scriptify(n, SUPERSCRIPT, "^")}√(${g})`)
@@ -441,10 +446,17 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
               </p>
             )}
             {history.map((h, i) => (
-              <p key={i} className={`study-help-msg ${h.role}`}>
+              // A plain <p> can't be used once the assistant branch renders — renderChatText returns its
+              // own <p>/<ul> blocks, and a <p> inside a <p> is invalid HTML (silently breaks the DOM tree).
+              <div key={i} className={`study-help-msg ${h.role}`}>
                 <span className="study-help-sender">{h.role === "user" ? L("Toi", "You") : "Otto"}</span>
-                {h.text}
-              </p>
+                {/* This panel rendered assistant replies as raw text with no formatting at all — reported
+                    live as a hint showing literal "\(...\)"/"**bold**" instead of real math/emphasis. Every
+                    other chat surface in the app already runs assistant text through renderChatText; this
+                    one-off sidebar had simply never been wired up to it. User's own text stays plain, same
+                    rule as everywhere else (a student pasting "**" from their notes shouldn't get it eaten). */}
+                {h.role === "assistant" ? renderChatText(h.text) : h.text}
+              </div>
             ))}
             {busy && <p className="study-help-msg assistant study-help-thinking">…</p>}
           </div>
