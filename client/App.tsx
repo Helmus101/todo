@@ -1859,6 +1859,11 @@ function FinancePage({ lang, notify }: { lang?: "fr" | "en"; notify: (msg: strin
   const [snapshot, setSnapshot] = useState<{ accounts: { id: string; name: string; type: string; balance: number | null }[]; transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[] } | null>(null);
   const [connecting, setConnecting] = useState(false);
   const en = lang === "en";
+  // The connect/connected sections below use the same "settings-sec reveal" fade-in class Settings uses —
+  // but that class starts at opacity:0 and only becomes visible once useReveal()'s IntersectionObserver adds
+  // "in" to it (see styles.css's .reveal/.reveal.in). This page never called it, so the button/content was
+  // permanently invisible (present in the DOM, opacity 0) — reported live as "no button on Finance at all".
+  useReveal([status]);
 
   const load = () => {
     void api.plaidStatus().then((s) => {
