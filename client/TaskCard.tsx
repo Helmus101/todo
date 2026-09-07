@@ -381,9 +381,18 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   // Set by "Je bloque"/"Aide" — the NEXT message sent is tagged as being about this step (server validates
   // the range). Cleared once that message actually sends, so a follow-up isn't silently re-tagged.
   const [chatStep, setChatStep] = useState<number | null>(null);
-  const chatInputRef = useRef<HTMLInputElement | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ block: "nearest" }); }, [task.chat?.length, chatSending]);
+  // Grows up to 3 lines (CSS max-height on .chat-input) then scrolls internally — was a single-line <input>,
+  // so anything longer than one line just scrolled sideways out of view while typing. Re-measured on every
+  // `chatInput` change (typing AND the programmatic clear after send), so sending correctly shrinks it back.
+  useEffect(() => {
+    const el = chatInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [chatInput]);
   // Two stages, not one: a plain reply is usually back well under 6s, but a turn that looks something up
   // or makes a deck/quiz is 2-3 sequential model calls and routinely runs 15-20s+ — a single "still
   // thinking…" left sitting for that long starts reading as broken.
@@ -1067,7 +1076,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
 function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, verySlow, onSend, inputRef, endRef, onOpenNote, onOpenDeck, onOpenQuiz }: {
   task: WebTask; input: string; setInput: (v: string) => void; sending: boolean; error: string | null;
   pendingMsg: string | null; slow: boolean; verySlow: boolean; onSend: () => void;
-  inputRef: MutableRefObject<HTMLInputElement | null>; endRef: MutableRefObject<HTMLDivElement | null>;
+  inputRef: MutableRefObject<HTMLTextAreaElement | null>; endRef: MutableRefObject<HTMLDivElement | null>;
   onOpenNote: (id: string) => void; onOpenDeck: (id: string) => void; onOpenQuiz: (id: string) => void;
 }) {
   const L = useLang();
@@ -1131,9 +1140,9 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
         </div>
       ) : null}
       <div className="chat-row">
-        <input
+        <textarea
           ref={inputRef}
-          className="chat-input" aria-label={L("Ton message pour Otto", "Your message to Otto")}
+          className="chat-input" rows={1} aria-label={L("Ton message pour Otto", "Your message to Otto")}
           placeholder={L("ex : je bloque à la question 3…", "e.g. I'm stuck on question 3…")}
           value={input} onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}

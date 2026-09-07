@@ -43,11 +43,21 @@ export function AskOttoPanel({
   onOpenNote, onOpenDeck, onOpenQuiz, voiceChat,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
   const [listening, setListening] = useState(false);
   const [speakingIdx, setSpeakingIdx] = useState<number | null>(null);
   const canListen = !!voiceChat && !!getSpeechRecognitionCtor();
+  // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
+  // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
+  // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a
+  // message correctly shrinks it back to one line instead of staying tall with nothing in it.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
   const canSpeak = !!voiceChat && typeof window !== "undefined" && "speechSynthesis" in window;
 
   useEffect(() => {
@@ -147,15 +157,15 @@ export function AskOttoPanel({
       ) : null}
 
       <div className="sm-ai-input-row">
-        <input
+        <textarea
           ref={inputRef}
           className="sm-ai-input"
-          type="text"
+          rows={1}
           aria-label="Your message to Otto"
           placeholder="What do you need help with?"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); onSend(); } }}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
           disabled={sending}
           autoFocus
         />
