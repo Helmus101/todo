@@ -32,7 +32,12 @@ export interface SourceItem {
 
 // Deterministic noise filters — mass mail never even reaches the model.
 const NOISE_SENDER = /no-?reply|donotreply|newsletter|marketing|updates?@|news@|mailer@|bounce/i;
-const NOISE_SUBJECT = /unsubscribe|newsletter|weekly digest|daily digest|verify your email|security alert/i;
+// Verification/one-time-code mail is real but never a TASK — there's nothing to plan or do beyond typing a
+// code you already have in front of you, and it churns constantly (every login, every new device) which
+// would otherwise flood the sweep with junk cards. Broadened beyond the original "verify your email" (too
+// narrow — missed "confirm your account", "verification code", OTP/2FA sign-in codes, etc., all of which
+// were slipping through as candidates).
+const NOISE_SUBJECT = /unsubscribe|newsletter|weekly digest|daily digest|security alert|verify(ing)? your (email|account|identity)|verif(y|ication) code|confirm(ing)? your (email|account)|email confirmation|one-?time (code|password|pin)|\botp\b|sign-?in code|login code|\b2fa\b|two-factor|authentication code/i;
 // Life-admin mail that USED to be hard-dropped as noise (it comes from an automated/billing-style sender
 // and often LOOKS like a receipt) but is exactly what a "mind the renewals/returns/duplicate subscriptions"
 // pass needs to see: a subscription about to renew or jump in price, a return/exchange window closing, a
@@ -49,7 +54,10 @@ export function isNoise(it: SourceItem): boolean {
   if (it.sourceApp === "gmail" && OTTO_SELF_EMAIL_SUBJECT.test(it.title || "")) return true;
   if (it.labels.includes("sent")) return false; // the user's own commitments are never noise
   if (ACTIONABLE_AUTOMATED.test(it.title || "") || ACTIONABLE_AUTOMATED.test(it.snippet || "")) return false;
-  return NOISE_SENDER.test(it.sender || "") || NOISE_SUBJECT.test(it.title || "");
+  // NOISE_SUBJECT checks the snippet too, not just the title — a verification email's subject is often
+  // generic ("Action required", "Your code") with the actual tell ("Enter this code to verify your
+  // account") only in the preview text.
+  return NOISE_SENDER.test(it.sender || "") || NOISE_SUBJECT.test(it.title || "") || NOISE_SUBJECT.test(it.snippet || "");
 }
 
 // Collapse (not strip) separators — stripping entirely let two DIFFERENT anchors collide, e.g.

@@ -291,6 +291,16 @@ check("no-reply sender is noise", isNoise(mk({ sender: "no-reply@stripe.com" }))
 check("unsubscribe subject is noise", isNoise(mk({ title: "March deals — unsubscribe anytime" })));
 check("real person is not noise", !isNoise(mk()));
 check("sent commitment never noise", isNoise(mk({ sender: "noreply@x.com", labels: ["sent"] })) === false);
+// Verification/one-time-code mail — real, but nothing to plan or do beyond typing a code already in hand;
+// churns constantly (every login/new device) and would otherwise flood the sweep. Broadened past the
+// original narrow "verify your email" match — these are real subject/preview shapes that used to slip through.
+check("'verify your email' subject is noise", isNoise(mk({ title: "Verify your email address" })));
+check("'confirm your account' subject is noise", isNoise(mk({ title: "Confirm your account to continue" })));
+check("a numeric verification-code subject is noise", isNoise(mk({ title: "Your verification code" })));
+check("OTP mentioned in the subject is noise", isNoise(mk({ title: "Your OTP for login" })));
+check("a generic subject with the tell only in the body/preview is still caught", isNoise(mk({ title: "Action required", snippet: "Enter this code to verify your account: 482913" })));
+check("a 2FA sign-in code subject is noise", isNoise(mk({ title: "Your sign-in code" })));
+check("a genuine security alert (not a code) is still noise, unchanged", isNoise(mk({ title: "New security alert for your account" })));
 const filtered = filterCandidates([mk(), mk({ anchorKey: "GMAIL_KNOWN1", externalId: "k1" }), mk({ sender: "marketing@spam.io", anchorKey: "gmail:sp" })], ["gmail:known1"]);
 check("known anchors + noise filtered out", filtered.length === 1 && filtered[0].anchorKey === "gmail:x");
 
