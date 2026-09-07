@@ -792,13 +792,19 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
             console.log(`${new Date().toISOString()} [tasks] daily-minimum: forced "${one.task.title}" (${forcedNew} new after fold)`);
           }
         }
-        // SUPPLEMENTARY SWEEP — discoverSourceItems only makes FIXED read calls against Gmail/Calendar/
-        // Drive. Once that "attempted" succeeds (true for any Gmail-connected account), this whole
-        // function returns above — so a connected app OUTSIDE that fixed set (Notion) was NEVER checked,
-        // ever, not even once. That's a silent, permanent recall gap: a student who connects Notion would
-        // never get a task generated from it. Run a small scoped open-ended sweep over just those OTHER
-        // toolkits (reusing the same tested agent as the full fallback below) and fold its findings in too.
+        // SUPPLEMENTARY SWEEP — discoverSourceItems only makes FIXED read calls against Gmail/Calendar (plus
+        // Pronote/Plaid, handled separately). Once that "attempted" succeeds (true for any Gmail-connected
+        // account), this whole function returns above — so a connected app OUTSIDE that fixed set (Notion)
+        // was NEVER checked, ever, not even once. That's a silent, permanent recall gap: a student who
+        // connects Notion would never get a task generated from it. Run a small scoped open-ended sweep over
+        // just those OTHER toolkits (reusing the same tested agent as the full fallback below) and fold its
+        // findings in too.
         if (extras?.tools?.length) {
+          // Excludes Gmail/Calendar (already covered deterministically above) AND Drive/Docs/Sheets/Slides
+          // (deliberately NOT a task-detection source at all, by product decision — see discover.ts's own
+          // comment where driveToItems used to be wired in). Excluding the Drive family here too means it
+          // never generates a task via EITHER path — only via genuine context-gathering during an actual
+          // run/chat (getAgentTools still exposes its read actions there, just never for candidate creation).
           const DETERMINISTIC_KITS = new Set(["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "googleslides"]);
           const otherTools = extras.tools.filter((t) => {
             const kit = /^\[(\w+)\]/.exec(t.description || "")?.[1]?.toLowerCase();

@@ -112,28 +112,6 @@ export function calendarToItems(data: any, now: number = Date.now(), account?: {
   }).filter((x): x is SourceItem => !!x);
 }
 
-function driveToItems(data: any, account?: { id?: string; email?: string }): SourceItem[] {
-  const files: any[] = data?.files || data?.items || data?.data?.files || (Array.isArray(data) ? data : []);
-  return (files || []).slice(0, 15).map((f: any): SourceItem | null => {
-    const id = String(f?.id ?? f?.fileId ?? "").trim();
-    if (!id) return null;
-    const modifiedBy = String(f?.lastModifyingUser?.emailAddress ?? f?.lastModifyingUser?.displayName ?? "");
-    return {
-      sourceApp: "drive",
-      externalId: id,
-      anchorKey: `drive:${id}`,
-      url: f?.webViewLink || undefined,
-      title: String(f?.name ?? f?.title ?? "(untitled file)").slice(0, 140),
-      snippet: `${f?.mimeType ? String(f.mimeType).replace("application/vnd.google-apps.", "") : "file"}${modifiedBy ? ` — last modified by ${modifiedBy}` : ""}${f?.sharedWithMeTime ? ` — shared with you ${f.sharedWithMeTime}` : ""}`,
-      sender: modifiedBy.slice(0, 120),
-      timestamp: String(f?.modifiedTime ?? f?.sharedWithMeTime ?? ""),
-      labels: [f?.sharedWithMeTime ? "shared" : "modified"],
-      accountId: account?.id,
-      accountEmail: account?.email,
-    };
-  }).filter((x): x is SourceItem => !!x);
-}
-
 // Exported for tests (same precedent as calendarToItems) — the énoncé this carries is what makes every
 // downstream artifact specific, so it's worth pinning that `snippet`/`subject` survive.
 export function pronoteToItems(items: { id: string; subject: string; description: string; deadline: string; done: boolean; attachments?: { name: string; url: string }[] }[]): SourceItem[] {
@@ -325,7 +303,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
     try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
   };
-  const [gmailAccounts, calAccounts, driveAccounts, pronoteOn, plaidOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), pronoteConnected(userEmail), plaidConnected(userEmail)]);
+  const [gmailAccounts, calAccounts, pronoteOn, plaidOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), plaidConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
@@ -352,25 +330,19 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
       timeMin: now.toISOString(), timeMax: week.toISOString(), maxResults: 20, singleEvents: true, orderBy: "startTime",
     }, acc.id), Date.now(), acc);
   }));
-  const driveGrabs = driveAccounts.map((acc) => grab(async () => {
-    const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().split(".")[0];
-    const files = driveToItems(await readAction(userEmail, "GOOGLEDRIVE_LIST_FILES", {
-      // Bound BOTH branches by `since` — `sharedWithMe = true` alone (no time bound) matches every file
-      // ever shared with the account, so a share from months ago could still surface today just for
-      // sitting near the top of the "most recently modified among all-time shares" list. Only a share
-      // that happened recently should count as a fresh signal; a stale share, even an unread one, isn't
-      // "new" and shouldn't compete with this week's actual activity.
-      q: `(sharedWithMeTime > '${since}' or modifiedTime > '${since}') and trashed = false`,
-      orderBy: "modifiedTime desc", pageSize: 15,
-      fields: "files(id,name,mimeType,webViewLink,modifiedTime,sharedWithMeTime,lastModifyingUser)",
-    }, acc.id), acc);
-    // Only files where ANOTHER person is the actor — the user's own edits aren't a to-do trigger.
-    return files.filter((f) => f.labels.includes("shared") || (f.sender && !f.sender.toLowerCase().includes(userEmail.split("@")[0].toLowerCase())));
-  }));
+  // Google Drive/Docs/Sheets/Slides are deliberately NOT a detection source — no xToItems converter, no
+  // grab() call here. Drive activity (someone shared/edited a file) used to become its own task candidate
+  // here, which is exactly the "context, not detection" line this app draws for Drive specifically (per
+  // explicit product decision — Gmail/Calendar/Pronote/Plaid genuinely signal "something needs doing";
+  // a modified Drive file is much weaker/noisier evidence of that, and duplicates work Gmail/Calendar
+  // already surface when a doc is actually relevant to something due). Drive/Docs/Sheets/Slides read tools
+  // are still fully available to the agent during an actual run/chat (getAgentTools, server/integrations.ts)
+  // for genuine context-gathering — "find the doc for this assignment," "read what's in this sheet" — and
+  // are excluded from the supplementary agent-sweep's own candidate-generation pass too (DETERMINISTIC_KITS,
+  // server/tasks.ts) so they never produce a task via that path either.
   await Promise.all([
     ...gmailGrabs,
     ...calGrabs,
-    ...driveGrabs,
     // Pronote (if connected) — outside the Composio/getConnectedAccounts path entirely; checked separately.
     // Gated OUTSIDE grab() deliberately: grab() marks `attempted` true on any non-throwing call, and a
     // "not connected" check always succeeds — that would make `attempted` true for a user with NOTHING

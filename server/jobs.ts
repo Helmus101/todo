@@ -479,12 +479,13 @@ async function processExecuteStep(job: store.Job): Promise<string> {
     });
   } catch (e) {
     console.error(`[jobs] getAgentToolsWithPermission failed for step ${index} on task ${taskId}:`, e);
+    reportError("get-agent-tools-with-permission", e, { taskId, index });
     // Fall back to regular tools if permissioned tools fail - this allows the step to still run
     // even if the permission check fails, though it may hit the write gate again
     permTools = await integrations.getAgentTools(email, {
       ...(t?.sourceAccountId ? { accountApp: t.source, accountId: t.sourceAccountId } : {}),
       primaryAccounts: profile.primaryAccounts,
-    }).catch((e2) => { console.error(`[jobs] fallback getAgentTools ALSO failed for step ${index} on task ${taskId}:`, e2); return undefined; });
+    }).catch((e2) => { console.error(`[jobs] fallback getAgentTools ALSO failed for step ${index} on task ${taskId}:`, e2); reportError("get-agent-tools-fallback", e2, { taskId, index }); return undefined; });
   }
   const academic = await loadAcademicContext(email);
   // Unlike processExecuteTask (which reverts the task's status and stamps lastError on failure), this had

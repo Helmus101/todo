@@ -783,6 +783,9 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     res.json({ tasks: req.session.tasks, note });
   } catch (e: any) {
     console.error("[tasks] generate error:", e);
+    // Responds directly instead of calling next(err) — bypasses the global route-catchall (below) that
+    // would otherwise report this to Sentry, so it needs its own call here.
+    reportError("tasks-generate", e);
     res.status(500).json({ error: e?.message || "generate failed" });
   }
 });
@@ -1077,6 +1080,10 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     res.json(t);
   } catch (e: any) {
     console.error(`[tasks] ${type} error for task`, id, ":", e);
+    // Shared by run/revise/step-run (and every other job-type action routed through this) — responds
+    // directly instead of calling next(err), so it bypasses the global route-catchall's Sentry reporting.
+    // Needs its own call here to cover this whole action surface.
+    reportError("tasks-job-action", e, { type, taskId: id });
     res.status(500).json({ error: e?.message || "run failed" });
   }
 };
@@ -1128,7 +1135,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
     void recordMetric(req.session.user!, "task_completed", 1, task.source || "n/a");
     if (task.shownAt) void recordMetric(req.session.user!, "task_time_to_completion_seconds", (Date.now() - Date.parse(task.shownAt)) / 1000, task.source || "n/a");
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't confirm that task — try again." }); }
+  } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); res.status(500).json({ error: e?.message || "Couldn't confirm that task — try again." }); }
 });
 app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
@@ -1138,7 +1145,7 @@ app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req
     tasks.reject(req.session.tasks || [], id);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't reject that task — try again." }); }
+  } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); res.status(500).json({ error: e?.message || "Couldn't reject that task — try again." }); }
 });
 app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
@@ -1151,7 +1158,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
     void recordMetric(req.session.user!, "task_dismissed", 1, task.source || "n/a");
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't dismiss that task — try again." }); }
+  } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); res.status(500).json({ error: e?.message || "Couldn't dismiss that task — try again." }); }
 });
 // Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue, same
 // as full runs, so it's durably locked and audited. Enqueue-and-return, NOT enqueue-and-drain: a step run
@@ -1175,7 +1182,7 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), a
     task.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(task);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "run failed" }); }
+  } catch (e: any) { reportError("tasks-step-run", e, { taskId: id, index }); res.status(500).json({ error: e?.message || "run failed" }); }
 });
 // Mark a step done/undone (a manual step the user did, or after the client opened a URL step).
 app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), async (req, res) => {
@@ -1196,7 +1203,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
     if (done && req.session.user) void recordMetric(req.session.user, "task_step_completed", 1, task.source || "n/a");
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't update the step — try again." }); }
+  } catch (e: any) { reportError("tasks-step-done", e); res.status(500).json({ error: e?.message || "Couldn't update the step — try again." }); }
 });
 // Record one flashcard review — advances/resets its Leitner box and schedules the next `dueAt` (see
 // nextLeitnerReview in shared/types.ts). Deterministic, no AI call. This is what turns flashcard decks from
@@ -1916,6 +1923,10 @@ app.get("/api/cron/drain", async (req, res) => {
     res.json(out);
   } catch (e: any) {
     console.error("[cron] drain failed:", e);
+    // The ONE unattended background entry point — per-account failures inside cronTick() already report
+    // (jobs.ts's "cron-tick-skip"), but cronTick() ITSELF throwing (the whole drain never even starting)
+    // was previously invisible outside Vercel's own logs.
+    reportError("cron-drain", e);
     res.status(500).json({ error: e?.message || "drain failed" });
   }
 });

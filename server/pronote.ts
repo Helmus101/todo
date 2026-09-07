@@ -33,6 +33,7 @@ import * as pronote from "@blockshub/pawnote-lts";
 import type { Profile } from "../shared/types.ts";
 import { loadState, saveState, type StoredPronote } from "./store.ts";
 import { credentialEncryptionConfigured } from "./crypto.ts";
+import { reportError } from "./sentry.ts";
 
 export const PRONOTE_KIND = { STUDENT: pronote.AccountKind.STUDENT, PARENT: pronote.AccountKind.PARENT } as const;
 
@@ -56,6 +57,17 @@ function withPronoteTimeout<T>(label: string, p: Promise<T>): Promise<T> {
 // the mock rows had no way to be told apart from real ones downstream). LEGACY_MOCK_URL below exists only
 // to detect and purge any already-stored mock connection from before this removal, not to keep the feature.
 const LEGACY_MOCK_URL = "mock://demo";
+
+// Everyday, expected outcomes (a wrong password, a rate limit, a real school portal being down) —
+// reporting every one of these to Sentry would just be noise around normal user/network behavior, not a
+// signal of an actual bug. Anything NOT in this list reaching connect/session-failure catches below is
+// genuinely unexpected and worth a report.
+function isExpectedPronoteError(e: unknown): boolean {
+  return e instanceof pronote.BadCredentialsError || e instanceof pronote.AccountDisabledError ||
+    e instanceof pronote.SuspendedIPError || e instanceof pronote.RateLimitedError ||
+    e instanceof pronote.SecurityError || e instanceof pronote.SessionExpiredError ||
+    e instanceof pronote.PageUnavailableError;
+}
 
 /** Turn pawnote's typed errors into something a user can actually act on. */
 function humanizeError(e: unknown): string {
@@ -136,6 +148,7 @@ export async function connectPronote(email: string, opts: { url: string; usernam
       return { ok: true };
     } catch (e: any) {
       console.warn("[pronote] connect failed:", e?.message || e);
+      if (!isExpectedPronoteError(e)) reportError("pronote-connect", e, { email });
       return { ok: false, error: humanizeError(e) };
     }
   });
@@ -220,6 +233,7 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
       if (current) void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, needsReconnect: true } }).catch(() => {});
     }
     console.warn("[pronote] session failed:", e?.message || e);
+    if (!isExpectedPronoteError(e)) reportError("pronote-session", e, { email });
     return undefined;
   }
 }

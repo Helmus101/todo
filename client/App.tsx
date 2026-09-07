@@ -1755,8 +1755,13 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   const [fix, setFix] = useState("");
   const [saving, setSaving] = useState(false);
   const [openSubject, setOpenSubject] = useState<string | null>(null);
+  // Same "don't silently drop a failed load" fix as SettingsPage's profileError/loadProfile — a failed
+  // fetch used to just flip `loaded` true with `profile` still null, rendering the same "no mistakes yet"
+  // empty state a genuinely-empty account gets, with no way to tell the two apart or retry.
+  const [profileError, setProfileError] = useState(false);
+  const loadProfile = () => { setProfileError(false); void api.profile().then((p) => { setProfile(p); setLoaded(true); }).catch(() => { setProfileError(true); setLoaded(true); }); };
 
-  useEffect(() => { void api.profile().then((p) => { setProfile(p); setLoaded(true); }).catch(() => setLoaded(true)); }, []);
+  useEffect(loadProfile, []);
 
   const groups = errorLogBySubject(profile?.errorLog);
   useEffect(() => { if (!openSubject && groups.length) setOpenSubject(groups[0].subject); }, [groups.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1783,6 +1788,10 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
         <h2>{L("Journal d'erreurs", "Error log")}</h2>
         <p className="dash-line">{L("Note tes erreurs précises — la question, ce que tu as eu faux, ce qu'il faut faire la prochaine fois. Classé par matière, pour réviser avant un contrôle.", "Log your specific mistakes — the question, what you got wrong, what to do next time. Grouped by subject, so you can review before a test.")}</p>
       </div>
+
+      {profileError ? (
+        <p className="rewrite-error">{L("Certaines infos n'ont pas pu être chargées.", "Some info couldn't load.")} <button type="button" className="btn xs ghost" onClick={loadProfile}>{L("Réessayer", "Retry")}</button></p>
+      ) : null}
 
       <div className="errorlog-addform">
         <div className="addrow">
@@ -1857,6 +1866,10 @@ function FinancePage({ lang, notify }: { lang?: "fr" | "en"; notify: (msg: strin
   const L = useLang();
   const [status, setStatus] = useState<{ connected: boolean; institutionName?: string; configured: boolean } | null>(null);
   const [snapshot, setSnapshot] = useState<{ accounts: { id: string; name: string; type: string; balance: number | null }[]; transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[] } | null>(null);
+  // A failed snapshot fetch used to leave `snapshot` at null forever with the .catch swallowing the error —
+  // indistinguishable from "connected, genuinely no transactions yet". Track the failure explicitly so a
+  // real outage shows something instead of a silent, misleadingly-empty account view.
+  const [snapshotError, setSnapshotError] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const en = lang === "en";
   // The connect/connected sections below use the same "settings-sec reveal" fade-in class Settings uses —
@@ -1868,7 +1881,10 @@ function FinancePage({ lang, notify }: { lang?: "fr" | "en"; notify: (msg: strin
   const load = () => {
     void api.plaidStatus().then((s) => {
       setStatus(s);
-      if (s.connected) void api.financeSnapshot().then(setSnapshot).catch(() => {});
+      if (s.connected) {
+        setSnapshotError(false);
+        void api.financeSnapshot().then(setSnapshot).catch(() => setSnapshotError(true));
+      }
     // A failed status load used to leave `status` at null forever — `!status ? null : ...` below then
     // rendered NOTHING but the page header, with no button and no error, indistinguishable from "still
     // loading". Fall back to an honest "not configured" shape instead, so there's always something to act
@@ -1919,24 +1935,43 @@ function FinancePage({ lang, notify }: { lang?: "fr" | "en"; notify: (msg: strin
           )}
         </p>
       </div>
-      {!status ? null : !status.connected ? (
-        <div className="settings-sec reveal">
-          <button className="btn primary" disabled={connecting || !status.configured} onClick={() => void connect()}>
-            {connecting ? L("Connexion…", "Connecting…") : L("Connecter une banque (Plaid, mode test)", "Connect a bank (Plaid, sandbox)")}
-          </button>
-          {!status.configured ? (
+      {!status ? null : (
+        <div className="int-group reveal">
+          <div className="int-grid">
+            <div className={`int-tile ${status.connected ? "on" : ""}`}>
+              <span className="int-logo"><Wallet /></span>
+              <div className="int-info">
+                <div className="int-name">{L("Banque", "Bank")}{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
+                <div className="int-blurb">
+                  {status.connected
+                    ? (status.institutionName || L("Compte bancaire", "Bank account"))
+                    : !status.configured
+                    ? L("Plaid n'est pas configuré sur ce serveur.", "Plaid isn't configured on this server.")
+                    : L("Repère les factures récurrentes et les charges inhabituelles.", "Spots recurring bills and unusual charges.")}
+                </div>
+              </div>
+              {status.connected
+                ? <button className="btn xs" onClick={() => void disconnect()}>{L("Déconnecter", "Disconnect")}</button>
+                : <button className="btn xs" disabled={connecting || !status.configured} onClick={() => void connect()}>
+                    {connecting ? "…" : L("Connecter", "Connect")}
+                  </button>}
+            </div>
+          </div>
+          {!status.connected && !status.configured ? (
             <p className="settings-hint" style={{ marginTop: 8 }}>
-              {L("Plaid n'est pas configuré sur ce serveur.", "Plaid isn't configured on this server.")}{" "}
               <button className="btn ghost sm-btn-sm" onClick={() => void connectMock()}>{L("Essayer avec des données de démo", "Try with demo data")}</button>
             </p>
           ) : null}
         </div>
-      ) : (
+      )}
+      {status?.connected ? (
         <div className="settings-sec reveal">
-          <div className="modal-row">
-            <span className="lbl">{L("Connecté", "Connected")}</span>
-            <span className="val">{status.institutionName || L("Compte bancaire", "Bank account")} <button className="btn xs ghost" onClick={() => void disconnect()}>{L("Déconnecter", "Disconnect")}</button></span>
-          </div>
+          {snapshotError ? (
+            <p className="settings-hint">
+              {L("Impossible de charger tes comptes — réessaie.", "Couldn't load your accounts — try again.")}{" "}
+              <button className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button>
+            </p>
+          ) : null}
           {snapshot?.accounts.length ? (
             <div className="modal-row">
               <span className="lbl">{L("Comptes", "Accounts")}</span>
@@ -1961,7 +1996,7 @@ function FinancePage({ lang, notify }: { lang?: "fr" | "en"; notify: (msg: strin
             {L("Otto crée un rappel automatiquement quand une charge récurrente approche — regarde tes tâches.", "Otto creates a reminder automatically when a recurring charge is coming up — check your tasks.")}
           </p>
         </div>
-      )}
+      ) : null}
     </main>
   );
 }
@@ -2224,9 +2259,11 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
       <h1 className="list-head">{L("Journal d'apprentissage", "Study journal")}</h1>
       <p className="dash-line">{L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
 
-      <div className="studylog-tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "journal"} className={`btn xs ${tab === "journal" ? "" : "ghost"}`} onClick={() => setTab("journal")}>{L("Journal", "Journal")}</button>
-        <button type="button" role="tab" aria-selected={tab === "flashcards"} className={`btn xs ${tab === "flashcards" ? "" : "ghost"}`} onClick={() => setTab("flashcards")}>{L("Cartes", "Flashcards")}</button>
+      {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
+          language for every binary switcher in the app, not a second bespoke tab style. */}
+      <div className="seg studylog-tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === "journal"} className={`seg-btn ${tab === "journal" ? "on" : ""}`} onClick={() => setTab("journal")}>{L("Journal", "Journal")}</button>
+        <button type="button" role="tab" aria-selected={tab === "flashcards"} className={`seg-btn ${tab === "flashcards" ? "on" : ""}`} onClick={() => setTab("flashcards")}>{L("Cartes", "Flashcards")}</button>
       </div>
 
       {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded /> : (

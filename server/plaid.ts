@@ -15,6 +15,7 @@
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { createHash } from "node:crypto";
 import { loadState, saveState, type StoredPlaid } from "./store.ts";
+import { reportError } from "./sentry.ts";
 
 // Plaid's client_user_id must be an opaque per-user identifier, NOT the email itself — Plaid's API rejects
 // a raw email with "should not contain sensitive information like an email" (a real 400, hit live). A
@@ -172,6 +173,10 @@ export async function plaidSnapshot(email: string): Promise<{ accounts: PlaidAcc
     return { accounts, transactions };
   } catch (e: any) {
     console.warn("[plaid] snapshot failed:", e?.response?.data?.error_message || e?.message);
+    // Was fully silent before — this compounds with the client's own snapshot fetch (client/App.tsx's
+    // FinancePage), which used to swallow the resulting empty response too, so a real Plaid outage was
+    // invisible end to end.
+    reportError("plaid-snapshot", e);
     return { accounts: [], transactions: [] };
   }
 }
