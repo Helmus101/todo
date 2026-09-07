@@ -1757,9 +1757,15 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `Return JSON: {"title": short label (≤8 words, name the actual topic(s)), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
-    // 10000 leaves real headroom for a genuinely dense day (up to 50 varied-length cards) without being the
-    // 14000+bundled-quiz-sized ask that was making this fail — most days use a fraction of this.
-    const res = await makeReq(10000, false);
+    // DeepSeek's v4 models are reasoning models — REASONING tokens count against max_tokens too, before any
+    // visible `content` is emitted, so a cap sized only for the expected JSON output routinely gets consumed
+    // entirely by reasoning on a genuinely dense multi-subject entry, leaving `content` EMPTY (not truncated
+    // — literally zero characters) even though the ask itself is small. Confirmed live: a real 5-subject
+    // entry failed outright at max_tokens=10000 (both this call AND the 3000-token fallback below came back
+    // with empty content), then succeeded cleanly at 24000 using ~13800 output tokens, most of it reasoning.
+    // 24000 leaves real headroom for a genuinely dense day (up to 50 varied-length cards) plus its reasoning
+    // overhead — most days use a fraction of this.
+    const res = await makeReq(24000, false);
     let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
     let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
     let tokens = usageOf(res);
@@ -1769,7 +1775,11 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
     // silently nothing. Only fires on failure, so it never adds cost to the normal path.
     if (!("deck" in result)) {
       console.log(`${new Date().toISOString()} [ai] generateDailyStudyCards: first attempt unparseable, retrying with a smaller ask`);
-      const res2 = await makeReq(3000, true);
+      // Same reasoning-tokens-eat-the-budget risk applies here — 3000 was too tight to reliably leave any
+      // room for actual `content` once reasoning ran, undermining the whole point of a fallback (observed
+      // live: the fallback ALSO came back with empty content on the same failing entry). Still meaningfully
+      // smaller than the primary attempt's 24000, just not so small it can't realistically finish.
+      const res2 = await makeReq(8000, true);
       out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res2.choices[0]?.message?.content || "");
       result = out ? makeDeck(out) : { error: "no parseable JSON in the retry either" };
       const t2 = usageOf(res2);

@@ -304,7 +304,7 @@ export interface PronoteTestItem { id: string; subject: string; deadline: string
 // Tests/exams need more lead time than homework — they're the thing a student should be STUDYING FOR
 // ahead of the date, not just showing up to. A wider window than homework gives Otto (and the student)
 // real runway to plan study sessions instead of surfacing the exam the day before.
-const TEST_DAYS_AHEAD = 28;
+export const TEST_DAYS_AHEAD = 28;
 
 /** Upcoming tests/exams (Pronote flags a lesson slot as "test") in the next `daysAhead` days. Pronote's
  *  timetable has no stable per-instance id across re-fetches, so the anchor identity used by the caller

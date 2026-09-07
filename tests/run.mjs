@@ -31,6 +31,20 @@ const dismissed = { ...base, id: "d1", title: "Reply to Vendor Corp pricing surv
 const reworded = { title: "Respond to the Vendor Corp survey on pricing", why: "Vendor Corp wants pricing input", source: "gmail", risk: "low", urgency: 0.6, importance: 0.6, anchorKey: "gmail:bbb" };
 const out1 = foldGenerated([dismissed], [reworded]);
 check("dismissed lookalike suppressed", out1.length === 1 && out1[0].status === "dismissed");
+// Regression: pronoteToItems/plaidBillsToTasks generate the SAME title for every different item in a
+// subject/merchant ("Physique-Chimie homework", "Pay Netflix") — the loose dismissed-lookalike match above
+// used to treat every later, genuinely different assignment/charge as "the one I already dismissed" and
+// silently swallow it forever. These two sources must dedupe by anchor ONLY.
+const dismissedHw = { ...base, id: "hw-old", title: "Physique-Chimie homework", why: "Vu sur Pronote — pas encore marqué comme fait.", source: "pronote", status: "dismissed", anchorKey: "pronote:old-assignment" };
+const newHw = { title: "Physique-Chimie homework", why: "Vu sur Pronote — pas encore marqué comme fait.", source: "pronote", risk: "low", urgency: 0.5, importance: 0.55, anchorKey: "pronote:brand-new-assignment" };
+const outHw = foldGenerated([dismissedHw], [newHw]);
+check("a genuinely NEW Pronote assignment with an identical generic title is NOT swallowed by an old dismissed one (different anchor)", outHw.some((t) => t.anchorKey === "pronote:brand-new-assignment" && t.status === "ready"));
+const dismissedBill = { ...base, id: "bill-old", title: "Pay Netflix", why: "Recurring charge...", source: "plaid", status: "dismissed", anchorKey: "plaid:netflix-jan" };
+const newBill = { title: "Pay Netflix", why: "Recurring charge...", source: "plaid", risk: "low", urgency: 0.6, importance: 0.6, anchorKey: "plaid:netflix-feb" };
+const outBill = foldGenerated([dismissedBill], [newBill]);
+check("a genuinely NEW month's Plaid bill with an identical title is NOT swallowed by last month's dismissed one", outBill.some((t) => t.anchorKey === "plaid:netflix-feb" && t.status === "ready"));
+// The exact SAME anchor (a genuine re-dismiss-then-regenerate case) must still be suppressed for both.
+check("the SAME Pronote anchor as a dismissed one IS still suppressed", foldGenerated([dismissedHw], [{ ...newHw, anchorKey: "pronote:old-assignment" }]).every((t) => t.anchorKey !== "pronote:old-assignment" || t.status === "dismissed"));
 const doneA = { ...base, id: "a", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "done", anchorKey: "gmail:x1" };
 const freshDup = { ...base, id: "b", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "ready", anchorKey: "GMAIL_X1" };
 check("done beats fresh duplicate", dedupeTasks([doneA, freshDup]).length === 1 && dedupeTasks([doneA, freshDup])[0].status === "done");
@@ -900,6 +914,12 @@ section("forceWeekCoverage — everything due this week gets a task, no matter w
   check("carries the real énoncé as sourceDetail, verbatim", out.find((t) => t.anchorKey === "pronote:hw1")?.sourceDetail === "Exercices 12 à 15 p.87 — mécanique du point");
   check("a bare test marker (no real énoncé) leaves sourceDetail undefined", out.find((t) => t.anchorKey === "pronote-test:maths:2026-08-15")?.sourceDetail === undefined);
   check("every forced task clears applyQualityBar's own floor", out.every((t) => t.urgency >= 0.35 || t.importance >= 0.35));
+
+  // The real production call site (tasks.ts's generate()) now passes daysAhead: TEST_DAYS_AHEAD (28) instead
+  // of the function's own 7-day default — per explicit instruction, EVERY not-yet-done Pronote item should
+  // become a task automatically, not just the classifier's/quality-bar's picks within the next week.
+  const wideOut = forceWeekCoverage(candidates, ["pronote:hw2"], { now, daysAhead: 28 });
+  check("a wider daysAhead override covers an item beyond the default 7-day window", wideOut.some((t) => t.anchorKey === "pronote:hw3"));
 }
 
 // The client is split across App.tsx / TaskCard.tsx / ui.tsx, which import each other. An ES-module import

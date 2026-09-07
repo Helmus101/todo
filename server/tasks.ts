@@ -4,6 +4,7 @@ import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHan
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
+import { TEST_DAYS_AHEAD } from "./pronote.ts";
 
 // Broad-scope verbs that genuinely tend to bundle several sub-actions under one short step text ("Review
 // the Brave Search API billing change", "Research colleges", "Organize the trip") — a step opening on one
@@ -760,16 +761,18 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
         // Model suggests scores; CODE decides what clears the bar (VIPs + deadline'd commitments always do).
         const kept = applyQualityBar(classified.tasks, candidates, profile.highPriorityPeople || []);
-        // Safety net: ANY not-yet-done Pronote item due within the next WEEK_COVERAGE_DAYS (7) that the
-        // classifier skipped or the quality bar dropped still gets a task — deliberately scoped to next
-        // week only (per explicit instruction), not the full pronoteHomework() pull horizon (21 days):
-        // something due 3 weeks out shouldn't necessarily become a task card yet just because Pronote
-        // already knows about it. coveredAnchors spans both prior sweeps (existing) and this sweep's own
-        // classified picks (kept), so nothing already-turned-into-a-task (done, dismissed, or still ready)
-        // ever gets a second copy.
+        // Safety net: ANY not-yet-done Pronote item the classifier skipped or the quality bar dropped still
+        // gets a task — covers the FULL pull horizon (the wider of pronoteHomework's/pronoteTests' own
+        // windows, 21/28 days), not just the next 7. This used to be scoped to 7 days deliberately (a
+        // homework due 3 weeks out "shouldn't necessarily" get a card yet) — reversed per explicit
+        // instruction: Pronote is a trusted, structured, low-noise source where every item genuinely IS
+        // real homework, so the AI classifier's judgment call on WHETHER to surface it is the wrong gate —
+        // only Gmail/Calendar (genuinely noisy sources) still need that judgment. coveredAnchors spans both
+        // prior sweeps (existing) and this sweep's own classified picks (kept), so nothing already-turned-
+        // into-a-task (done, dismissed, or still ready) ever gets a second copy.
         const weekCovered = forceWeekCoverage(
           candidates, [...existing.map((t) => t.anchorKey), ...kept.map((k) => k.anchorKey)],
-          { en: profile.language === "en" },
+          { en: profile.language === "en", daysAhead: TEST_DAYS_AHEAD },
         );
         const plaidBills = plaidBillsToTasks(plaidCandidates, existing.map((t) => t.anchorKey), profile.language === "en");
         const folded = foldGenerated(existing, [...kept, ...weekCovered, ...plaidBills], profile.highPriorityPeople || []);
@@ -869,13 +872,24 @@ export function foldGenerated(existing: WebTask[], genTasks: {
   // here only hides a card resembling one the user already rejected; a false negative resurfaces it.
   // (Done tasks keep the stricter matching — a NEW similar task after a finished one is often legit,
   // e.g. this week's edition of a recurring report.)
+  //
+  // BUT: Pronote/Plaid titles are GENERIC BY CONSTRUCTION — pronoteToItems makes every assignment in a
+  // subject "{subject} homework" (e.g. always "Physique-Chimie homework"), and plaidBillsToTasks makes
+  // every occurrence of a bill "Pay {merchant}" (e.g. always "Pay Netflix"). The loose title match below
+  // can't tell "this month's Netflix bill" from "last month's, which I dismissed" — it only sees identical
+  // text. Real, live bug: dismiss ONE homework for a subject (or one month's bill) and every FUTURE
+  // different assignment/charge for it silently stops surfacing forever, even though it has its own unique
+  // anchorKey. These two sources already have a reliable per-item identity (assignment id / transaction
+  // id) — the anchor-exact-match check above is the correct dedupe for them; the fuzzy fallback is not.
   const dismissed = existing.filter((t) => t.status === "dismissed");
   const resemblesDismissed = (g: { title: string; why: string; source: string; anchorKey?: string; link?: string }) =>
-    dismissed.some((d) =>
-      (!!g.anchorKey && !!d.anchorKey && normKey(g.anchorKey) === normKey(d.anchorKey)) ||
-      (!!g.link && linkOf(d) === g.link) ||
-      looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) ||
-      (g.source === d.source && looseDup(g.why, d.why)));
+    dismissed.some((d) => {
+      if (g.anchorKey && d.anchorKey && normKey(g.anchorKey) === normKey(d.anchorKey)) return true;
+      if (g.link && linkOf(d) === g.link) return true;
+      if (g.source === "pronote" || g.source === "plaid") return false; // anchor-exact-match only, see above
+      return looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) ||
+        (g.source === d.source && looseDup(g.why, d.why));
+    });
   genTasks = genTasks.filter((g) => !resemblesDismissed(g));
 
   const candidates: WebTask[] = [...existing];
