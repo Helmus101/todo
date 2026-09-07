@@ -233,6 +233,73 @@ export function plaidToItems(transactions: { id: string; name: string; amount: n
   return items;
 }
 
+// Anything below this is too small for a false-positive "unusually large charge" flag to be worth the
+// noise, even for an account whose entire recent history is tiny purchases (a student with a $20/week
+// spending pattern shouldn't get flagged over a $22 charge just because it's "4x the median").
+const SUSPICIOUS_MIN_AMOUNT = 50;
+/** Deterministic, AI-free "worth a second look" detection from real Plaid transaction history — same
+ *  architectural guarantee as plaidToItems above (never touches an AI call, never becomes a "ready"/
+ *  auto-run task — see plaidBillsToTasks's own comment in tasks.ts). Two independent signals, both cheap
+ *  statistics over amounts already in hand, no external fraud-detection service:
+ *   1. UNUSUALLY LARGE — a charge well above what this account's OWN recent spending looks like (relative
+ *      to its own median, not a fixed dollar amount — a $40/month account and a $4,000/month account have
+ *      very different "normal"), floored at SUSPICIOUS_MIN_AMOUNT so a low-spend account doesn't get noise.
+ *   2. POSSIBLE DUPLICATE — the exact same merchant + amount charged twice within a few days, which is
+ *      either a bank/merchant processing glitch or a genuine unauthorized re-charge — and is explicitly
+ *      NOT what plaidToItems' recurring-bill detector catches (that needs a ~monthly gap; this needs a
+ *      SHORT one, the opposite pattern). */
+export function plaidSuspiciousToItems(transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[]): SourceItem[] {
+  const real = transactions.filter((t) => !t.pending && t.amount > 0); // amount>0 = money OUT (Plaid convention)
+  if (!real.length) return [];
+  const amounts = [...real.map((t) => t.amount)].sort((a, b) => a - b);
+  const median = amounts[Math.floor(amounts.length / 2)];
+  const largeThreshold = Math.max(SUSPICIOUS_MIN_AMOUNT, median * 4);
+  const items: SourceItem[] = [];
+  const seenLarge = new Set<string>(); // one flag per transaction id, never duplicated across sweeps' worth of the same data
+  for (const t of real) {
+    if (t.amount < largeThreshold) continue;
+    seenLarge.add(t.id);
+    items.push({
+      sourceApp: "plaid",
+      externalId: t.id,
+      anchorKey: `plaid-alert:${t.id}`,
+      title: `Check ${t.name}`.slice(0, 140),
+      snippet: `Unusually large charge — ${t.amount.toFixed(2)}, well above your typical ${median.toFixed(2)} — worth a quick check that this was really you.`,
+      timestamp: t.date,
+      labels: ["suspicious"],
+    });
+  }
+  // Duplicate-charge pass — grouped by merchant+amount (not just merchant, since plaidToItems already
+  // handles "same merchant, different amount over time" as ordinary recurring billing).
+  const byPair = new Map<string, { name: string; amount: number; entries: { id: string; date: string }[] }>();
+  for (const t of real) {
+    const key = `${normalizeMerchant(t.name)}::${t.amount.toFixed(2)}`;
+    const g = byPair.get(key) || { name: t.name, amount: t.amount, entries: [] };
+    g.entries.push({ id: t.id, date: t.date });
+    byPair.set(key, g);
+  }
+  for (const [, g] of byPair) {
+    if (g.entries.length < 2) continue;
+    const sorted = [...g.entries].sort((a, b) => a.date.localeCompare(b.date));
+    for (let i = 1; i < sorted.length; i++) {
+      const gapDays = (Date.parse(sorted[i].date) - Date.parse(sorted[i - 1].date)) / 86_400_000;
+      if (gapDays > 3) continue; // > 3 days apart reads as two separate real charges, not a duplicate
+      const dupeId = sorted[i].id;
+      if (seenLarge.has(dupeId)) continue; // already flagged as unusually large — one card, not two
+      items.push({
+        sourceApp: "plaid",
+        externalId: dupeId,
+        anchorKey: `plaid-alert:${dupeId}`,
+        title: `Check ${g.name}`.slice(0, 140),
+        snippet: `Possible duplicate charge — ${g.amount.toFixed(2)} charged twice within ${Math.round(gapDays)} day${Math.round(gapDays) === 1 ? "" : "s"} — worth confirming it wasn't billed twice by mistake.`,
+        timestamp: sorted[i].date,
+        labels: ["suspicious"],
+      });
+    }
+  }
+  return items;
+}
+
 /** Is this snippet the source's REAL words, or just a synthesized placeholder ("Due 2026-09-02",
  *  "Test on …")? Only real text is worth carrying onto the task as `sourceDetail` — a placeholder
  *  would give the run a confident-looking énoncé block containing nothing but a date it already has. */
@@ -316,7 +383,9 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
     // real transaction history become the SAME kind of candidate a Pronote assignment or a calendar event
     // is, running through the identical classify/quality-bar/dedupe pipeline below.
     ...(plaidOn.connected ? [
-      grab(async () => plaidToItems((await plaidSnapshot(userEmail)).transactions)),
+      // One snapshot fetch, fed to both detectors — recurring bills AND suspicious/duplicate charges are
+      // both read off the exact same transaction list, no reason to hit Plaid twice for it.
+      grab(async () => { const { transactions } = await plaidSnapshot(userEmail); return [...plaidToItems(transactions), ...plaidSuspiciousToItems(transactions)]; }),
     ] : []),
   ]);
   return { items: dedupeByThread(items), attempted };

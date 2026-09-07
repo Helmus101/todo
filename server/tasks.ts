@@ -563,7 +563,7 @@ export function applyQualityBar<T extends { anchorKey?: string; when?: string; u
 // AI prompt at ANY later point either, not just at creation. The task is fully actionable on its own (a
 // plain "go pay this" reminder) and needs no agent run to be useful.
 export function plaidBillsToTasks(
-  candidates: { sourceApp: string; anchorKey: string; title: string; snippet: string; timestamp?: string }[],
+  candidates: { sourceApp: string; anchorKey: string; title: string; snippet: string; timestamp?: string; labels?: string[] }[],
   coveredAnchors: (string | undefined)[],
   en = false,
 ): { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; sourceDetail?: string; status: "needs_review"; steps: TaskStep[] }[] {
@@ -571,14 +571,18 @@ export function plaidBillsToTasks(
   const out: ReturnType<typeof plaidBillsToTasks> = [];
   for (const c of candidates) {
     if (c.sourceApp !== "plaid" || covered.has(normKey(c.anchorKey))) continue;
+    // "suspicious" (discover.ts's plaidSuspiciousToItems — an unusually large charge or a possible duplicate)
+    // is a DIFFERENT kind of card from a routine bill reminder: nothing to "pay", something to go verify.
+    // Same AI-free/needs_review guarantee either way — only the framing/urgency/step text differ.
+    const isAlert = c.labels?.includes("suspicious");
     out.push({
       title: c.title.slice(0, 120),
       why: c.snippet.slice(0, 300),
       when: c.timestamp,
       source: "plaid", risk: "low",
-      // Fixed, not model-scored (there's no model involved) — a recurring bill due soon is inherently a
-      // "do this" item, matched to Pronote's own forceWeekCoverage safety-net scoring for the same reason.
-      urgency: 0.6, importance: 0.6,
+      // Fixed, not model-scored (there's no model involved). A suspicious charge reads slightly more
+      // urgent than a routine bill — matched to Pronote's own forceWeekCoverage safety-net scoring either way.
+      urgency: isAlert ? 0.7 : 0.6, importance: isAlert ? 0.65 : 0.6,
       anchorKey: c.anchorKey,
       sourceDetail: c.snippet.slice(0, 300),
       // "needs_review" (never "ready") is the OTHER half of keeping this data away from AI — "ready" tasks
@@ -587,7 +591,12 @@ export function plaidBillsToTasks(
       // complete (not "prepared" by a run) so the card is immediately actionable with nothing left pending —
       // Otto genuinely never needs to "do" anything with this beyond having noticed it.
       status: "needs_review",
-      steps: [{ text: en ? "Pay via your bank's app or the merchant's own site." : "Payer via l'appli de ta banque ou le site du marchand.", done: false, automatable: false }],
+      steps: [{
+        text: isAlert
+          ? (en ? "Check your bank's app or statement to confirm this charge is really yours." : "Vérifie dans l'appli de ta banque que cette charge est bien la tienne.")
+          : (en ? "Pay via your bank's app or the merchant's own site." : "Payer via l'appli de ta banque ou le site du marchand."),
+        done: false, automatable: false,
+      }],
     });
   }
   return out;

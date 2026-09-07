@@ -4,7 +4,7 @@ import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergePr
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
-import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems } from "../server/discover.ts";
+import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
@@ -1491,6 +1491,38 @@ section("/finance (Plaid) — plaidToItems + plaidBillsToTasks, and that NONE of
   check("comes with its own pre-written step — never needs an AI run to be actionable", billTasks[0].steps.length === 1 && !!billTasks[0].steps[0].text);
   check("respects an already-covered anchor (no duplicate for an existing task)", plaidBillsToTasks([plaidCandidate], ["plaid:netflix"]).length === 0);
   check("ignores a non-Plaid candidate entirely, even if handed one by mistake", plaidBillsToTasks([{ ...plaidCandidate, sourceApp: "gmail" }], []).length === 0);
+
+  // plaidSuspiciousToItems — the deterministic "worth a second look" detector: unusually large charges
+  // (relative to the account's OWN median, never a fixed dollar figure) and possible duplicate charges
+  // (same merchant+amount, days apart, not months — the opposite pattern from a recurring bill).
+  const typicalSpend = Array.from({ length: 6 }, (_, i) => ({ id: `t${i}`, name: "Boulangerie", amount: 8 + i, date: daysAgo(10 + i), pending: false }));
+  const bigCharge = { id: "big1", name: "Electronics Store", amount: 900, date: daysAgo(1), pending: false };
+  const alerts = plaidSuspiciousToItems([...typicalSpend, bigCharge]);
+  check("flags a charge well above the account's own median as suspicious", alerts.some((a) => a.externalId === "big1" && a.labels.includes("suspicious")));
+  check("does NOT flag ordinary small purchases that make up the account's normal spending", !alerts.some((a) => a.externalId.startsWith("t")));
+  check("a low-spend account isn't flagged over a proportionally-large-but-tiny charge (floored at $50)", plaidSuspiciousToItems([
+    { id: "s1", name: "Snack", amount: 4, date: daysAgo(10), pending: false },
+    { id: "s2", name: "Bakery", amount: 5, date: daysAgo(4), pending: false }, // different merchant/amount — no duplicate match
+    { id: "s3", name: "Coffee", amount: 22, date: daysAgo(1), pending: false }, // ~5x median but under the $50 floor
+  ]).length === 0);
+
+  const dupeCharges = [
+    { id: "d1", name: "SHOP #4471", amount: 45, date: daysAgo(2), pending: false },
+    { id: "d2", name: "SHOP #4471", amount: 45, date: daysAgo(1), pending: false }, // same merchant+amount, 1 day apart
+  ];
+  const dupeAlerts = plaidSuspiciousToItems(dupeCharges);
+  check("flags the same merchant+amount charged twice within a few days as a possible duplicate", dupeAlerts.length === 1 && dupeAlerts[0].externalId === "d2");
+  check("a genuinely monthly-recurring charge (the plaidToItems case) is NOT flagged as a duplicate", plaidSuspiciousToItems(recurring).length === 0);
+  check("the same pair charged months apart is NOT a duplicate (that's normal recurring billing, plaidToItems' job)", plaidSuspiciousToItems([
+    { id: "m1", name: "Insurance", amount: 40, date: daysAgo(60), pending: false },
+    { id: "m2", name: "Insurance", amount: 40, date: daysAgo(30), pending: false },
+  ]).length === 0);
+
+  // plaidBillsToTasks on a "suspicious" candidate — same AI-free/needs_review guarantee, different framing.
+  const alertCandidate = { sourceApp: "plaid", anchorKey: "plaid-alert:big1", title: "Check Electronics Store", snippet: "Unusually large charge...", timestamp: daysAgo(1), labels: ["suspicious"] };
+  const alertTasks = plaidBillsToTasks([alertCandidate], []);
+  check("a suspicious-charge candidate also lands at needs_review, never auto-run", alertTasks.length === 1 && alertTasks[0].status === "needs_review");
+  check("a suspicious-charge task's step is 'go verify', not 'go pay'", /confirm|check|v[ée]rifie/i.test(alertTasks[0].steps[0].text));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
