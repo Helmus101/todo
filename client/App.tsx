@@ -15,7 +15,8 @@ import {
   AlertTriangle,
   Settings as SettingsIcon,
   Menu,
-  X
+  X,
+  Wallet
 } from "lucide-react";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
@@ -745,6 +746,14 @@ export function App() {
             {status?.language === "en" ? "Error log" : "Erreurs"}
           </a>
           <a
+            className={`sidebar-item ${route === "finance" ? "active" : ""}`}
+            href="/finance"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <Wallet />
+            {status?.language === "en" ? "Finance" : "Finances"}
+          </a>
+          <a
             className={`sidebar-item ${route === "settings" ? "active" : ""}`}
             href="/settings"
             onClick={() => setSidebarOpen(false)}
@@ -793,6 +802,8 @@ export function App() {
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
         <MistakeLogPage lang={status?.language} />
+      ) : route === "finance" ? (
+        <FinancePage lang={status?.language} notify={notify} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -1816,6 +1827,132 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   );
 }
 
+// Loads Plaid's own hosted Link script once (idempotent — a second call is a no-op if it's already there).
+// Link is Plaid's modal that handles the actual bank login entirely on Plaid's own side — this app never
+// sees a password or account number, only the public_token Link hands back on success.
+let plaidScriptPromise: Promise<void> | null = null;
+function loadPlaidScript(): Promise<void> {
+  if ((window as any).Plaid) return Promise.resolve();
+  if (plaidScriptPromise) return plaidScriptPromise;
+  plaidScriptPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Couldn't load Plaid."));
+    document.head.appendChild(s);
+  });
+  return plaidScriptPromise;
+}
+
+/** /finance — connect a bank via Plaid (SANDBOX ONLY right now, see server/plaid.ts's own comment on why:
+ *  no production approval, no confirmed French-bank coverage yet) as an ADDITIONAL proactive source
+ *  alongside Pronote/Gmail. Recurring bills detected from real transaction history surface as ordinary
+ *  reminder tasks — see server/tasks.ts's plaidBillsToTasks for the (deliberately AI-free) mechanism.
+ *  Financial data never reaches an AI call anywhere in this app; this page is a plain, honest data view. */
+function FinancePage({ lang, notify }: { lang?: "fr" | "en"; notify: (msg: string, kind?: "error" | "info") => void }) {
+  const L = useLang();
+  const [status, setStatus] = useState<{ connected: boolean; institutionName?: string; configured: boolean } | null>(null);
+  const [snapshot, setSnapshot] = useState<{ accounts: { id: string; name: string; type: string; balance: number | null }[]; transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[] } | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const en = lang === "en";
+
+  const load = () => {
+    void api.plaidStatus().then((s) => {
+      setStatus(s);
+      if (s.connected) void api.financeSnapshot().then(setSnapshot).catch(() => {});
+    }).catch(() => {});
+  };
+  useEffect(load, []);
+
+  const connect = async () => {
+    setConnecting(true);
+    try {
+      await loadPlaidScript();
+      const { linkToken } = await api.plaidLinkToken();
+      const handler = (window as any).Plaid.create({
+        token: linkToken,
+        onSuccess: async (publicToken: string) => {
+          try { await api.plaidExchange(publicToken); load(); }
+          catch (e: any) { notify(e?.message || L("Connexion impossible.", "Couldn't connect."), "error"); }
+          finally { setConnecting(false); }
+        },
+        onExit: () => setConnecting(false),
+      });
+      handler.open();
+    } catch (e: any) {
+      notify(e?.message || L("Connexion impossible.", "Couldn't connect."), "error");
+      setConnecting(false);
+    }
+  };
+  const connectMock = async () => {
+    setConnecting(true);
+    try { await api.plaidConnectMock(); load(); }
+    catch (e: any) { notify(e?.message || L("Mode démo indisponible sur ce serveur.", "Demo mode isn't available on this server."), "error"); }
+    finally { setConnecting(false); }
+  };
+  const disconnect = async () => {
+    try { await api.plaidDisconnect(); setSnapshot(null); load(); }
+    catch (e: any) { notify(e?.message || L("Déconnexion impossible.", "Couldn't disconnect."), "error"); }
+  };
+
+  return (
+    <main className="list-wrap">
+      <div className="dash-head">
+        <h2>{L("Finances", "Finance")}</h2>
+        <p className="dash-line">
+          {L(
+            "Connecte un compte bancaire (mode test) pour qu'Otto repère les factures récurrentes et te les rappelle — comme une tâche de plus, pas un chat. Otto n'utilise jamais l'IA sur tes données bancaires.",
+            "Connect a bank account (sandbox/test mode) so Otto can spot recurring bills and remind you — just another task, never a chat topic. Otto never uses AI on your financial data.",
+          )}
+        </p>
+      </div>
+      {!status ? null : !status.connected ? (
+        <div className="settings-sec reveal">
+          <button className="btn primary" disabled={connecting || !status.configured} onClick={() => void connect()}>
+            {connecting ? L("Connexion…", "Connecting…") : L("Connecter une banque (Plaid, mode test)", "Connect a bank (Plaid, sandbox)")}
+          </button>
+          {!status.configured ? (
+            <p className="settings-hint" style={{ marginTop: 8 }}>
+              {L("Plaid n'est pas configuré sur ce serveur.", "Plaid isn't configured on this server.")}{" "}
+              <button className="btn ghost sm-btn-sm" onClick={() => void connectMock()}>{L("Essayer avec des données de démo", "Try with demo data")}</button>
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <div className="settings-sec reveal">
+          <div className="modal-row">
+            <span className="lbl">{L("Connecté", "Connected")}</span>
+            <span className="val">{status.institutionName || L("Compte bancaire", "Bank account")} <button className="btn xs ghost" onClick={() => void disconnect()}>{L("Déconnecter", "Disconnect")}</button></span>
+          </div>
+          {snapshot?.accounts.length ? (
+            <div className="modal-row">
+              <span className="lbl">{L("Comptes", "Accounts")}</span>
+              <span className="val settings-hint">
+                {snapshot.accounts.map((a) => `${a.name}${a.balance !== null ? ` — ${a.balance.toFixed(2)}` : ""}`).join(" · ")}
+              </span>
+            </div>
+          ) : null}
+          {snapshot?.transactions.length ? (
+            <div className="modal-row" style={{ alignItems: "flex-start" }}>
+              <span className="lbl">{L("Transactions récentes", "Recent transactions")}</span>
+              <span className="val">
+                <ul className="usage-breakdown-list">
+                  {snapshot.transactions.slice(0, 15).map((t) => (
+                    <li key={t.id}><span className="usage-breakdown-label">{t.name} — {t.date}</span><span className="usage-breakdown-amount">{t.amount.toFixed(2)}</span></li>
+                  ))}
+                </ul>
+              </span>
+            </div>
+          ) : null}
+          <p className="settings-hint" style={{ marginTop: 8 }}>
+            {L("Otto crée un rappel automatiquement quand une charge récurrente approche — regarde tes tâches.", "Otto creates a reminder automatically when a recurring charge is coming up — check your tasks.")}
+          </p>
+        </div>
+      )}
+    </main>
+  );
+}
+
 function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
   tasks: WebTask[]; setTasks: Dispatch<SetStateAction<WebTask[]>>; status: ConnectionStatus; notify: (msg: string, kind?: "error" | "info") => void; navigate: (r: string) => void;
 }) {
@@ -2204,13 +2341,14 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "other", number>> } | null>(null);
+  const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other", number>> } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
+  const [showStudentModel, setShowStudentModel] = useState(false);
   const [showTrustLog, setShowTrustLog] = useState(false);
   const [showErrorLog, setShowErrorLog] = useState(false);
   useEffect(() => { void api.recordMetric("settings_opened", 1); }, []);
   const [themeBusy, setThemeBusy] = useState(false);
-  const [patterns, setPatterns] = useState<{ predictedEngagement: { weekday: number; hour: number } | null; weakSubjects: string[] } | null>(null);
+  const [patterns, setPatterns] = useState<{ predictedEngagement: { weekday: number; hour: number } | null; weakSubjects: string[]; bandits: Record<string, { armId: string; confidence: number } | null> } | null>(null);
   useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
   const [errorLog, setErrorLog] = useState(() => getErrors());
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
@@ -2354,24 +2492,47 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             ) : null}
           </span>
         </div>
-        {/* Pattern recognition (server/patterns.ts) — a plain, explainable observation from the student's
-            own activity/study data, not a new decision the student has to act on. Only rendered when there's
-            an actual signal (cold-start accounts see nothing here at all) — one quiet line, not a dashboard. */}
-        {patterns && (patterns.predictedEngagement || patterns.weakSubjects.length > 0) ? (
+        {/* Full transparency for everything Otto has learned — per direct instruction. Every line below
+            comes from a REAL, already-running personalization mechanism (7 bandits + pattern recognition),
+            never invented for display — a bandit with no evidence yet simply contributes no line, same
+            calm/quiet posture as the rest of this section. This is what actually makes "personalization" a
+            checkable claim instead of an invisible one: the learned preference is legible, not just acted on. */}
+        {patterns && (patterns.predictedEngagement || patterns.weakSubjects.length > 0 || Object.values(patterns.bandits).some(Boolean)) ? (
           <div className="modal-row">
-            <span className="lbl">{L("Ce qu'Otto a remarqué", "What Otto's noticed")}</span>
+            <span className="lbl">{L("Ce qu'Otto a appris de toi", "What Otto's learned about you")}</span>
             <span className="val settings-hint">
-              {[
-                patterns.predictedEngagement
-                  ? L(
-                      `Tu es généralement le plus actif ${["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"][patterns.predictedEngagement.weekday]} vers ${patterns.predictedEngagement.hour}h.`,
-                      `You're usually most active around ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][patterns.predictedEngagement.weekday]} at ${patterns.predictedEngagement.hour}:00.`,
-                    )
-                  : null,
-                patterns.weakSubjects.length
-                  ? L(`Pourrait valoir une révision : ${patterns.weakSubjects.join(", ")}.`, `Might be worth reviewing: ${patterns.weakSubjects.join(", ")}.`)
-                  : null,
-              ].filter(Boolean).join(" ")}
+              <ul className="personalization-list">
+                {patterns.predictedEngagement ? (
+                  <li>{L(
+                    `Tu es généralement le plus actif ${["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"][patterns.predictedEngagement.weekday]} vers ${patterns.predictedEngagement.hour}h.`,
+                    `You're usually most active around ${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][patterns.predictedEngagement.weekday]} at ${patterns.predictedEngagement.hour}:00.`,
+                  )}</li>
+                ) : null}
+                {patterns.weakSubjects.length ? (
+                  <li>{L(`Pourrait valoir une révision : ${patterns.weakSubjects.join(", ")}.`, `Might be worth reviewing: ${patterns.weakSubjects.join(", ")}.`)}</li>
+                ) : null}
+                {patterns.bandits.pomodoro?.armId && patterns.bandits.pomodoro.armId !== "none" ? (
+                  <li>{L(`Séances de travail : des blocs de ${patterns.bandits.pomodoro.armId.replace("/", " min / ")} min de pause te réussissent le mieux.`, `Study sessions: ${patterns.bandits.pomodoro.armId.replace("/", "-minute blocks with a ")}-minute break tend to work best for you.`)}</li>
+                ) : null}
+                {patterns.bandits.flashcards?.armId && patterns.bandits.flashcards.armId !== "standard" ? (
+                  <li>{L(
+                    patterns.bandits.flashcards.armId === "concise" ? "Fiches : tu retiens mieux avec des cartes courtes et directes." : "Fiches : tu retiens mieux avec des cartes plus détaillées.",
+                    patterns.bandits.flashcards.armId === "concise" ? "Flashcards: you retain best with short, punchy cards." : "Flashcards: you retain best with more detailed cards.",
+                  )}</li>
+                ) : null}
+                {patterns.bandits.granularity?.armId === "granular" ? (
+                  <li>{L("Tâches : découper en étapes plus petites t'aide à démarrer plus vite.", "Tasks: breaking work into smaller steps helps you start sooner.")}</li>
+                ) : null}
+                {patterns.bandits.audio?.armId && patterns.bandits.audio.armId !== "silence" ? (
+                  <li>{L(`Ambiance : le bruit ${patterns.bandits.audio.armId === "brown" ? "brun" : patterns.bandits.audio.armId === "pink" ? "rose" : "blanc"} t'aide à rester concentré.`, `Ambience: ${patterns.bandits.audio.armId} noise helps you stay focused.`)}</li>
+                ) : null}
+                {patterns.bandits.chatstyle?.armId && patterns.bandits.chatstyle.armId !== "concise" ? (
+                  <li>{L(
+                    patterns.bandits.chatstyle.armId === "socratic" ? "Chat avec Otto : tu progresses mieux quand Otto pose des questions plutôt que d'expliquer directement." : "Chat avec Otto : tu progresses mieux avec des exemples résolus en parallèle.",
+                    patterns.bandits.chatstyle.armId === "socratic" ? "Chat with Otto: you do best when Otto asks questions rather than explaining directly." : "Chat with Otto: you do best with a parallel worked example.",
+                  )}</li>
+                ) : null}
+              </ul>
             </span>
           </div>
         ) : null}
@@ -2513,6 +2674,37 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
           <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
         {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
+      </section>
+
+      {/* "How Otto sees you" — full visibility + one-click reset for profile.studentModel, the AI-synthesized
+          running read of this student (server/jobs.ts refreshes it once/day at most, only if there's been
+          real activity — see shouldRefreshStudentModel). This is the most surveillance-adjacent field in the
+          app (AI-authored ABOUT the student, not self-reported like grades/errorLog) — full transparency +
+          a genuinely destructive reset here is required, not optional, same posture as the error log/usage
+          breakdown sections above. */}
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
+        <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
+          <h3>{L("Comment Otto te voit", "How Otto sees you")}</h3>
+          <span className={`caret ${showStudentModel ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showStudentModel && (
+          <div className="settings-reveal">
+            <p className="settings-hint">{L(
+              "Un résumé qu'Otto met à jour au plus une fois par jour à partir de ton activité (chat, journal, révisions) — comment tu raisonnes, ce qui a marché, ce qui progresse. Jamais partagé, jamais utilisé pour te noter.",
+              "A summary Otto updates at most once a day from your activity (chat, journal, reviews) — how you reason, what's worked, what's improving. Never shared, never used to grade you."
+            )}</p>
+            {profile?.studentModel?.summary ? (
+              <>
+                <p className="student-model-text">{profile.studentModel.summary}</p>
+                <p className="settings-hint">{L(`Mis à jour le ${fmtDay(profile.studentModel.updatedAt)}`, `Updated ${fmtDay(profile.studentModel.updatedAt)}`)}</p>
+                <button type="button" className="btn xs ghost" onClick={async () => {
+                  try { setProfile(await api.resetStudentModel()); }
+                  catch (e: any) { notify(e?.message || L("Réinitialisation impossible — réessaie.", "Couldn't reset — try again."), "error"); }
+                }}>{L("Réinitialiser", "Reset")}</button>
+              </>
+            ) : <p className="settings-hint">{L("Pas encore assez d'activité pour ça.", "Not enough activity yet.")}</p>}
+          </div>
+        )}
       </section>
     </main>
   );

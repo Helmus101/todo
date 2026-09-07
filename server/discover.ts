@@ -11,9 +11,10 @@
  */
 import { readAction, getConnectedAccounts } from "./integrations.ts";
 import { pronoteConnected, pronoteHomework, pronoteTests } from "./pronote.ts";
+import { plaidConnected, plaidSnapshot } from "./plaid.ts";
 
 export interface SourceItem {
-  sourceApp: "gmail" | "calendar" | "drive" | "pronote";
+  sourceApp: "gmail" | "calendar" | "drive" | "pronote" | "plaid";
   externalId: string;
   anchorKey: string;      // "gmail:<threadId>" / "calendar:<eventId>" / "drive:<fileId>" — the dedupe identity
   url?: string;
@@ -177,6 +178,61 @@ export function pronoteTestsToItems(items: { id: string; subject: string; deadli
   }));
 }
 
+// Group name normalization for recurring-charge detection — Plaid transaction names carry noise (a store
+// number, a date fragment, "POS " prefixes) that would otherwise make the SAME recurring charge look like a
+// new merchant every month. Coarse and deliberately over-eager (strips trailing digits/punctuation) since a
+// false MERGE (two different one-off purchases treated as "recurring") is harmless — it just fails the
+// "seen 2+ times" bar below — while a false SPLIT (the same bill never recognized as recurring) is the
+// actual failure mode this exists to avoid.
+function normalizeMerchant(name: string): string {
+  return name.toLowerCase().replace(/[0-9]/g, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+}
+/** Recurring-charge detection from real Plaid transaction history — NOT bill PAYMENT (Otto never initiates
+ *  a transfer/payment on a student's behalf; that's a real-money action with a liability profile completely
+ *  unlike drafting an email, and deliberately out of scope here). This only turns "this charge has recurred
+ *  before, and is due again around now" into a REMINDER task — the same proactive-surfacing role Pronote/
+ *  Gmail candidates already play, just for finance instead of school. A merchant seen only once produces no
+ *  candidate at all (one data point isn't a pattern); seen 2+, the NEXT occurrence is estimated at the last
+ *  seen date + the average gap between the seen occurrences (usually ~30 days for a monthly subscription/bill). */
+export function plaidToItems(transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[]): SourceItem[] {
+  const byMerchant = new Map<string, { name: string; amount: number; dates: string[] }>();
+  for (const t of transactions) {
+    if (t.pending || t.amount <= 0) continue; // amount>0 = money OUT (Plaid convention) — a bill/charge, not a deposit/refund
+    const key = normalizeMerchant(t.name);
+    if (!key) continue;
+    const g = byMerchant.get(key) || { name: t.name, amount: t.amount, dates: [] };
+    g.dates.push(t.date);
+    byMerchant.set(key, g);
+  }
+  const now = Date.now();
+  const items: SourceItem[] = [];
+  for (const [key, g] of byMerchant) {
+    if (g.dates.length < 2) continue; // one occurrence isn't a recurring pattern yet
+    const sorted = [...g.dates].sort();
+    const gaps: number[] = [];
+    for (let i = 1; i < sorted.length; i++) gaps.push((Date.parse(sorted[i]) - Date.parse(sorted[i - 1])) / 86_400_000);
+    const avgGapDays = gaps.reduce((s, x) => s + x, 0) / gaps.length;
+    const lastSeen = Date.parse(sorted[sorted.length - 1]);
+    const nextDue = new Date(lastSeen + avgGapDays * 86_400_000);
+    // Only worth a task once it's actually coming up (within a week) or already just passed (a day's grace,
+    // same "small grace window" idiom forceWeekCoverage uses for Pronote deadlines) — a bill due in 3 weeks
+    // isn't a today-relevant reminder yet, and re-surfacing it every single sweep in the meantime would be
+    // noise, not proactiveness.
+    const daysUntilDue = (nextDue.getTime() - now) / 86_400_000;
+    if (daysUntilDue < -1 || daysUntilDue > 7) continue;
+    items.push({
+      sourceApp: "plaid",
+      externalId: key,
+      anchorKey: `plaid:${key}`,
+      title: `Pay ${g.name}`.slice(0, 140),
+      snippet: `Recurring charge of ~${g.amount.toFixed(2)} seen ${g.dates.length} times, roughly every ${Math.round(avgGapDays)} days — next one due around ${nextDue.toISOString().slice(0, 10)}.`,
+      timestamp: nextDue.toISOString(),
+      labels: ["bill"],
+    });
+  }
+  return items;
+}
+
 /** Is this snippet the source's REAL words, or just a synthesized placeholder ("Due 2026-09-02",
  *  "Test on …")? Only real text is worth carrying onto the task as `sourceDetail` — a placeholder
  *  would give the run a confident-looking énoncé block containing nothing but a date it already has. */
@@ -202,7 +258,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
     try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
   };
-  const [gmailAccounts, calAccounts, driveAccounts, pronoteOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), pronoteConnected(userEmail)]);
+  const [gmailAccounts, calAccounts, driveAccounts, pronoteOn, plaidOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), accountsFor("googledrive"), pronoteConnected(userEmail), plaidConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
@@ -255,6 +311,12 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
     ...(pronoteOn.connected ? [
       grab(async () => pronoteToItems(await pronoteHomework(userEmail))),
       grab(async () => pronoteTestsToItems(await pronoteTests(userEmail))),
+    ] : []),
+    // Plaid (/finance, if connected) — the "additional proactive source" ask: recurring bills detected from
+    // real transaction history become the SAME kind of candidate a Pronote assignment or a calendar event
+    // is, running through the identical classify/quality-bar/dedupe pipeline below.
+    ...(plaidOn.connected ? [
+      grab(async () => plaidToItems((await plaidSnapshot(userEmail)).transactions)),
     ] : []),
   ]);
   return { items: dedupeByThread(items), attempted };

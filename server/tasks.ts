@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory } from "../shared/types.ts";
+import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep } from "../shared/types.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
@@ -371,6 +371,9 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     lastSweepAt: (Date.parse(p2.lastSweepAt || "") || 0) >= (Date.parse(p1.lastSweepAt || "") || 0) ? (p2.lastSweepAt ?? p1.lastSweepAt) : (p1.lastSweepAt ?? p2.lastSweepAt),
     lastForcedAt: (Date.parse(p2.lastForcedAt || "") || 0) >= (Date.parse(p1.lastForcedAt || "") || 0) ? (p2.lastForcedAt ?? p1.lastForcedAt) : (p1.lastForcedAt ?? p2.lastForcedAt),
     lastSupplementarySweepAt: (Date.parse(p2.lastSupplementarySweepAt || "") || 0) >= (Date.parse(p1.lastSupplementarySweepAt || "") || 0) ? (p2.lastSupplementarySweepAt ?? p1.lastSupplementarySweepAt) : (p1.lastSupplementarySweepAt ?? p2.lastSupplementarySweepAt),
+    // Same MAX-by-timestamp reasoning as lastSweepAt above — the single "did real tutor activity happen"
+    // stamp shouldRefreshStudentModel gates on; a stale copy must never erase a newer device's activity.
+    lastTutorActivityAt: (Date.parse(p2.lastTutorActivityAt || "") || 0) >= (Date.parse(p1.lastTutorActivityAt || "") || 0) ? (p2.lastTutorActivityAt ?? p1.lastTutorActivityAt) : (p1.lastTutorActivityAt ?? p2.lastTutorActivityAt),
     // Same MAX-per-bucket reasoning as usage counters above — monotonic, so a stale copy can't reset it.
     activityHours: (p1.activityHours || p2.activityHours)
       ? Array.from({ length: 24 }, (_, h) => Math.max(p1.activityHours?.[h] || 0, p2.activityHours?.[h] || 0))
@@ -467,6 +470,17 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
     errorLog: (p1.errorLog?.length || p2.errorLog?.length)
       ? [...new Map([...(p1.errorLog || []), ...(p2.errorLog || [])].map((e) => [e.id, e])).values()]
       : undefined,
+    // studentModel is a REPLACED synthesis, not accumulated data — same most-recent-wins-by-stamp pattern as
+    // language/languageSetAt below, keyed on updatedAt. A stale copy must never resurrect an older narrative
+    // over a fresher one (or resurrect one at all after the student explicitly reset it — a reset writes
+    // `undefined` with nothing to compare against, so the SIDE THAT HAS ANY VALUE at a given timestamp
+    // legitimately wins; the reset endpoint itself persists to cloud before commit, same pattern as an
+    // errorLog delete, so the "stale copy" this guards against is a genuinely older device, not the reset).
+    studentModel: (() => {
+      const t1 = Date.parse(p1.studentModel?.updatedAt || "") || 0;
+      const t2 = Date.parse(p2.studentModel?.updatedAt || "") || 0;
+      return t2 >= t1 ? (p2.studentModel ?? p1.studentModel) : (p1.studentModel ?? p2.studentModel);
+    })(),
     // Usage counters are monotonic — take the MAX of each field so a stale copy can't reset the total
     // (a concurrent increment on another instance may under-count by one delta; fine for a display metric).
     // Month-to-date counters MAX only within the SAME month; when the keys differ the later month's values win.
@@ -535,6 +549,48 @@ export function applyQualityBar<T extends { anchorKey?: string; when?: string; u
     // classifier's inclusion decision; scores drive RANKING, not survival.
     return g.importance >= 0.35 || g.urgency >= 0.35;
   });
+}
+
+// ── Data-leakage prevention for /finance (Plaid) candidates ────────────────────────────────────────────
+// Plaid-sourced candidates (recurring-bill reminders — see discover.ts's plaidToItems) NEVER pass through
+// classifyCandidates or any other AI call, full stop — bank transaction merchant names/amounts are
+// meaningfully more sensitive than an email subject line, and there is no reason a bill reminder needs an
+// AI's judgment anyway: plaidToItems already deterministically decided it's real, recurring, and due soon.
+// This is the direct fix for "don't want an AI having random access to bank statements" — not a policy
+// promise, an actual code path that structurally cannot send this data to DeepSeek. The resulting task also
+// lands at "needs_review" (never "ready"), which keeps it OUT of the auto-run/agent-execution pipeline too
+// (tasksToEnqueue in jobs.ts only ever picks up "ready" tasks) — so the merchant/amount data never enters an
+// AI prompt at ANY later point either, not just at creation. The task is fully actionable on its own (a
+// plain "go pay this" reminder) and needs no agent run to be useful.
+export function plaidBillsToTasks(
+  candidates: { sourceApp: string; anchorKey: string; title: string; snippet: string; timestamp?: string }[],
+  coveredAnchors: (string | undefined)[],
+  en = false,
+): { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; sourceDetail?: string; status: "needs_review"; steps: TaskStep[] }[] {
+  const covered = new Set(coveredAnchors.filter((a): a is string => !!a).map(normKey));
+  const out: ReturnType<typeof plaidBillsToTasks> = [];
+  for (const c of candidates) {
+    if (c.sourceApp !== "plaid" || covered.has(normKey(c.anchorKey))) continue;
+    out.push({
+      title: c.title.slice(0, 120),
+      why: c.snippet.slice(0, 300),
+      when: c.timestamp,
+      source: "plaid", risk: "low",
+      // Fixed, not model-scored (there's no model involved) — a recurring bill due soon is inherently a
+      // "do this" item, matched to Pronote's own forceWeekCoverage safety-net scoring for the same reason.
+      urgency: 0.6, importance: 0.6,
+      anchorKey: c.anchorKey,
+      sourceDetail: c.snippet.slice(0, 300),
+      // "needs_review" (never "ready") is the OTHER half of keeping this data away from AI — "ready" tasks
+      // are what the cron catch-all (tasksToEnqueue, jobs.ts) auto-runs through the agent; this status skips
+      // that pipeline entirely, permanently, not just at creation. The step below is pre-written and
+      // complete (not "prepared" by a run) so the card is immediately actionable with nothing left pending —
+      // Otto genuinely never needs to "do" anything with this beyond having noticed it.
+      status: "needs_review",
+      steps: [{ text: en ? "Pay via your bank's app or the merchant's own site." : "Payer via l'appli de ta banque ou le site du marchand.", done: false, automatable: false }],
+    });
+  }
+  return out;
 }
 
 /** Days-ahead window used for "this week" everywhere — must match workload.ts's own DAYS_AHEAD (7) so the
@@ -680,7 +736,12 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
       const { items, attempted } = await discoverSourceItems(userEmail);
       if (attempted) {
         const knownAnchors = existing.map((t) => t.anchorKey);
-        const candidates = filterCandidates(items, knownAnchors);
+        const allCandidates = filterCandidates(items, knownAnchors);
+        // Plaid (/finance) candidates are carved out HERE, before anything else touches `candidates` —
+        // see plaidBillsToTasks's own comment for why this data must structurally never reach an AI prompt.
+        // classifyCandidates below only ever sees `candidates` (the non-Plaid remainder).
+        const candidates = allCandidates.filter((c) => c.sourceApp !== "plaid");
+        const plaidCandidates = allCandidates.filter((c) => c.sourceApp === "plaid");
         const classified = candidates.length
           ? await classifyCandidates(candidates, profile, active.map((a) => a.title), handled.map((h) => h.title))
           : { tasks: [], profileUpdates: [] as ProfileUpdate[] };
@@ -701,7 +762,8 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
           candidates, [...existing.map((t) => t.anchorKey), ...kept.map((k) => k.anchorKey)],
           { en: profile.language === "en" },
         );
-        const folded = foldGenerated(existing, [...kept, ...weekCovered], profile.highPriorityPeople || []);
+        const plaidBills = plaidBillsToTasks(plaidCandidates, existing.map((t) => t.anchorKey), profile.language === "en");
+        const folded = foldGenerated(existing, [...kept, ...weekCovered, ...plaidBills], profile.highPriorityPeople || []);
         // Pipeline visibility: where do candidates go? A sudden "0 new" is now diagnosable at a glance —
         // was it the classifier (classified 0), the quality bar (kept 0), or dedupe (folded == existing).
         const newCards = folded.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
@@ -764,7 +826,14 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
 // NOTE: `genTasks` is a structural literal, so TypeScript will NOT complain if a field is listed here
 // but forgotten in the `candidates.push` below — that silent-drop is exactly how source context gets
 // lost. tests/run.mjs pins sourceDetail survival for this reason.
-export function foldGenerated(existing: WebTask[], genTasks: { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; link?: string; accountId?: string; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }[], highPriorityPeople: string[] = [], now_: Date = new Date()): WebTask[] {
+export function foldGenerated(existing: WebTask[], genTasks: {
+  title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number;
+  anchorKey?: string; link?: string; accountId?: string; sourceDetail?: string; sourceSubject?: string; sourceDue?: string;
+  // Both optional, both default to the normal AI-run path (undefined status → "ready", undefined steps →
+  // none, filled in by the eventual run) — only a caller that needs to structurally SKIP the AI pipeline
+  // (see plaidBillsToTasks's own comment on why /finance data must never reach an AI prompt) sets these.
+  status?: "ready" | "needs_review"; steps?: TaskStep[];
+}[], highPriorityPeople: string[] = [], now_: Date = new Date()): WebTask[] {
   const now = now_.toISOString();
   // Idle "ready" cards — Otto surfaced them, but nothing ever happened: never opened, never run, no step
   // touched. After ~2 weeks whatever made them relevant has almost certainly passed (the thread got handled
@@ -805,8 +874,9 @@ export function foldGenerated(existing: WebTask[], genTasks: { title: string; wh
     candidates.push({
       id, title: g.title, why: g.why, when, whenApprox: !g.when, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
-      status: "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
+      status: g.status || "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
       sourceDetail: g.sourceDetail, sourceSubject: g.sourceSubject, sourceDue: g.sourceDue,
+      ...(g.steps ? { steps: g.steps } : {}),
     });
   }
   const deduped = dedupeTasks(candidates);
@@ -928,6 +998,12 @@ const GRANULAR_STEPS_HINT = "Break the work into MORE, SMALLER steps than you no
 export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string, academic?: AcademicContext, granularityArm?: string): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   if (!task) return undefined;
+  // Third and final guard against /finance (Plaid) data ever reaching an AI call — this is the actual
+  // function that calls the agent (aiRun below), so this is the one place that, if it held, would make the
+  // other two guards (tasks.ts's plaidBillsToTasks generation-time carve-out, index.ts's chat-route refusal)
+  // moot anyway. A Plaid task should never even reach "ready"/get a revision request, but refuse outright
+  // regardless of how it got here — never trust upstream state alone for something this sensitive.
+  if (task.source === "plaid") return task;
   if (canonStatus(task.status) === "executing") return task; // already in flight — never double-run
   task.status = "executing";
   task.autoRan = true; // set before the await so concurrent auto-runs skip it (pendingAutoRun checks !autoRan)

@@ -509,8 +509,11 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         ) : null}
       </div>
 
-      {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away. */}
-      {!isDone ? (
+      {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away.
+          Hidden entirely for a /finance (Plaid) task — the server refuses this call anyway (no AI ever
+          touches bank data, see the /api/tasks/:id/chat route's own comment), so don't even offer the
+          input for something that can only ever come back as an error. */}
+      {!isDone && task.source !== "plaid" ? (
         <TaskChat
           task={task} input={chatInput} setInput={setChatInput} sending={chatSending} error={chatError}
           pendingMsg={pendingMsg} slow={chatSlow} verySlow={chatVerySlow} onSend={sendChat}

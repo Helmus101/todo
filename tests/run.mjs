@@ -1,14 +1,14 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
-import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText } from "../server/discover.ts";
+import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
-import { sweepDueForDay, localDay, sweepDue, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
+import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
-import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior } from "../server/bandit.ts";
+import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, predictNextTasks, subjectFrequency, orderingBoost } from "../server/patterns.ts";
 
 let pass = 0, fail = 0;
@@ -520,6 +520,19 @@ check("learned 8am-peak account is still NOT due before its own peak hour (7am)"
 const lateBirdHours = new Array(24).fill(1); lateBirdHours[22] = 30; // peaks at 10pm, LATER than the 4pm default
 check("a learned peak LATER than the fixed default never delays the floor past 4pm", sweepDue({ ...utcProfile, activityHours: lateBirdHours }, new Date("2026-07-20T16:00:00Z")));
 check("too little history (below minTotal) falls back to the fixed 4pm default, not a noisy guess", !sweepDue({ ...utcProfile, activityHours: (() => { const h = new Array(24).fill(0); h[8] = 3; return h; })() }, new Date("2026-07-20T09:00:00Z")));
+
+// ── profile.studentModel refresh gate — once/day, and only if there's been real activity ─────────────
+section("shouldRefreshStudentModel — the Primer-style tutor memory's cost-discipline gate");
+{
+  const now = new Date("2026-07-20T16:05:00Z");
+  check("cold start, no studentModel yet → refresh", shouldRefreshStudentModel({ ...utcProfile }, now));
+  const fresh = { ...utcProfile, studentModel: { summary: "x", updatedAt: "2026-07-20T08:00:00Z", basedOnActivityAt: "2026-07-19T10:00:00Z" } };
+  check("already refreshed TODAY → skip regardless of activity", !shouldRefreshStudentModel({ ...fresh, lastTutorActivityAt: "2026-07-20T15:00:00Z" }, now));
+  const stale = { ...utcProfile, studentModel: { summary: "x", updatedAt: "2026-07-19T08:00:00Z", basedOnActivityAt: "2026-07-19T07:00:00Z" } };
+  check("refreshed yesterday + new activity since → refresh", shouldRefreshStudentModel({ ...stale, lastTutorActivityAt: "2026-07-19T20:00:00Z" }, now));
+  check("refreshed yesterday + NO new activity since → skip (inactive account costs nothing)", !shouldRefreshStudentModel({ ...stale, lastTutorActivityAt: "2026-07-19T06:00:00Z" }, now));
+  check("refreshed yesterday, no lastTutorActivityAt at all → skip", !shouldRefreshStudentModel({ ...stale }, now));
+}
 
 // ── Cron catch-all: offline auto-run + stuck-queued recovery ──────────────────
 section("cron enqueue + stuck-queued recovery");
@@ -1416,6 +1429,68 @@ section("normalizeProfile — self-heals duplicated Pronote grade rows (the '40 
   check("keeps the NEWEST Pronote row (by updatedAt), not an arbitrary one", pronoteRows[0].id === "random-39");
   check("never touches a genuinely separate manual entry for the same subject", cleaned.some((g) => g.source === "manual" && g.id === "manual-1"));
   check("a normal, already-clean grade list is untouched", normalizeProfile({ grades: [{ id: "a", subject: "Maths", grade: 15, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "pronote" }] }).grades.length === 1);
+}
+
+section("leadingArm — honest, deterministic 'what does the bandit currently believe' for Settings display");
+{
+  const key = contextKey(new Date("2026-01-05T09:00:00"));
+  check("cold start (no evidence) returns null, never a confident-sounding guess", leadingArm(POMODORO_ARMS, {}, key) === null);
+  let state = {};
+  // Below the evidence floor (minEvidence=6 by default) — still null even though "45/10" already looks ahead.
+  state = updatePosterior(state, key, "45/10", 1);
+  state = updatePosterior(state, key, "45/10", 1);
+  check("a couple of trials isn't enough evidence yet — still null, not a premature claim", leadingArm(POMODORO_ARMS, state, key) === null);
+  for (let i = 0; i < 10; i++) state = updatePosterior(state, key, "45/10", 1);
+  for (let i = 0; i < 10; i++) state = updatePosterior(state, key, "25/5", 0);
+  const leading = leadingArm(POMODORO_ARMS, state, key);
+  check("picks the arm with the highest posterior MEAN once there's enough evidence", leading?.arm.id === "45/10");
+  check("confidence is a real number in [0, 1]", leading && leading.confidence > 0 && leading.confidence <= 1);
+  // Determinism: unlike chooseArm (a stochastic Thompson-Sampling draw), leadingArm must return the SAME
+  // answer every call for the same state — no rng involved at all.
+  const again = leadingArm(POMODORO_ARMS, state, key);
+  check("deterministic — the same state always yields the same leading arm (no resampling)", again?.arm.id === leading?.arm.id && again?.confidence === leading?.confidence);
+  check("a never-touched context key is its own independent cold start", leadingArm(POMODORO_ARMS, state, "afternoon|weekday|other") === null);
+}
+
+section("/finance (Plaid) — plaidToItems + plaidBillsToTasks, and that NONE of it needs an AI call");
+{
+  const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+  const daysFromNow = (n) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+  // A genuinely recurring monthly charge, last seen ~2 days ago (so the NEXT one is due imminently) —
+  // exactly the "detected from real history, deterministic, no model involved" case.
+  const recurring = [
+    { id: "1", name: "NETFLIX.COM 12345", amount: 13.49, date: daysAgo(60), pending: false },
+    { id: "2", name: "NETFLIX.COM 67890", amount: 13.49, date: daysAgo(30), pending: false }, // ~30-day gap → next due ~today
+  ];
+  const items = plaidToItems(recurring);
+  check("detects a recurring charge seen 2+ times, due soon, as a candidate", items.length === 1 && items[0].sourceApp === "plaid");
+  check("normalizes merchant names (strips the trailing store/reference numbers)", items[0].anchorKey === "plaid:netflix com");
+  check("candidate title is a plain, real reminder, not a generic placeholder", /netflix/i.test(items[0].title));
+
+  check("a single one-off purchase produces NO candidate — one data point isn't a pattern", plaidToItems([{ id: "3", name: "Librairie Gibert", amount: 24.9, date: daysAgo(3), pending: false }]).length === 0);
+  check("a pending transaction is ignored (not a settled charge yet)", plaidToItems([
+    { id: "4", name: "Spotify", amount: 10.99, date: daysAgo(30), pending: false },
+    { id: "5", name: "Spotify", amount: 10.99, date: daysAgo(1), pending: true },
+  ]).length === 0);
+  check("a deposit/refund (amount <= 0, Plaid's credit convention) is never treated as a bill", plaidToItems([
+    { id: "6", name: "Payroll", amount: -500, date: daysAgo(30), pending: false },
+    { id: "7", name: "Payroll", amount: -500, date: daysAgo(1), pending: false },
+  ]).length === 0);
+  check("a recurring charge not due for weeks yet produces no candidate (not relevant TODAY)", plaidToItems([
+    { id: "8", name: "Insurance", amount: 40, date: daysAgo(45), pending: false },
+    { id: "9", name: "Insurance", amount: 40, date: daysAgo(15), pending: false }, // 30-day gap, last seen 15 days ago → next due ~15 days from now
+  ]).length === 0);
+
+  // plaidBillsToTasks — the AI-free conversion into an actual task. Must land at "needs_review" (never
+  // "ready") so it can NEVER be auto-run through the agent pipeline, and must come with its own step
+  // pre-written (no AI-authored steps at all).
+  const plaidCandidate = { sourceApp: "plaid", anchorKey: "plaid:netflix", title: "Pay Netflix", snippet: "Recurring charge...", timestamp: daysFromNow(1) };
+  const billTasks = plaidBillsToTasks([plaidCandidate], []);
+  check("produces exactly one task from one candidate", billTasks.length === 1);
+  check("status is needs_review, NEVER ready — structurally cannot be auto-run by the agent pipeline", billTasks[0].status === "needs_review");
+  check("comes with its own pre-written step — never needs an AI run to be actionable", billTasks[0].steps.length === 1 && !!billTasks[0].steps[0].text);
+  check("respects an already-covered anchor (no duplicate for an existing task)", plaidBillsToTasks([plaidCandidate], ["plaid:netflix"]).length === 0);
+  check("ignores a non-Plaid candidate entirely, even if handed one by mistake", plaidBillsToTasks([{ ...plaidCandidate, sourceApp: "gmail" }], []).length === 0);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

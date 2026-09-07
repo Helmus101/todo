@@ -103,6 +103,27 @@ export function chooseArm<T extends { id: string }>(arms: T[], state: BanditStat
   return { arm: best, coldStart };
 }
 
+/** What the bandit currently BELIEVES, for HONEST DISPLAY — not for making the actual decision (that's
+ *  chooseArm's job, which deliberately samples so exploration keeps happening). This is deterministic: the
+ *  arm with the highest posterior MEAN (a/(a+b)), the same value a reader could compute by hand from the
+ *  stored a/b — no resampling on every page view, which would make the "learned preference" line in
+ *  Settings flicker between arms for no real reason. Returns null below a small evidence floor (same
+ *  cold-start posture as learnedProductiveHour/predictNextEngagement elsewhere in this build) — a
+ *  confident-sounding claim from 2 data points would be dishonest, not transparent. Confidence scales with
+ *  total evidence the same way patterns.ts's confidenceFromEvidence does, capped at 1. */
+export function leadingArm<T extends { id: string }>(arms: T[], state: BanditState, key: string, minEvidence = 6): { arm: T; confidence: number } | null {
+  const cell = getCell(state, key);
+  let best: T | null = null, bestMean = -1, bestEvidence = 0;
+  for (const arm of arms) {
+    const { a, b } = getPosterior(cell, arm.id);
+    const evidence = a + b - 2; // subtract the uniform prior's own a=1,b=1 — evidence is what's ACTUALLY been observed
+    const mean = a / (a + b);
+    if (mean > bestMean) { bestMean = mean; best = arm; bestEvidence = evidence; }
+  }
+  if (!best || bestEvidence < minEvidence) return null;
+  return { arm: best, confidence: Math.max(0, Math.min(1, bestEvidence / 40)) };
+}
+
 /** Reward inputs — every one of these is ALREADY computed/available elsewhere in the app (see the plan's
  *  "What's already there" section); this function only combines them. Weighted equally to start (see the
  *  plan: the ARM choice is what the bandit adapts, this formula is a simpler, revisitable constant, not

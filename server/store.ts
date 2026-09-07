@@ -10,6 +10,14 @@ import type { BanditState } from "./bandit.ts";
 /** A persisted Google connection for an account (incl. the refresh token, so it stays connected). */
 export interface StoredGoogle { tokens: Credentials; email?: string; }
 
+/** A persisted Plaid connection (bank-linking, /finance) — `accessToken` is the long-lived credential Plaid
+ *  issues after Link succeeds, protected the SAME way Pronote's token is: RLS + service-role-only write path
+ *  AND app-level AES-256-GCM encryption (server/crypto.ts), transparent in loadState/saveState below. This
+ *  interface always holds the LIVE plaintext token in memory; only the DB row is encrypted. Sandbox-only for
+ *  now (see server/plaid.ts) — production use needs a real Plaid business approval and, for this app's
+ *  actual French-lycée audience, confirmed bank coverage first. */
+export interface StoredPlaid { accessToken: string; itemId: string; institutionName?: string; connectedAt: string; }
+
 /** A persisted Pronote (French school portal) connection. `token` is a rotating credential the pawnote
  *  library issues in place of the password after the first login — NOT the password itself, which is used
  *  once to connect and never stored (see server/pronote.ts). Protected by RLS + the service-role-only
@@ -175,7 +183,7 @@ export async function deleteAuthUser(email: string): Promise<void> {
   } catch (e) { console.warn("[store] deleteAuthUser threw:", (e as any)?.message || e); }
 }
 
-export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
+export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; plaid?: StoredPlaid; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
 
 // A transient network drop (undici "terminated"/"fetch failed", a reset socket) is NOT the same as "no
 // data" — but Supabase surfaces it both as a thrown error AND, sometimes, as a returned {error}. Treating
@@ -223,14 +231,17 @@ export async function loadState(email?: string): Promise<AccountState> {
   const cached = stateCache.get(email);
   if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
   const { data, error } = await withRetry("load", async () =>
-    client!.from(TABLE).select("profile,tasks,google,pronote").eq("email", email).maybeSingle());
+    client!.from(TABLE).select("profile,tasks,google,pronote,plaid").eq("email", email).maybeSingle());
   if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
   const pronote = d?.pronote && d.pronote.token
     ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token) }
     : undefined;
-  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote };
+  const plaid = d?.plaid && d.plaid.accessToken
+    ? { ...(d.plaid as StoredPlaid), accessToken: decryptSecret(d.plaid.accessToken) }
+    : undefined;
+  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, plaid };
   cacheSetState(email, result);
   return result;
 }
@@ -247,6 +258,9 @@ export async function saveState(email: string | undefined, state: AccountState):
   if ("google" in state) row.google = state.google ?? null;
   if ("pronote" in state) {
     row.pronote = state.pronote ? { ...state.pronote, token: encryptSecret(state.pronote.token) } : null;
+  }
+  if ("plaid" in state) {
+    row.plaid = state.plaid ? { ...state.plaid, accessToken: encryptSecret(state.plaid.accessToken) } : null;
   }
   // Invalidate rather than try to update-in-place: `state` here often omits google/pronote entirely (see
   // comment above), so overwriting the cached entry with it would wrongly blank out fields this save never

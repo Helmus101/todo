@@ -103,6 +103,14 @@ export const api = {
   connectPronote: (url: string, username: string, password: string, kind?: number): Promise<{ ok: boolean; error?: string }> =>
     post("/api/integrations/pronote/connect", { url, username, password, kind }).catch((e) => ({ ok: false, error: e?.message || "Couldn't connect." })),
   disconnectPronote: (): Promise<{ ok: boolean }> => post("/api/integrations/pronote/disconnect"),
+  // /finance (Plaid) — sandbox-only for now, see server/plaid.ts's own comment.
+  plaidStatus: (): Promise<{ connected: boolean; institutionName?: string; configured: boolean }> => req("/api/integrations/plaid/status").then(j),
+  plaidLinkToken: (): Promise<{ linkToken: string }> => post("/api/integrations/plaid/link-token"),
+  plaidExchange: (publicToken: string): Promise<{ ok: boolean }> => post("/api/integrations/plaid/exchange", { publicToken }),
+  plaidConnectMock: (): Promise<{ ok: boolean }> => post("/api/integrations/plaid/connect-mock"),
+  plaidDisconnect: (): Promise<{ ok: boolean }> => post("/api/integrations/plaid/disconnect"),
+  financeSnapshot: (): Promise<{ accounts: { id: string; name: string; type: string; balance: number | null }[]; transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[] }> =>
+    req("/api/finance/snapshot").then(j),
   pronoteTests: (): Promise<{ tests: { subject: string; deadline: string }[] }> => req("/api/pronote/tests").then(j),
   workload: (): Promise<{ days: { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number }[] }> =>
     req("/api/workload").then(j),
@@ -147,7 +155,11 @@ export const api = {
   resetTheme: (): Promise<{ ok: boolean }> => post("/api/ui/theme-reset", {}),
   // Pattern recognition (server/patterns.ts) — read-only prediction from the student's own activity/study
   // data, never a new decision surface of its own; see Settings' quiet "Otto has noticed" line.
-  patternsSummary: (): Promise<{ predictedEngagement: { weekday: number; hour: number; confidence: number } | null; weakSubjects: string[] }> =>
+  patternsSummary: (): Promise<{
+    predictedEngagement: { weekday: number; hour: number; confidence: number } | null;
+    weakSubjects: string[];
+    bandits: Record<string, { armId: string; confidence: number } | null>;
+  }> =>
     req("/api/patterns/summary").then(j),
   submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number, audioArmId?: string, densityArmId?: string): Promise<{ ok: boolean }> =>
     post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta, audioArmId, densityArmId }),
@@ -160,6 +172,7 @@ export const api = {
   addErrorLogEntry: (subject: string, question: string, mistake: string, fix: string): Promise<Profile> =>
     post("/api/profile/errorlog", { subject, question, mistake, fix }).then(normalizeProfile),
   deleteErrorLogEntry: (id: string): Promise<Profile> => req(`/api/profile/errorlog/${encodeURIComponent(id)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
+  resetStudentModel: (): Promise<Profile> => req("/api/profile/student-model", { method: "DELETE" }).then(j).then(normalizeProfile),
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
   // Returns the fresh list + the sweep's own result line ("swept: 3 new tasks…" / "skipped: nothing
   // connected") so the UI reports what actually happened rather than inferring it.

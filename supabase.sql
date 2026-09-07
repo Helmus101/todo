@@ -15,6 +15,7 @@ create table if not exists weave_web_state (
 alter table weave_web_state add column if not exists profile jsonb not null default '{}'::jsonb;
 alter table weave_web_state add column if not exists google jsonb;
 alter table weave_web_state add column if not exists pronote jsonb;
+alter table weave_web_state add column if not exists plaid jsonb;         -- persisted Plaid connection (encrypted access token — see server/store.ts)
 
 -- SECURE BY DEFAULT: `weave_web_users.pass_hash` and the `google`/`profile` columns are SECRETS. This file
 -- enables RLS with NO public policy, so the anon key can read/write NOTHING. Production runs the server with

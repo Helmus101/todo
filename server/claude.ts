@@ -1,8 +1,8 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens, WebTask } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
-import { dedupeFacts, sameFact } from "../shared/types.ts";
+import { dedupeFacts, sameFact, errorLogBySubject, gradesBySubject } from "../shared/types.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 import { hasAssignmentText } from "./discover.ts";
@@ -213,6 +213,58 @@ export function learningStyleLine(p?: Profile): string {
       `question or dumb down content to fit.\n`,
   };
   return "\n\n" + (by[style] || "");
+}
+// "Stories tuned to her life" — the one piece of Neal Stephenson's Primer that's directly buildable here:
+// when explaining something new, reach for an analogy or example rooted in what THIS student is actually
+// known to care about (their own `about`/`projects` — whatever they or Otto's own `remember` tool have
+// already captured), not a generic one. Deliberately reuses data already on the profile rather than
+// collecting anything new — the same "no new invasive tracking, use what's already there" posture as every
+// other personalization mechanism in this app. Silently contributes nothing when the profile has no such
+// context yet (a fresh account), same cold-start posture as everywhere else.
+export function personalContextLine(p?: Profile): string {
+  const bits = [p?.about?.trim(), ...(p?.projects || [])].filter(Boolean).slice(0, 4);
+  if (!bits.length) return "";
+  return `\n\nWHO THEY ARE: ${bits.join(" — ")}. When a genuinely fitting analogy or example would help ` +
+    `explain something, reach for one rooted in THIS — a real interest/project of theirs beats a generic ` +
+    `textbook example — but never force a connection that doesn't actually fit just to use it.\n`;
+}
+/** The synthesized running read of this student (profile.studentModel, refreshed only in the daily 4pm
+ *  sweep — see server/jobs.ts's processSweep). Distinct from personalContextLine's raw `about`/`projects`:
+ *  this is Otto's OWN accumulated understanding, replaced wholesale each refresh, so it can name a
+ *  misconception pattern or growth trajectory personalContextLine has no way to express. Silent when absent
+ *  (cold start, or a student who reset it in Settings) — same posture as every other personalization line. */
+export function studentModelLine(p?: Profile): string {
+  if (!p?.studentModel?.summary) return "";
+  return `\n\nYOUR RUNNING READ ON THIS STUDENT (your own notes from watching them over time — use this to ` +
+    `recognize a recurring pattern, reach for an analogy that reflects who they ACTUALLY are now rather than ` +
+    `a generic one, and build toward their reasoning/judgment over time, not just today's fact; never quote ` +
+    `this verbatim back to them or announce that you're using it):\n${p.studentModel.summary}\n`;
+}
+/** Student-logged mistakes (Profile.errorLog, self-authored via the Error Log tab) for the SUBJECT this
+ *  task belongs to — subject-matched, not global, since an error from a different subject is noise here.
+ *  This data already existed and was fully built (CRUD routes, its own tab) but was never once read into an
+ *  AI prompt before — free signal, zero new AI cost, just wiring. */
+export function errorLogLine(p: Profile | undefined, subject: string | undefined): string {
+  if (!subject) return "";
+  const match = errorLogBySubject(p?.errorLog).find((g) => g.subject.toLowerCase() === subject.toLowerCase());
+  if (!match?.entries.length) return "";
+  const recent = match.entries.slice(0, 5); // errorLogBySubject already sorts newest-first within a subject
+  return `\nPAST MISTAKES THEY'VE LOGGED IN ${subject.toUpperCase()} (their own error journal — bring one up ` +
+    `by name if it's genuinely the same kind of slip right now, e.g. "this is the same mix-up as the one you ` +
+    `logged about X" — never just recite the list):\n` +
+    recent.map((e) => `- Q: "${e.question}" — mistake: "${e.mistake}"${e.fix ? ` — fix they noted: "${e.fix}"` : ""}`).join("\n") + "\n";
+}
+/** Flashcards on THIS task sitting at Leitner box 1 (gotten wrong / never advanced) — weakCardFronts
+ *  (server/tasks.ts) already computes this exact signal for the study-journal week/month summaries; this is
+ *  the same logic inlined here (not imported — tasks.ts already imports FROM claude.ts, so importing tasks.ts
+ *  here would create a cycle) to reuse it for chat too, at zero extra AI cost. */
+export function weakCardLine(task: { flashcards?: TaskFlashcards[] }): string {
+  const fronts: string[] = [];
+  for (const deck of task.flashcards || []) for (const c of deck.cards) if (c.review?.box === 1) fronts.push(c.front);
+  if (!fronts.length) return "";
+  return `\nSTILL SHAKY ON THESE CARDS (Leitner box 1 — gotten wrong / never advanced, from this task's own ` +
+    `flashcards): ${fronts.slice(0, 8).join("; ")}. If the question touches one of these, that's a strong signal ` +
+    `to slow down here rather than assume it's solid.\n`;
 }
 // A big multi-week project (Extended Essay, TOK, CAS, an Internal Assessment, a group project, a full
 // essay/dissertation, a thesis/mémoire) isn't like an ordinary task — it runs for weeks/months, has real
@@ -638,7 +690,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // mid-JSON, firstJson() returned null on the unbalanced braces, and the whole thing silently produced NO
 // deck with a 200-success response — see the fix at generateDailyStudyCards' own prompt (capped at 40, not
 // "no cap") and the route-level error surfacing this budget bump pairs with.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 500 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 500, studentModel: 2000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -1501,6 +1553,75 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
       tokens: usageOf(res),
     };
   } catch { return null; }
+}
+
+// Synthesis prompt for profile.studentModel (server/jobs.ts's processSweep is the only caller — see that
+// file's shouldRefreshStudentModel for the once-a-day-and-only-if-active gate that keeps this from becoming
+// a 4th AI-spend window). This is a COMPRESSION task over data Otto already has, not new reasoning over new
+// content — deliberately NOT the full 8-rule tutoring prompt above.
+const STUDENT_MODEL_SYS =
+  `You are updating a tutor's private running notes on ONE specific teenage student (IB/Lycée, not a young ` +
+  `child), based on real data below. Write a 150-300 word third-person summary covering: how they seem to ` +
+  `think/reason (not just what subjects they're in), any recurring misconception or pattern of mistake worth ` +
+  `watching for, what kind of explanation or approach has actually worked for them before, a genuine interest ` +
+  `or project worth drawing a future analogy from, and how they seem to be growing/changing over time (don't ` +
+  `just restate today's snapshot). Write it as if for a tutor picking up where the last one left off — plain, ` +
+  `specific, no praise-speak, no clinical/diagnostic labels, nothing invented beyond what the data supports. ` +
+  `This text may later be shown directly to the student themselves, so nothing that would feel judgmental or ` +
+  `surveillance-like if they read it verbatim. Output plain prose only, no headers, no bullet points.`;
+
+/** Assembles a small (~800-1000 token) text blob purely from data already resident in `profile`/`list` — no
+ *  new AI call, no raw full chat history. Returns undefined when there's genuinely nothing to synthesize
+ *  from yet (true cold start), so synthesizeStudentModel can skip the call entirely rather than spending one
+ *  to say "not enough data". */
+function buildStudentModelInputs(profile: Profile, list: WebTask[]): string | undefined {
+  const parts: string[] = [];
+  const errLog = errorLogBySubject(profile.errorLog).flatMap((g) => g.entries).slice(0, 10);
+  if (errLog.length) {
+    parts.push(`Mistakes they've logged themselves (most recent first):\n` +
+      errLog.map((e) => `- [${e.subject}] Q: "${e.question}" — mistake: "${e.mistake}"${e.fix ? ` — fix noted: "${e.fix}"` : ""}`).join("\n"));
+  }
+  const weakFronts: string[] = [];
+  for (const t of list) for (const deck of t.flashcards || []) for (const c of deck.cards) if (c.review?.box === 1) weakFronts.push(c.front);
+  if (weakFronts.length) parts.push(`Flashcards still shaky (Leitner box 1, gotten wrong / never advanced): ${weakFronts.slice(0, 15).join("; ")}`);
+  const grades = gradesBySubject(profile.grades);
+  if (grades.length) parts.push(`Current grade averages (weakest first, /20): ${grades.map((g) => `${g.subject} ${g.avg20.toFixed(1)}`).join(", ")}`);
+  if (profile.about?.trim()) parts.push(`What they've told Otto about themselves: ${profile.about.trim()}`);
+  if (profile.projects?.length) parts.push(`Projects/interests on record: ${profile.projects.slice(0, 5).join("; ")}`);
+  // Recent student-side chat highlights — the last 1-2 things THEY said (not Otto's replies) from a handful
+  // of recently-active task threads, as a compression input, not a full re-read of the conversation.
+  const chatHighlights = list
+    .filter((t) => t.chat?.length)
+    .sort((a, b) => Date.parse(b.chat![b.chat!.length - 1].at) - Date.parse(a.chat![a.chat!.length - 1].at))
+    .slice(0, 5)
+    .flatMap((t) => (t.chat || []).filter((m) => m.role === "user").slice(-2).map((m) => `- (${t.title}) "${m.text.slice(0, 150)}"`));
+  if (chatHighlights.length) parts.push(`Recent things they've said in chat:\n${chatHighlights.join("\n")}`);
+  return parts.length ? parts.join("\n\n") : undefined;
+}
+
+/** Cheap, bounded synthesis of profile.studentModel — the ONE new AI-spend site this feature adds, and it
+ *  lives INSIDE the existing 4pm sweep window (server/jobs.ts's processSweep), never a 4th AI-spend window.
+ *  Small model tier, small max_tokens, small input: a compression pass over data Otto already has. Returns
+ *  undefined if there's nothing worth synthesizing yet, spending zero tokens. */
+export async function synthesizeStudentModel(profile: Profile, list: WebTask[]): Promise<{ summary: string; tokens: { in: number; out: number; cachedIn: number } } | undefined> {
+  const inputs = buildStudentModelInputs(profile, list);
+  if (!inputs) return undefined;
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model,
+      max_tokens: OUT.studentModel,
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: STUDENT_MODEL_SYS },
+        { role: "user", content: inputs },
+      ],
+    }));
+    const summary = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 2000);
+    if (!summary) return undefined;
+    return { summary, tokens: usageOf(res) };
+  } catch { return undefined; }
 }
 
 // Shared by every study-deck generator below (daily/weekly/monthly/topic) — the "minimum information
@@ -3670,7 +3791,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up" },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -3720,7 +3841,12 @@ export async function chatAboutTask(
     : opts?.styleArm === "worked-example"
     ? "\nSTYLE THIS TURN: once diagnosis is done, prefer leading with a PARALLEL worked example (same method, different numbers/case) before asking them to try their own — concrete before abstract.\n"
     : "";
-  const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + styleLine +
+  const growthLine = opts?.growthTrend === "up"
+    ? `\nGROWTH: their recent quiz results in this subject show real, measurable improvement over their last ` +
+      `few attempts. If it comes up naturally (don't force it into an unrelated reply), acknowledge that ` +
+      `genuinely — a tutor who's watched them improve, not one meeting them for the first time.\n`
+    : "";
+  const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject) + weakCardLine(task) + styleLine +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -3776,7 +3902,9 @@ export async function chatAboutTask(
     `step they already finished, a subject they're stronger in, the class material referenced in the task. ` +
     `When it naturally fits (not every turn), briefly tie back to something from earlier in THIS thread ` +
     `("this is the same move as when we did X a minute ago") — a student should be able to feel themselves ` +
-    `getting somewhere, not just receiving isolated answers.\n` +
+    `getting somewhere, not just receiving isolated answers. If a logged past mistake or a still-shaky ` +
+    `flashcard front (below, when present) is genuinely relevant right now, name it specifically instead of ` +
+    `re-diagnosing blind — that's exactly the kind of continuity a real tutor has and a fresh one doesn't.\n` +
     `6. BE HONEST ABOUT UNCERTAINTY. If the task context doesn't contain what's needed to answer well, say so ` +
     `and tell them where to look (their cours, the énoncé, the teacher) rather than inventing plausible ` +
     `subject content. A confident wrong explanation is far worse than "I don't have that here." This applies ` +
@@ -3798,7 +3926,15 @@ export async function chatAboutTask(
     `never react to "I don't get it" or a genuinely wrong answer with surprise, a sigh-shaped line, or ` +
     `anything that reads as judging them for not already knowing it. The fastest way to lose a student is to ` +
     `make admitting confusion feel costly; the point of rule 7 above is precision, not a chance to make them ` +
-    `feel bad for missing something.\n\n` +
+    `feel bad for missing something.\n` +
+    `9. BUILD THE PERSON, NOT JUST THE ANSWER. When you have a running read on this student (above, when ` +
+    `present), use it: reach for an analogy or framing that reflects what you actually know about them NOW, ` +
+    `not a generic one, and if you recognize a recurring pattern — the same kind of slip, the same kind of ` +
+    `explanation that's clicked before — say so plainly, like a tutor who's actually been paying attention ` +
+    `across sessions, not one meeting them for the first time. Never by reciting facts about them, and never ` +
+    `in a way that reads as being watched. Over weeks and months this compounds: you're not just answering ` +
+    `today's question, you're helping them get better at reasoning through problems and judging their own ` +
+    `work so they need you less over time — treat that as the actual long-run goal, not a slogan.\n\n` +
 
     `THE LINE YOU NEVER CROSS — this is what makes Otto different from asking a chatbot to do it:\n` +
     `Never produce the graded work itself. No essay/dissertation paragraphs (not even "just the intro"), no ` +

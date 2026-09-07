@@ -14,12 +14,13 @@ import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidT
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "./store.ts";
-import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS } from "./bandit.ts";
+import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
+import * as plaidSvc from "./plaid.ts";
 
 declare module "express-session" {
   interface SessionData {
@@ -72,21 +73,25 @@ app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
 // (Docker/self-host) path and every API response.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  // https://cdn.plaid.com: Plaid Link's own hosted JS (client/App.tsx's FinancePage loads it directly) — the
+  // ONLY external script this app loads; everything else stays self-only.
+  "script-src 'self' https://cdn.plaid.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https://logos.composio.dev",
   // Study Mode's in-app dictionary artifact fetches these directly from the browser (client/study/artifacts/
   // DictionaryArtifact.tsx) — a strict 'self' here silently blocked every lookup with "Failed to fetch"
   // (CSP violations don't reach the app's own try/catch as an HTTP error; the browser just refuses the fetch).
-  "connect-src 'self' https://freedictionaryapi.com",
+  // https://*.plaid.com: Link's own network calls during the bank-login flow (sandbox.plaid.com etc) — the
+  // student's bank credentials go straight to Plaid over this, never through Otto's own server at all.
+  "connect-src 'self' https://freedictionaryapi.com https://*.plaid.com",
   // Study Mode embeds several things in iframes: a Spotify playlist/album/track widget (client/study/
   // spotify.ts, no OAuth needed), a Google Doc, a YouTube video, and — critically — the student's own
   // uploaded PDFs, which load from a same-page blob: URL (StudySetup's upload flow). Once frame-src is set
   // AT ALL it replaces the default-src 'self' fallback entirely rather than adding to it — setting it to
   // just the Spotify origin (as this first did) silently broke every other embed, including the student's
   // own files, with Chrome's generic "This content is blocked" — so 'self' and blob: must be listed here
-  // explicitly, not assumed to still apply.
-  "frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://www.youtube-nocookie.com https://www.desmos.com https://*.padlet.com https://*.padlet.org",
+  // explicitly, not assumed to still apply. https://cdn.plaid.com: Link's own modal renders in an iframe.
+  "frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://www.youtube-nocookie.com https://www.desmos.com https://*.padlet.com https://*.padlet.org https://cdn.plaid.com",
   "font-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -507,6 +512,42 @@ app.get("/api/pronote/grades", requireAuth, async (req, res) => {
     res.json({ grades: await pronoteSvc.pronoteGrades(req.session.user!) });
   } catch { res.json({ grades: [] }); }
 });
+
+// ── /finance (Plaid) — an ADDITIONAL proactive source, same shape as Pronote above: no OAuth redirect (Plaid
+// Link is a client-side modal, not a server redirect), so this is a link-token/exchange pair rather than a
+// single /connect. SANDBOX ONLY (see plaid.ts's own file-level comment) — never touches a real bank account
+// or costs anything. Financial data NEVER reaches an AI call anywhere in this app — see plaidBillsToTasks
+// (server/tasks.ts) and the /api/tasks/:id/chat route's own guard for the three separate places that's enforced.
+app.get("/api/integrations/plaid/status", requireAuth, ah(async (req, res) => {
+  res.json({ ...(await plaidSvc.plaidConnected(req.session.user!)), configured: plaidSvc.plaidConfigured() });
+}));
+app.post("/api/integrations/plaid/link-token", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+  if (!plaidSvc.plaidConfigured()) { res.status(503).json({ error: "Plaid isn't configured on this server." }); return; }
+  try {
+    res.json(await plaidSvc.createLinkToken(req.session.user!));
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't start the connection." }); }
+}));
+app.post("/api/integrations/plaid/exchange", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+  const publicToken = String(req.body?.publicToken || "");
+  if (!publicToken) { res.status(400).json({ error: "Missing token." }); return; }
+  const result = await plaidSvc.exchangePublicToken(req.session.user!, publicToken);
+  if (!result.ok) { res.status(400).json(result); return; }
+  res.json(result);
+}));
+// Dev/demo path — only actually does anything when PLAID_MOCK=1 on the server (see plaid.ts's connectMock),
+// otherwise returns its own honest error. Lets /finance be fully exercised with zero real Plaid credentials.
+app.post("/api/integrations/plaid/connect-mock", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+  const result = await plaidSvc.connectMock(req.session.user!);
+  if (!result.ok) { res.status(400).json(result); return; }
+  res.json(result);
+}));
+app.post("/api/integrations/plaid/disconnect", requireAuth, async (req, res) => {
+  try { await plaidSvc.disconnectPlaid(req.session.user!); res.json({ ok: true }); }
+  catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
+});
+app.get("/api/finance/snapshot", requireAuth, ah(async (req, res) => {
+  res.json(await plaidSvc.plaidSnapshot(req.session.user!));
+}));
 // Deterministic "this week" workload view — no AI call, just real Pronote homework/tests + open tasks
 // bucketed by day with a relative effort heuristic (see server/workload.ts). Cheap enough to recompute
 // on every request rather than cache/store.
@@ -682,9 +723,29 @@ app.get("/api/patterns/summary", requireAuth, ah(async (req, res) => {
   const profile = req.session.profile;
   const signals = aggregateSubjectSignals(req.session.tasks || []);
   const weakSubjects = predictWeakSubjects(signals);
+  // Full transparency pass, per direct instruction ("make all info learned transparent through settings") —
+  // every bandit's CURRENT belief (leadingArm: the highest-posterior-mean arm, deterministic, not a
+  // Thompson-Sampling draw — see its own doc comment for why this must not be the same function that makes
+  // the actual decision) alongside the existing pattern predictions, in ONE request. Best-effort per bandit:
+  // one bandit's storage hiccup must never blank out the others' — this is a read-only summary, nothing here
+  // can be allowed to look worse than "that one line is just missing".
+  const email = req.session.user!;
+  const key = banditContextKey(new Date(), profile);
+  const bandits: Record<string, { armId: string; confidence: number } | null> = {};
+  for (const [decisionKey, arms] of Object.entries({
+    pomodoro: POMODORO_ARMS, flashcards: FLASHCARD_ARMS, granularity: GRANULARITY_ARMS,
+    audio: AUDIO_ARMS, density: DENSITY_ARMS, ordering: ORDERING_ARMS, chatstyle: CHAT_STYLE_ARMS,
+  })) {
+    try {
+      const state = await loadBanditState(email, decisionKey);
+      const leading = leadingArm(arms as { id: string }[], state, key);
+      bandits[decisionKey] = leading ? { armId: leading.arm.id, confidence: leading.confidence } : null;
+    } catch { bandits[decisionKey] = null; }
+  }
   res.json({
     predictedEngagement: predictNextEngagement(profile),
     weakSubjects,
+    bandits,
   });
 }));
 
@@ -818,6 +879,12 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   if (!message) { res.status(400).json({ error: "Say something first." }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) { res.status(404).json({ error: "not found" }); return; }
+  // /finance (Plaid) tasks NEVER reach the AI, full stop — not at generation (see plaidBillsToTasks in
+  // tasks.ts), and not here either: chat is PER-TASK, so opening it on a "Pay X" card would otherwise send
+  // that task's own sourceDetail (a real merchant name + amount) into the tutor's prompt, a second path to
+  // the exact leak plaidBillsToTasks's own comment describes. No AI call, no exception — a plain, honest
+  // client-side message instead of pretending to chat about something Otto never actually reasoned about.
+  if (t.source === "plaid") { res.status(403).json({ error: "Otto doesn't use AI on your bank data — this is a plain reminder, not a chat topic." }); return; }
   // The "Aide" button on a step (see F) sends its own index — validate the range server-side, never trust
   // it blindly (steps get regenerated on every rerun, so a stale index from an old page load could point
   // anywhere or nowhere).
@@ -858,16 +925,29 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       const styleState = await loadBanditState(req.session.user!, "chatstyle");
       chatStyleArm = chooseArm(CHAT_STYLE_ARMS, styleState, styleKey).arm.id;
     } catch { /* best-effort — the reply below still proceeds with the default (concise) style */ }
+    // "It grows with them" — the Primer quality of a tutor that's actually watched this student over time,
+    // not a stateless one-off. Only the POSITIVE direction is surfaced mid-conversation (a real, earned
+    // "you've been improving at this") — a declining trend is a Settings-level signal (weak-subject
+    // surfacing already handles that), not something to raise unprompted inside an encouraging tutoring
+    // chat. Best-effort, reuses the SAME aggregation the weak-subject prediction already computes.
+    let growthTrend: "up" | undefined;
+    try {
+      if (t.sourceSubject) {
+        const signal = aggregateSubjectSignals(req.session.tasks || []).find((s) => s.subject === t.sourceSubject);
+        if (signal?.trend === "up") growthTrend = "up";
+      }
+    } catch { /* best-effort */ }
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile);
+    profile.lastTutorActivityAt = new Date().toISOString(); // drives shouldRefreshStudentModel's "real activity" gate
     void recordMetric(req.session.user!, "chat_message_sent", 1);
     void recordMetric(req.session.user!, "chat_message_length_chars", message.length);
     // A genuine failure (DeepSeek error / empty completion) used to get silently saved into the thread as
@@ -1135,7 +1215,7 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   card.review = { seen: (prev?.seen || 0) + 1, correct: (prev?.correct || 0) + (correct ? 1 : 0), lastAt: new Date().toISOString(), dueAt, box };
   deck!.lastReviewedAt = new Date().toISOString();
   task.updatedAt = new Date().toISOString();
-  if (req.session.profile) bumpActivityHour(req.session.profile);
+  if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "flashcard_review", correct ? 1 : 0, task.source || "n/a");
   await commit(req);
   // "How often you go back and redo flashcards" signal — a card seen several times with a low correct-rate
@@ -1162,6 +1242,7 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   if (!task || !quiz) { res.status(404).json({ error: "Quiz not found — it may have already changed elsewhere." }); return; }
   quiz.attempts = [...(quiz.attempts || []), { at: new Date().toISOString(), score, total, ...(wrong?.length ? { wrong } : {}) }].slice(-QUIZ_ATTEMPT_CAP);
   task.updatedAt = new Date().toISOString();
+  if (req.session.profile) req.session.profile.lastTutorActivityAt = new Date().toISOString();
   void recordMetric(req.session.user!, "quiz_attempt_score_ratio", score / total, task.source || "n/a");
   await commit(req);
   res.json(req.session.tasks || []);
@@ -1294,7 +1375,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   // (flashcards still empty after a real try) also always retries, same as before.
   const textChanged = t.logText !== text;
   t.logText = text;
-  if (req.session.profile) bumpActivityHour(req.session.profile);
+  if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "journal_entry_saved", 1);
   void recordMetric(req.session.user!, "journal_entry_length_chars", text.length);
   if (t.flashcards?.length && !textChanged) {
@@ -2037,6 +2118,21 @@ app.delete("/api/profile/errorlog/:id", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't remove that entry — try again." }); }
+});
+// Reset Otto's synthesized "read" on this student (profile.studentModel) — same transparency posture as
+// errorLog/usage above: this is the most surveillance-adjacent field in the app (an AI-authored read of how
+// a student thinks, not self-reported), so a genuinely destructive, one-click reset is required, not
+// optional. Otto rebuilds it from scratch on the next 4pm sweep if there's still activity to synthesize from.
+app.delete("/api/profile/student-model", requireAuth, async (req, res) => {
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    p.studentModel = undefined;
+    // Delete-persists-to-cloud-first — same reasoning as the errorLog/grade/exam deletes above: without
+    // this, commit()'s cross-device merge could resurrect the "deleted" summary from a stale cloud copy.
+    if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
+    await commit(req);
+    res.json(p);
+  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't reset — try again." }); }
 });
 // Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
 app.delete("/api/profile", requireAuth, async (req, res) => {

@@ -74,6 +74,24 @@ export function sweepDue(profile: Profile, now: Date = new Date()): boolean {
   return localHour(tzOf(profile), now) >= floorHour;
 }
 
+/** Should THIS sweep pass refresh profile.studentModel? Pure + exported for a direct unit test, same
+ *  reasoning as sweepDue above. Two independent gates, both required — either one being false means an
+ *  inactive/already-fresh account costs $0 on this sweep:
+ *   1. Not already refreshed today (studentModel.updatedAt's local day < today's) — at most once/day, by
+ *      construction, since this only ever runs inside the once-daily sweep itself.
+ *   2. Real tutor activity (lastTutorActivityAt — a chat message, a journal save, a quiz/flashcard review)
+ *      has happened since the LAST refresh's basedOnActivityAt, OR there's no studentModel yet at all (first
+ *      run — nothing to compare against, so any prior activity is "new"). An account with a studentModel
+ *      already and zero activity since it was written never re-spends just because a day passed. */
+export function shouldRefreshStudentModel(profile: Profile, now: Date = new Date()): boolean {
+  const tz = tzOf(profile);
+  if (profile.studentModel?.updatedAt && localDay(profile.studentModel.updatedAt, tz) === localDay(now, tz)) return false;
+  if (!profile.studentModel) return true;
+  const lastActivity = Date.parse(profile.lastTutorActivityAt || "") || 0;
+  const basedOn = Date.parse(profile.studentModel.basedOnActivityAt || "") || 0;
+  return lastActivity > basedOn;
+}
+
 /** Which tasks the cron catch-all should enqueue for execution (bounded, cron's offline auto-run):
  *   - plain READY + never-attempted (the normal offline auto-run — failed_* retry via their own job,
  *     failed_terminal waits for the user's Retry, so cron never loops on a broken task); PLUS
@@ -167,6 +185,20 @@ async function processSweep(job: store.Job): Promise<string> {
   try {
     if ((await pronoteConnected(email)).connected) applyPronoteGrades(profile, await pronoteGrades(email));
   } catch { /* best-effort */ }
+  // Refresh Otto's synthesized "read" on this student (profile.studentModel) — the ONE new AI-spend site
+  // this feature adds, and it deliberately lives HERE, inside the sweep's own already-checked
+  // overMonthlyBudget gate above, rather than as a 4th standalone AI-spend window. shouldRefreshStudentModel
+  // already gates on "not already refreshed today" + "real activity since the last refresh", so an inactive
+  // account (or one already refreshed today) costs nothing — best-effort, must never block the sweep itself.
+  if (shouldRefreshStudentModel(profile)) {
+    try {
+      const synth = await claude.synthesizeStudentModel(profile, next);
+      if (synth) {
+        profile.studentModel = { summary: synth.summary, updatedAt: new Date().toISOString(), basedOnActivityAt: profile.lastTutorActivityAt };
+        addUsage(profile, synth.tokens, "student_model");
+      }
+    } catch { /* best-effort */ }
+  }
   // A big IB project's milestone steps (targetDate set — see isBigIbProject/writeStepsFromContext in
   // claude.ts) get re-dated here if one slipped, so a missed research-question deadline doesn't just sit
   // stale — the remaining milestones shift out to stay realistic. Deterministic, no AI call (replanMilestones).

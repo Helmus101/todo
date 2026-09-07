@@ -164,6 +164,22 @@ export interface Profile {
   // the exact gap in my reasoning and the fix", closer to an error journal used for exam prep. Accumulates
   // like grades/manualExams above — never overwritten, only appended to and individually deletable.
   errorLog?: { id: string; subject: string; question: string; mistake: string; fix: string; createdAt: string }[];
+  // AI-synthesized running "mental model" of THIS student — how they think/reason, a recurring misconception
+  // pattern, what's clicked for them before, a genuine interest worth an analogy, how they're growing over
+  // time. REPLACED wholesale on every refresh (server/jobs.ts's processSweep), never appended — a tutor's
+  // updated read of the kid, not a log. Refreshed at most once/day, ONLY inside the 4pm sweep (this app's
+  // AI spend is deliberately confined to 3 windows: the sweep, chat, and journal/study mode — see
+  // shouldRefreshStudentModel in server/tasks.ts) — one cheap synthesis call over data that already exists
+  // (errorLog, weak flashcards, grades, growth trend), never a 4th AI-spend window. Fully visible + one-click
+  // resettable in Settings (same transparency posture as errorLog/usage breakdown) — this is the most
+  // surveillance-adjacent field in the app, so hiding it would be inconsistent with that precedent. NEVER
+  // used for grading, a parent-facing view, or any priority/auto-archive decision — tutoring tone only.
+  studentModel?: { summary: string; updatedAt: string; basedOnActivityAt?: string };
+  // Last time this student did something a tutor would call "real activity" — sent a chat message, saved a
+  // journal entry, attempted a quiz/flashcard review. Distinct from activityHours (an hour-of-day histogram,
+  // no absolute timestamp) — this is the single stamp shouldRefreshStudentModel compares against
+  // studentModel.basedOnActivityAt to skip refreshing an inactive account for $0 cost.
+  lastTutorActivityAt?: string;
   // Which track this student is on — drives AI vocabulary (isBigIbProject/trackLine in claude.ts) and
   // unlocks the milestone/big-project breakdown for IB (EE/IA/TOK/CAS). Set from Settings.
   track?: "ib" | "bac" | "other";
@@ -298,6 +314,14 @@ export function normalizeProfile(p: any): Profile {
           createdAt: typeof e?.createdAt === "string" ? e.createdAt : new Date().toISOString(),
         })).filter((e: { subject: string; question: string }) => e.subject && e.question).slice(0, 500)
       : undefined,
+    studentModel: p?.studentModel && typeof p.studentModel === "object" && typeof p.studentModel.summary === "string" && p.studentModel.summary.trim()
+      ? {
+          summary: p.studentModel.summary.trim().slice(0, 2000), // ~150-300 words expected; hard ceiling is defense in depth
+          updatedAt: typeof p.studentModel.updatedAt === "string" ? p.studentModel.updatedAt : new Date().toISOString(),
+          basedOnActivityAt: typeof p.studentModel.basedOnActivityAt === "string" ? p.studentModel.basedOnActivityAt : undefined,
+        }
+      : undefined,
+    lastTutorActivityAt: typeof p?.lastTutorActivityAt === "string" ? p.lastTutorActivityAt : undefined,
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
@@ -494,7 +518,7 @@ export function budgetRenewsOn(profile?: Profile | null, now: Date = new Date())
 // What kind of AI call spent the money — lets Settings answer "what's actually costing money" instead of
 // just a single opaque total. Deliberately a small, fixed set (not a free-text label) so it stays a real
 // breakdown a person can scan, not a growing pile of one-off strings.
-export type AddUsageCategory = "sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "other";
+export type AddUsageCategory = "sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other";
 
 export function addUsage(profile: Profile, tokens?: { in?: number; out?: number; cachedIn?: number } | null, category: AddUsageCategory = "other"): void {
   const tin = Number(tokens?.in) || 0, tout = Number(tokens?.out) || 0, cached = Number(tokens?.cachedIn) || 0;
