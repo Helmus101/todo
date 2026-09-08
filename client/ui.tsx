@@ -477,7 +477,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
   );
 }
 
-/** Drillable flashcard viewer (CREATE_FLASHCARDS): Enter/click flips the card, → marks it right and
+/** Drillable flashcard viewer (CREATE_FLASHCARDS): click flips the card, → marks it right and
  *  advances, ← marks it wrong and advances. Ends on a score summary with a restart. Keyboard-first so a
  *  student can drill an entire deck without touching the mouse. */
 function loadDeckProgress(deckId: string): { i: number; right: number[]; wrong: number[] } | null {
@@ -503,7 +503,7 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
   // fluke. Fix: suppress the transition for exactly the one frame where flip+content both change (double
   // rAF so the no-transition style is actually applied before the state change paints), so advancing to the
   // next card is an instant cut, front-facing, no animated flip at all — the flip animation still plays
-  // normally for an actual user-initiated flip (Enter/click), which never touches `i`.
+  // normally for an actual user-initiated flip (click), which never touches `i`.
   const [skipFlipAnim, setSkipFlipAnim] = useState(false);
   useEffect(() => {
     if (!skipFlipAnim) return;
@@ -562,8 +562,7 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done) return;
-      if (e.key === "Enter") { e.preventDefault(); setFlipped((v) => !v); }
-      else if (e.key === "ArrowRight") { e.preventDefault(); mark(true); }
+      if (e.key === "ArrowRight") { e.preventDefault(); mark(true); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); mark(false); }
     };
     document.addEventListener("keydown", onKey);
