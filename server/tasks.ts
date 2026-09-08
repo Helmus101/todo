@@ -399,8 +399,8 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
       return d2 > d1 ? { autoRunDay: d2, autoRunCount: p2.autoRunCount } : { autoRunDay: d1, autoRunCount: p1.autoRunCount };
     })(),
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
-    // genPerDay/timezone/responseStyle/autoApprove/highPriorityPeople/autoArchivePatterns/track/yearLevel/
-    // voiceChat: all set through the ONE POST /api/profile/preference route (server/index.ts), all stamped together via
+    // genPerDay/timezone/responseStyle/autoApprove/highPriorityPeople/autoArchivePatterns/track/yearLevel:
+    // all set through the ONE POST /api/profile/preference route (server/index.ts), all stamped together via
     // preferencesUpdatedAt. A plain `p2 ?? p1` here used to mean "whichever session touched ANYTHING
     // most recently wins for ALL of these," not "whichever session actually changed this setting" — a
     // stale tab on device B doing something unrelated (confirming a task) would silently revert a
@@ -421,7 +421,6 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
         autoArchivePatterns: side.autoArchivePatterns ?? fallback.autoArchivePatterns,
         track: side.track ?? fallback.track,
         yearLevel: side.yearLevel ?? fallback.yearLevel,
-        voiceChat: side.voiceChat ?? fallback.voiceChat,
         uiDensity: side.uiDensity ?? fallback.uiDensity,
         preferencesUpdatedAt: side.preferencesUpdatedAt ?? fallback.preferencesUpdatedAt,
       };

@@ -15,7 +15,6 @@ interface ChatArtifactProps {
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
-  voiceChat?: boolean;
 }
 
 // Thin wrapper, same pattern as FlashcardArtifact/QuizArtifact: hosts the existing AskOttoPanel content on

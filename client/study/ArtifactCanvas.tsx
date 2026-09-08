@@ -44,7 +44,6 @@ interface ArtifactCanvasProps {
     onOpenNote: (id: string, title: string) => void;
     onOpenDeck: (id: string, title: string) => void;
     onOpenQuiz: (id: string, title: string) => void;
-    voiceChat?: boolean;
   };
 }
 

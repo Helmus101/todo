@@ -3881,10 +3881,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 /* Grows from one line up to 3 (~80px at this font/line-height/padding), then scrolls internally — see the
    auto-resize effect in AskOttoPanel.tsx. resize:none because the height is script-driven, not user-dragged. */
 .sm-ai-input { min-width: 0; min-height: 40px; max-height: 80px; padding: 9px var(--space-3); line-height: 1.4; resize: none; overflow-y: auto; }
-.sm-ai-mic { width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--vermilion); }
-.sm-ai-mic-active { animation: smMicPulse 1.1s ease-in-out infinite; }
-@keyframes smMicPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-.sm-ai-speak { margin-top: 6px; }
 .sm-ai-step-tag { display: block; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,0.75); margin-bottom: 3px; letter-spacing: 0.02em; }
 .sm-ai-sender { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
 .sm-ai-sender-user { color: rgba(255,255,255,0.7); }

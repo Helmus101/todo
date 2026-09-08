@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, isLowGrade, sortWithinQuadrant, gradesBySubject, errorLogBySubject } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
@@ -662,7 +662,6 @@ export function App() {
               onTaskUpdate={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
               userId={status?.user}
               language={status?.language === "en" ? "en" : "fr"}
-              voiceChat={!!status?.voiceChat}
             />
           </NotifyContext.Provider>
         </LangContext.Provider>
@@ -1421,17 +1420,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
     catch (e: any) { notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
   };
-  // Voice input/read-aloud in Study Mode's Ask Otto chat — off by default, opt-in like every other
-  // capability toggle in this app. Browser-native (Web Speech API), so there's no per-request cost to
-  // gate against — see Profile.voiceChat's doc comment for why this is the free option that actually works
-  // on this app's serverless deployment.
-  const [voiceChat, setVoiceChatState] = useState(!!profile?.voiceChat);
-  useEffect(() => { setVoiceChatState(!!profile?.voiceChat); }, [profile?.voiceChat]);
-  const saveVoiceChat = async (v: boolean) => {
-    setVoiceChatState(v);
-    try { onChanged?.(await api.setProfilePreference("voiceChat", v)); }
-    catch (e: any) { setVoiceChatState(!v); notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
-  };
   return (
     <>
       <div className="set-row">
@@ -1456,10 +1444,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
-      <label className="set-row">
-        <span className="set-text"><b>{L("Chat vocal avec Otto", "Voice chat with Otto")}</b><span className="settings-hint">{L("Parle au lieu d'écrire dans le chat d'étude, et fais lire les réponses à voix haute. 100% gratuit — utilise la synthèse vocale de ton navigateur, pas d'API payante.", "Speak instead of typing in the study chat, and have replies read aloud. 100% free — uses your browser's own speech engine, not a paid API.")}</span></span>
-        <span className="switch"><input type="checkbox" checked={voiceChat} onChange={(e) => void saveVoiceChat(e.target.checked)} /><span className="switch-track" /></span>
-      </label>
     </>
   );
 }
@@ -1467,105 +1451,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
 /** Self-reported per-subject grades (Pronote's read API doesn't expose grades) — feeds profileBlock() so
  *  Otto weighs a weak subject more heavily than the deadline alone would suggest. Simple add/edit/remove
  *  list, same pattern as ProfileEditor's fact lists. */
-function GradesEditor({ profile, onChanged, pronoteConnected, onTasksChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void; pronoteConnected?: boolean; onTasksChanged: (tasks: WebTask[]) => void }) {
-  const L = useLang();
-  const notify = useNotify();
-  const [openSubject, setOpenSubject] = useState<string | null>(null);
-  const [addedTaskFor, setAddedTaskFor] = useState<string | null>(null);
-  // Grades come from Pronote only — no manual self-report. Not connected → naturally nothing to show,
-  // rather than a form the student fills in by hand that then silently drifts from reality. Any manual
-  // entries from before this existed still render below (and can be deleted) so a legacy account isn't
-  // left with mystery data it can't see, but there's no way to ADD a new one anymore.
-  if (!pronoteConnected) {
-    return <p className="settings-hint">{L("Connecte ton Pronote pour voir tes notes ici.", "Connect your Pronote to see your grades here.")}</p>;
-  }
-  const grades = profile?.grades || [];
-  // No manual "sync" button — Pronote grades pull in automatically (on connect, and again with every
-  // daily sweep; see applyPronoteGrades in server/pronote.ts). A passive status line, not a button the
-  // student has to remember to press, matches how the rest of Otto works (things just happen for you).
-  const bySubject = gradesBySubject(grades); // weakest subject first — see shared/types.ts
-  // Overall average — average of PER-SUBJECT averages (each already normalized to /20), not a raw mean
-  // of every entry: a subject with 5 logged grades shouldn't outweigh one with a single Pronote average
-  // just because it has more rows.
-  const overallAvg20 = bySubject.length ? bySubject.reduce((sum, s) => sum + s.avg20, 0) / bySubject.length : null;
-  const [addTaskError, setAddTaskError] = useState<{ subject: string; message: string } | null>(null);
-  // Fires from Settings, which has no access to the dashboard's task-list state (that lives in the top-
-  // level App component) — onTasksChanged threads a setter down for exactly this. The original version
-  // just awaited api.add() and flashed a small "Ajoutée ✓" with no try/catch, so a failed call (session
-  // hiccup, AI refinement erroring) threw silently and the button visually did nothing ("the button
-  // doesn't work"). A later fix added error handling and navigated to Tasks on success, but never actually
-  // applied api.add()'s own response to the app's task state — the dashboard's `tasks` state only refreshes
-  // on its own poll (up to 45s) or a route change it's watching, neither of which "navigate to Tasks"
-  // triggers, so the new task still didn't visibly appear right away even though it WAS created. Applying
-  // the response here directly closes that gap.
-  const addTask = async (subj: string) => {
-    setAddTaskError(null);
-    setAddedTaskFor(subj);
-    try {
-      onTasksChanged(await api.add(L(`Réviser ${subj}`, `Review ${subj}`)));
-      navigate("tasks");
-    } catch (e: any) {
-      setAddedTaskFor(null);
-      setAddTaskError({ subject: subj, message: e?.message || L("Échec de l'ajout — réessaie.", "Couldn't add it — try again.") });
-    }
-  };
-  return (
-    <div className="grades-editor">
-      {grades.length > 0 && (
-        <p className="settings-hint grades-sync-note">{L("Synchronisées automatiquement depuis Pronote", "Synced automatically from Pronote")}</p>
-      )}
-      {overallAvg20 !== null && (
-        <div className={`grade-average ${isLowGrade(overallAvg20, 20) ? "low" : ""}`}>
-          <span className="grade-average-label">{L("Moyenne générale", "Overall average")}</span>
-          <span className="grade-average-value">{overallAvg20.toFixed(1)}/20</span>
-        </div>
-      )}
-      {bySubject.length > 0 && (
-        <ul className="grade-list">
-          {bySubject.map((s) => {
-            const pct = Math.max(0, Math.min(100, (s.avg20 / 20) * 100));
-            const low = isLowGrade(s.avg20, 20);
-            const open = openSubject === s.subject;
-            return (
-              <li key={s.subject} className="grade-row">
-                <button type="button" className="grade-row-top grade-row-toggle" aria-expanded={open} onClick={() => setOpenSubject(open ? null : s.subject)}>
-                  <span className="grade-subject">{s.subject}</span>
-                  <span className="grade-value">{s.avg20.toFixed(1)}/20{s.entries.length > 1 ? <span className="grade-count"> · {L(`${s.entries.length} notes`, `${s.entries.length} grades`)}</span> : null}</span>
-                  <span className={`caret ${open ? "open" : ""}`} aria-hidden="true">›</span>
-                </button>
-                <div className="grade-bar"><div className={`grade-bar-fill ${low ? "low" : ""}`} style={{ width: `${pct}%` }} /></div>
-                {low ? (
-                  <div className="grade-nudge">
-                    <span>{addTaskError?.subject === s.subject ? addTaskError.message : L("En difficulté dans cette matière — un peu plus de révision pourrait aider.", "Struggling in this subject — a bit more review time could help.")}</span>
-                    <button type="button" className="btn xs ghost" disabled={addedTaskFor === s.subject} onClick={() => void addTask(s.subject)}>{addedTaskFor === s.subject ? L("Ajout…", "Adding…") : L("Ajouter une révision", "Add a study task")}</button>
-                  </div>
-                ) : null}
-                {open ? (
-                  <ul className="grade-entries grade-row-body">
-                    {s.entries.map((g) => (
-                      <li key={g.id} className="grade-entry">
-                        <span className="grade-entry-value">{g.grade}/{g.scale}</span>
-                        <span className="grade-entry-meta">{g.source === "pronote" ? L("Pronote", "Pronote") : new Date(g.updatedAt).toLocaleDateString()}</span>
-                        {/* Deletable regardless of source — a Pronote-sourced row used to be un-removable on
-                            the theory that the next real sync would overwrite it anyway, but that assumption
-                            breaks for a stale/wrong entry (e.g. leftover PRONOTE_MOCK test data, or a school
-                            that's since disconnected) with no real sync coming to correct it. */}
-                        <button className="x" title={L("Supprimer", "Remove")} onClick={async () => {
-                          try { onChanged?.(await api.deleteGrade(g.id)); }
-                          catch (e: any) { notify(e?.message || L("Impossible de supprimer la note.", "Couldn't remove the grade."), "error"); }
-                        }}>×</button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
 
 /** Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test sync, for a student
  *  whose school doesn't use it (most IB/international schools). Same add/remove pattern as GradesEditor
@@ -2037,7 +1922,6 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
       onTaskUpdate={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
       userId={status?.user}
       language={en ? "en" : "fr"}
-      voiceChat={!!status?.voiceChat}
     />
   );
 }
@@ -2573,6 +2457,18 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                 {patterns.bandits.granularity?.armId === "granular" ? (
                   <li>{L("Tâches : découper en étapes plus petites t'aide à démarrer plus vite.", "Tasks: breaking work into smaller steps helps you start sooner.")}</li>
                 ) : null}
+                {patterns.bandits.density?.armId && patterns.bandits.density.armId !== "cozy" ? (
+                  <li>{L(
+                    patterns.bandits.density.armId === "compact" ? "Affichage : une interface plus compacte te convient mieux." : "Affichage : une interface plus aérée te convient mieux.",
+                    patterns.bandits.density.armId === "compact" ? "Display: a more compact layout suits you better." : "Display: a more spacious layout suits you better.",
+                  )}</li>
+                ) : null}
+                {patterns.bandits.ordering?.armId && patterns.bandits.ordering.armId !== "urgency-first" ? (
+                  <li>{L(
+                    patterns.bandits.ordering.armId === "quick-wins-first" ? "Tableau de bord : tu avances mieux en commençant par les tâches rapides." : "Tableau de bord : tu avances mieux avec les tâches réparties équitablement entre matières.",
+                    patterns.bandits.ordering.armId === "quick-wins-first" ? "Dashboard: you make more progress starting with quick wins." : "Dashboard: you make more progress with tasks balanced evenly across subjects.",
+                  )}</li>
+                ) : null}
                 {patterns.bandits.audio?.armId && patterns.bandits.audio.armId !== "silence" ? (
                   <li>{L(`Ambiance : le bruit ${patterns.bandits.audio.armId === "brown" ? "brun" : patterns.bandits.audio.armId === "pink" ? "rose" : "blanc"} t'aide à rester concentré.`, `Ambience: ${patterns.bandits.audio.armId} noise helps you stay focused.`)}</li>
                 ) : null}
@@ -2669,12 +2565,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
           </label>
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.12s" }}>
-        <h3>{L("Tes notes", "Your grades")}</h3>
-        <p className="settings-hint">{L("Aide Otto à repérer les matières qui traînent, pas juste ce qui est dû bientôt.", "Helps Otto spot subjects falling behind, not just what's due soonest.")}</p>
-        <GradesEditor profile={profile} onChanged={setProfile} pronoteConnected={status.pronoteConnected} onTasksChanged={onTasksChanged} />
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>

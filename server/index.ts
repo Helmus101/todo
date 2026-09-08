@@ -630,7 +630,6 @@ app.get("/api/status", ah(async (req, res) => {
     overBudget: overMonthlyBudget(req.session.profile),
     unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
-    voiceChat: !!req.session.profile?.voiceChat,
     customTheme: req.session.profile?.customTheme,
   };
   res.json(s);
@@ -2033,8 +2032,6 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
       p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "yearLevel" && typeof value === "string" && value.trim()) {
       p.yearLevel = value.trim().slice(0, 40); p.preferencesUpdatedAt = new Date().toISOString();
-    } else if (key === "voiceChat" && typeof value === "boolean") {
-      p.voiceChat = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else {
       // Every recognized key/value combo is handled above — anything else used to fall through to a
       // silent no-op 200 (profile committed unchanged, client reads back success). A typo'd key or an
