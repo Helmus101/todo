@@ -2802,20 +2802,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // "did" backstop: the model sometimes omits the structured did[] field even after genuinely writing
     // something (submit still requires synthesis, which then carries the same information) — fall back to
     // the one-line synthesis rather than showing an empty "What Otto did" section for real work.
-    let did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
-    // In-house artifact backstop: a real note/flashcard-deck/quiz call is VERIFIED (it's in *Created below,
-    // not just claimed), same bar as the doc/gmail backstops above — but the model frequently narrates the
-    // task's OTHER work in "did" and forgets to mention the artifact itself, since PreparedPanel already
-    // shows it as a chip. That left a card with real content and no plain-language "Otto made you a note
-    // titled X" line — reported live as "what Otto did isn't clear enough". Add one bullet per artifact
-    // that isn't ALREADY referenced (by title) in an existing did bullet, so the artifact is never silent.
-    const mentions = (title: string) => did.some((d) => d.toLowerCase().includes(title.toLowerCase().slice(0, 20)));
-    const artifactBullets = [
-      ...notesCreated.filter((n) => !mentions(n.title)).map((n) => fr ? `Fiche créée : « ${n.title} »` : `Made a note: "${n.title}"`),
-      ...flashcardsCreated.filter((f) => !mentions(f.title)).map((f) => fr ? `Cartes créées : « ${f.title} » (${f.cards.length})` : `Made flashcards: "${f.title}" (${f.cards.length} cards)`),
-      ...quizzesCreated.filter((q) => !mentions(q.title)).map((q) => fr ? `Quiz créé : « ${q.title} » (${q.questions.length} questions)` : `Made a quiz: "${q.title}" (${q.questions.length} questions)`),
-    ];
-    if (artifactBullets.length) did = [...did, ...artifactBullets].slice(0, 6);
+    const did = o.did.length || !wroteAny || !o.synthesis || o.synthesis === "Done." ? o.did : [o.synthesis];
+    // An in-house note/flashcard-deck/quiz artifact is ALREADY shown as its own labeled, clickable chip in
+    // PreparedPanel ("Créé pour toi"/"Made for you") — this used to ALSO synthesize a redundant "did" bullet
+    // for it ("Made a note: X") directly above that chip, so the same artifact got named twice on one card.
+    // Reported live as clutter ("remove done part in tasks") — reversing an earlier fix that added this
+    // specifically to solve the opposite complaint ("what Otto did isn't clear enough"). The chip alone is
+    // the artifact's one clear mention now; "did" only ever holds the model's own genuinely narrated actions.
     // Links backstop: if the last doc/sheet/slide it created isn't already linked, add it — a "did" bullet
     // describing an artifact with no way to open it is a broken card, the same failure class as a drafted
     // reply with no Send button (see lastGmailDraft above).
