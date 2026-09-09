@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, carryOverWeakCards, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
@@ -1205,6 +1205,32 @@ section("weakCardFronts — the study-journal week summary's 'what did I get wro
   check("excludes never-reviewed cards (no review field at all)", !fronts.includes("No review yet"));
   check("empty input yields empty output", weakCardFronts([]).length === 0);
   check("a day with no flashcards at all is handled without throwing", weakCardFronts([{ ...dayA, id: "c", flashcards: undefined }]).length === 0);
+}
+
+section("carryOverWeakCards — wrong cards follow the student into the NEXT daily deck until they're right");
+{
+  const deckWith = (cards) => ({ id: "d1", title: "Day deck", cards, createdAt: new Date().toISOString() });
+  const dayA = { id: "a", title: "Mon", logDate: "2026-09-07", why: "", source: "studylog", risk: "low", urgency: 0, importance: 0, quadrant: "later", score: 0, status: "needs_review", createdAt: new Date().toISOString(),
+    flashcards: [deckWith([
+      { front: "Photosynthesis equation", back: "6CO2 + 6H2O -> ...", review: { seen: 2, correct: 0, box: 1 } },
+      { front: "Mitochondria role", back: "...", review: { seen: 3, correct: 3, box: 3 } },
+    ])] };
+  const dayB = { id: "b", title: "Tue", logDate: "2026-09-08", why: "", source: "studylog", risk: "low", urgency: 0, importance: 0, quadrant: "later", score: 0, status: "needs_review", createdAt: new Date().toISOString(),
+    flashcards: [deckWith([
+      { front: "1789 causes", back: "...", review: { seen: 1, correct: 0, box: 1 } },
+      { front: "No review yet", back: "..." },
+    ])] };
+  const carried = carryOverWeakCards([dayA, dayB]);
+  check("carries a box-1 (wrong) card forward, WITH its review history intact", !!carried.find((c) => c.front === "Photosynthesis equation" && c.review?.box === 1));
+  check("carries box-1 cards from multiple prior days", !!carried.find((c) => c.front === "1789 causes"));
+  check("excludes advanced (box > 1) cards — those are already 'right', not carried over", !carried.some((c) => c.front === "Mitochondria role"));
+  check("excludes never-reviewed cards", !carried.some((c) => c.front === "No review yet"));
+  check("empty input yields empty output", carryOverWeakCards([]).length === 0);
+  const dup = { ...dayA, id: "a2", logDate: "2026-09-06" };
+  check("dedupes the same wrong card repeated across days, keeping only one copy", carryOverWeakCards([dayA, dup]).filter((c) => c.front === "Photosynthesis equation").length === 1);
+  const manyWrong = { ...dayA, id: "a3", logDate: "2026-09-07",
+    flashcards: [deckWith(Array.from({ length: 20 }, (_, i) => ({ front: `Wrong ${i}`, back: "x", review: { seen: 1, correct: 0, box: 1 } })))] };
+  check("caps how many carried-over cards one day's deck can balloon to", carryOverWeakCards([manyWrong], 8).length === 8);
 }
 
 section("needsAutoBreakdown — only auto-expand a step when it's genuinely complicated");

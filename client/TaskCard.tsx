@@ -674,6 +674,23 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       </div>
     );
   }
+  // needs_review with an EMPTY step list means Otto already ran this task and it genuinely produced no
+  // checklist (e.g. only artifacts — a note/deck/quiz — with nothing actionable left over) — NOT "hasn't
+  // been attempted yet". Showing the "hasn't prepared this yet" message + a "Run now" button here used to be
+  // flatly wrong: the server's own idempotency guard (processExecuteTask in jobs.ts) skips a needs_review
+  // task as "already executed", so that Run now button silently did nothing — reported live as "Run now
+  // doesn't work" on a task that already had a "Made for you" artifact. Route needs_review here to the same
+  // done-screen treatment as "every step ticked", just without a score ring (there were no steps to score).
+  if (steps.length === 0 && cStatus === "needs_review") {
+    return (
+      <div className="step-hero hero-complete">
+        <p className="hero-line">{L("Otto a préparé ce qu'il fallait pour toi.", "Otto's prepared what you need.")}</p>
+        <div className="hero-acts">
+          <button className="btn primary" onClick={onConfirm}>{L("C'est bon", "Looks good")}</button>
+        </div>
+      </div>
+    );
+  }
   if (steps.length === 0) {
     // A task never NEEDS a click to begin — the daily 4pm sweep auto-runs its top few by score itself
     // (server/jobs.ts's processSweep + tasks.autoRunBudgetLeft), so most of the time nothing here gets
@@ -681,9 +698,9 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     // with zero way to jump the queue — the "Exécuter maintenant"/"Run now" button below exists for exactly
     // that case (and for "I want this NOW", cap or no cap): it's a genuinely deliberate manual click, so it's
     // exempt from the daily cap by design (see the button's own comment) the same way chat/Journal are.
-    // autoStarting reads task.status directly (isInFlight), NOT the local `running` state — that only
-    // reflects THIS click; the task list refreshing (poll/kick) is what flips task.status once a run, from
-    // either path, actually starts.
+    // Only reachable with cStatus "ready" now (needs_review is routed above) — this really is "never
+    // attempted yet", so autoStarting/isInFlight below stays a live check, not dead code, for the moment
+    // between this click firing and the task list poll picking up the resulting "queued"/"executing" status.
     const autoStarting = isInFlight(task.status);
     return (
       <div className="step-hero hero-empty">
