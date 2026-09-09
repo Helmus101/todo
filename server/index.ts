@@ -77,7 +77,11 @@ const CSP = [
   // ONLY external script this app loads; everything else stays self-only.
   "script-src 'self' https://cdn.plaid.com",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: https://logos.composio.dev",
+  // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
+  // blob: URL (StudySetup's/StudyMode's upload flow, same origin as the PDF blob: already allowed under
+  // frame-src below) — without this, EVERY uploaded image silently failed to render (CSP blocks it before
+  // it ever reaches the app's own error handling, so it just looked like "this image doesn't work").
+  "img-src 'self' data: blob: https://logos.composio.dev",
   // Study Mode's in-app dictionary artifact fetches these directly from the browser (client/study/artifacts/
   // DictionaryArtifact.tsx) — a strict 'self' here silently blocked every lookup with "Failed to fetch"
   // (CSP violations don't reach the app's own try/catch as an HTTP error; the browser just refuses the fetch).
