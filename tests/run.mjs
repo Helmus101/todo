@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, carryOverWeakCards, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
@@ -512,18 +512,18 @@ check("forced YESTERDAY → due again today", forcedDueToday({ ...utcProfile, la
 // Timezone: 2026-07-20T02:00Z is still Jul 19 in NY, so a force the next NY day is due — the gate is per LOCAL day.
 check("force gate respects the user's timezone", forcedDueToday({ ...nyProfile, lastForcedAt: "2026-07-20T02:00:00Z" }, new Date("2026-07-20T13:00:00Z")));
 
-// ── Daily auto-run spend cap (sweep + kick loop share one budget) — 7/day ─────
-section("autoRunBudgetLeft / recordAutoRuns — daily cap on passive AI spend (7/day)");
+// ── Daily auto-run spend cap (sweep + kick loop share one budget) — 50/day ─────
+section("autoRunBudgetLeft / recordAutoRuns — daily cap on passive AI spend (50/day)");
 {
   const p = { ...utcProfile };
-  check("fresh day → full budget (7)", autoRunBudgetLeft(p, new Date("2026-07-20T08:00:00Z")) === 7);
+  check("fresh day → full budget (50)", autoRunBudgetLeft(p, new Date("2026-07-20T08:00:00Z")) === 50);
   recordAutoRuns(p, 3, new Date("2026-07-20T08:00:00Z"));
-  check("after spending 3 → 4 left", autoRunBudgetLeft(p, new Date("2026-07-20T09:00:00Z")) === 4);
-  recordAutoRuns(p, 4, new Date("2026-07-20T16:00:00Z"));
-  check("after spending 7 total → 0 left, same day", autoRunBudgetLeft(p, new Date("2026-07-20T20:00:00Z")) === 0);
+  check("after spending 3 → 47 left", autoRunBudgetLeft(p, new Date("2026-07-20T09:00:00Z")) === 47);
+  recordAutoRuns(p, 47, new Date("2026-07-20T16:00:00Z"));
+  check("after spending 50 total → 0 left, same day", autoRunBudgetLeft(p, new Date("2026-07-20T20:00:00Z")) === 0);
   recordAutoRuns(p, 5, new Date("2026-07-20T21:00:00Z")); // overspend attempt (bug elsewhere) never goes negative
   check("budget floors at 0, never negative", autoRunBudgetLeft(p, new Date("2026-07-20T22:00:00Z")) === 0);
-  check("next local day → resets to full 7, ignoring yesterday's count", autoRunBudgetLeft(p, new Date("2026-07-21T08:00:00Z")) === 7);
+  check("next local day → resets to full 50, ignoring yesterday's count", autoRunBudgetLeft(p, new Date("2026-07-21T08:00:00Z")) === 50);
   check("recordAutoRuns(0) is a no-op", (() => { const q = { ...utcProfile, autoRunDay: "2026-07-20", autoRunCount: 1 }; recordAutoRuns(q, 0, new Date("2026-07-20T10:00:00Z")); return q.autoRunCount === 1; })());
 }
 
@@ -1205,6 +1205,32 @@ section("weakCardFronts — the study-journal week summary's 'what did I get wro
   check("excludes never-reviewed cards (no review field at all)", !fronts.includes("No review yet"));
   check("empty input yields empty output", weakCardFronts([]).length === 0);
   check("a day with no flashcards at all is handled without throwing", weakCardFronts([{ ...dayA, id: "c", flashcards: undefined }]).length === 0);
+}
+
+section("carryOverWeakCards — wrong cards follow the student into the NEXT daily deck until they're right");
+{
+  const deckWith = (cards) => ({ id: "d1", title: "Day deck", cards, createdAt: new Date().toISOString() });
+  const dayA = { id: "a", title: "Mon", logDate: "2026-09-07", why: "", source: "studylog", risk: "low", urgency: 0, importance: 0, quadrant: "later", score: 0, status: "needs_review", createdAt: new Date().toISOString(),
+    flashcards: [deckWith([
+      { front: "Photosynthesis equation", back: "6CO2 + 6H2O -> ...", review: { seen: 2, correct: 0, box: 1 } },
+      { front: "Mitochondria role", back: "...", review: { seen: 3, correct: 3, box: 3 } },
+    ])] };
+  const dayB = { id: "b", title: "Tue", logDate: "2026-09-08", why: "", source: "studylog", risk: "low", urgency: 0, importance: 0, quadrant: "later", score: 0, status: "needs_review", createdAt: new Date().toISOString(),
+    flashcards: [deckWith([
+      { front: "1789 causes", back: "...", review: { seen: 1, correct: 0, box: 1 } },
+      { front: "No review yet", back: "..." },
+    ])] };
+  const carried = carryOverWeakCards([dayA, dayB]);
+  check("carries a box-1 (wrong) card forward, WITH its review history intact", !!carried.find((c) => c.front === "Photosynthesis equation" && c.review?.box === 1));
+  check("carries box-1 cards from multiple prior days", !!carried.find((c) => c.front === "1789 causes"));
+  check("excludes advanced (box > 1) cards — those are already 'right', not carried over", !carried.some((c) => c.front === "Mitochondria role"));
+  check("excludes never-reviewed cards", !carried.some((c) => c.front === "No review yet"));
+  check("empty input yields empty output", carryOverWeakCards([]).length === 0);
+  const dup = { ...dayA, id: "a2", logDate: "2026-09-06" };
+  check("dedupes the same wrong card repeated across days, keeping only one copy", carryOverWeakCards([dayA, dup]).filter((c) => c.front === "Photosynthesis equation").length === 1);
+  const manyWrong = { ...dayA, id: "a3", logDate: "2026-09-07",
+    flashcards: [deckWith(Array.from({ length: 20 }, (_, i) => ({ front: `Wrong ${i}`, back: "x", review: { seen: 1, correct: 0, box: 1 } })))] };
+  check("caps how many carried-over cards one day's deck can balloon to", carryOverWeakCards([manyWrong], 8).length === 8);
 }
 
 section("needsAutoBreakdown — only auto-expand a step when it's genuinely complicated");
