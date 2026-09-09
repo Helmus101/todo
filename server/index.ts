@@ -150,9 +150,9 @@ const mergeProfiles = tasks.mergeProfileStates;
 // Persist the session AND this ACCOUNT's durable state (profile + tasks) to the cloud, keyed by the
 // account email — so it follows the account across devices and survives restarts. (Integration
 // connections live in Composio, keyed by the same account email, so there's nothing extra to store.)
-const commit = async (req: express.Request) => {
-  // Only the session-store write is awaited: it's what a same-device follow-up request depends on
-  // (sessions are cloud-backed too — makeSessionStore() — so this is the account's cross-request
+const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => {
+  // Only the session-store write is awaited BY DEFAULT: it's what a same-device follow-up request depends
+  // on (sessions are cloud-backed too — makeSessionStore() — so this is the account's cross-request
   // truth, and it's a single round trip). The cross-device cloud sync below (read this account's cloud
   // row, merge, write it back) used to run — and be retried up to 3x on a blip — IN LINE before the
   // response, turning every confirm/dismiss/step-done tap into 2 sequential Supabase round trips
@@ -161,12 +161,22 @@ const commit = async (req: express.Request) => {
   // finishing first — detach it as best-effort background work instead, matching saveState's own "never
   // throws into the request path" contract and the `void recordEvent(...)` fire-and-forget pattern
   // already used right after several of these call sites.
+  //
+  // BUT: on a serverless deploy (Vercel), the function invocation can freeze/tear down the instant the
+  // HTTP response finishes — a detached `void (async () => ...)()` isn't guaranteed to run to completion
+  // after that point, unlike a long-lived server where the process just keeps going. This was reported
+  // live as journal entries and flashcard reviews not reliably surviving in the cloud — exactly the
+  // "response went out, but the write behind it never actually finished" shape. `opts.awaitCloud` opts a
+  // call site into waiting for the real cloud write before responding — used for the lower-frequency,
+  // higher-value-per-write paths (a day's journal save, a flashcard review) where a slightly slower
+  // response is worth actually guaranteeing the data lands, while high-frequency routes (step-done,
+  // confirm) keep the fire-and-forget default so they stay snappy.
   await saveSession(req);
   if (!req.session.user) return;
   const email = req.session.user;
   const localTasks = req.session.tasks || [];
   const localProfile = req.session.profile || emptyProfile();
-  void (async () => {
+  const syncCloud = async () => {
     try {
       const current = await loadState(email);
       const mergedTasks = mergeTasks(current.tasks || [], localTasks);
@@ -175,7 +185,9 @@ const commit = async (req: express.Request) => {
     } catch {
       await saveState(email, { profile: localProfile, tasks: localTasks }).catch(() => {});
     }
-  })();
+  };
+  if (opts?.awaitCloud) await syncCloud();
+  else void syncCloud();
 };
 
 // Simple synchronous task-mutating routes (confirm/reject/dismiss/step-done) used to just `find()` in
@@ -1356,7 +1368,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   if (!text) {
     // Clearing an entry — keep the (now-empty) task shell rather than deleting, so re-typing later just
     // upserts the same anchor again instead of minting a fresh id.
-    if (t) { t.logText = ""; t.flashcards = []; t.quizzes = []; t.practiceProblem = undefined; t.updatedAt = new Date().toISOString(); await commit(req); }
+    if (t) { t.logText = ""; t.flashcards = []; t.quizzes = []; t.practiceProblem = undefined; t.updatedAt = new Date().toISOString(); await commit(req, { awaitCloud: true }); }
     res.json(req.session.tasks || []);
     return;
   }
@@ -1400,7 +1412,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   void recordMetric(req.session.user!, "journal_entry_length_chars", text.length);
   if (t.flashcards?.length && !textChanged) {
     t.updatedAt = new Date().toISOString();
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
     return;
   }
@@ -1443,7 +1455,10 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
       else t.practiceProblem = undefined;
     } catch { /* best-effort — flashcards above already succeeded regardless */ }
     t.updatedAt = new Date().toISOString();
-    await commit(req);
+    // Awaited (not fire-and-forget) — this is THE write that actually creates the day's journal/flashcards
+    // record, reported live as not reliably surviving in the cloud on serverless. See commit()'s own comment
+    // for why the default fire-and-forget mode is genuinely at risk here.
+    await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't make flashcards from that — try again." }); }
 }));
@@ -1509,7 +1524,7 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
       t.quizzes = qr.quiz ? [qr.quiz] : [];
       if (qr.quiz) void recordMetric(req.session.user!, "quiz_created", qr.quiz.questions.length, "weekly");
     } catch { /* best-effort — the deck above already succeeded regardless */ }
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the week summary — try again." }); }
 }));
@@ -1582,7 +1597,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
       t.quizzes = qr.quiz ? [qr.quiz] : [];
       if (qr.quiz) void recordMetric(req.session.user!, "quiz_created", qr.quiz.questions.length, "monthly");
     } catch { /* best-effort — the deck above already succeeded regardless */ }
-    await commit(req);
+    await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the month summary — try again." }); }
 }));
