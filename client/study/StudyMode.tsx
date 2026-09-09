@@ -508,6 +508,48 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     updateEnv({ audioType: "spotify", spotifyEmbedUrl: embedUrl, audioPlaying: true });
   }, [updateEnv, stopCustomAudio]);
 
+  // Add a NEW material to an ALREADY-RUNNING session — StudySetup.tsx's own handleFiles/addLink only ever
+  // ran before a session started, so realizing mid-study that you need one more PDF/link meant ending the
+  // session and starting a fresh one just to reattach it. Appends onto env.materials (same shape StudySetup
+  // builds), mirroring StudySetup's own upload path (objectUrl + best-effort async PDF text extraction) so
+  // a material added here is indistinguishable from one picked at setup — same MaterialsDrawer "Open ↗", same
+  // chat-visible text once extraction finishes.
+  const addMaterial = useCallback((file: File) => {
+    if (!env) return;
+    const objectUrl = URL.createObjectURL(file);
+    const type: StudyMaterial["type"] = file.type === "application/pdf" ? "pdf" : file.type.startsWith("image/") ? "image" : "document";
+    const mat: StudyMaterial = { id: crypto.randomUUID(), label: file.name, type, objectUrl, source: "upload", size: file.size };
+    updateEnv({ materials: [...env.materials, mat] });
+    void api.recordMetric("study_material_added", 1, type);
+    if (type === "pdf") {
+      void api.recordMetric("study_pdf_uploaded", 1);
+      void extractPdfText(file).then((text) => {
+        if (!text) return;
+        // Functional setEnv (not updateEnv, which closes over a possibly-stale `env`) — this resolves well
+        // after the upload, during which the student may have added/removed other materials in the meantime.
+        setEnv(prev => {
+          if (!prev) return prev;
+          const next = { ...prev, materials: prev.materials.map((m) => m.id === mat.id ? { ...m, text } : m), lastSavedAt: new Date().toISOString() };
+          persistEnv(next);
+          return next;
+        });
+      });
+    }
+  }, [env, updateEnv, persistEnv]);
+
+  const addMaterialLink = useCallback((url: string, label: string) => {
+    if (!env || !url.trim()) return;
+    const mat: StudyMaterial = {
+      id: crypto.randomUUID(),
+      label: label.trim() || url,
+      type: /youtube\.com|youtu\.be/.test(url) ? "video" : "link",
+      url: url.trim(),
+      source: /youtube\.com|youtu\.be/.test(url) ? "youtube" : "link",
+    };
+    updateEnv({ materials: [...env.materials, mat] });
+    void api.recordMetric("study_material_added", 1, mat.type);
+  }, [env, updateEnv]);
+
   useEffect(() => () => { noiseRef.current?.stop(); stopCustomAudio(); }, [stopCustomAudio]);
 
   // ── Start session (from setup screen) ────────────────────────────────────
@@ -932,6 +974,8 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
           <MaterialsDrawer
             materials={env.materials}
             onClose={() => setOpenPanel(null)}
+            onAddFiles={(files) => Array.from(files).forEach(addMaterial)}
+            onAddLink={addMaterialLink}
             onOpenArtifact={(mat) => {
               const type = mat.type === "pdf" ? "pdf" : mat.type === "video" ? "video" : mat.type === "image" ? "image"
                 : mat.type === "note" ? "sticky" : mat.type === "flashcard" ? "flashcard" : mat.type === "quiz" ? "quiz" : "document";
@@ -1026,18 +1070,27 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
           />
         )}
 
-        {openPanel === "audio" && (
-          <AudioPanel
-            audioType={env.audioType}
-            volume={env.audioVolume}
-            playing={env.audioPlaying}
-            customAudioName={env.customAudioName}
-            spotifyEmbedUrl={env.spotifyEmbedUrl}
-            onClose={() => setOpenPanel(null)}
-            onChange={setAudio}
-            onUploadAudio={(file) => void uploadAudio(file)}
-            onSetSpotify={setSpotify}
-          />
+        {/* Always mounted (never conditionally rendered like the other drawers) whenever a Spotify track is
+            set — CSS-hidden instead of unmounted when the drawer itself is closed. The Spotify widget is a
+            live <iframe> with its own playback state; the old `{openPanel === "audio" && <AudioPanel/>}`
+            destroyed and recreated that iframe every time the drawer closed, which killed the music the
+            instant the student closed the Audio tab to go do something else — exactly backwards from what
+            background music is for. A plain CSS `display:none` on the wrapper hides the drawer's visuals
+            without touching the iframe's own document, so playback keeps going untouched underneath. */}
+        {(openPanel === "audio" || env.audioType === "spotify") && (
+          <div style={openPanel === "audio" ? undefined : { display: "none" }}>
+            <AudioPanel
+              audioType={env.audioType}
+              volume={env.audioVolume}
+              playing={env.audioPlaying}
+              customAudioName={env.customAudioName}
+              spotifyEmbedUrl={env.spotifyEmbedUrl}
+              onClose={() => setOpenPanel(null)}
+              onChange={setAudio}
+              onUploadAudio={(file) => void uploadAudio(file)}
+              onSetSpotify={setSpotify}
+            />
+          </div>
         )}
 
       </div>
