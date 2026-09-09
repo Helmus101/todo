@@ -1,12 +1,8 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
-import { X, Menu, Wallet, GraduationCap } from "lucide-react";
 import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject, errorLogBySubject } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard } from "./ui.tsx";
-import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
-import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
-import { pushError, getErrors, clearErrors } from "./errorLog.ts";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, saveDeckLocally, saveQuizLocally, pushError, getAllLocalDecks, getAllLocalQuizzes, getErrors, clearErrors, errorLogBySubject } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 
