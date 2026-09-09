@@ -948,6 +948,7 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
         {children}
       </div>
     </div>,
-    document.body,
+    document.body
   );
 }
+

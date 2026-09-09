@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep } from "../shared/types.ts";
+import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, TaskFlashcards } from "../shared/types.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
@@ -57,6 +57,33 @@ export function weakCardFronts(dayTasks: WebTask[]): string[] {
   const fronts: string[] = [];
   for (const dt of dayTasks) for (const deck of dt.flashcards || []) for (const c of deck.cards) if (c.review?.box === 1) fronts.push(c.front);
   return fronts;
+}
+
+/** Cards still sitting at Leitner box 1 (gotten wrong / never advanced past it) from OTHER study-log days —
+ *  carried forward into a NEW day's freshly generated deck so a card gotten wrong doesn't just disappear
+ *  once its own day's entry stops being looked at: it keeps reappearing in the daily deck (with its real
+ *  review history attached, not a fresh copy) until it's finally answered right, at which point its box
+ *  advances past 1, it drops out of this carry-over on its own, and it becomes ordinary spaced-repetition
+ *  content weighted into the weekly summary via leitnerBoxBreakdown instead — never both places forever.
+ *  Deduped by front text (newest day wins) so a card re-taught across several bad days doesn't show up more
+ *  than once in the same deck; capped so a long losing streak can't balloon one day's deck indefinitely. */
+export function carryOverWeakCards(dayTasks: WebTask[], cap = 8): TaskFlashcards["cards"] {
+  const seen = new Set<string>();
+  const out: TaskFlashcards["cards"] = [];
+  const sorted = [...dayTasks].sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""));
+  for (const dt of sorted) {
+    for (const deck of dt.flashcards || []) {
+      for (const c of deck.cards) {
+        if (c.review?.box !== 1) continue;
+        const key = c.front.trim().toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(c);
+        if (out.length >= cap) return out;
+      }
+    }
+  }
+  return out;
 }
 
 /** Full Leitner-box breakdown across a set of study-log tasks — the real spaced-repetition signal, not
@@ -698,10 +725,15 @@ export function supplementarySweepDue(profile: Profile, now: Date = new Date()):
 // A real ceiling on PASSIVE AI spend — tasks that start themselves with zero user click (the sweep's own
 // auto-run-top-N, and the kick loop's catch-up for anything the sweep didn't get to). Was 3/day, briefly
 // removed entirely per direct instruction ("it shouldn't have limit on tasks it can execute"), then raised
-// back to a real but much higher ceiling (7/day) per direct instruction again right after — a backlog-heavy
-// day no longer gets stuck behind a low count, but there's still SOME bound on unattended spend independent
-// of the monthly $ budget (which only catches runaway spend after a whole month, not the day it happens).
-const AUTO_RUN_DAILY_CAP = 7;
+// back to 7/day per direct instruction again right after. 7 turned out too low for real usage — a backlog-
+// heavy day (e.g. Pronote's own once-daily "due this week" sweep surfacing several tests/homework at once)
+// left MOST newly-found tasks stuck showing "Otto hasn't prepared this yet" indefinitely, since only 7 of
+// however many were found ever got auto-queued and the rest waited for tomorrow's cap to do the same thing
+// again — reported live as "for all tasks it shows this... just automatically run tasks". Raised again, high
+// enough that a normal day's volume never hits it — this is now a backstop against a genuine runaway/bug
+// case, not a everyday-relevant throttle. The monthly $ budget (overMonthlyBudget) remains the real ongoing
+// cost control; this only ever bounded HOW MANY could start themselves in one day, not how much they cost.
+const AUTO_RUN_DAILY_CAP = 50;
 /** How many more tasks may auto-start today, across every trigger (sweep + kick) combined. 0 once the cap
  *  is hit; resets to the full cap at local midnight. */
 export function autoRunBudgetLeft(profile: Profile, now: Date = new Date()): number {
