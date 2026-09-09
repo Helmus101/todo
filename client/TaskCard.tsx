@@ -15,7 +15,7 @@ import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { BookOpen } from "lucide-react";
 import {
-  LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle,
+  LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
   withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
 } from "./ui.tsx";
@@ -155,9 +155,12 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
   // Only a chip that means "needs you" earns a place on the row — muted (queued) and good ("done for
   // you", not actionable) both used to render a chip too, which meant a row could carry a colored pill
   // even when there was nothing to act on. Reserving the chip for attention/bad/busy keeps it a genuine
-  // signal instead of one more piece of always-on decoration. Priority itself is dropped entirely: the
-  // list is already ordered by it, and `.when-soon` + the card's own left border carry urgency without
-  // a word.
+  // signal instead of one more piece of always-on decoration.
+  // REVERSAL, direct instruction ("eisenhower grid should clearly be denoted"): the plain quadrant label
+  // below used to be deliberately omitted here on the theory that sort order + `.when-soon` already carry
+  // priority without a word — that's still true for URGENCY, but it silently drops the Eisenhower matrix's
+  // other axis entirely (importance/delegate-ability), which is the actual point of showing it explicitly
+  // rather than leaving it as internal-only sort input.
   const chip = !isDone ? statusChip(task, retrying, cardEn) : null;
   // "executing" is the one busy-tone case that ALSO shows the spinner (`.card-spin` below) — a "Working"
   // chip next to a spinner would restate the same fact twice (rule 14, remove redundant UI). A
@@ -202,10 +205,11 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
           <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{stripStrayMarkdown(task.title)}</span>
-          {(task.sourceSubject || w || secondary) ? (
+          {(task.sourceSubject || w || secondary || !isDone) ? (
             <span className="card-sub">
               {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
               {w && <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span>}
+              {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
               {secondary}
             </span>
           ) : null}
@@ -245,6 +249,7 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
         <div className="dash-hero-meta">
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {w ? <span className="when">{w}</span> : null}
+          <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span>
           {showChip ? <span className={`chip chip-${showChip.tone}`}>{showChip.label}</span> : null}
         </div>
       ) : null}
@@ -455,6 +460,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         <div className="tf-meta">
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
+          {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
           {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
           {/* Study Mode entry point — the collapsed row already has one (.card-study); the expanded
@@ -492,7 +498,14 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         <p className="first-action">
           <span className="first-action-label">{L("Pour démarrer", "To get started")}</span>
           {task.firstAction.text}
-          {task.firstAction.minutes ? <span className="first-action-minutes">~{task.firstAction.minutes} {L("min", "min")}</span> : null}
+          {/* The 2-minute rule (GTD): anything genuinely this quick shouldn't get filed away for later at
+              all — say so plainly instead of just stating a duration, so the badge itself is the nudge to
+              knock it out right now rather than something to schedule. */}
+          {task.firstAction.minutes ? (
+            task.firstAction.minutes <= 2
+              ? <span className="first-action-minutes quick-win">⚡ {L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
+              : <span className="first-action-minutes">~{task.firstAction.minutes} {L("min", "min")}</span>
+          ) : null}
         </p>
       ) : null}
 
@@ -907,7 +920,13 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 <span className="step-text">{withInlineLinks(s.text)}</span>
                 {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
                 {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
-                {!s.done && s.minutes ? <span className="step-minutes">~{s.minutes} {L("min", "min")}</span> : null}
+                {/* 2-minute rule: a step this short shouldn't just sit in the checklist waiting its turn —
+                    flag it so it's obviously worth knocking out right now instead of scheduling for later. */}
+                {!s.done && s.minutes ? (
+                  s.minutes <= 2
+                    ? <span className="step-minutes quick-win">⚡ {L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
+                    : <span className="step-minutes">~{s.minutes} {L("min", "min")}</span>
+                ) : null}
                 {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}
                 {!s.done && blk ? <span className="step-dep">{L(`Débloque à l'étape ${(s.dependsOn ?? 0) + 1}`, `Unlocks at step ${(s.dependsOn ?? 0) + 1}`)}</span> : null}
                 {s.question && !s.done && !blk ? (

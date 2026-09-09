@@ -126,10 +126,17 @@ export function sourceBadge(s: string, en?: boolean): string {
   const map = en ? SOURCE_BADGE_EN : SOURCE_BADGE_FR;
   return map[s] || (s ? s[0].toUpperCase() + s.slice(1) : (en ? "Task" : "Tâche"));
 }
-// Quadrant already encodes urgency+importance (see eisenhower()) — reuse it as a plain-English priority
-// badge instead of asking the user to parse "do/schedule/delegate/later".
-export function priorityBadge(q?: string, en?: boolean): string {
-  return q === "do" ? (en ? "Urgent" : "Urgent") : q === "schedule" ? (en ? "Medium" : "Moyen") : (en ? "Low" : "Faible");
+// The Eisenhower quadrant (urgency×importance — see eisenhower() in server/tasks.ts) each task is already
+// scored into, but until now was computed purely for internal SORT ORDER and never actually surfaced to the
+// student — direct instruction: "eisenhower grid should clearly be denoted". Four genuinely distinct labels
+// (not collapsed into a simplified 3-tier "Urgent/Medium/Low", which is what this used to do and what made
+// it dead/unused code — a real Eisenhower matrix's whole point is separating "delegate" from "later", not
+// losing that distinction to a generic "Low").
+export function quadrantLabel(q?: string, en?: boolean): string {
+  if (q === "do") return en ? "Do now" : "À faire";
+  if (q === "schedule") return en ? "Schedule" : "À planifier";
+  if (q === "delegate") return en ? "Delegate" : "À déléguer";
+  return en ? "Later" : "Plus tard";
 }
 
 // One short context line under the title. The STATUS is carried by the chip on the right — the subtitle

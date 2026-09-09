@@ -15,7 +15,7 @@ import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "./store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
-import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost } from "./patterns.ts";
+import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -727,7 +727,7 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       // (unlike orderingBoost's arms, which are a bandit EXPERIMENT), since struggling with a subject is a
       // real, unconditional reason to see that subject's tasks a little sooner, not something to A/B test.
       const weakSubjects = predictWeakSubjects(aggregateSubjectSignals(req.session.tasks));
-      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects);
+      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects) + twoMinuteRuleBoost(t);
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; } }
     } catch {
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }

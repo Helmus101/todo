@@ -10,7 +10,7 @@ import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToE
 import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
 import { stripHtml } from "../server/pronote.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
-import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, predictNextTasks, subjectFrequency, orderingBoost } from "../server/patterns.ts";
+import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, predictNextTasks, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -1424,6 +1424,13 @@ section("server/patterns.ts — pattern recognition (predict the student's next 
     ["Maths"],
   );
   check("predictNextTasks ranks the weak-subject task first when base scores tie", ranked[0].id === "b");
+
+  // twoMinuteRuleBoost — GTD's two-minute rule
+  check("boosts a task whose smallest first action is 2 minutes or less", twoMinuteRuleBoost({ firstAction: { minutes: 2 } }) > 0);
+  check("boosts a 1-minute first action too", twoMinuteRuleBoost({ firstAction: { minutes: 1 } }) > 0);
+  check("no boost once it's over 2 minutes", twoMinuteRuleBoost({ firstAction: { minutes: 3 } }) === 0);
+  check("no boost with no firstAction at all", twoMinuteRuleBoost({}) === 0);
+  check("no boost when firstAction has no minutes estimate", twoMinuteRuleBoost({ firstAction: { text: "do it" } }) === 0);
 
   // predictNextEngagement now returns a confidence score alongside (weekday, hour).
   const confP = { timezone: "UTC" };

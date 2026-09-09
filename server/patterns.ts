@@ -152,6 +152,17 @@ export function weakSubjectBoost(task: { sourceSubject?: string }, weakSubjects:
   return weakSubjects.includes(task.sourceSubject) ? 0.15 : 0;
 }
 
+/** GTD's two-minute rule: if it genuinely takes two minutes or less, do it now instead of filing it away for
+ *  later — direct instruction. `firstAction.minutes` (server/claude.ts's anti-procrastination "smallest
+ *  possible first move", shared/types.ts) is Otto's own estimate of the smallest real action on this task;
+ *  when that's ≤2 minutes, nudge the whole task up the same way weakSubjectBoost/orderingBoost do (same 0.15
+ *  cap — this reorders WITHIN a quadrant, it never lets a two-minute chore outrank a genuinely urgent task
+ *  from another one). The UI-visible ⚡ badge (TaskCard.tsx) is the other half of this — this is the half
+ *  that actually changes where the task lands, not just how it's labeled. */
+export function twoMinuteRuleBoost(task: { firstAction?: { minutes?: number } }): number {
+  return (task.firstAction?.minutes ?? Infinity) <= 2 ? 0.15 : 0;
+}
+
 /** Ranks ready/actionable tasks by a blend of their own urgency/importance score and how soon they're due —
  *  the "what will the student probably act on next" prediction, layered on top of (never replacing) the
  *  existing Eisenhower quadrant/score already on each task. Deliberately simple: recency/deadline-weighted,
