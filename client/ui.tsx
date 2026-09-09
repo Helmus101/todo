@@ -948,6 +948,93 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
         {children}
       </div>
     </div>,
-    document.body,
+    document.body
   );
+}
+
+// Local storage helpers for flashcards and quizzes
+const DECKS_KEY = "otto_local_decks";
+const QUIZZES_KEY = "otto_local_quizzes";
+const ERRORS_KEY = "otto_error_log";
+
+export function saveDeckLocally(deck: TaskFlashcards, taskTitle: string): void {
+  try {
+    const decks = getAllLocalDecks();
+    decks.push({ deck, taskTitle, savedAt: new Date().toISOString() });
+    localStorage.setItem(DECKS_KEY, JSON.stringify(decks));
+  } catch (e) {
+    console.error("Failed to save deck locally:", e);
+  }
+}
+
+export function saveQuizLocally(quiz: TaskQuiz, taskTitle: string): void {
+  try {
+    const quizzes = getAllLocalQuizzes();
+    quizzes.push({ quiz, taskTitle, savedAt: new Date().toISOString() });
+    localStorage.setItem(QUIZZES_KEY, JSON.stringify(quizzes));
+  } catch (e) {
+    console.error("Failed to save quiz locally:", e);
+  }
+}
+
+export function getAllLocalDecks(): Array<{ deck: TaskFlashcards; taskTitle: string; savedAt: string }> {
+  try {
+    const data = localStorage.getItem(DECKS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    console.error("Failed to load decks:", e);
+    return [];
+  }
+}
+
+export function getAllLocalQuizzes(): Array<{ quiz: TaskQuiz; taskTitle: string; savedAt: string }> {
+  try {
+    const data = localStorage.getItem(QUIZZES_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    console.error("Failed to load quizzes:", e);
+    return [];
+  }
+}
+
+// Error logging functions
+export interface ErrorEntry {
+  message: string;
+  timestamp: string;
+  subject?: string;
+  context?: string;
+}
+
+export function pushError(error: ErrorEntry): void {
+  try {
+    const errors = getErrors();
+    errors.push(error);
+    // Keep only last 100 errors
+    if (errors.length > 100) errors.shift();
+    localStorage.setItem(ERRORS_KEY, JSON.stringify(errors));
+  } catch (e) {
+    console.error("Failed to save error:", e);
+  }
+}
+
+export function getErrors(): ErrorEntry[] {
+  try {
+    const data = localStorage.getItem(ERRORS_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    console.error("Failed to load errors:", e);
+    return [];
+  }
+}
+
+export function clearErrors(): void {
+  try {
+    localStorage.removeItem(ERRORS_KEY);
+  } catch (e) {
+    console.error("Failed to clear errors:", e);
+  }
+}
+
+export function errorLogBySubject(subject: string): ErrorEntry[] {
+  return getErrors().filter((e) => e.subject === subject);
 }

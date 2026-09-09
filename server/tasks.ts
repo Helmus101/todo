@@ -725,10 +725,15 @@ export function supplementarySweepDue(profile: Profile, now: Date = new Date()):
 // A real ceiling on PASSIVE AI spend — tasks that start themselves with zero user click (the sweep's own
 // auto-run-top-N, and the kick loop's catch-up for anything the sweep didn't get to). Was 3/day, briefly
 // removed entirely per direct instruction ("it shouldn't have limit on tasks it can execute"), then raised
-// back to a real but much higher ceiling (7/day) per direct instruction again right after — a backlog-heavy
-// day no longer gets stuck behind a low count, but there's still SOME bound on unattended spend independent
-// of the monthly $ budget (which only catches runaway spend after a whole month, not the day it happens).
-const AUTO_RUN_DAILY_CAP = 7;
+// back to 7/day per direct instruction again right after. 7 turned out too low for real usage — a backlog-
+// heavy day (e.g. Pronote's own once-daily "due this week" sweep surfacing several tests/homework at once)
+// left MOST newly-found tasks stuck showing "Otto hasn't prepared this yet" indefinitely, since only 7 of
+// however many were found ever got auto-queued and the rest waited for tomorrow's cap to do the same thing
+// again — reported live as "for all tasks it shows this... just automatically run tasks". Raised again, high
+// enough that a normal day's volume never hits it — this is now a backstop against a genuine runaway/bug
+// case, not a everyday-relevant throttle. The monthly $ budget (overMonthlyBudget) remains the real ongoing
+// cost control; this only ever bounded HOW MANY could start themselves in one day, not how much they cost.
+const AUTO_RUN_DAILY_CAP = 50;
 /** How many more tasks may auto-start today, across every trigger (sweep + kick) combined. 0 once the cap
  *  is hit; resets to the full cap at local midnight. */
 export function autoRunBudgetLeft(profile: Profile, now: Date = new Date()): number {
