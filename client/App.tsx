@@ -1,23 +1,10 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
-import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, isLowGrade, isPeakHourUtc, sortWithinQuadrant, gradesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
-import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
-import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
-import { pushError, getErrors, clearErrors } from "./errorLog.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard } from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, saveDeckLocally, saveQuizLocally, pushError, getAllLocalDecks, getAllLocalQuizzes, getErrors, clearErrors, errorLogBySubject } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
-import { 
-  LayoutDashboard,
-  BookOpen,
-  GraduationCap,
-  AlertTriangle,
-  Settings as SettingsIcon,
-  Menu,
-  X,
-  Wallet
-} from "lucide-react";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
  *  first time it enters the viewport (CSS does the actual animation — see `.reveal`/`.reveal.in` in
@@ -716,7 +703,11 @@ export function App() {
             href="/tasks"
             onClick={() => setSidebarOpen(false)}
           >
-            <LayoutDashboard />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="3" y1="9" x2="21" y2="9"></line>
+              <line x1="9" y1="21" x2="9" y2="9"></line>
+            </svg>
             {status?.language === "en" ? "Tasks" : "Tâches"}
             {live.length > 0 && <span className="sidebar-badge">{live.length}</span>}
           </a>
@@ -725,39 +716,21 @@ export function App() {
             href="/log"
             onClick={() => setSidebarOpen(false)}
           >
-            <BookOpen />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+            </svg>
             {status?.language === "en" ? "Journal" : "Journal"}
-          </a>
-          <a
-            className={`sidebar-item ${route === "study" ? "active" : ""}`}
-            href="/study"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <GraduationCap />
-            {status?.language === "en" ? "Study" : "Réviser"}
-          </a>
-          <a
-            className={`sidebar-item ${route === "errorlog" ? "active" : ""}`}
-            href="/errorlog"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <AlertTriangle />
-            {status?.language === "en" ? "Error log" : "Erreurs"}
-          </a>
-          <a
-            className={`sidebar-item ${route === "finance" ? "active" : ""}`}
-            href="/finance"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <Wallet />
-            {status?.language === "en" ? "Finance" : "Finances"}
           </a>
           <a
             className={`sidebar-item ${route === "settings" ? "active" : ""}`}
             href="/settings"
             onClick={() => setSidebarOpen(false)}
           >
-            <SettingsIcon />
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
             {status?.language === "en" ? "Settings" : "Réglages"}
           </a>
         </nav>
