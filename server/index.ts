@@ -15,7 +15,7 @@ import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "./store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
-import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost } from "./patterns.ts";
+import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -709,7 +709,13 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       const orderingState = await loadBanditState(req.session.user!, "ordering");
       const orderingArm = chooseArm(ORDERING_ARMS, orderingState, orderingKey).arm.id;
       const subjectFreq = subjectFrequency(live);
-      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, orderingArm, subjectFreq);
+      // Weak-subject nudge (patterns.ts's weakSubjectBoost) — same "what did you get wrong lately" signal
+      // already shown in Settings' "Otto has noticed" panel, but until now never actually fed back into
+      // anything: it was computed, displayed, and never touched the dashboard it was describing. Always-on
+      // (unlike orderingBoost's arms, which are a bandit EXPERIMENT), since struggling with a subject is a
+      // real, unconditional reason to see that subject's tasks a little sooner, not something to A/B test.
+      const weakSubjects = predictWeakSubjects(aggregateSubjectSignals(req.session.tasks));
+      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects);
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; } }
     } catch {
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
@@ -1252,7 +1258,10 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   if (!task || !quiz) { res.status(404).json({ error: "Quiz not found — it may have already changed elsewhere." }); return; }
   quiz.attempts = [...(quiz.attempts || []), { at: new Date().toISOString(), score, total, ...(wrong?.length ? { wrong } : {}) }].slice(-QUIZ_ATTEMPT_CAP);
   task.updatedAt = new Date().toISOString();
-  if (req.session.profile) req.session.profile.lastTutorActivityAt = new Date().toISOString();
+  // Every other activity site (flashcard review, chat, journal save) feeds bumpActivityHour — a quiz attempt
+  // is exactly the same kind of "the student is actively working right now" signal, but was missing here,
+  // leaving a real gap in the "when is this student actually active" pattern (predictNextEngagement).
+  if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "quiz_attempt_score_ratio", score / total, task.source || "n/a");
   await commit(req);
   res.json(req.session.tasks || []);
@@ -1291,6 +1300,7 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
   const correct = practiceAnswerMatches(answer, problem.answer);
   problem.attempt = { answer, correct, at: new Date().toISOString() };
   task.updatedAt = new Date().toISOString();
+  if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "practice_problem_attempted", 1);
   void recordMetric(req.session.user!, "practice_problem_correct", correct ? 1 : 0);
   await commit(req);
