@@ -663,40 +663,30 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .addrow .addinput { flex: 1; }
 .grade-num { flex: none !important; width: 84px; }
 
-/* ─── Task list — grouped plain rows, not stacked cards ──────────────────────
-   Reversed from an earlier "elevated card" redesign (border + shadow + hover-lift per row) back to a
-   flat grouped list — hierarchy comes from spacing/typography/a quiet hover tint instead of a box around
-   every single row, the same convention Settings' .set-row/.modal-row and .done-row already use. A card
-   is for a genuinely distinct object (the dashboard rail panel, the TaskHero spotlight); an ordinary task
-   row in a list of many is not one. */
+/* ─── Task list — Notion-like block-style rows ──────────────────────────────
+   Block-based design like Notion: clean, minimal, with drag handles and subtle hover states.
+   Hierarchy comes from spacing/typography rather than borders/shadows. */
 .list {
   background: transparent;
   border: none;
   border-radius: 0;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 2px;
 }
 .card {
   position: relative;
-  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-4) var(--space-4) 22px; min-height: 54px;
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); min-height: 48px;
   background: transparent;
   border: none;
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   /* One calm group fade, not a per-row cascade — a visibly staggered entrance is exactly the kind of
      "look how much is happening" motion that reads as busy rather than polished (see Settings' own
      single section fade, which this now matches). */
   animation: cardIn var(--duration-slow) var(--ease) backwards;
-  transition: background var(--duration-base) var(--ease);
+  transition: background var(--duration-fast) var(--ease);
 }
-.card + .card { border-top: 1px solid var(--line-soft); }
-/* Scoped to real hover (mouse/trackpad) ONLY — this is very likely the actual live-confirmed "tasks won't
-   open on iPhone" bug. iOS Safari applies :hover styles on touchDOWN (a long-documented WebKit quirk), so
-   an unscoped rule here would shift visual state between finger-down and finger-up on iOS Safari. `hover:
-   hover` is the codebase's own established pattern for this class of problem (see `hover: none` nearby). */
-@media (hover: hover) {
-  .card:hover { background: var(--hover-wash); }
-}
+.card + .card { margin-top: 1px; }
 /* Once the list has shown once, later re-renders replay faster and without the stagger — it's an update,
    not a fresh reveal. */
 .list.settled .card { animation-duration: 0.18s; animation-delay: 0s; }
@@ -3804,6 +3794,9 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   color: var(--accent);
   font-size: var(--text-sm);
 }
+.sm-material-add { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line-soft); }
+.sm-material-add-link { display: flex; gap: var(--space-2); }
+.sm-material-add-link input { flex: 1; min-width: 0; }
 .sm-tools-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

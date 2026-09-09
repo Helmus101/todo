@@ -1075,7 +1075,18 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // the job re-checks against a freshly loaded CLOUD profile and can disagree (another device just paused
     // it, or budget ticked over between the click and the drain). Surface it as the same honest error.
     const skipNote = typeof job.output?.note === "string" && job.output.note.startsWith("skipped:") ? job.output.note : null;
-    if (skipNote) { res.status(403).json({ error: skipNote.includes("budget") ? BUDGET_MSG : "AI is paused — resume it in Settings to run this." }); return; }
+    if (skipNote) {
+      // Used to hardcode "AI is paused" for EVERY skip reason other than budget — so a "Run now" click on a
+      // task that was actually already run (needs_review, no steps left) claimed the AI was paused, which
+      // was both false and pointed the user at the wrong fix (Settings) for a task that didn't need one.
+      // Map each real skip reason to its own honest message instead of guessing.
+      const msg = skipNote.includes("budget") ? BUDGET_MSG
+        : /AI paused/i.test(skipNote) ? "AI is paused — resume it in Settings to run this."
+        : /already executed|already handled/i.test(skipNote) ? "Otto's already run this one — nothing left to run."
+        : /waiting for the user's Retry/i.test(skipNote) ? "This task failed before — use Retry instead of Run now."
+        : "Couldn't run this right now — try again in a moment.";
+      res.status(403).json({ error: msg }); return;
+    }
     res.json(t);
   } catch (e: any) {
     console.error(`[tasks] ${type} error for task`, id, ":", e);
@@ -1415,6 +1426,19 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   try {
     const result = await generateDailyStudyCards(text, req.session.profile, flashcardArmId);
     if (result) addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
+    // Carry forward cards still gotten wrong (Leitner box 1) from OTHER days into today's fresh deck — see
+    // carryOverWeakCards' own comment. Without this, a card's own day's deck is the only place it ever gets
+    // re-tested, so getting it wrong once and never reopening that day again meant it was simply never seen
+    // again (the weekly summary only weights toward it, doesn't guarantee it survives until week's end).
+    if (result) {
+      const priorDays = list.filter((x) => x.source === "studylog" && x.id !== t!.id && x.logDate && DATE_RE.test(x.logDate));
+      const carried = tasks.carryOverWeakCards(priorDays);
+      if (carried.length) {
+        const existingFronts = new Set(result.deck.cards.map((c) => c.front.trim().toLowerCase()));
+        const toAdd = carried.filter((c) => !existingFronts.has(c.front.trim().toLowerCase()));
+        if (toAdd.length) result.deck.cards = [...toAdd, ...result.deck.cards];
+      }
+    }
     t.flashcards = result ? [result.deck] : [];
     if (result) void recordMetric(req.session.user!, "flashcard_deck_created", result.deck.cards.length, "daily");
     // No quiz from the daily call any more (see generateDailyStudyCards's own comment) — leave t.quizzes
