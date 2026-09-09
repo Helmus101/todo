@@ -17,7 +17,7 @@ import { BookOpen } from "lucide-react";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
-  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal, useNotify,
+  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
 } from "./ui.tsx";
 
 /**
@@ -1073,13 +1073,14 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
 
 /* ─────────────────────────────── the tutor ─────────────────────────────── */
 
-function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, verySlow, onSend, inputRef, endRef, onOpenNote, onOpenDeck, onOpenQuiz }: {
+function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, inputRef, endRef, onOpenNote, onOpenDeck, onOpenQuiz }: {
   task: WebTask; input: string; setInput: (v: string) => void; sending: boolean; error: string | null;
   pendingMsg: string | null; slow: boolean; verySlow: boolean; onSend: () => void;
   inputRef: MutableRefObject<HTMLTextAreaElement | null>; endRef: MutableRefObject<HTMLDivElement | null>;
   onOpenNote: (id: string) => void; onOpenDeck: (id: string) => void; onOpenQuiz: (id: string) => void;
 }) {
   const L = useLang();
+  const thinkingWord = useThinkingWord(sending);
   return (
     <section className="task-chat">
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>
@@ -1126,8 +1127,10 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, slow, ver
         {sending ? (
           <div className="chat-msg chat-assistant chat-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
             <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
-            {verySlow ? <span className="typing-slow">{L("il prépare peut-être quelque chose…", "might be putting something together…")}</span>
-              : slow ? <span className="typing-slow">{L("il réfléchit encore…", "still thinking…")}</span> : null}
+            {/* Cycling word (see useThinkingWord, ui.tsx) replaces the old static "still thinking…"/"might
+                be putting something together…" text — it already reads as "still actively working" since
+                it keeps changing every ~1.4s, so it doesn't need a second static line stacked under it. */}
+            {thinkingWord ? <span className="typing-slow">{thinkingWord}…</span> : null}
           </div>
         ) : null}
         <div ref={endRef} />

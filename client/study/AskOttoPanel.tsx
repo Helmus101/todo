@@ -1,6 +1,6 @@
 import { useRef, useEffect } from "react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText } from "../ui.tsx";
+import { renderChatText, useThinkingWord } from "../ui.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -25,11 +25,12 @@ interface AskOttoPanelProps {
 // "chat" artifact (ChatArtifact.tsx → ArtifactCanvas.tsx) rather than docked to a fixed side panel like the
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
-  task, currentStep, input, setInput, sending, error, pendingMsg, slow, verySlow, onSend,
+  task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
   onOpenNote, onOpenDeck, onOpenQuiz,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const thinkingWord = useThinkingWord(sending);
   // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
   // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
   // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a
@@ -80,8 +81,11 @@ export function AskOttoPanel({
         {sending ? (
           <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label="Otto is thinking">
             <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
-            {verySlow ? <span className="sm-typing-slow">might be putting something together…</span>
-              : slow ? <span className="sm-typing-slow">still thinking…</span> : null}
+            {/* The cycling word itself already reads as "still actively working" (it keeps changing), so it
+                replaces the old static "still thinking…"/"might be putting something together…" text
+                entirely rather than stacking both — verySlow still extends the interval-checking useEffect
+                lifetime the same as before, just no longer needs its own separate line. */}
+            {thinkingWord ? <span className="sm-typing-slow">{thinkingWord}…</span> : null}
           </div>
         ) : null}
         <div ref={endRef} />

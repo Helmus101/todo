@@ -31,6 +31,46 @@ export type Notify = (msg: string, kind?: "info" | "error") => void;
 export const NotifyContext = createContext<Notify>(() => {});
 export function useNotify(): Notify { return useContext(NotifyContext); }
 
+// Chat "thinking" loading words — cosmetic, not a translated string (see L()'s pattern elsewhere): these
+// stay in English in both languages, the same way a lot of AI products let a flourish like this be its own
+// small bit of brand voice rather than forcing every locale through it. Deliberately not deduped despite a
+// couple of repeats in the source list (e.g. "Synthesizing"/"Elaborating"/"Extrapolating" appear twice) —
+// harmless, and pruning them isn't worth diverging from exactly what was asked for.
+const THINKING_WORDS = [
+  "Conceptualizing", "Formulating", "Synthesizing", "Deliberating", "Deconstructing", "Architecting",
+  "Constructing", "Elaborating", "Iterating", "Refining", "Rationalizing", "Extrapolating", "Hypothesizing",
+  "Evaluating", "Interpreting", "Correlating", "Contextualizing", "Disambiguating", "Devising", "Engineering",
+  "Orchestrating", "Optimizing", "Calibrating", "Modeling", "Simulating", "Projecting", "Deriving",
+  "Inferring", "Deducing", "Reasoning", "Reconciling", "Integrating", "Aggregating", "Distilling",
+  "Abstracting", "Generalizing", "Particularizing", "Systematizing", "Structuring", "Organizing", "Mapping",
+  "Sequencing", "Prioritizing", "Decomposing", "Parsing", "Classifying", "Categorizing", "Assessing",
+  "Scrutinizing", "Investigating", "Examining", "Interrogating", "Validating", "Verifying", "Corroborating",
+  "Cross-referencing", "Triangulating", "Benchmarking", "Quantifying", "Calculating", "Computing",
+  "Resolving", "Discerning", "Identifying", "Isolating", "Extracting", "Consolidating",
+  "Reconceptualizing", "Recontextualizing", "Reconstructing", "Reconfiguring", "Recalibrating",
+  "Reassessing", "Reinterpreting", "Reorganizing", "Prototyping", "Developing", "Designing", "Inventing",
+  "Innovating", "Elaborating", "Materializing", "Operationalizing", "Formalizing", "Codifying",
+  "Articulating", "Crystallizing", "Distinguishing", "Synthesizing", "Converging", "Reconciling",
+  "Extrapolating", "Extrapolating implications", "Evaluating alternatives", "Constructing a framework",
+  "Establishing relationships", "Generating hypotheses", "Refining the model", "Resolving inconsistencies",
+  "Finalizing the synthesis",
+];
+/** Cycles through THINKING_WORDS at a fixed interval while `active` — one shared hook so every chat surface
+ *  (TaskCard.tsx's TaskChat, AskOttoPanel.tsx) shows the same "Otto is working" vibe instead of each
+ *  reimplementing its own timer. Starts at a random offset each time it activates so two chats open at once
+ *  (or the same chat across two messages) don't visibly march in lockstep. Returns null while inactive so
+ *  callers can render nothing/fall back to a plain "…" instead of a stale leftover word. */
+export function useThinkingWord(active: boolean, intervalMs = 1400): string | null {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    setI(Math.floor(Math.random() * THINKING_WORDS.length));
+    const id = setInterval(() => setI((v) => (v + 1) % THINKING_WORDS.length), intervalMs);
+    return () => clearInterval(id);
+  }, [active, intervalMs]);
+  return active ? THINKING_WORDS[i] : null;
+}
+
 /** Today as a bare "YYYY-MM-DD" — for comparing against a milestone's targetDate (same bare-string
  *  convention as server/workload.ts's BARE_DATE check, so this never drifts across a timezone). */
 export const todayIso = (): string => new Date().toISOString().slice(0, 10);
