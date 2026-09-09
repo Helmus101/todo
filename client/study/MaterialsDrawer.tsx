@@ -67,7 +67,7 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
             ref={fileInputRef}
             type="file"
             multiple
-            accept="application/pdf,image/*,.doc,.docx,.txt"
+            accept="application/pdf,image/*,.doc,.docx,.txt,.heic,.heif"
             style={{ display: "none" }}
             onChange={(e) => { if (e.target.files?.length) onAddFiles(e.target.files); e.target.value = ""; }}
           />

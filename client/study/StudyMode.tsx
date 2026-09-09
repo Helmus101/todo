@@ -517,7 +517,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   const addMaterial = useCallback((file: File) => {
     if (!env) return;
     const objectUrl = URL.createObjectURL(file);
-    const type: StudyMaterial["type"] = file.type === "application/pdf" ? "pdf" : file.type.startsWith("image/") ? "image" : "document";
+    // Same fallback as StudySetup.tsx's handleFiles — file.type comes back empty for some formats a phone
+    // camera actually produces (HEIC/HEIF especially), so a pure MIME check would misfile those as a
+    // generic "document" and lose the image viewer.
+    const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg|heic|heif|tiff?|avif)$/i.test(file.name);
+    const type: StudyMaterial["type"] = file.type === "application/pdf" ? "pdf" : isImage ? "image" : "document";
     const mat: StudyMaterial = { id: crypto.randomUUID(), label: file.name, type, objectUrl, source: "upload", size: file.size };
     updateEnv({ materials: [...env.materials, mat] });
     void api.recordMetric("study_material_added", 1, type);

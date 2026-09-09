@@ -173,8 +173,11 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
     if (!files) return;
     Array.from(files).forEach(file => {
       const objectUrl = URL.createObjectURL(file);
-      const type: StudyMaterial["type"] = file.type === "application/pdf" ? "pdf" :
-        file.type.startsWith("image/") ? "image" : "document";
+      // file.type is unreliable for some formats a phone camera actually produces (HEIC/HEIF especially —
+      // several browsers report an empty MIME string for it rather than "image/heic") — fall back to the
+      // extension so those don't silently get filed as a generic "document" and lose the image viewer.
+      const isImage = file.type.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg|heic|heif|tiff?|avif)$/i.test(file.name);
+      const type: StudyMaterial["type"] = file.type === "application/pdf" ? "pdf" : isImage ? "image" : "document";
       const mat: StudyMaterial = {
         id: crypto.randomUUID(),
         label: file.name,
@@ -284,7 +287,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.png,.jpg,.jpeg,.gif,.webp"
+            accept="application/pdf,image/*,.doc,.docx,.ppt,.pptx,.txt,.heic,.heif"
             style={{ display: "none" }}
             onChange={e => handleFiles(e.target.files)}
           />
