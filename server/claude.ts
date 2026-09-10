@@ -1862,14 +1862,18 @@ export async function generateDailyPracticeProblem(logText: string, profile?: Pr
           `The student's log entry below MAY cover math/physics/science. If it genuinely does, write ONE real ` +
           `practice problem (a calculation, an equation to solve, a short applied problem) on THOSE actual ` +
           `themes, calibrated to their year/grade level above. This is FREE-RESPONSE, not multiple choice — the ` +
-          `student will type their own answer, so: "answer" must be the single correct final answer in its ` +
-          `simplest normal form (a number, an expression, a short phrase) — not a worked solution, not a ` +
-          `sentence explaining it, just the answer itself, since it's checked by comparison. "format" is a ` +
-          `short note on what the typed answer should look like — units, decimal places, simplification — AND ` +
-          `which plain-text symbols to use for anything not on a normal keyboard (e.g. "^" for an exponent, ` +
-          `"sqrt(x)" for a square root, "pi", "x_1" for a subscript, "->" for a reaction arrow), so the student ` +
-          `knows how to actually type it. If the entry has NO real math/physics/science content, or you cannot ` +
-          `write a genuine problem from it, output {"problem": null}.\n\n` +
+          `student will type their own answer, so: "answer" must be JUST THE BARE NUMBER in its simplest normal ` +
+          `form (e.g. "84", "3.5", "-2") — NO unit attached to it (not "84 m", not "3.5 s"), same convention as ` +
+          `an SAT/digital-exam grid-in answer: the number alone is what's graded, a unit is never required or ` +
+          `expected. If the quantity genuinely can't be reduced to one bare number (a short expression, a ` +
+          `word/phrase answer), that's fine — just never pad a numeric answer with its unit. Not a worked ` +
+          `solution, not a sentence explaining it, just the answer itself, since it's checked by comparison. ` +
+          `"format" is a short note on what the typed answer should look like — decimal places, simplification, ` +
+          `and explicitly REMIND the student they don't need to type the unit — AND which plain-text symbols to ` +
+          `use for anything not on a normal keyboard (e.g. "^" for an exponent, "sqrt(x)" for a square root, ` +
+          `"pi", "x_1" for a subscript, "->" for a reaction arrow), so the student knows how to actually type ` +
+          `it. If the entry has NO real math/physics/science content, or you cannot write a genuine problem ` +
+          `from it, output {"problem": null}.\n\n` +
           `Return ONLY this JSON: {"problem": {"problem": "...", "answer": "...", "format": "..."} | null}.` },
         { role: "user", content: `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""` },
       ],
