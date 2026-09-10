@@ -39,7 +39,7 @@ interface ArtifactCanvasProps {
   chat?: {
     currentStep: { text: string } | undefined;
     input: string; setInput: (v: string) => void;
-    sending: boolean; error: string | null; pendingMsg: string | null; slow: boolean; verySlow: boolean;
+    sending: boolean; error: string | null; pendingMsg: string | null;
     onSend: () => void;
     onOpenNote: (id: string, title: string) => void;
     onOpenDeck: (id: string, title: string) => void;

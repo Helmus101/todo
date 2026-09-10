@@ -87,7 +87,10 @@ const CSP = [
   // (CSP violations don't reach the app's own try/catch as an HTTP error; the browser just refuses the fetch).
   // https://*.plaid.com: Link's own network calls during the bank-login flow (sandbox.plaid.com etc) — the
   // student's bank credentials go straight to Plaid over this, never through Otto's own server at all.
-  "connect-src 'self' https://freedictionaryapi.com https://*.plaid.com",
+  // https://*.ingest.*.sentry.io: client-side Sentry (main.tsx) reports errors straight from the browser —
+  // this was missing here while vercel.json's copy of this CSP (the one actually served on Vercel) already
+  // had it, so client error reporting was silently CSP-blocked on the self-hosted/Docker path only.
+  "connect-src 'self' https://freedictionaryapi.com https://*.plaid.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io",
   // Study Mode embeds several things in iframes: a Spotify playlist/album/track widget (client/study/
   // spotify.ts, no OAuth needed), a Google Doc, a YouTube video, and — critically — the student's own
   // uploaded PDFs, which load from a same-page blob: URL (StudySetup's upload flow). Once frame-src is set

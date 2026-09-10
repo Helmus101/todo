@@ -220,14 +220,6 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [pendingMsg, setPendingMsg] = useState<string | null>(null);
-  const [chatSlow, setChatSlow] = useState(false);
-  const [chatVerySlow, setChatVerySlow] = useState(false);
-  useEffect(() => {
-    if (!chatSending) { setChatSlow(false); setChatVerySlow(false); return; }
-    const id1 = setTimeout(() => setChatSlow(true), 6000);
-    const id2 = setTimeout(() => setChatVerySlow(true), 15000);
-    return () => { clearTimeout(id1); clearTimeout(id2); };
-  }, [chatSending]);
   const [saveIndicator, setSaveIndicator] = useState<"saved" | "saving" | "">("");
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Chrome fades to reduce clutter while the student is actually working (reported live: "feels crowded")
@@ -962,7 +954,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
           backgroundImageUrl={backgroundUrl}
           chat={{
             currentStep, input: chatInput, setInput: setChatInput, sending: chatSending, error: chatError,
-            pendingMsg, slow: chatSlow, verySlow: chatVerySlow, onSend: sendChat,
+            pendingMsg, onSend: sendChat,
             onOpenNote: (id, title) => openArtifactByKind("note", id, title),
             onOpenDeck: (id, title) => openArtifactByKind("deck", id, title),
             onOpenQuiz: (id, title) => openArtifactByKind("quiz", id, title),

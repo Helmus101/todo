@@ -9,8 +9,6 @@ interface ChatArtifactProps {
   sending: boolean;
   error: string | null;
   pendingMsg: string | null;
-  slow: boolean;
-  verySlow: boolean;
   onSend: () => void;
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;

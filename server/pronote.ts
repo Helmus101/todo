@@ -35,8 +35,6 @@ import { loadState, saveState, type StoredPronote } from "./store.ts";
 import { credentialEncryptionConfigured } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
 
-export const PRONOTE_KIND = { STUDENT: pronote.AccountKind.STUDENT, PARENT: pronote.AccountKind.PARENT } as const;
-
 // pawnote (the unofficial Pronote client this file wraps — see the module doc comment above) talks to a
 // real school's own server, which has no uptime/latency guarantee at all — a slow or hanging school portal
 // had no ceiling here, unlike server/websearch.ts's DuckDuckGo call which already timed out at 9s. A LOGICAL
@@ -258,13 +256,10 @@ export interface PronoteHomeworkItem { id: string; subject: string; description:
 // should already be starting on (a long essay, a project) — widened so nothing due within ~3 weeks is
 // silently invisible to Otto. Urgency/importance still scale with proximity in classify (claude.ts), so
 // a far-off deadline doesn't crowd out what's actually due soon.
-// How far ahead pronoteHomework() pulls not-yet-done homework. Not the same window the AI classifier's
-// forceWeekCoverage safety net (tasks.ts) guarantees a task for — that's deliberately narrower
-// (WEEK_COVERAGE_DAYS, 7 days): something due 3 weeks out is still visible/read here, but doesn't
-// necessarily get a task card until it's closer.
-export const HOMEWORK_DAYS_AHEAD = 21;
-
-/** Homework due in the next `daysAhead` days, not yet marked done. */
+/** Homework due in the next `daysAhead` days (default 21), not yet marked done. Not the same window the AI
+ *  classifier's forceWeekCoverage safety net (tasks.ts) guarantees a task for — that's deliberately
+ *  narrower (WEEK_COVERAGE_DAYS, 7 days): something due 3 weeks out is still visible/read here, but doesn't
+ *  necessarily get a task card until it's closer. */
 // Pronote's assignment `description` is genuinely HTML (the school's own rich-text editor output) — e.g.
 // `<div>Exercices n° : &quot;...&quot; <br> - Rédigez...</div>` — but every downstream consumer of this
 // field (sourceDetail on WebTask, the "Instructions" panel, the AI prompt itself) treats it as plain text.
@@ -289,7 +284,7 @@ export function stripHtml(html: string): string {
     .replace(/&lt;/g, "<").replace(/&gt;/g, ">");
 }
 
-export async function pronoteHomework(email: string, daysAhead = HOMEWORK_DAYS_AHEAD): Promise<PronoteHomeworkItem[]> {
+export async function pronoteHomework(email: string, daysAhead = 21): Promise<PronoteHomeworkItem[]> {
   const out = await withPronoteSession(email, async (session) => {
     const now = new Date();
     const end = new Date(now.getTime() + daysAhead * 86_400_000);

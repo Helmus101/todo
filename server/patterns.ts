@@ -9,7 +9,6 @@
  * store.ts elsewhere in this codebase.
  */
 import type { Profile, WebTask } from "../shared/types.ts";
-import { deadlineEpoch } from "../shared/types.ts";
 
 /** This student's most likely (weekday, hour) to engage next, from the 7x24 grid — or null when there isn't
  *  enough history to trust yet (same cold-start posture as learnedProductiveHour). `minTotal` mirrors that
@@ -161,18 +160,4 @@ export function weakSubjectBoost(task: { sourceSubject?: string }, weakSubjects:
  *  that actually changes where the task lands, not just how it's labeled. */
 export function twoMinuteRuleBoost(task: { firstAction?: { minutes?: number } }): number {
   return (task.firstAction?.minutes ?? Infinity) <= 2 ? 0.15 : 0;
-}
-
-/** Ranks ready/actionable tasks by a blend of their own urgency/importance score and how soon they're due —
- *  the "what will the student probably act on next" prediction, layered on top of (never replacing) the
- *  existing Eisenhower quadrant/score already on each task. Deliberately simple: recency/deadline-weighted,
- *  no learned weights — the same reasoning as everywhere else in this layer (interpretable over clever). */
-export function predictNextTasks(tasks: WebTask[], weakSubjects: string[] = [], now: Date = new Date()): WebTask[] {
-  const scored = tasks.map((t) => {
-    const dueMs = deadlineEpoch(t.when, now);
-    const dueSoonBoost = Number.isFinite(dueMs) ? Math.max(0, 1 - (dueMs - now.getTime()) / (7 * 86_400_000)) * 0.3 : 0;
-    const score = (t.score || 0) + dueSoonBoost + weakSubjectBoost(t, weakSubjects);
-    return { task: t, score };
-  });
-  return scored.sort((a, b) => b.score - a.score).map((s) => s.task);
 }

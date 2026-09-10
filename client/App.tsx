@@ -1448,15 +1448,10 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   );
 }
 
-/** Self-reported per-subject grades (Pronote's read API doesn't expose grades) — feeds profileBlock() so
- *  Otto weighs a weak subject more heavily than the deadline alone would suggest. Simple add/edit/remove
- *  list, same pattern as ProfileEditor's fact lists. */
-
 /** Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test sync, for a student
- *  whose school doesn't use it (most IB/international schools). Same add/remove pattern as GradesEditor
- *  right above it; feeds ExamCountdown/WeekLoad via GET /api/pronote/tests and /api/workload merging
- *  manualExams in server-side, so this is the ENTIRE client-side surface needed — no other component
- *  needs to know these two data sources exist. */
+ *  whose school doesn't use it (most IB/international schools). Feeds ExamCountdown/WeekLoad via GET
+ *  /api/pronote/tests and /api/workload merging manualExams server-side, so this is the ENTIRE client-side
+ *  surface needed — no other component needs to know this data source exists. */
 function ExamsEditor({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
   const L = useLang();
   const notify = useNotify();
@@ -1470,7 +1465,7 @@ function ExamsEditor({ profile, onChanged }: { profile: Profile | null; onChange
     catch (e: any) { notify(e?.message || L("Impossible d'ajouter cet examen.", "Couldn't add that exam."), "error"); }
   };
   return (
-    <div className="grades-editor">
+    <div className="exams-editor">
       <p className="settings-hint">{L("Pas de Pronote ? Ajoute tes examens ici — ils comptent comme les autres.", "No Pronote? Add exams here — they count just like the rest.")}</p>
       {exams.length > 0 && (
         <ul className="grade-list">

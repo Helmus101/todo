@@ -1115,17 +1115,6 @@ export function reject(list: WebTask[], id: string): void {
   if (t) { t.status = "ready"; t.synthesis = undefined; t.steps = undefined; t.links = undefined; t.autoRan = false; t.updatedAt = new Date().toISOString(); }
 }
 
-/** Mark a step done/undone (a manual step the user did, or after auto-do). */
-export function setStepDone(list: WebTask[], id: string, index: number, done: boolean, result?: string): void {
-  const t = list.find((x) => x.id === id);
-  const step = t?.steps?.[index];
-  if (!step) return;
-  step.done = done;
-  step.doneAt = done ? new Date().toISOString() : undefined;
-  if (result !== undefined) step.result = result;
-  t!.updatedAt = new Date().toISOString();
-}
-
 /**
  * Auto-do ONE automatable step: a focused agent run scoped to that step. The agent does the reversible work
  * itself via the connected apps and marks the step done with a short result. (URL-open steps are handled on

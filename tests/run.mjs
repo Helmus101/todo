@@ -7,10 +7,10 @@ import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtif
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
-import { computeWorkload, isPileUp, lightestDay } from "../server/workload.ts";
+import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml } from "../server/pronote.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
-import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, predictNextTasks, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
+import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
 let pass = 0, fail = 0;
 const check = (name, cond) => { cond ? pass++ : (fail++, console.log("  FAIL:", name)); };
@@ -729,7 +729,6 @@ check("low-grade subject's test costs more than a normal one", testDay.items.fin
 check("the 2-test day is flagged as a pile-up", isPileUp(testDay, wl1.days) === true);
 const quietDay = wl1.days.find((d) => d.items.length === 0);
 check("an empty day is never a pile-up", !quietDay || isPileUp(quietDay, wl1.days) === false);
-check("lightestDay excludes the given date and picks the lowest-effort remaining day", lightestDay(wl1.days, testDay.date) !== testDay.date);
 const wlOutside = computeWorkload({ homework: [{ id: "h2", subject: "SES", description: "x", deadline: wlIso(20), done: false }], tests: [], tasks: [], now: WL_NOW });
 check("items past the 7-day window are dropped", wlOutside.days.every((d) => d.items.length === 0));
 
@@ -1415,15 +1414,10 @@ section("server/patterns.ts — pattern recognition (predict the student's next 
   check("aggregates flashcard review correct/seen across cards for a subject", maths?.attempts === 6 && Math.abs((maths?.correctRate || 0) - 3 / 6) < 1e-9);
   check("uses only the LATEST quiz attempt, not a sum across attempts", histoire?.attempts === 10 && histoire?.correctRate === 0.9);
 
-  // weakSubjectBoost / predictNextTasks
+  // weakSubjectBoost
   check("boosts a task in a weak subject", weakSubjectBoost({ sourceSubject: "Maths" }, ["Maths"]) > 0);
   check("no boost for a subject not flagged weak", weakSubjectBoost({ sourceSubject: "Anglais" }, ["Maths"]) === 0);
   check("no boost for a task with no subject at all", weakSubjectBoost({}, ["Maths"]) === 0);
-  const ranked = predictNextTasks(
-    [{ id: "a", score: 0.5, sourceSubject: "Anglais" }, { id: "b", score: 0.5, sourceSubject: "Maths" }],
-    ["Maths"],
-  );
-  check("predictNextTasks ranks the weak-subject task first when base scores tie", ranked[0].id === "b");
 
   // twoMinuteRuleBoost — GTD's two-minute rule
   check("boosts a task whose smallest first action is 2 minutes or less", twoMinuteRuleBoost({ firstAction: { minutes: 2 } }) > 0);

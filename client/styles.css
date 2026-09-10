@@ -254,10 +254,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   box-shadow: var(--shadow-pop); padding: 32px; max-width: 400px;
   display: flex; flex-direction: column; gap: var(--space-3); align-items: center;
 }
-.authcard {
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 24px; display: flex; flex-direction: column; gap: 10px; width: min(360px, 92vw);
-}
 
 /* ─── Topbar ───────────────────────────────────────────────────────────────── */
 /* min-height: 100vh alone is sized to the viewport with mobile browser chrome COLLAPSED — taller than
@@ -661,7 +657,6 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .addinput.sm { height: 34px; font-size: 13px; }
 .addrow { display: flex; gap: var(--space-2); }
 .addrow .addinput { flex: 1; }
-.grade-num { flex: none !important; width: 84px; }
 
 /* ─── Task list — grouped plain rows, not stacked cards ──────────────────────
    Reversed from an earlier "elevated card" redesign (border + shadow + hover-lift per row) back to a
@@ -1560,10 +1555,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .profile-list .x:hover, .memory-list .x:hover, .grade-list .x:hover { color: var(--warn); background: var(--bg-2); }
 .profile-list .x:active, .memory-list .x:active, .grade-list .x:active { transform: scale(0.85); }
-.grade-average { display: flex; align-items: baseline; justify-content: space-between; padding: 10px 12px; margin: 4px 0 10px; border-radius: var(--radius); background: var(--bg-2); }
-.grade-average-label { font-size: var(--text-sm); color: var(--ink-2); font-weight: var(--weight-medium); }
-.grade-average-value { font-family: var(--mono, ui-monospace, monospace); font-size: 16px; font-weight: var(--weight-semibold); }
-.grade-average.low .grade-average-value { color: var(--accent); }
 .errorlog-addform { display: flex; flex-direction: column; gap: var(--space-2); max-width: 560px; margin-top: var(--space-3); }
 .errorlog-groups { display: flex; flex-direction: column; gap: var(--space-2); }
 .errorlog-group { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
@@ -1578,32 +1569,8 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .grade-row { padding: 9px 0; }
 .grade-row + .grade-row { border-top: 1px solid var(--line-soft); }
 .grade-row-top { display: flex; align-items: center; gap: var(--space-2); margin-bottom: 5px; }
-.grade-row-toggle { width: 100%; background: none; border: none; padding: 0; cursor: pointer; font: inherit; color: inherit; text-align: left; }
-.grade-row-toggle .caret { transition: transform var(--duration-base) var(--ease); }
-.grade-row-toggle .caret.open { transform: rotate(90deg); }
-.grade-row-body { animation: fadeIn 0.16s var(--ease); }
 .grade-subject { font-size: var(--text-base); font-weight: var(--weight-medium); flex: 1; }
 .grade-value { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; color: var(--ink-2); }
-.grade-count { font-family: inherit; color: var(--ink-3); }
-.grade-bar { height: 4px; border-radius: 2px; background: var(--line-soft); overflow: hidden; }
-.grade-bar-fill { height: 100%; border-radius: 2px; transition: width var(--duration-base) var(--ease); }
-/* The weakest subjects get the accent (draws the eye, same "needs attention" language as chip-attention
-   elsewhere); everything else stays muted grey — no red/amber/green semantic colors, matching the rest
-   of the app's monochrome-plus-one-accent palette. */
-.grade-bar-fill { background: var(--ink-3); }
-.grade-bar-fill.low { background: var(--accent); }
-/* Individual grades behind a subject's average — only shown once expanded, so the default view stays a
-   scannable one-line-per-subject list. */
-.grade-entries { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px dashed var(--line-soft); display: flex; flex-direction: column; gap: 5px; }
-.grade-entry { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
-.grade-entry-value { font-family: var(--mono, ui-monospace, monospace); color: var(--ink); }
-.grade-entry-meta { color: var(--ink-3); flex: 1; }
-/* The one place a low average turns into an action, not just a color — same accent-as-call-to-action
-   pattern as the hero's primary button, kept quiet (small text + xs ghost button) so it reads as a
-   gentle nudge, not an alarm. */
-.grade-nudge { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--accent-soft); font-size: 12px; color: var(--ink-2); }
-.grade-scale-sep { color: var(--ink-3); font-size: 13px; }
-.grade-scale { width: 46px; flex: none; }
 .forget-row { display: flex; align-items: center; gap: 10px; margin-top: var(--space-3); }
 
 /* ─── Onboarding overlay ───────────────────────────────────────────────────── */
@@ -1798,24 +1765,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .feature + .feature { border-top: 1px solid var(--line-soft); }
 .feature h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); letter-spacing: -0.01em; margin-bottom: 3px; }
 .feature p { font-size: var(--text-base); color: var(--ink-2); line-height: 1.6; }
-
-/* Second product visual — a mock of the actual task list. */
-.landing-tasks {
-  margin-top: 26px; background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--radius); box-shadow: var(--shadow-pop); padding: 6px 18px;
-}
-.lt-row { display: flex; align-items: center; gap: 14px; padding: 15px 4px; }
-.lt-row + .lt-row { border-top: 1px solid var(--line-soft); }
-.lt-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #fff; }
-.lt-dot.need { background: var(--accent); }
-.lt-dot.done { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
-.lt-dot.check { background: var(--ink-3); font-size: 9px; }
-.lt-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.lt-title { font-size: 14.5px; font-weight: 560; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lt-sub { font-size: var(--text-sm); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lt-chip { flex: none; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; padding: 3px 9px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
-.lt-when { flex: none; font-size: 12px; color: var(--ink-3); }
-.lt-row.is-done .lt-title { text-decoration: line-through; color: var(--ink-3); }
 
 /* Outcomes — concrete "what you get" rows. */
 .outcomes { display: flex; flex-direction: column; margin-top: var(--space-1); }
@@ -2013,16 +1962,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .hero h1 { font-family: var(--display); font-size: clamp(2.2rem, 5vw, 3.6rem); font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; max-width: 720px; }
 .hero-sub { font-size: 17px; color: var(--ink-2); max-width: 580px; line-height: 1.55; }
 .hero-cta { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
-.hero-proof { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-3); margin-top: var(--space-3); }
-
-.features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; margin: 40px 0; }
-.feat-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; text-align: left; }
-.feat-icon { font-size: var(--text-2xl); margin-bottom: 10px; }
-.feat-card h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); margin-bottom: 6px; }
-.feat-card p { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
-
-.philosophy-section { text-align: center; padding: 40px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 40px; }
-.philosophy-section h2 { font-family: var(--display); font-size: 22px; font-weight: 700; margin-bottom: var(--space-2); }
 
 /* ─── Study Mode Styling ───────────────────────────────────────────────────── */
 .study-mode {
@@ -2665,111 +2604,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   line-height: 1.5;
 }
 
-/* Audio panel styling */
-.audio-panel {
-  position: fixed;
-  bottom: 80px;
-  right: 24px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop);
-  z-index: 1002;
-  min-width: 280px;
-  overflow: hidden;
-}
-
-.audio-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-2);
-}
-
-.audio-header h3 {
-  font-family: var(--display);
-  font-size: var(--text-base);
-  font-weight: var(--weight-semibold);
-  color: var(--ink);
-  margin: 0;
-}
-
-.audio-types {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-}
-
-.audio-type-btn {
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--ink);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: all var(--duration-fast) var(--ease);
-  text-align: left;
-}
-
-.audio-type-btn:hover {
-  background: var(--bg-2);
-}
-
-.audio-type-btn.active {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-.volume-control {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px 16px 16px;
-}
-
-.volume-slider {
-  flex: 1;
-  cursor: pointer;
-}
-
-.volume-label {
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-  min-width: 40px;
-  text-align: right;
-}
-
-.volume-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--accent);
-  cursor: pointer;
-}
-
-.volume-slider::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--accent);
-  cursor: pointer;
-  border: none;
-}
-
-.volume-label {
-  font-size: var(--text-xs);
-  color: var(--ink-2);
-  font-family: var(--mono);
-  min-width: 40px;
-}
-
 /* Full-screen materials drawer */
 .materials-fullscreen {
   width: 100%;
@@ -2986,206 +2820,6 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   font-family: var(--mono);
   opacity: 0.6;
   pointer-events: none;
-}
-
-/* Command Palette */
-.command-palette-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 120px;
-  z-index: 1004;
-}
-
-.command-palette {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  width: 100%;
-  max-width: 500px;
-  box-shadow: var(--shadow-pop);
-  overflow: hidden;
-}
-
-.command-input {
-  width: 100%;
-  padding: 16px 20px;
-  border: none;
-  border-bottom: 1px solid var(--line);
-  font-size: var(--text-lg);
-  font-family: var(--sans);
-  background: var(--bg);
-  color: var(--ink);
-}
-
-.command-input:focus {
-  outline: none;
-}
-
-.command-list {
-  max-height: 300px;
-  overflow-y: auto;
-  padding: 8px 0;
-}
-
-.command-item {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 20px;
-  border: none;
-  background: transparent;
-  color: var(--ink);
-  font-size: var(--text-base);
-  font-family: var(--sans);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease);
-}
-
-.command-item:hover {
-  background: var(--bg-2);
-}
-
-.command-label {
-  text-align: left;
-}
-
-.command-shortcut {
-  font-family: var(--mono);
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-  background: var(--bg-2);
-  padding: 4px 8px;
-  border-radius: var(--radius-xs);
-}
-
-.command-empty {
-  padding: 20px;
-  text-align: center;
-  color: var(--ink-3);
-  font-size: var(--text-base);
-}
-
-.command-footer {
-  display: flex;
-  justify-content: space-between;
-  padding: 12px 20px;
-  border-top: 1px solid var(--line);
-  background: var(--bg-2);
-}
-
-.command-hint {
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-  font-family: var(--mono);
-}
-
-/* AI Contextual Menu */
-.ai-contextual-menu {
-  position: fixed;
-  bottom: 80px;
-  right: 24px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop);
-  z-index: 1005;
-  min-width: 280px;
-  overflow: hidden;
-}
-
-.ai-menu-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-2);
-}
-
-.ai-menu-header h3 {
-  font-family: var(--display);
-  font-size: var(--text-base);
-  font-weight: var(--weight-semibold);
-  color: var(--ink);
-  margin: 0;
-}
-
-.ai-menu-options {
-  display: flex;
-  flex-direction: column;
-  padding: 8px 0;
-}
-
-.ai-menu-item {
-  width: 100%;
-  padding: 12px 16px;
-  border: none;
-  background: transparent;
-  color: var(--ink);
-  font-size: var(--text-base);
-  font-family: var(--sans);
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease);
-}
-
-.ai-menu-item:hover {
-  background: var(--bg-2);
-}
-
-.ai-menu-item:active {
-  background: var(--accent-soft);
-}
-
-/* Browser toolbar */
-.browser-toolbar {
-  display: flex;
-  gap: 8px;
-  padding: 8px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
-  align-items: center;
-}
-
-.browser-nav-btn {
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--ink);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition: all var(--duration-fast) var(--ease);
-}
-
-.browser-nav-btn:hover:not(:disabled) {
-  background: var(--bg-2);
-}
-
-.browser-nav-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.browser-url-input {
-  flex: 1;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--ink);
-  font-size: var(--text-sm);
-  font-family: var(--sans);
-}
-
-.browser-url-input:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 
 /* Workspace tabs */

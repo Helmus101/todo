@@ -102,14 +102,6 @@ export function computeWorkload(input: {
   return { days };
 }
 
-/** The lightest day in the window (excluding one date, e.g. the day a task is currently on) — where a
- *  movable task should be suggested to move to when its current day is overloaded. */
-export function lightestDay(days: WorkloadDay[], excludeDate?: string): string | undefined {
-  const candidates = days.filter((d) => d.date !== excludeDate);
-  if (!candidates.length) return undefined;
-  return candidates.reduce((a, b) => (b.totalEffort < a.totalEffort ? b : a)).date;
-}
-
 /** A day counts as a pile-up when it's meaningfully heavier than the week's typical BUSY day — the visual
  *  "early warning" signal (no separate notification/AI call needed). Baselined against days that actually
  *  have something due (not the whole week including empty days), since most weeks are mostly empty and a
