@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -894,6 +894,15 @@ check("quotes the teacher's real wording", ab.includes("Exercices 12 à 15 p.87 
 check("carries the subject", ab.includes("Physique-Chimie"));
 check("frames it as never-invent", /never invent/i.test(ab));
 
+section("dueLine — always-shown due-date + server-computed days-until for chat");
+check("empty when there's no due date at all", dueLine(undefined) === "");
+check("empty for an unparseable due date", dueLine("not a date") === "");
+const inThreeDays = new Date(Date.now() + 3 * 86_400_000 + 3600_000).toISOString(); // +1h buffer against midnight flakiness
+check("computes 'in N days' correctly for a future date", /in 3 days/.test(dueLine(inThreeDays)));
+const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+check("flags a past due date as already past", /already past/i.test(dueLine(yesterday)));
+check("tells the model to compute from this, not guess", /do the math from this/i.test(dueLine(inThreeDays)));
+
 // ── Prompt content — pins the academic-research + specificity instructions (house style: trackLine
 // vocabulary above is already tested this same way) ───────────────────────────────────────────────────
 section("PLAN_ONLY_OVERRIDE — academic research guidance");
@@ -1227,6 +1236,11 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   check("a genuinely wrong numeric answer still fails", !practiceAnswerMatches("41", "42"));
   check("a genuinely wrong text answer still fails", !practiceAnswerMatches("London", "Paris"));
   check("empty given answer never matches", !practiceAnswerMatches("", "42"));
+  // Leading-number fallback: a correct number typed without the unit the problem asked for still counts.
+  check("a bare number matches the same number WITH a unit", practiceAnswerMatches("84", "84 m"));
+  check("a number typed with no space before the unit still matches", practiceAnswerMatches("84m", "84 m"));
+  check("still rejects a genuinely wrong number even with matching units on both sides", !practiceAnswerMatches("80 m", "84 m"));
+  check("decimal number without unit matches decimal WITH unit", practiceAnswerMatches("3.5", "3.5 s"));
 }
 
 section("looksLikeStem / makePracticeProblem — daily practice-problem generation gate + validation");

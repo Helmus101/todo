@@ -546,6 +546,23 @@ export function assignmentBlock(t: { sourceSubject?: string; sourceDetail?: stri
     `at what the exercise asks.\n`;
 }
 
+/** This task's own due date, ALWAYS shown when known — unlike assignmentBlock above (which only renders at
+ *  all when the full énoncé text exists), a deadline is worth surfacing even on a bare Pronote test or a
+ *  calendar event with no assignment text attached. The days-until is computed HERE, server-side, rather
+ *  than left for the model to work out from two raw dates — asking an LLM to do its own date arithmetic
+ *  ("today is Tuesday the 9th, due the 18th, so...") is exactly the kind of simple calculation it gets
+ *  wrong often enough to not trust blind; handing it the literal number closes that gap outright. */
+export function dueLine(sourceDue?: string): string {
+  if (!sourceDue) return "";
+  const due = new Date(sourceDue);
+  if (isNaN(due.getTime())) return "";
+  const days = Math.round((due.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000);
+  const when = days === 0 ? "TODAY" : days === 1 ? "TOMORROW" : days === -1 ? "YESTERDAY (already past)"
+    : days < 0 ? `${-days} days ago (already past)` : `in ${days} days`;
+  const dateStr = new Date(sourceDue).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  return `\nTHIS TASK IS DUE: ${dateStr} — ${when}. If they ask how much time they have, do the math from this, not from a guess.\n`;
+}
+
 // Study Mode materials (uploaded PDFs, mainly — see client/study/pdfText.ts) sent along with a chat turn.
 // Capped both per-material and in total: this rides along on EVERY chat message (see chatAboutTask), so an
 // unbounded dump here would be the single biggest line-item in the token budget, not a one-off cost. The
@@ -3865,7 +3882,7 @@ export async function chatAboutTask(
       `few attempts. If it comes up naturally (don't force it into an unrelated reply), acknowledge that ` +
       `genuinely — a tutor who's watched them improve, not one meeting them for the first time.\n`
     : "";
-  const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject) + weakCardLine(task) + styleLine +
+  const sys = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject) + weakCardLine(task) + styleLine +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +

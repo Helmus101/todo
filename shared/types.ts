@@ -971,6 +971,15 @@ export function practiceAnswerMatches(given: string, correct: string): boolean {
   if (g === c) return true;
   const gn = Number(g.replace(/,/g, "")), cn = Number(c.replace(/,/g, ""));
   if (Number.isFinite(gn) && Number.isFinite(cn)) return Math.abs(gn - cn) < 1e-6 * Math.max(1, Math.abs(cn));
+  // Leading-number fallback: makePracticeProblem's own prompt (server/claude.ts) tells the STUDENT to
+  // include a unit ("format" field says so explicitly) and stores the correct answer WITH one too ("84 m") —
+  // but a student who types just the number ("84") has the numerically exact right answer, only missing
+  // the unit string. The plain Number() parse above fails the moment either side has trailing unit text, so
+  // without this a perfectly correct "84" was marked wrong against "84 m". Compares just the leading numeric
+  // token on each side; only reachable when the whole-string parse above didn't already resolve it.
+  const leadingNum = (s: string) => { const m = s.match(/^-?\d+(?:[.,]\d+)?(?:e-?\d+)?/); return m ? Number(m[0].replace(",", ".")) : NaN; };
+  const gln = leadingNum(g), cln = leadingNum(c);
+  if (Number.isFinite(gln) && Number.isFinite(cln)) return Math.abs(gln - cln) < 1e-6 * Math.max(1, Math.abs(cln));
   return false;
 }
 
