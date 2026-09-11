@@ -233,12 +233,15 @@ const sameTask = (a: WebTask, b: WebTask): boolean => {
  */
 export function dedupeTasks(list: WebTask[]): WebTask[] {
   const kept: WebTask[] = [];
+  const when = (t: WebTask) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
+  let matchedByAnchor = false;
   for (const t of list) {
     const ak = normKey(t.anchorKey), link = linkOf(t);
+    matchedByAnchor = false;
     const i = kept.findIndex((k) => {
       const kak = normKey(k.anchorKey);
-      if (!!ak && kak === ak) return true;             // SAME anchor (same thread/event) → dup
-      if (!!link && linkOf(k) === link) return true;   // same source link → dup
+      if (!!ak && kak === ak) { matchedByAnchor = true; return true; }             // SAME anchor (same thread/event) → dup
+      if (!!link && linkOf(k) === link) { matchedByAnchor = true; return true; }   // same source link → dup
       // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER are different real-world items
       // (two distinct emails/events). A genuinely NEW email must not be swallowed into a similarly-titled
       // OLD *handled* task ("refresh finds nothing") — so across distinct anchors, don't let a DONE or
@@ -263,7 +266,31 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       if ((t.source === "manual" || k.source === "manual") && (isHandled(k.status) || isHandled(t.status))) return false;
       return sameTask(k, t);
     });
-    if (i >= 0) kept[i] = carrySource(betterOf(kept[i], t), kept[i], t);
+    if (i >= 0) {
+      // A SAME-ANCHOR/link match is never a coincidence — it's provably the same real-world item, most
+      // often two independent sessions each minting their own fresh id for it (e.g. a studylog day task
+      // created twice because one session's local task list hadn't picked up the other's save yet). Both
+      // are "needs_review" so betterOf's rank-based pick ties and falls back to "keep whichever came first
+      // in this array" — arbitrary insertion order, NOT which copy actually has the content. That silently
+      // discarded a day's freshly-generated flashcards whenever the stale duplicate happened to sort first,
+      // exactly the "flashcards generated, gone after reload" bug. For this unambiguous-same-entity case,
+      // break ties by recency (mirrors mergeTaskLists' per-id merge) and union the study artifacts + keep
+      // whichever side actually has real journal text, instead of ever silently dropping either.
+      if (matchedByAnchor) {
+        const a = kept[i], b = t;
+        const ra = rankStatus(a), rb = rankStatus(b);
+        const winner = rb > ra ? b : rb < ra ? a : (when(b) >= when(a) ? b : a);
+        const loser = winner === a ? b : a;
+        const artifacts = unionStudyArtifacts(winner, loser);
+        const logText = winner.logText?.trim() ? winner.logText : loser.logText;
+        const merged = artifacts || logText !== winner.logText
+          ? { ...winner, ...(artifacts || {}), ...(logText !== winner.logText ? { logText } : {}) }
+          : winner;
+        kept[i] = carrySource(merged, a, b);
+      } else {
+        kept[i] = carrySource(betterOf(kept[i], t), kept[i], t);
+      }
+    }
     else kept.push(t);
   }
   return kept;

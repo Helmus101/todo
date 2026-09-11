@@ -67,6 +67,18 @@ const emailSmith = { ...base, id: "cs2", title: "Email professor Smith about the
 check("same-person different-action tasks do NOT merge", dedupeTasks([callSmith, emailSmith]).length === 2);
 // …same anchor (formatting drift) always merges, regardless of status.
 check("same anchor still merges", dedupeTasks([doneOld, { ...newEmail, anchorKey: "GMAIL_OLD1" }]).length === 1);
+// Same-anchor collision on an EQUAL-rank tie (the studylog day-task shape: two independent sessions each
+// mint a fresh id for the same date because one hadn't picked up the other's save yet) must keep the copy
+// that actually has the content, not whichever happened to be added to the array first — that arbitrary
+// tie-break used to silently discard a day's freshly-generated flashcards on the exact "flashcards
+// generated, then gone after reload" bug.
+const staleDay = { ...base, id: "day-old", title: "2026-09-11", why: "Daily study log — 2026-09-11", source: "studylog", status: "needs_review", anchorKey: "studylog:2026-09-11", logDate: "2026-09-11", logText: "", updatedAt: "2026-09-11T08:00:00.000Z" };
+const freshDay = { ...base, id: "day-new", title: "2026-09-11", why: "Daily study log — 2026-09-11", source: "studylog", status: "needs_review", anchorKey: "studylog:2026-09-11", logDate: "2026-09-11", logText: "Motion graphs & quadratics", flashcards: [{ id: "d1", title: "Physics", cards: [{ front: "f", back: "b" }], createdAt: "2026-09-11T10:00:00.000Z" }], updatedAt: "2026-09-11T10:00:00.000Z" };
+const dayMerged = dedupeTasks([staleDay, freshDay]);
+check("same-anchor tie keeps the copy with flashcards, not just the first one added", dayMerged.length === 1 && dayMerged[0].flashcards?.length === 1);
+check("same-anchor tie keeps the real journal text even if the surviving side's own text is blank", dayMerged.length === 1 && dayMerged[0].logText === "Motion graphs & quadratics");
+const dayMergedReversed = dedupeTasks([freshDay, staleDay]);
+check("same-anchor tie is order-independent", dayMergedReversed.length === 1 && dayMergedReversed[0].flashcards?.length === 1 && dayMergedReversed[0].logText === "Motion graphs & quadratics");
 // …and anchorless title dups still merge (agent-sweep fallback, non-manual source).
 check("anchorless title dup still merges", dedupeTasks([{ ...doneOld, anchorKey: undefined }, { ...newEmail, anchorKey: undefined }]).length === 1);
 // MANUAL tasks are a deliberate user action — fuzzy title similarity must NEVER swallow a fresh manual add
