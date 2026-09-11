@@ -34,6 +34,7 @@ import type { Profile } from "../shared/types.ts";
 import { loadState, saveState, type StoredPronote } from "./store.ts";
 import { credentialEncryptionConfigured } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
+import { connectionStatusesCached, sendSystemEmail } from "./integrations.ts";
 
 // pawnote (the unofficial Pronote client this file wraps — see the module doc comment above) talks to a
 // real school's own server, which has no uptime/latency guarantee at all — a slow or hanging school portal
@@ -204,6 +205,21 @@ async function saveRotatedToken(email: string, rotated: StoredPronote): Promise<
   }
 }
 
+/** Actively tells the student their Pronote session died, instead of leaving it as a passive badge in
+ *  Settings they'd only see if they happened to open that page — every task Otto would otherwise have found
+ *  from Pronote silently stops appearing the moment this happens, so it's worth a real nudge, not a quiet
+ *  UI state. Best-effort and silent-fail like every other system email here: a missing/unconnected Gmail
+ *  account just means no email goes out, never a thrown error back into the discovery pipeline. */
+async function notifyPronoteReconnectNeeded(email: string, profile: Profile): Promise<void> {
+  if (!(await connectionStatusesCached(email, ["gmail"]))["gmail"]) return; // no Gmail, nothing to send through
+  const en = profile.language === "en";
+  const subject = en ? "Otto — reconnect Pronote" : "Otto — reconnecte Pronote";
+  const body = en
+    ? `<p>Your Pronote session expired — Otto can't see your homework or tests until you reconnect.</p><p><a href="${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/settings">Reconnect Pronote →</a></p>`
+    : `<p>Ta session Pronote a expiré — Otto ne peut plus voir tes devoirs ni tes contrôles tant que tu ne te reconnectes pas.</p><p><a href="${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/settings">Se reconnecter à Pronote →</a></p>`;
+  await sendSystemEmail(email, { to: email, subject, body, primaryAccounts: profile.primaryAccounts });
+}
+
 /** Open a fresh Pronote session from the stored token, run `fn`, then persist the ROTATED token (pawnote
  *  issues a new one on every login) before returning — skipping that would lock the next read out. Never
  *  throws; a login/read failure returns undefined and is logged (best-effort, same pattern as the rest of
@@ -228,7 +244,15 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
     // this must never throw on top of the real error being handled below.
     if (e instanceof pronote.SessionExpiredError || e instanceof pronote.BadCredentialsError) {
       const current = await loadState(email).catch(() => undefined);
-      if (current) void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, needsReconnect: true } }).catch(() => {});
+      if (current) {
+        void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, needsReconnect: true } }).catch(() => {});
+        // Direct instruction: don't just leave this as a passive Settings badge the student has to notice on
+        // their own — actively tell them. Only on the FALSE→true transition (stored.needsReconnect was not
+        // already set) so a broken connection doesn't re-email on every single sweep attempt while it stays
+        // broken; the next successful reconnect clears needsReconnect entirely (see the login path above),
+        // so this fires again if it ever breaks a second time, same as the first.
+        if (!stored.needsReconnect) void notifyPronoteReconnectNeeded(email, current.profile).catch(() => {});
+      }
     }
     console.warn("[pronote] session failed:", e?.message || e);
     if (!isExpectedPronoteError(e)) reportError("pronote-session", e, { email });
