@@ -10,7 +10,7 @@ const KEY = "otto-local-decks";
 // Bounded so a very active account's local cache can't grow forever — oldest-saved decks get evicted first.
 const MAX_DECKS = 300;
 
-interface StoredDeck { taskId: string; taskTitle: string; deck: TaskFlashcards; savedAt: string }
+interface StoredDeck { taskId: string; taskTitle: string; deck: TaskFlashcards; savedAt: string; logDate?: string }
 
 function readAll(): Record<string, StoredDeck> {
   try {
@@ -25,14 +25,14 @@ function writeAll(map: Record<string, StoredDeck>): void {
 
 /** Save (or refresh) one deck's local copy — idempotent, cheap to call repeatedly (e.g. on every task-list
  *  update); a deck already saved with identical content is a no-op write. */
-export function saveDeckLocally(taskId: string, taskTitle: string, deck: TaskFlashcards): void {
+export function saveDeckLocally(taskId: string, taskTitle: string, deck: TaskFlashcards, logDate?: string): void {
   if (!deck?.id || !deck.cards?.length) return;
   const map = readAll();
   const existing = map[deck.id];
   // Same content already saved — skip the write (this runs on every task-list change, so most calls are
   // re-saving something unchanged).
-  if (existing && JSON.stringify(existing.deck) === JSON.stringify(deck)) return;
-  map[deck.id] = { taskId, taskTitle, deck, savedAt: new Date().toISOString() };
+  if (existing && JSON.stringify(existing.deck) === JSON.stringify(deck) && existing.logDate === logDate) return;
+  map[deck.id] = { taskId, taskTitle, deck, savedAt: new Date().toISOString(), ...(logDate ? { logDate } : {}) };
   const ids = Object.keys(map);
   if (ids.length > MAX_DECKS) {
     // Evict the oldest-saved entries first (bounded growth, not a strict LRU — good enough for a backup cache).

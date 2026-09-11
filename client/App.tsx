@@ -257,8 +257,9 @@ export function App() {
   // the task list actually changes.
   useEffect(() => {
     for (const t of tasks) {
-      for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck);
-      for (const quiz of t.quizzes || []) saveQuizLocally(t.id, t.title, quiz);
+      const logDate = t.source === "studylog" && t.logDate && !t.logDate.includes(":") ? t.logDate : undefined;
+      for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck, logDate);
+      for (const quiz of t.quizzes || []) saveQuizLocally(t.id, t.title, quiz, logDate);
     }
   }, [tasks]);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
@@ -1562,11 +1563,14 @@ function FlashcardsLibraryPage({ lang, tasks, embedded }: { lang?: "fr" | "en"; 
         <p className="muted small">{L("Pas encore de cartes — elles apparaissent ici dès qu'Otto (ou toi) en crée.", "No flashcards yet — they'll show up here as soon as Otto (or you) creates some.")}</p>
       ) : (
         <div className="list">
-          {decks.map(({ deck, taskTitle, savedAt }) => (
+          {decks.map(({ deck, taskTitle, savedAt, logDate }) => (
             <button key={deck.id} type="button" className="card" onClick={() => setOpenId(deck.id)}>
               <div className="card-text">
                 <div className="card-title">{deck.title}</div>
-                <div className="card-sub">{taskTitle} · {deck.cards.length} {L("cartes", "cards")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}</div>
+                <div className="card-sub">
+                  {logDate ? `${L("Journal du", "Journal entry —")} ${new Date(`${logDate}T00:00:00Z`).toLocaleDateString(en ? "en-GB" : "fr-FR", { timeZone: "UTC" })} · ` : `${taskTitle} · `}
+                  {deck.cards.length} {L("cartes", "cards")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}
+                </div>
               </div>
             </button>
           ))}
@@ -1579,11 +1583,14 @@ function FlashcardsLibraryPage({ lang, tasks, embedded }: { lang?: "fr" | "en"; 
       ) : null}
       {quizzes.length > 0 ? (
         <div className="list">
-          {quizzes.map(({ quiz, taskTitle, savedAt }) => (
+          {quizzes.map(({ quiz, taskTitle, savedAt, logDate }) => (
             <button key={quiz.id} type="button" className="card" onClick={() => setOpenQuizId(quiz.id)}>
               <div className="card-text">
                 <div className="card-title">{quiz.title}</div>
-                <div className="card-sub">{taskTitle} · {quiz.questions.length} {L("questions", "questions")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}</div>
+                <div className="card-sub">
+                  {logDate ? `${L("Journal du", "Journal entry —")} ${new Date(`${logDate}T00:00:00Z`).toLocaleDateString(en ? "en-GB" : "fr-FR", { timeZone: "UTC" })} · ` : `${taskTitle} · `}
+                  {quiz.questions.length} {L("questions", "questions")} · {new Date(savedAt).toLocaleDateString(en ? "en-GB" : "fr-FR")}
+                </div>
               </div>
             </button>
           ))}
@@ -2009,8 +2016,8 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
   useEffect(() => {
     for (const d of days) {
       if (!d) continue;
-      for (const deck of d.flashcards || []) saveDeckLocally(d.id, d.title, deck);
-      for (const quiz of d.quizzes || []) saveQuizLocally(d.id, d.title, quiz);
+      for (const deck of d.flashcards || []) saveDeckLocally(d.id, d.title, deck, d.logDate);
+      for (const quiz of d.quizzes || []) saveQuizLocally(d.id, d.title, quiz, d.logDate);
     }
     if (summary) {
       for (const deck of summary.flashcards || []) saveDeckLocally(summary.id, summary.title, deck);

@@ -7,7 +7,7 @@ import type { TaskQuiz } from "../shared/types.ts";
 const KEY = "otto-local-quizzes";
 const MAX_QUIZZES = 300;
 
-interface StoredQuiz { taskId: string; taskTitle: string; quiz: TaskQuiz; savedAt: string }
+interface StoredQuiz { taskId: string; taskTitle: string; quiz: TaskQuiz; savedAt: string; logDate?: string }
 
 function readAll(): Record<string, StoredQuiz> {
   try {
@@ -21,12 +21,12 @@ function writeAll(map: Record<string, StoredQuiz>): void {
 }
 
 /** Save (or refresh) one quiz's local copy — idempotent, cheap to call repeatedly. */
-export function saveQuizLocally(taskId: string, taskTitle: string, quiz: TaskQuiz): void {
+export function saveQuizLocally(taskId: string, taskTitle: string, quiz: TaskQuiz, logDate?: string): void {
   if (!quiz?.id || !quiz.questions?.length) return;
   const map = readAll();
   const existing = map[quiz.id];
-  if (existing && JSON.stringify(existing.quiz) === JSON.stringify(quiz)) return;
-  map[quiz.id] = { taskId, taskTitle, quiz, savedAt: new Date().toISOString() };
+  if (existing && JSON.stringify(existing.quiz) === JSON.stringify(quiz) && existing.logDate === logDate) return;
+  map[quiz.id] = { taskId, taskTitle, quiz, savedAt: new Date().toISOString(), ...(logDate ? { logDate } : {}) };
   const ids = Object.keys(map);
   if (ids.length > MAX_QUIZZES) {
     for (const id of ids.sort((a, b) => Date.parse(map[a].savedAt) - Date.parse(map[b].savedAt)).slice(0, ids.length - MAX_QUIZZES)) delete map[id];

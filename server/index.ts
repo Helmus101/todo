@@ -1248,7 +1248,7 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   task.updatedAt = new Date().toISOString();
   if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "flashcard_review", correct ? 1 : 0, task.source || "n/a");
-  await commit(req);
+  await commit(req, { awaitCloud: true });
   // "How often you go back and redo flashcards" signal — a card seen several times with a low correct-rate
   // is exactly the "you might need to study this material more" case from the personalization ask. 3+ seen
   // avoids flagging normal early misses; the correct-rate itself is the metric value (bucketed by the
@@ -1278,7 +1278,7 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   // leaving a real gap in the "when is this student actually active" pattern (predictNextEngagement).
   if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "quiz_attempt_score_ratio", score / total, task.source || "n/a");
-  await commit(req);
+  await commit(req, { awaitCloud: true });
   res.json(req.session.tasks || []);
 }));
 // A student's OWN note, written by hand right after a quiz/flashcard mistake — "what I got wrong and what
@@ -1297,7 +1297,7 @@ app.post("/api/tasks/:id/notes", requireAuth, rateLimit(60, 60_000), ah(async (r
   task.notes = [...(task.notes || []), note].slice(-tasks.ARTIFACT_CAP);
   task.updatedAt = new Date().toISOString();
   void recordMetric(req.session.user!, "chat_artifact_created", 1, "manual_note");
-  await commit(req);
+  await commit(req, { awaitCloud: true });
   res.json(req.session.tasks || []);
 }));
 // Check a typed answer against a daily practice problem (see DailyPracticeProblem/practiceAnswerMatches in
@@ -1318,7 +1318,7 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
   if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "practice_problem_attempted", 1);
   void recordMetric(req.session.user!, "practice_problem_correct", correct ? 1 : 0);
-  await commit(req);
+  await commit(req, { awaitCloud: true });
   res.json(req.session.tasks || []);
 }));
 // Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
