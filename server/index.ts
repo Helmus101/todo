@@ -1503,7 +1503,21 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
   }
   const list = req.session.tasks || [];
   const dayTasks = dates.map((d) => list.find((x) => x.source === "studylog" && x.logDate === d)).filter((x): x is WebTask => !!x?.logText?.trim());
-  if (!dayTasks.length) { res.status(400).json({ error: "No entries logged this week yet." }); return; }
+  if (!dayTasks.length) {
+    // Self-diagnosing error: this exact "No entries logged this week yet" message was reported live despite
+    // the student having saved an entry every day — with no server log access on their end, the error
+    // message itself is the only way to see what actually happened. Lists every studylog day task that DOES
+    // exist server-side (whatever its real logDate is) against what this request was actually looking for,
+    // so a genuine date-key mismatch (the real suspect — e.g. a stale/incorrectly-computed weekStart) is
+    // visible directly in the toast instead of requiring DevTools access the student may not have/know how
+    // to use. Not a permanent UX feature — the underlying mismatch found is what actually gets fixed.
+    const allLogs = list.filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:"));
+    const found = allLogs.length
+      ? allLogs.map((x) => `${x.logDate}${x.logText?.trim() ? "" : " (empty)"}`).sort().join(", ")
+      : "none at all";
+    res.status(400).json({ error: `No entries logged this week yet. (Looked for ${dates.join(", ")} — entries that actually exist: ${found})` });
+    return;
+  }
   const boxBreakdown = tasks.leitnerBoxBreakdown(dayTasks);
   try {
     const result = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), boxBreakdown, req.session.profile);
