@@ -179,18 +179,21 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
   const email = req.session.user;
   const localTasks = req.session.tasks || [];
   const localProfile = req.session.profile || emptyProfile();
-  const syncCloud = async () => {
+  const syncCloud = async (throwOnError?: boolean) => {
     try {
       const current = await loadState(email);
       const mergedTasks = mergeTasks(current.tasks || [], localTasks);
       const mergedProfile = mergeProfiles(current.profile || emptyProfile(), localProfile);
-      await saveState(email, { profile: mergedProfile, tasks: mergedTasks });
-    } catch {
-      await saveState(email, { profile: localProfile, tasks: localTasks }).catch(() => {});
+      await saveState(email, { profile: mergedProfile, tasks: mergedTasks }, { throwOnError });
+    } catch (e) {
+      reportError("commit-sync-cloud-merge", e);
+      // Fallback write on merge failure — same throwOnError contract, so an `awaitCloud` caller still finds
+      // out if this ALSO fails, instead of the request looking like a success while nothing was saved.
+      await saveState(email, { profile: localProfile, tasks: localTasks }, { throwOnError });
     }
   };
-  if (opts?.awaitCloud) await syncCloud();
-  else void syncCloud();
+  if (opts?.awaitCloud) await syncCloud(true);
+  else void syncCloud().catch((e) => reportError("commit-sync-cloud-detached", e));
 };
 
 // Simple synchronous task-mutating routes (confirm/reject/dismiss/step-done) used to just `find()` in

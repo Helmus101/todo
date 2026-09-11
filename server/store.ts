@@ -244,7 +244,7 @@ export async function loadState(email?: string): Promise<AccountState> {
 
 /** Persist an account's profile + tasks + Google/Pronote connection (best-effort; never throws into the
  *  request path). Transient network failures are retried so a blip doesn't silently drop a write. */
-export async function saveState(email: string | undefined, state: AccountState): Promise<void> {
+export async function saveState(email: string | undefined, state: AccountState, opts?: { throwOnError?: boolean }): Promise<void> {
   if (!client || !email) return;
   const row: Record<string, unknown> = { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], updated_at: new Date().toISOString() };
   // Only touch google/pronote when the CALLER explicitly manages that connection. Most callers (commit()
@@ -265,7 +265,17 @@ export async function saveState(email: string | undefined, state: AccountState):
   stateCache.delete(email);
   const { error } = await withRetry("save", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
-  if (error) { console.warn("[store] save failed:", error.message); reportError("save-state", error, { email }); }
+  if (error) {
+    console.warn("[store] save failed:", error.message);
+    reportError("save-state", error, { email });
+    // By default this is deliberately swallowed — most callers are fire-and-forget background syncs where
+    // throwing would crash an unrelated request. But a caller that actually AWAITS this write to guarantee
+    // data landed (commit()'s `awaitCloud` path) needs to know it silently failed — without this, a real
+    // Supabase error here (past withRetry's retries) looked IDENTICAL to success: 200 response, nothing
+    // actually saved, gone on the next reload. That was reported live as journal entries + flashcards
+    // vanishing right after being created.
+    if (opts?.throwOnError) throw new Error(error.message || "Cloud save failed.");
+  }
 }
 
 // ── Personalization bandit (see server/bandit.ts for the pure Thompson-Sampling math) ──────────────────
