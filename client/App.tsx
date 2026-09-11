@@ -1955,19 +1955,14 @@ function loadMonthCache(month: string): { weeks: WebTask[]; summary: WebTask | n
 function saveMonthCache(month: string, data: { weeks: WebTask[]; summary: WebTask | null }): void {
   try { localStorage.setItem(STUDYLOG_MONTH_CACHE_PREFIX + month, JSON.stringify(data)); } catch { /* best-effort */ }
 }
-// A fresh server response for one day/summary slot REPLACES the cached one — except when the fresh side
-// has lost its deck/quiz entirely while the cached side still has one. That specific shape (server says
-// "nothing here" for a slot the browser just watched get generated) is what made a freshly-generated deck
-// visually vanish on reload: a stale read hitting a session/cache race, a cross-device merge that hasn't
-// caught up yet, anything — is far more likely than the deck having been genuinely deleted, since deletion
-// isn't a feature this page has. Preferring "whichever side actually has content" makes the Journal page
-// itself resilient to that class of bug, on top of the Flashcards tab's separate permanent local backup.
-function richerTask(fresh: WebTask | null, cached: WebTask | null): WebTask | null {
-  const freshHasContent = !!(fresh?.flashcards?.length || fresh?.quizzes?.length || fresh?.practiceProblem);
-  const cachedHasContent = !!(cached?.flashcards?.length || cached?.quizzes?.length || cached?.practiceProblem);
-  if (!freshHasContent && cachedHasContent) return cached;
-  return fresh;
-}
+// REVERSAL: this used to prefer "whichever side actually has content" (server vs. local cache) on the
+// theory that a server response briefly showing no deck was more likely a stale read/merge race than a
+// real absence. In practice this masked genuine data loss instead: a day whose save never actually finished
+// writing to the cloud (see commit()'s awaitCloud fix) still showed its deck forever via the local cache,
+// with no way to tell "safely stored" from "only exists in this one browser" — reported live as a deck
+// visible in the Journal while the week-summary route (which only ever reads real server state) insisted
+// the day had nothing. A successful server response is now trusted outright; the local cache is used ONLY
+// when the fetch itself fails (see load()'s .catch() below), never merged against a response that succeeded.
 
 function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   const L = useLang();
@@ -2033,10 +2028,15 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
     if (cached) { setDays(cached.days); setSummary(cached.summary); setLoaded(true); }
     else setLoaded(false);
     void api.studyLogWeek(m).then((r) => {
-      const mergedDays = r.days.map((d, i) => richerTask(d, cached?.days[i] ?? null));
-      const mergedSummary = richerTask(r.summary, cached?.summary ?? null);
-      setDays(mergedDays); setSummary(mergedSummary); setLoaded(true);
-      saveWeekCache(m, { days: mergedDays, summary: mergedSummary });
+      // A SUCCESSFUL server response is authoritative, full stop — richerTask's "prefer whichever has
+      // content" merge used to run even here, which meant a day the server genuinely has no deck for could
+      // still show a stale LOCAL-ONLY deck left over from an earlier save that looked like it worked
+      // client-side but never actually finished writing to the cloud (reported live: a deck visible on
+      // screen, yet the week-summary route — which only ever reads real server state — insisted the day had
+      // nothing). richerTask stays useful for the .catch() branch below (a genuine fetch failure, where the
+      // cache is the only copy there is at all) — just not here, where server truth already won the race.
+      setDays(r.days); setSummary(r.summary); setLoaded(true);
+      saveWeekCache(m, { days: r.days, summary: r.summary });
     }).catch(() => { if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); } });
   }, [en, notify]);
   useEffect(() => { load(monday); }, [monday, load]);
@@ -2045,9 +2045,10 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
     const cached = loadMonthCache(month);
     if (cached) { setMonthWeeks(cached.weeks); setMonthSummary(cached.summary); }
     void api.studyLogMonth(month).then((r) => {
-      const mergedSummary = richerTask(r.summary, cached?.summary ?? null);
-      setMonthWeeks(r.weeks); setMonthSummary(mergedSummary);
-      saveMonthCache(month, { weeks: r.weeks, summary: mergedSummary });
+      // Same reasoning as the week load above — a successful response is authoritative, never overridden
+      // by a stale local-only cache entry.
+      setMonthWeeks(r.weeks); setMonthSummary(r.summary);
+      saveMonthCache(month, { weeks: r.weeks, summary: r.summary });
     }).catch(() => {});
   }, [month]);
 
