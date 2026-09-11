@@ -1470,6 +1470,13 @@ app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
   if (!DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
   const monday = mondayOf(start);
   const dates = weekdayDates(monday);
+  // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
+  if (req.session.user && cloudEnabled()) {
+    try {
+      const cloud = await loadState(req.session.user);
+      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    } catch { /* best-effort — fall back to whatever the session already has */ }
+  }
   const list = req.session.tasks || [];
   const days = dates.map((d) => list.find((x) => x.source === "studylog" && x.logDate === d) || null);
   const summary = list.find((x) => x.source === "studylog" && x.logDate === `week:${monday}`) || null;
@@ -1483,6 +1490,17 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
   if (!DATE_RE.test(weekStart)) { res.status(400).json({ error: "Invalid date." }); return; }
   const monday = mondayOf(weekStart);
   const dates = weekdayDates(monday);
+  // Reconcile with the cloud copy first — same reasoning as GET /api/tasks's own reload. This route used to
+  // trust ONLY req.session.tasks, unlike mutation routes (findTaskOrReload) which fall back to a fresh cloud
+  // read on a miss — reported live as "No entries logged this week yet" despite every day genuinely having
+  // an entry: a session that hadn't picked up a write from another tab/device/reload had no way to recover
+  // before this, since nothing here ever went back to the cloud to check.
+  if (req.session.user && cloudEnabled()) {
+    try {
+      const cloud = await loadState(req.session.user);
+      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    } catch { /* best-effort — fall back to whatever the session already has */ }
+  }
   const list = req.session.tasks || [];
   const dayTasks = dates.map((d) => list.find((x) => x.source === "studylog" && x.logDate === d)).filter((x): x is WebTask => !!x?.logText?.trim());
   if (!dayTasks.length) { res.status(400).json({ error: "No entries logged this week yet." }); return; }
@@ -1545,6 +1563,13 @@ app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
   const start = String(req.query.start || "");
   if (!MONTH_RE.test(start) && !DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
   const month = monthOf(start);
+  // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
+  if (req.session.user && cloudEnabled()) {
+    try {
+      const cloud = await loadState(req.session.user);
+      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    } catch { /* best-effort — fall back to whatever the session already has */ }
+  }
   const list = req.session.tasks || [];
   const weeks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month)
     .sort((a, b) => a.logDate!.localeCompare(b.logDate!));
@@ -1558,6 +1583,13 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
   const monthStart = String(req.body?.monthStart || "");
   if (!MONTH_RE.test(monthStart) && !DATE_RE.test(monthStart)) { res.status(400).json({ error: "Invalid date." }); return; }
   const month = monthOf(monthStart);
+  // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
+  if (req.session.user && cloudEnabled()) {
+    try {
+      const cloud = await loadState(req.session.user);
+      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+    } catch { /* best-effort — fall back to whatever the session already has */ }
+  }
   const list = req.session.tasks || [];
   const weekTasks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month && x.flashcards?.length);
   if (!weekTasks.length) { res.status(400).json({ error: "No weekly summaries yet this month." }); return; }

@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
@@ -982,6 +982,15 @@ section("forceWeekCoverage — everything due this week gets a task, no matter w
   // become a task automatically, not just the classifier's/quality-bar's picks within the next week.
   const wideOut = forceWeekCoverage(candidates, ["pronote:hw2"], { now, daysAhead: 28 });
   check("a wider daysAhead override covers an item beyond the default 7-day window", wideOut.some((t) => t.anchorKey === "pronote:hw3"));
+}
+
+section("nothingToPrepare — a bare Pronote test placeholder never gets auto-run");
+{
+  check("a bare Pronote test (no sourceDetail) has nothing to prepare", nothingToPrepare({ source: "pronote", sourceDetail: undefined }));
+  check("a bare Pronote test with whitespace-only sourceDetail still counts as nothing to prepare", nothingToPrepare({ source: "pronote", sourceDetail: "   " }));
+  check("real Pronote homework WITH an énoncé is fine to auto-run", !nothingToPrepare({ source: "pronote", sourceDetail: "Exercices 12 à 15 p.87" }));
+  check("a non-Pronote source is never flagged, even with no sourceDetail", !nothingToPrepare({ source: "gmail", sourceDetail: undefined }));
+  check("a manual task with no source at all is never flagged", !nothingToPrepare({ sourceDetail: undefined }));
 }
 
 // The client is split across App.tsx / TaskCard.tsx / ui.tsx, which import each other. An ES-module import

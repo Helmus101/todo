@@ -174,7 +174,7 @@ async function processSweep(job: store.Job): Promise<string> {
   // Server-side auto-run: queue execution for the new ready tasks RIGHT IN THE SWEEP (top by score,
   // bounded) — the browser no longer decides what runs; it only displays state and kicks the drain.
   const found = next.filter((t) => !before.has(t.id) && !isHandled(t.status));
-  const toRun = found.filter((t) => canonStatus(t.status) === "ready").sort((a, b) => b.score - a.score).slice(0, Math.max(0, autoRunBudget - autoRunSpent));
+  const toRun = found.filter((t) => canonStatus(t.status) === "ready" && !tasks.nothingToPrepare(t)).sort((a, b) => b.score - a.score).slice(0, Math.max(0, autoRunBudget - autoRunSpent));
   for (const t of toRun) t.status = "queued";
   autoRunSpent += toRun.length;
   tasks.recordAutoRuns(profile, autoRunSpent, new Date());
@@ -625,7 +625,7 @@ export async function cronTick(): Promise<{ users: number; enqueued: number; pro
       const candidates = tasksToEnqueue(list, activeIds);
       const orphaned = candidates.filter((t) => canonStatus(t.status) === "queued");
       let readyBudget = tasks.autoRunBudgetLeft(profile, now);
-      const readyPicks = candidates.filter((t) => canonStatus(t.status) === "ready").slice(0, readyBudget);
+      const readyPicks = candidates.filter((t) => canonStatus(t.status) === "ready" && !tasks.nothingToPrepare(t)).slice(0, readyBudget);
       const toEnqueueNow = [...orphaned, ...readyPicks];
       for (const t of toEnqueueNow) { await store.enqueueJob(email, "execute_task", t.id); enqueued++; }
       if (readyPicks.length) {

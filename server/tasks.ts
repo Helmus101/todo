@@ -607,6 +607,19 @@ export function plaidBillsToTasks(
  *  tasks.ts ↔ workload.ts pulling into each other over one constant. */
 const WEEK_COVERAGE_DAYS = 7;
 
+/** A Pronote-sourced task with genuinely nothing for Otto to prepare from — a bare test placeholder
+ *  (pronoteTestsToItems' snippet is deliberately just "Test on {date}", pronote's timetable has no
+ *  description field at all) rather than real homework text. Auto-running one of these produces exactly
+ *  the generic "revoir le cours" filler the tutoring prompt itself calls out as a failure mode elsewhere —
+ *  there's no actual content to build a fiche/plan from, just a subject name and a date. Direct instruction:
+ *  don't auto-prepare these (still show them — the deadline itself is genuinely useful — just don't spend an
+ *  AI run on one automatically; a manual "Run now" click still works if the student wants Otto to try anyway).
+ *  Homework tasks (which DO carry real énoncé text as sourceDetail, see forceWeekCoverage/pronoteToItems)
+ *  are unaffected — this only ever matches the content-less test case. */
+export function nothingToPrepare(t: { source?: string; sourceDetail?: string }): boolean {
+  return t.source === "pronote" && !t.sourceDetail?.trim();
+}
+
 /**
  * Guarantee: every Pronote homework/test due within WEEK_COVERAGE_DAYS (7) gets a task card, independent of
  * the AI classifier's judgment. The classifier (classifyCandidates) is DELIBERATELY selective — right for a
