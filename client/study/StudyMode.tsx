@@ -863,6 +863,33 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     }
   }, [chatInput, chatSending, env, task, onTaskUpdate]);
 
+  // ── Task checklist, right from the desk ─────────────────────────────────────
+  // Previously Study Mode could only READ steps (TaskDetailDrawer/TaskInfoArtifact were plain text) — ticking
+  // one off or marking the task done meant leaving the session entirely to go back to the main task list.
+  // Same server calls TaskCard.tsx already uses; the result flows back through the existing onTaskUpdate
+  // prop, which already merges into the app-level task list, so nothing new is needed on that end.
+  const toggleStep = useCallback(async (index: number, done: boolean) => {
+    try {
+      const list = await api.stepDone(task.id, index, done);
+      const updated = list.find((t) => t.id === task.id);
+      if (updated) onTaskUpdate(updated);
+    } catch { /* best-effort — a failed toggle just means the checkbox springs back on next render */ }
+  }, [task.id, onTaskUpdate]);
+  const toggleSubstep = useCallback(async (index: number, subIndex: number, done: boolean) => {
+    try {
+      const list = await api.substepDone(task.id, index, subIndex, done);
+      const updated = list.find((t) => t.id === task.id);
+      if (updated) onTaskUpdate(updated);
+    } catch { /* best-effort */ }
+  }, [task.id, onTaskUpdate]);
+  const completeTask = useCallback(async () => {
+    try {
+      const list = await api.confirm(task.id);
+      const updated = list.find((t) => t.id === task.id);
+      if (updated) onTaskUpdate(updated);
+    } catch { /* best-effort — student can still mark it done from the main task list */ }
+  }, [task.id, onTaskUpdate]);
+
   // ── Format elapsed time ───────────────────────────────────────────────────
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, "0");
@@ -952,6 +979,9 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
           onRemoveArtifact={removeArtifact}
           onNotesChange={(notes) => updateEnv({ notes })}
           onScratchpadChange={(scratchpad) => updateEnv({ scratchpad })}
+          onToggleStep={toggleStep}
+          onToggleSubstep={toggleSubstep}
+          onCompleteTask={completeTask}
           language={language}
           backgroundImageUrl={backgroundUrl}
           chat={{
@@ -965,7 +995,8 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
 
         {/* ── Panels (Layer 2) ── */}
         {openPanel === "task" && (
-          <TaskDetailDrawer task={task} onClose={() => setOpenPanel(null)} />
+          <TaskDetailDrawer task={task} onClose={() => setOpenPanel(null)}
+            onToggleStep={toggleStep} onToggleSubstep={toggleSubstep} onComplete={completeTask} />
         )}
 
         {openPanel === "materials" && (

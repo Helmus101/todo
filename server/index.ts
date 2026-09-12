@@ -13,7 +13,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } f
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "./store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
@@ -519,6 +519,16 @@ app.get("/api/pronote/tests", requireAuth, async (req, res) => {
     res.json({ tests: [...tests.map((t) => ({ subject: t.subject, deadline: t.deadline })), ...manual] });
   } catch { res.json({ tests: manual }); }
 });
+// Opportunistic session-keepalive — see touchPronoteSession's own comment (server/pronote.ts) for why this
+// exists: the daily cron sweep alone leaves a token idle long enough that Pronote's own session TTL can
+// kill it before anything renews it. The client calls this on its normal periodic heartbeat (whenever a
+// connected student actually has the app open); the function itself is gated to at most once per few hours
+// so this adds no real load. Fire-and-forget from the client's point of view — always 200s immediately,
+// since a touch failing here just means "no better off than before," never worse.
+app.post("/api/pronote/touch", requireAuth, rateLimit(10, 60_000), async (req, res) => {
+  void pronoteSvc.touchPronoteSession(req.session.user!).catch(() => {});
+  res.json({ ok: true });
+});
 app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
   try {
     await pronoteSvc.disconnectPronote(req.session.user!);
@@ -769,10 +779,15 @@ app.get("/api/patterns/summary", requireAuth, ah(async (req, res) => {
       bandits[decisionKey] = leading ? { armId: leading.arm.id, confidence: leading.confidence } : null;
     } catch { bandits[decisionKey] = null; }
   }
+  // Study/concentration metrics — same "real, already-computed, best-effort" posture as the bandits above;
+  // a storage hiccup here must never blank out the rest of this summary.
+  let studyMetrics = null;
+  try { studyMetrics = await getStudyMetricsSummary(email); } catch { /* best-effort */ }
   res.json({
     predictedEngagement: predictNextEngagement(profile),
     weakSubjects,
     bandits,
+    studyMetrics,
   });
 }));
 

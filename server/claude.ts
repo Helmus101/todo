@@ -1083,7 +1083,10 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
   const raw = Array.isArray(input?.questions) ? input.questions : [];
   const questions = raw
     .map((item: any) => {
-      const q = String(item?.q || "").trim().slice(0, 300);
+      // 300 chars fit "one clear sentence" (the tool schema's own description) but silently chopped a
+      // passage-based reading-comprehension question mid-word — a full SAT-style passage-plus-question
+      // legitimately runs 400-600+ chars. Raised well above that, same reasoning as `back`'s cap above.
+      const q = String(item?.q || "").trim().slice(0, 1500);
       const correctIdx = Number(item?.correct);
       if (!q || !Array.isArray(item?.options) || !Number.isInteger(correctIdx)) return null;
       // Sanitise options while tracking WHICH one was flagged correct, by identity — not by index. Trimming

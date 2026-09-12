@@ -3,14 +3,19 @@ import { withInlineLinks, stripStrayMarkdown, stripHtml } from "../../ui.tsx";
 
 interface TaskInfoArtifactProps {
   task: WebTask;
+  onToggleStep?: (index: number, done: boolean) => void;
+  onToggleSubstep?: (index: number, subIndex: number, done: boolean) => void;
+  onComplete?: () => void;
 }
 
 // Same content as TaskDetailDrawer.tsx (title/why/instructions/context/links/steps) but as a draggable,
 // resizable desk artifact instead of a fixed sidebar — so a student can keep the task's own instructions
 // and checklist visible ALONGSIDE their notes/PDF/etc rather than having to pop the drawer open and closed.
-export function TaskInfoArtifact({ task }: TaskInfoArtifactProps) {
+// Steps/substeps are real checkboxes and there's a "mark task complete" action, same as the drawer.
+export function TaskInfoArtifact({ task, onToggleStep, onToggleSubstep, onComplete }: TaskInfoArtifactProps) {
   const steps = task.steps || [];
   const doneCount = steps.filter(s => s.done).length;
+  const isHandled = task.status === "done" || task.status === "dismissed";
 
   return (
     <div className="sm-task-artifact-body">
@@ -42,12 +47,21 @@ export function TaskInfoArtifact({ task }: TaskInfoArtifactProps) {
           <ol className="sm-task-detail-steps">
             {steps.map((s, i) => (
               <li key={i} className={s.done ? "done" : ""}>
-                <span className="sm-task-detail-step-mark" aria-hidden="true">{s.done ? "✓" : i + 1}</span>
+                <button type="button" className="sm-task-detail-step-mark" aria-label={s.done ? "Mark step not done" : "Mark step done"}
+                  onClick={() => onToggleStep?.(i, !s.done)} disabled={!onToggleStep}>
+                  {s.done ? "✓" : i + 1}
+                </button>
                 <span>{withInlineLinks(s.text)}</span>
                 {s.substeps?.length ? (
                   <ul className="sm-task-detail-substeps">
                     {s.substeps.map((sub, si) => (
-                      <li key={si} className={sub.done ? "done" : ""}>{withInlineLinks(sub.text)}</li>
+                      <li key={si} className={sub.done ? "done" : ""}>
+                        <label className="sm-task-detail-substep-label">
+                          <input type="checkbox" checked={!!sub.done} disabled={!onToggleSubstep}
+                            onChange={(e) => onToggleSubstep?.(i, si, e.target.checked)} />
+                          {withInlineLinks(sub.text)}
+                        </label>
+                      </li>
                     ))}
                   </ul>
                 ) : null}
@@ -56,6 +70,11 @@ export function TaskInfoArtifact({ task }: TaskInfoArtifactProps) {
           </ol>
         </div>
       )}
+      {onComplete && !isHandled ? (
+        <button type="button" className="sm-btn sm-btn-primary sm-task-detail-complete" onClick={onComplete}>
+          Mark task complete
+        </button>
+      ) : null}
     </div>
   );
 }

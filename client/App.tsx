@@ -474,7 +474,10 @@ export function App() {
   // list is never stuck waiting for a tab-switch to show up.
   useEffect(() => {
     if (!connected) return;
-    const on = () => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); } };
+    // Opportunistic Pronote keepalive — piggybacks on this same "app is actually open" heartbeat rather
+    // than a new timer; server/pronote.ts's touchPronoteSession gates the real work to at most once per
+    // few hours, so calling this every tick here costs nothing beyond one cheap request.
+    const on = () => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); if (status?.pronoteConnected) void api.pronoteTouch(); } };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
     // A backend-generated task (from cron, another device, or a queued-but-not-auto-run item) is only ever
@@ -491,7 +494,7 @@ export function App() {
     const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 90_000);
     const fullTick = setInterval(on, 5 * 60_000); // periodic budget refresh + cadence-gated sweep check
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
-  }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus]);
+  }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus, status?.pronoteConnected]);
 
   // THE SERVER OWNS EXECUTION. The browser no longer decides what runs — sweeps queue execution jobs
   // server-side, cron drains them offline. While anything is queued/executing, the OPEN client "kicks"
@@ -2317,7 +2320,11 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [showErrorLog, setShowErrorLog] = useState(false);
   useEffect(() => { void api.recordMetric("settings_opened", 1); }, []);
   const [themeBusy, setThemeBusy] = useState(false);
-  const [patterns, setPatterns] = useState<{ predictedEngagement: { weekday: number; hour: number } | null; weakSubjects: string[]; bandits: Record<string, { armId: string; confidence: number } | null> } | null>(null);
+  const [patterns, setPatterns] = useState<{
+    predictedEngagement: { weekday: number; hour: number } | null; weakSubjects: string[];
+    bandits: Record<string, { armId: string; confidence: number } | null>;
+    studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number } | null;
+  } | null>(null);
   useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
   const [errorLog, setErrorLog] = useState(() => getErrors());
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
@@ -2511,6 +2518,48 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                   <li>{L(
                     patterns.bandits.chatstyle.armId === "socratic" ? "Chat avec Otto : tu progresses mieux quand Otto pose des questions plutôt que d'expliquer directement." : "Chat avec Otto : tu progresses mieux avec des exemples résolus en parallèle.",
                     patterns.bandits.chatstyle.armId === "socratic" ? "Chat with Otto: you do best when Otto asks questions rather than explaining directly." : "Chat with Otto: you do best with a parallel worked example.",
+                  )}</li>
+                ) : null}
+              </ul>
+            </span>
+          </div>
+        ) : null}
+        {/* Study & concentration — the aggregate numbers behind the Pomodoro/ambience lines above: how much
+            you've actually studied and how focused those sessions were, not just which cadence works.
+            Sourced from the same recordMetric points Study Mode already sends on every session end
+            (server/store.ts's getStudyMetricsSummary) — real data only, same quiet posture: nothing renders
+            until there's at least one real session in the window. */}
+        {patterns?.studyMetrics && patterns.studyMetrics.totalSessions > 0 ? (
+          <div className="modal-row">
+            <span className="lbl">{L("Étude et concentration", "Study & concentration")}</span>
+            <span className="val settings-hint">
+              <ul className="personalization-list">
+                <li>{L(
+                  `${patterns.studyMetrics.totalSessions} séance${patterns.studyMetrics.totalSessions > 1 ? "s" : ""} de travail sur les ${patterns.studyMetrics.windowDays} derniers jours, pour un total de ${Math.round(patterns.studyMetrics.totalStudySeconds / 60)} min.`,
+                  `${patterns.studyMetrics.totalSessions} study session${patterns.studyMetrics.totalSessions > 1 ? "s" : ""} in the last ${patterns.studyMetrics.windowDays} days, ${Math.round(patterns.studyMetrics.totalStudySeconds / 60)} min total.`,
+                )}</li>
+                {patterns.studyMetrics.avgIdleRatio !== null ? (
+                  <li>{L(
+                    `Temps resté actif pendant les séances : environ ${Math.round((1 - patterns.studyMetrics.avgIdleRatio) * 100)} %.`,
+                    `Time spent actively working during sessions: about ${Math.round((1 - patterns.studyMetrics.avgIdleRatio) * 100)}%.`,
+                  )}</li>
+                ) : null}
+                {patterns.studyMetrics.earlyExitRate !== null && patterns.studyMetrics.earlyExitRate > 0 ? (
+                  <li>{L(
+                    `${Math.round(patterns.studyMetrics.earlyExitRate * 100)} % des séances se sont terminées avant la durée prévue.`,
+                    `${Math.round(patterns.studyMetrics.earlyExitRate * 100)}% of sessions ended before the planned length.`,
+                  )}</li>
+                ) : null}
+                {patterns.studyMetrics.pomodoroCyclesCompleted > 0 ? (
+                  <li>{L(
+                    `${patterns.studyMetrics.pomodoroCyclesCompleted} cycle${patterns.studyMetrics.pomodoroCyclesCompleted > 1 ? "s" : ""} Pomodoro travail/pause terminé${patterns.studyMetrics.pomodoroCyclesCompleted > 1 ? "s" : ""}.`,
+                    `${patterns.studyMetrics.pomodoroCyclesCompleted} completed Pomodoro work/break cycle${patterns.studyMetrics.pomodoroCyclesCompleted > 1 ? "s" : ""}.`,
+                  )}</li>
+                ) : null}
+                {patterns.studyMetrics.totalBreakSeconds > 0 ? (
+                  <li>{L(
+                    `${Math.round(patterns.studyMetrics.totalBreakSeconds / 60)} min de pause au total.`,
+                    `${Math.round(patterns.studyMetrics.totalBreakSeconds / 60)} min of breaks total.`,
                   )}</li>
                 ) : null}
               </ul>

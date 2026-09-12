@@ -103,6 +103,10 @@ export const api = {
   connectPronote: (url: string, username: string, password: string, kind?: number): Promise<{ ok: boolean; error?: string }> =>
     post("/api/integrations/pronote/connect", { url, username, password, kind }).catch((e) => ({ ok: false, error: e?.message || "Couldn't connect." })),
   disconnectPronote: (): Promise<{ ok: boolean }> => post("/api/integrations/pronote/disconnect"),
+  // Opportunistic keepalive — called on the app's normal heartbeat when Pronote is connected (see
+  // server/pronote.ts's touchPronoteSession for why: the daily cron alone leaves the token idle too long).
+  // Fire-and-forget from every caller's point of view; the server itself is what rate-gates the real work.
+  pronoteTouch: (): Promise<{ ok: boolean }> => post("/api/pronote/touch").catch(() => ({ ok: false })),
   // /finance (Plaid) — sandbox-only for now, see server/plaid.ts's own comment.
   plaidStatus: (): Promise<{ connected: boolean; institutionName?: string; configured: boolean }> => req("/api/integrations/plaid/status").then(j),
   plaidLinkToken: (): Promise<{ linkToken: string }> => post("/api/integrations/plaid/link-token"),
@@ -159,6 +163,7 @@ export const api = {
     predictedEngagement: { weekday: number; hour: number; confidence: number } | null;
     weakSubjects: string[];
     bandits: Record<string, { armId: string; confidence: number } | null>;
+    studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number } | null;
   }> =>
     req("/api/patterns/summary").then(j),
   submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number, audioArmId?: string, densityArmId?: string): Promise<{ ok: boolean }> =>

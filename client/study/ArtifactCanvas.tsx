@@ -31,6 +31,11 @@ interface ArtifactCanvasProps {
   onRemoveArtifact: (id: string) => void;
   onNotesChange: (notes: string) => void;
   onScratchpadChange: (s: string) => void;
+  // Threaded down to the "task" artifact (TaskInfoArtifact) so its checklist is a real checklist, not
+  // read-only text — same server-backed handlers StudyMode.tsx already built for TaskDetailDrawer.
+  onToggleStep?: (index: number, done: boolean) => void;
+  onToggleSubstep?: (index: number, subIndex: number, done: boolean) => void;
+  onCompleteTask?: () => void;
   language?: "fr" | "en";
   backgroundImageUrl?: string | null;
   // Ask Otto chat state — still owned/lived in StudyMode.tsx (same as `notes`/`scratchpad` above), just
@@ -51,7 +56,7 @@ interface ArtifactCanvasProps {
 export function ArtifactCanvas({
   artifacts, notes, scratchpad, task, taskId, environmentId,
   onUpdateArtifact, onAddArtifact, onRemoveArtifact,
-  onNotesChange, onScratchpadChange, language = "en", backgroundImageUrl, chat,
+  onNotesChange, onScratchpadChange, onToggleStep, onToggleSubstep, onCompleteTask, language = "en", backgroundImageUrl, chat,
 }: ArtifactCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
@@ -188,7 +193,7 @@ export function ArtifactCanvas({
       case "chat":
         return chat ? <ChatArtifact task={task} {...chat} /> : null;
       case "task":
-        return <TaskInfoArtifact task={task} />;
+        return <TaskInfoArtifact task={task} onToggleStep={onToggleStep} onToggleSubstep={onToggleSubstep} onComplete={onCompleteTask} />;
       default:
         return null;
     }

@@ -853,8 +853,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-face-text { font-size: 18px; line-height: 1.5; max-height: 190px; overflow-y: auto; white-space: pre-wrap; }
 .deck-hint { font-size: 12px; color: var(--ink-3); margin: 12px 0; }
 .deck-acts { display: flex; gap: var(--space-2); justify-content: center; margin-top: var(--space-1); }
-.quiz-mistake-note { margin-top: var(--space-3); text-align: left; }
+.quiz-wrong-review { margin-top: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); max-height: 260px; overflow-y: auto; }
+.quiz-mistake-note { text-align: left; border-top: 1px solid var(--line-soft); padding-top: var(--space-2); }
+.quiz-wrong-review .quiz-mistake-note:first-child { border-top: none; padding-top: 0; }
 .quiz-mistake-note label { display: block; margin-bottom: 6px; }
+.quiz-mistake-q { font-size: var(--text-sm); font-weight: 600; margin-bottom: 6px; }
+.quiz-mistake-saved { font-size: var(--text-sm); color: var(--ink-3); border-top: 1px solid var(--line-soft); padding-top: var(--space-2); margin: 0; }
 .quiz-mistake-textarea {
   width: 100%; resize: vertical; padding: var(--space-2); border: 1px solid var(--line-2);
   border-radius: var(--radius-sm); font-size: var(--text-sm); background: var(--surface-1); color: var(--ink-1);
@@ -3409,11 +3413,17 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .sm-task-detail-step-mark {
   display: flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line);
-  font-size: var(--text-xs); flex: none;
+  font-size: var(--text-xs); flex: none; background: var(--surface); color: inherit;
+  cursor: pointer; padding: 0;
 }
+.sm-task-detail-step-mark:disabled { cursor: default; }
+.sm-task-detail-step-mark:not(:disabled):hover { border-color: var(--accent); }
 .sm-task-detail-steps > li.done .sm-task-detail-step-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
 .sm-task-detail-substeps { list-style: none; margin-top: var(--space-2); padding-left: var(--space-3); display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--ink-2); }
 .sm-task-detail-substeps li.done { text-decoration: line-through; color: var(--ink-3); }
+.sm-task-detail-substep-label { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; }
+.sm-task-detail-substep-label input[type="checkbox"] { flex: none; }
+.sm-task-detail-complete { display: block; width: 100%; margin-top: var(--space-2); }
 .sm-material-list,
 .sm-setup-materials {
   list-style: none;

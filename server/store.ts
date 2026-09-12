@@ -31,6 +31,11 @@ export interface StoredPronote { url: string; username: string; kind: number; to
    *  list with no signal to reconnect. Cleared on the next successful session (see runPronoteSessionOnce)
    *  and on a fresh connectPronote(). */
   needsReconnect?: boolean;
+  /** Last time a session was opened for ANY reason (sweep, task run, or the opportunistic client-side
+   *  "touch" — see touchPronoteSession in pronote.ts) — lets the touch path skip re-opening a session (and
+   *  rotating the token again) if one already happened recently, instead of hammering Pronote every time a
+   *  student has the app open. Not a Pronote-protocol field, just Otto's own bookkeeping. */
+  lastTouchedAt?: string;
 }
 
 // Cloud persistence, keyed by the user's Google email — so memory + tasks survive restarts and follow
@@ -337,6 +342,59 @@ export async function recordSessionOutcome(o: SessionOutcome): Promise<void> {
  *  Best-effort, same posture as recordSessionOutcome — a metrics hiccup must never affect the real feature. */
 export async function recordMetric(email: string, name: string, value: number, bucket = "n/a", context = ""): Promise<void> {
   return recordSessionOutcome({ userEmail: email, decisionKey: `metric:${name}`, arm: bucket, context, reward: value, at: new Date().toISOString() });
+}
+
+export interface StudyMetricsSummary {
+  totalSessions: number;
+  totalStudySeconds: number;
+  totalBreakSeconds: number;
+  avgIdleRatio: number | null;      // 0-1, lower = more concentrated; null when no sessions recorded yet
+  earlyExitRate: number | null;     // 0-1 share of sessions ended before the planned length
+  pomodoroCyclesCompleted: number;
+  windowDays: number;
+}
+
+const STUDY_METRIC_NAMES = [
+  "study_session_duration_seconds", "study_session_break_seconds", "study_idle_ratio",
+  "study_exit_early", "study_pomodoro_cycles_completed",
+] as const;
+
+/** Aggregate the study/concentration metrics `recordMetric` already collects (server/index.ts's
+ *  /api/studysessions or client/study/StudyMode.tsx's endSession) into the handful of numbers a Settings
+ *  page actually wants to show — nobody reads the raw outcomes log directly today (see recordMetric's own
+ *  comment: "a flexible collection point... ahead of specific uses being built for it"). This is that first
+ *  real read. Best-effort/in-memory-aware like everything else here: falls back to memOutcomes when there's
+ *  no Supabase client, so this works in local/dev too, not just against a live table. */
+export async function getStudyMetricsSummary(email: string, windowDays = 30): Promise<StudyMetricsSummary> {
+  const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
+  const decisionKeys = STUDY_METRIC_NAMES.map((n) => `metric:${n}`);
+  let rows: SessionOutcome[] = [];
+  if (client) {
+    try {
+      const { data, error } = await client.from(OUTCOMES).select("decision_key,arm,context,reward,at")
+        .eq("email", email).in("decision_key", decisionKeys).gte("at", since).limit(5000);
+      if (error) throw error;
+      rows = (data || []).map((d: any) => ({ userEmail: email, decisionKey: d.decision_key, arm: d.arm, context: d.context, reward: d.reward, at: d.at }));
+    } catch { rows = memOutcomes.filter((o) => o.userEmail === email && decisionKeys.includes(o.decisionKey) && o.at >= since); }
+  } else {
+    rows = memOutcomes.filter((o) => o.userEmail === email && decisionKeys.includes(o.decisionKey) && o.at >= since);
+  }
+  const byName = (n: typeof STUDY_METRIC_NAMES[number]) => rows.filter((r) => r.decisionKey === `metric:${n}`);
+  const durations = byName("study_session_duration_seconds");
+  const breaks = byName("study_session_break_seconds");
+  const idleRatios = byName("study_idle_ratio");
+  const earlyExits = byName("study_exit_early");
+  const cycles = byName("study_pomodoro_cycles_completed");
+  const sum = (xs: SessionOutcome[]) => xs.reduce((s, x) => s + (Number(x.reward) || 0), 0);
+  return {
+    totalSessions: durations.length,
+    totalStudySeconds: Math.round(sum(durations)),
+    totalBreakSeconds: Math.round(sum(breaks)),
+    avgIdleRatio: idleRatios.length ? sum(idleRatios) / idleRatios.length : null,
+    earlyExitRate: earlyExits.length ? sum(earlyExits) / earlyExits.length : null,
+    pomodoroCyclesCompleted: Math.round(sum(cycles)),
+    windowDays,
+  };
 }
 
 /** Every account email with saved state — the cron sweeper iterates these to work while users are offline. */

@@ -233,7 +233,7 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
       url: stored.url, username: stored.username, kind: stored.kind as pronote.AccountKind, token: stored.token,
       deviceUUID: stored.deviceUUID, navigatorIdentifier: stored.navigatorIdentifier,
     }));
-    const rotated: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID: stored.deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier };
+    const rotated: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID: stored.deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier, lastTouchedAt: new Date().toISOString() };
     await saveRotatedToken(email, rotated);
     try { return await fn(session); }
     finally { if (session.presence) pronote.clearPresenceInterval(session); }
@@ -258,6 +258,21 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
     if (!isExpectedPronoteError(e)) reportError("pronote-session", e, { email });
     return undefined;
   }
+}
+
+// Vercel Hobby's cron only runs once/day (see server/index.ts's /api/cron/drain comment), so the daily
+// sweep is the only GUARANTEED session touch — leaving a token idle for a full day between refreshes gives
+// Pronote's own server-side session TTL the most possible time to kill it before anything renews it. This
+// closes that gap opportunistically: every time a connected student actually has the app open (client's
+// periodic heartbeat, client/App.tsx), hit this — it just re-opens a session (rotating the token, exactly
+// like a real sweep would) and does nothing else. Gated to at most once per few hours per account so an
+// open tab doesn't hammer Pronote or burn the rotation budget for no reason.
+const TOUCH_MIN_GAP_MS = 4 * 60 * 60 * 1000; // 4h
+export async function touchPronoteSession(email: string): Promise<void> {
+  const { pronote: stored } = await loadState(email);
+  if (!stored || stored.needsReconnect) return; // nothing to renew, or already dead — only a real reconnect fixes that
+  if (stored.lastTouchedAt && Date.now() - Date.parse(stored.lastTouchedAt) < TOUCH_MIN_GAP_MS) return;
+  await runPronoteSessionOnce(email, async () => undefined);
 }
 
 // Covers the same concurrent-rotation hazard the withPronoteLock comment above describes (e.g. a

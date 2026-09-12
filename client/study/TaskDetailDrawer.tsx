@@ -4,15 +4,21 @@ import { withInlineLinks, stripStrayMarkdown, stripHtml } from "../ui.tsx";
 interface TaskDetailDrawerProps {
   task: WebTask;
   onClose: () => void;
+  onToggleStep?: (index: number, done: boolean) => void;
+  onToggleSubstep?: (index: number, subIndex: number, done: boolean) => void;
+  onComplete?: () => void;
 }
 
 // Full task context — title, why, the source's own detail, links, and the complete step breakdown (not
 // just the "currently working on" step the session header shows). Study Mode deliberately keeps only the
 // current step in view most of the time (see SessionHeader) so the student isn't staring at the whole
 // checklist while heads-down — this is the "zoom out and see everything" escape hatch when they need it.
-export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps) {
+// Steps/substeps are real checkboxes (not read-only text) and there's a "mark task complete" action, so a
+// student can actually finish a task from inside the session instead of leaving Study Mode to do it.
+export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep, onComplete }: TaskDetailDrawerProps) {
   const steps = task.steps || [];
   const doneCount = steps.filter(s => s.done).length;
+  const isHandled = task.status === "done" || task.status === "dismissed";
 
   return (
     <div className="sm-drawer sm-drawer-task">
@@ -49,12 +55,21 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps) {
             <ol className="sm-task-detail-steps">
               {steps.map((s, i) => (
                 <li key={i} className={s.done ? "done" : ""}>
-                  <span className="sm-task-detail-step-mark" aria-hidden="true">{s.done ? "✓" : i + 1}</span>
+                  <button type="button" className="sm-task-detail-step-mark" aria-label={s.done ? "Mark step not done" : "Mark step done"}
+                    onClick={() => onToggleStep?.(i, !s.done)} disabled={!onToggleStep}>
+                    {s.done ? "✓" : i + 1}
+                  </button>
                   <span>{withInlineLinks(s.text)}</span>
                   {s.substeps?.length ? (
                     <ul className="sm-task-detail-substeps">
                       {s.substeps.map((sub, si) => (
-                        <li key={si} className={sub.done ? "done" : ""}>{withInlineLinks(sub.text)}</li>
+                        <li key={si} className={sub.done ? "done" : ""}>
+                          <label className="sm-task-detail-substep-label">
+                            <input type="checkbox" checked={!!sub.done} disabled={!onToggleSubstep}
+                              onChange={(e) => onToggleSubstep?.(i, si, e.target.checked)} />
+                            {withInlineLinks(sub.text)}
+                          </label>
+                        </li>
                       ))}
                     </ul>
                   ) : null}
@@ -63,6 +78,11 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps) {
             </ol>
           </div>
         )}
+        {onComplete && !isHandled ? (
+          <button type="button" className="sm-btn sm-btn-primary sm-task-detail-complete" onClick={onComplete}>
+            Mark task complete
+          </button>
+        ) : null}
       </div>
     </div>
   );

@@ -680,36 +680,41 @@ function loadQuizProgress(quizId: string): { i: number; right: number[]; wrongId
     return { i: p.i, right: p.right, wrongIdx: p.wrongIdx, order: Array.isArray(p.order) ? p.order : null };
   } catch { return null; }
 }
-function QuizMistakeNote({ taskId, quizTitle, wrongCount }: { taskId: string; quizTitle: string; wrongCount: number }) {
+// One reflection prompt PER wrong question, not one combined note for the whole quiz — the point is
+// capturing the student's own read on THAT specific mistake while it's fresh, and having it land as a real,
+// searchable errorLog entry (grouped by subject, shared/types.ts's errorLogBySubject) rather than a generic
+// task note nobody reopens. Each question saves independently so answering one doesn't block/lose the rest.
+function QuizWrongReflection({ subject, question }: { subject: string; question: string }) {
   const L = useLang();
   const [text, setText] = useState("");
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
-  if (saved) return <p className="settings-hint">{L("Note enregistrée — retrouvable dans « Ce qu'Otto a préparé ».", "Note saved — find it under \"What Otto prepared\".")}</p>;
+  if (saved) return <p className="quiz-mistake-saved">{L("Enregistré dans le carnet d'erreurs.", "Saved to your error log.")}</p>;
   const save = async () => {
     if (!text.trim()) return;
     setSaving(true);
     try {
-      await api.addNote(taskId, L(`Erreurs — ${quizTitle}`, `Mistakes — ${quizTitle}`), text.trim());
+      await api.addErrorLogEntry(subject, question, text.trim(), "");
       setSaved(true);
-    } catch { /* best-effort — losing this note isn't worth blocking the quiz result screen over */ }
+    } catch { /* best-effort — losing this reflection isn't worth blocking the quiz result screen over */ }
     finally { setSaving(false); }
   };
   return (
     <div className="quiz-mistake-note">
-      <label className="settings-hint" htmlFor="quiz-mistake-text">
-        {L(`Note ce que tu as retenu de tes ${wrongCount} erreur${wrongCount > 1 ? "s" : ""} (optionnel) :`, `Note what to remember from your ${wrongCount} mistake${wrongCount > 1 ? "s" : ""} (optional):`)}
+      <p className="quiz-mistake-q">{formatMath(stripStrayMarkdown(question))}</p>
+      <label className="settings-hint" htmlFor={`qwr-${question.slice(0, 20)}`}>
+        {L("Pourquoi tu penses t'être trompé·e ?", "Why do you think you got this wrong?")}
       </label>
-      <textarea id="quiz-mistake-text" className="quiz-mistake-textarea" value={text} onChange={(e) => setText(e.target.value)}
+      <textarea id={`qwr-${question.slice(0, 20)}`} className="quiz-mistake-textarea" value={text} onChange={(e) => setText(e.target.value)}
         placeholder={L("Ex. : j'ai confondu vitesse et accélération…", "E.g., I mixed up velocity and acceleration…")} rows={2} />
       <button type="button" className="btn xs ghost" disabled={!text.trim() || saving} onClick={() => void save()}>
-        {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer la note", "Save note")}
+        {saving ? L("Enregistrement…", "Saving…") : L("Enregistrer", "Save")}
       </button>
     </div>
   );
 }
 
-export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }) {
+export function QuizPlayer({ quiz, taskId, subject }: { quiz: TaskQuiz; taskId?: string; subject?: string }) {
   const L = useLang();
   const saved = useRef(loadQuizProgress(quiz.id)).current;
   const [i, setI] = useState(saved?.i ?? 0);
@@ -760,11 +765,15 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
   }, [quiz.id, i, right, wrongIdx, order, done]);
   // Only the "advance past a picked answer" shortcut remains — no number-key shortcut to PICK an answer:
   // that let a student cycle 1/2/3/4 blind without reading the options, defeating the point of a
-  // discrimination check (see the tool's own doc comment above CREATE_QUIZ_TOOL).
+  // discrimination check (see the tool's own doc comment above CREATE_QUIZ_TOOL). Enter deliberately does
+  // NOT advance: it's the natural key to submit text elsewhere on this same screen (the study-help panel,
+  // and after a wrong answer the per-question "why did you get this wrong?" reflection box) — overloading
+  // it to also mean "next question" meant submitting one of those could silently skip a question instead.
+  // ArrowRight is unambiguous (never a text-submit key) so it stays as the only keyboard shortcut.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (done || !q) return;
-      if (picked !== null && (e.key === "Enter" || e.key === "ArrowRight")) { e.preventDefault(); next(); }
+      if (picked !== null && e.key === "ArrowRight") { e.preventDefault(); next(); }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -783,11 +792,16 @@ export function QuizPlayer({ quiz, taskId }: { quiz: TaskQuiz; taskId?: string }
           {wrongIdx.length > 0 && <button className="btn ghost" onClick={() => restart(true)}>{L(`Revoir mes ${wrongIdx.length} erreurs`, `Review my ${wrongIdx.length} mistake${wrongIdx.length > 1 ? "s" : ""}`)}</button>}
           <button className="btn primary" onClick={() => restart(false)}>{L("Recommencer", "Restart")}</button>
         </div>
-        {/* A quick, low-friction place to write down what actually went wrong and why — the point isn't
-            re-reading the question again later, it's capturing the STUDENT'S OWN read on their mistake
-            while it's fresh. Only offered when there's something to write about; saved as a plain note
-            (no AI call), so it shows up as a normal chip in "What Otto prepared" for review later. */}
-        {wrongIdx.length > 0 && taskId ? <QuizMistakeNote taskId={taskId} quizTitle={quiz.title} wrongCount={wrongIdx.length} /> : null}
+        {/* One reflection prompt per question actually gotten wrong — saved straight to the error log
+            (grouped by subject) instead of one combined note, so each mistake is a real, reviewable record
+            rather than a paragraph nobody reopens. */}
+        {wrongIdx.length > 0 ? (
+          <div className="quiz-wrong-review">
+            {[...wrongIdx].sort((a, b) => a - b).map((idx) => (
+              <QuizWrongReflection key={idx} subject={subject || quiz.title} question={quiz.questions[idx].q} />
+            ))}
+          </div>
+        ) : null}
       </div>
     );
   }

@@ -1362,7 +1362,7 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
         </TaskModal>
       ) : null}
       {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} taskId={task.id} /></TaskModal> : null}
-      {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} /></TaskModal> : null}
+      {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} subject={task.sourceSubject} /></TaskModal> : null}
     </>
   );
 }
