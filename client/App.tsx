@@ -2316,7 +2316,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [usage, setUsage] = useState<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "studylog" | "student_model" | "other", number>> } | null>(null);
   const [showKnows, setShowKnows] = useState(false);
   const [showStudentModel, setShowStudentModel] = useState(false);
-  const [showTrustLog, setShowTrustLog] = useState(false);
   const [showErrorLog, setShowErrorLog] = useState(false);
   useEffect(() => { void api.recordMetric("settings_opened", 1); }, []);
   const [themeBusy, setThemeBusy] = useState(false);
@@ -2657,15 +2656,11 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
       </section>
 
       {(() => {
-        // Not a claimed number — counted straight from each task's own audit trail (kind: "guardrail"),
-        // the same record a parent/teacher can open and verify per task. Only shown once it's actually
-        // happened at least once: a brand-new account showing "0" would read as a hollow promise, not
-        // evidence. The expandable list below is the account-wide version of TaskCard.tsx's per-task
-        // "Activity log" — same data, same classes (.audit-log/.audit-list), just pooled across every task
-        // so "never does the work" is something a parent/teacher can actually verify in one place instead
-        // of having to open each task individually.
-        const allAudit = tasks.flatMap((t) => (t.audit || []).map((a) => ({ ...a, taskTitle: t.title })));
-        const guardrailCount = allAudit.filter((a) => a.kind === "guardrail").length;
+        // Not a claimed number — counted straight from each task's own audit trail (kind: "guardrail").
+        // Only shown once it's actually happened at least once: a brand-new account showing "0" would read
+        // as a hollow promise, not evidence. The raw expandable activity log this summary used to sit above
+        // was removed — the count alone is the useful trust signal; the line-by-line log wasn't.
+        const guardrailCount = tasks.flatMap((t) => t.audit || []).filter((a) => a.kind === "guardrail").length;
         return guardrailCount > 0 ? (
           <section className="settings-sec reveal" style={{ ["--d" as any]: "0.14s" }}>
             <p className="settings-hint guardrail-stat">
@@ -2674,20 +2669,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                 `Otto has declined to do your graded work ${guardrailCount} times — and made a guide instead.`,
               )}
             </p>
-            <button type="button" className="btn xs ghost audit-toggle" aria-expanded={showTrustLog} onClick={() => setShowTrustLog((v) => !v)}>
-              {L("Journal complet", "Full activity log")} ({allAudit.length})
-            </button>
-            {showTrustLog ? (
-              <ul className="audit-list">
-                {allAudit.slice().reverse().slice(0, 200).map((e, i) => (
-                  <li key={i} className={`audit-${e.kind}`}>
-                    <span className="audit-icon" aria-hidden="true">{e.kind === "guardrail" ? "✦" : e.kind === "artifact" ? "✓" : "•"}</span>
-                    <span className="audit-label">{e.label}<span className="settings-hint" style={{ display: "block" }}>{e.taskTitle}</span></span>
-                    <span className="audit-at">{new Date(e.at).toLocaleString(status.language === "en" ? "en-GB" : "fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
           </section>
         ) : null;
       })()}

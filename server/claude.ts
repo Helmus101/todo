@@ -414,7 +414,12 @@ export const PLAN_ONLY_OVERRIDE =
   `one just to turn "step 1, step 2, step 3" into bullet-point prose, that is not content. Only create a note ` +
   `for this kind of task if you found something genuinely worth preserving that the steps alone don't capture ` +
   `— real compiled options with prices/links, actual confirmation details, a real comparison — never a ` +
-  `placeholder checklist standing in for research you didn't actually do. When in doubt for a logistics task, ` +
+  `placeholder checklist standing in for research you didn't actually do. A SINGLE fact (one contact address, ` +
+  `one phone number, one link) does NOT clear this bar by itself — that belongs in a step's own text or the ` +
+  `task's links, not a whole separate note; a note needs several things worth compiling TOGETHER, not one ` +
+  `thing worth restating. Renewing/returning a library loan, confirming a single appointment, a one-step ` +
+  `errand — these almost never need a note even when you found a real detail (an address, a due date, a ` +
+  `renew-online link): put that detail directly in the step, done. When in doubt for a logistics task, ` +
   `leave it as steps and skip the note. ` +
   `A FICHE IS ONLY WORTH MAKING IF IT HAS THE REAL CONTENT — the actual formulas, the actual vocabulary, the ` +
   `actual dates/authors of THIS chapter, which means you LOOKED THEM UP (stage 1d) before writing it. A fiche ` +

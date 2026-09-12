@@ -1020,8 +1020,6 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
   task: WebTask; onOpenNote: (id: string) => void; onOpenDeck: (id: string) => void; onOpenQuiz: (id: string) => void;
 }) {
   const L = useLang();
-  const cardEn = useContext(LangContext) === "en";
-  const [showAudit, setShowAudit] = useState(false);
   const artifactCount = (task.notes?.length || 0) + (task.flashcards?.length || 0) + (task.quizzes?.length || 0);
   return (
     <>
@@ -1065,26 +1063,6 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
       ) : null}
       {task.links?.length ? (
         <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
-      ) : null}
-      {/* Audit trail: what Otto actually called/created/blocked on this task, in plain language — so a
-          parent or teacher can verify "never does the work" is enforced, not just claimed. */}
-      {task.audit?.length ? (
-        <div className="audit-log">
-          <button type="button" className="btn xs ghost audit-toggle" aria-expanded={showAudit} onClick={() => setShowAudit((v) => !v)}>
-            {L("Journal d'activité", "Activity log")} ({task.audit.length})
-          </button>
-          {showAudit ? (
-            <ul className="audit-list">
-              {task.audit.slice().reverse().map((e, i) => (
-                <li key={i} className={`audit-${e.kind}`}>
-                  <span className="audit-icon" aria-hidden="true">{e.kind === "guardrail" ? "✦" : e.kind === "artifact" ? "✓" : "•"}</span>
-                  <span className="audit-label">{e.label}</span>
-                  <span className="audit-at">{new Date(e.at).toLocaleString(cardEn ? "en-GB" : "fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
       ) : null}
     </>
   );
