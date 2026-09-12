@@ -3722,7 +3722,8 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   height: 100%;
   border: 0;
 }
-.sm-pdf-fallback-link {
+.sm-pdf-fallback-link,
+.sm-document-fallback-link {
   display: block;
   text-align: center;
   font-size: var(--text-xs);

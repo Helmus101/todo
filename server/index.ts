@@ -98,7 +98,10 @@ const CSP = [
   // just the Spotify origin (as this first did) silently broke every other embed, including the student's
   // own files, with Chrome's generic "This content is blocked" — so 'self' and blob: must be listed here
   // explicitly, not assumed to still apply. https://cdn.plaid.com: Link's own modal renders in an iframe.
-  "frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://www.youtube-nocookie.com https://www.desmos.com https://*.padlet.com https://*.padlet.org https://cdn.plaid.com",
+  // https://drive.google.com: a Drive FILE preview (e.g. a PDF/image uploaded to Drive rather than a
+  // native Doc/Sheet/Slide) — DocumentArtifact.tsx converts a normal .../view share link to .../preview,
+  // but the CSP still has to list the origin itself or the frame never even attempts to load.
+  "frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://drive.google.com https://www.youtube-nocookie.com https://www.desmos.com https://*.padlet.com https://*.padlet.org https://cdn.plaid.com",
   "font-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",

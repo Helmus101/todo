@@ -26,9 +26,10 @@ function getYouTubeId(url: string): string | null {
 export function classifyUrl(url: string): "video" | "document" | "pdf" | "link" {
   if (getYouTubeId(url)) return "video";
   if (url.match(/\.pdf($|\?)/i)) return "pdf";
-  // Padlet boards embed the same way Google Docs do (DocumentArtifact.tsx handles both) — without this a
-  // Padlet link fell through to plain "link" and never reached the iframe embed at all.
-  if (url.match(/docs\.google\.com|:\/\/([a-z0-9-]+\.)?padlet\.(com|org)\//i)) return "document";
+  // Padlet boards and Drive file previews embed the same way Google Docs/Sheets/Slides do
+  // (DocumentArtifact.tsx handles all of them) — without this, a Padlet or Drive link fell through to
+  // plain "link" and never reached the iframe embed at all.
+  if (url.match(/docs\.google\.com|drive\.google\.com|:\/\/([a-z0-9-]+\.)?padlet\.(com|org)\//i)) return "document";
   return "link";
 }
 
