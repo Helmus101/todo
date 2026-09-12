@@ -7,6 +7,19 @@ interface DictionaryArtifactProps {
   language?: "fr" | "en";
 }
 
+// The languages a French lycée student actually studies (LV1/LV2/LV3 + their own), not just the app's own
+// UI language — a student's UI can be "fr" while they're looking up an English or Spanish word for cours
+// d'anglais/espagnol, so the lookup language was previously silently locked to whichever language the app
+// itself happened to be in. freedictionaryapi.com covers all of these (Wiktionary-backed).
+const DICT_LANGS: { code: string; label: string }[] = [
+  { code: "en", label: "English" },
+  { code: "fr", label: "Français" },
+  { code: "es", label: "Español" },
+  { code: "de", label: "Deutsch" },
+  { code: "it", label: "Italiano" },
+  { code: "pt", label: "Português" },
+];
+
 interface DictionaryEntry {
   word: string;
   phonetic?: string;
@@ -34,7 +47,7 @@ interface FreeDictResponse {
   }>;
 }
 
-async function lookupWord(q: string, lang: "en" | "fr"): Promise<DictionaryEntry | null> {
+async function lookupWord(q: string, lang: string): Promise<DictionaryEntry | null> {
   const res = await fetch(`https://freedictionaryapi.com/api/v1/entries/${lang}/${encodeURIComponent(q)}`);
   if (!res.ok) throw new Error("Dictionary lookup failed.");
   const data = (await res.json()) as FreeDictResponse;
@@ -50,7 +63,11 @@ async function lookupWord(q: string, lang: "en" | "fr"): Promise<DictionaryEntry
 
 export function DictionaryArtifact({ artifact, onChange, language = "en" }: DictionaryArtifactProps) {
   const savedWord = (artifact.contentState?.word as string) || "";
+  // Persisted per-artifact so switching desks/reopening keeps the language a student was actually working
+  // in (e.g. mid-way through Spanish vocab) — falls back to the app's UI language only as a first guess.
+  const savedLang = (artifact.contentState?.lang as string) || language;
   const [word, setWord] = useState(savedWord);
+  const [lang, setLang] = useState(savedLang);
   const [entry, setEntry] = useState<DictionaryEntry | null>((artifact.contentState?.entry as DictionaryEntry) || null);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
@@ -59,15 +76,16 @@ export function DictionaryArtifact({ artifact, onChange, language = "en" }: Dict
     setWord(savedWord);
   }, [savedWord]);
 
-  const lookup = async () => {
+  const lookup = async (overrideLang?: string) => {
     const q = word.trim();
     if (!q) return;
+    const useLang = overrideLang || lang;
     setStatus("loading");
     setError("");
     try {
-      const next = await lookupWord(q, language);
+      const next = await lookupWord(q, useLang);
       setEntry(next);
-      onChange({ ...artifact.contentState, word: q, entry: next });
+      onChange({ ...artifact.contentState, word: q, lang: useLang, entry: next });
       setStatus(next ? "idle" : "error");
       if (!next) setError("No definition found.");
     } catch (e) {
@@ -81,6 +99,20 @@ export function DictionaryArtifact({ artifact, onChange, language = "en" }: Dict
   return (
     <div className="sm-dictionary-body">
       <div className="sm-dictionary-search">
+        <select
+          className="sm-dictionary-lang"
+          value={lang}
+          onChange={(e) => {
+            const next = e.target.value;
+            setLang(next);
+            onChange({ ...artifact.contentState, lang: next });
+            // Re-run the current word in the newly picked language right away — a student switching from
+            // "anglais" to "espagnol" mid-lookup wants the new definition, not to have to retype the word.
+            if (word.trim() && entry) void lookup(next);
+          }}
+        >
+          {DICT_LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+        </select>
         <input
           value={word}
           onChange={(e) => setWord(e.target.value)}
@@ -89,7 +121,7 @@ export function DictionaryArtifact({ artifact, onChange, language = "en" }: Dict
           autoCapitalize="none"
           spellCheck={false}
         />
-        <button className="sm-btn sm-btn-primary" onClick={lookup} disabled={!word.trim() || status === "loading"}>
+        <button className="sm-btn sm-btn-primary" onClick={() => void lookup()} disabled={!word.trim() || status === "loading"}>
           {status === "loading" ? "..." : "Look up"}
         </button>
       </div>
