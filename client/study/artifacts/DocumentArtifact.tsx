@@ -28,8 +28,13 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
         // can run its own scripts and open a new tab, but neither it nor a link clicked inside it can ever
         // navigate/redirect the OUTER Otto page to another site — a link "to another app" inside an
         // embedded document must never be able to hijack the tab the student is actually using Otto in.
+        // Also WITHOUT allow-same-origin: combined with allow-scripts, that pairing lets sandboxed content
+        // strip its own sandbox — a well-known escape browsers warn about, and Google Docs/Drive's viewer
+        // specifically detects it and refuses to render at all ("This content is blocked. Contact the site
+        // owner to fix the issue.") rather than serve the document. Neither Google Docs' read/comment view
+        // nor a Padlet board needs same-origin access to Otto's own page to work.
         <iframe className="sm-embed" src={toEmbeddableUrl(url!)} title={title}
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" />
+          sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" />
       ) : url ? (
         <div className="sm-document-reference">
           <strong>{title}</strong>
