@@ -297,10 +297,13 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     getEnvironmentByTask(task.id).then((existing) => {
       if (existing) {
         setEnv(existing);
-        // If there's a saved session in active/paused state, go straight to session
+        // If there's a saved session in active/break state, go straight to session. "paused" is a legacy
+        // status from before Pause was removed (Break is now the only way to step away) — treat any
+        // old session still saved in that state as active rather than resuming into a dead-end with no
+        // button left to get out of it.
         if (existing.sessionStatus === "active" || existing.sessionStatus === "paused" || existing.sessionStatus === "break") {
           setElapsedSeconds(existing.timerElapsed);
-          setSessionStatus(existing.sessionStatus);
+          setSessionStatus(existing.sessionStatus === "paused" ? "active" : existing.sessionStatus);
           setPhase("session");
         }
       }
@@ -757,7 +760,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   // a material from the Materials drawer.
   const openArtifactByKind = useCallback((kind: "note" | "deck" | "quiz", id: string, title: string) => {
     if (!env) return;
-    const type = kind === "note" ? "sticky" : kind === "deck" ? "flashcard" : "quiz";
+    const type = kind === "note" ? "brief" : kind === "deck" ? "flashcard" : "quiz";
     const contentState = kind === "note" ? { text: task.notes?.find(n => n.id === id)?.body || "" }
       : kind === "deck" ? { deckId: id } : { quizId: id };
     addArtifact({
@@ -928,7 +931,6 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         formatTime={formatTime}
         onBack={() => { exitFullscreen(); onExit(); }}
         onSubmitStep={() => setShowSubtaskSubmit(true)}
-        sessionStatus={sessionStatus}
         isFullscreen={isFullscreen}
         onToggleFullscreen={() => (isFullscreen ? exitFullscreen() : enterFullscreen())}
         pomodoroRemaining={env.pomodoroEnabled ? Math.max(0, (env.pomodoroWorkMinutes || 25) * 60 - phaseSeconds) : undefined}
@@ -974,7 +976,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
             onAddLink={addMaterialLink}
             onOpenArtifact={(mat) => {
               const type = mat.type === "pdf" ? "pdf" : mat.type === "video" ? "video" : mat.type === "image" ? "image"
-                : mat.type === "note" ? "sticky" : mat.type === "flashcard" ? "flashcard" : mat.type === "quiz" ? "quiz" : "document";
+                : mat.type === "note" ? "brief" : mat.type === "flashcard" ? "flashcard" : mat.type === "quiz" ? "quiz" : "document";
               // For flashcard/quiz materials, buildTaskMaterials (StudySetup.tsx) stashed the deck/quiz id in
               // `text` (there's no file/url for these — they live on the task itself) — thread it through as
               // the id the artifact looks the real deck/quiz up by, not literal note text.
@@ -1100,12 +1102,6 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         onBreak={startBreak}
         onEnd={() => setShowEndModal(true)}
         audioPlaying={env.audioPlaying}
-        sessionStatus={sessionStatus}
-        onPauseResume={() => {
-          const next = sessionStatus === "active" ? "paused" : "active";
-          setSessionStatus(next);
-          updateEnv({ sessionStatus: next });
-        }}
       />
 
       {/* ── Subtask submit modal ── */}

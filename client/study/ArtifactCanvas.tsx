@@ -10,6 +10,7 @@ import { CalculatorArtifact } from "./artifacts/CalculatorArtifact.tsx";
 import { DesmosArtifact } from "./artifacts/DesmosArtifact.tsx";
 import { DictionaryArtifact } from "./artifacts/DictionaryArtifact.tsx";
 import { StickyNoteArtifact } from "./artifacts/StickyNoteArtifact.tsx";
+import { BriefArtifact } from "./artifacts/BriefArtifact.tsx";
 import { PDFArtifact } from "./artifacts/PDFArtifact.tsx";
 import { VideoArtifact } from "./artifacts/VideoArtifact.tsx";
 import { DocumentArtifact } from "./artifacts/DocumentArtifact.tsx";
@@ -168,6 +169,8 @@ export function ArtifactCanvas({
         return <DictionaryArtifact {...contentProps} language={language} />;
       case "sticky":
         return <StickyNoteArtifact {...contentProps} />;
+      case "brief":
+        return <BriefArtifact value={(art.contentState?.text as string) || ""} />;
       case "pdf":
         return <PDFArtifact artifact={art} onChange={(contentState) => onUpdateArtifact(art.id, { contentState })} />;
       case "image":

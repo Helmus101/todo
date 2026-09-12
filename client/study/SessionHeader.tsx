@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
-import type { SessionStatus } from "./StudyTypes.ts";
 
 // Fullscreen hides the OS clock/menu bar — genuinely full-screen (see StudyMode's requestFullscreen) means
 // there's no other way to see the wall-clock time while studying. Self-contained (ticks on its own) so no
@@ -24,7 +23,6 @@ interface SessionHeaderProps {
   formatTime: (s: number) => string;
   onBack: () => void;
   onSubmitStep: () => void;
-  sessionStatus: SessionStatus;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
   /** Pomodoro: seconds remaining in the current work interval, the interval's total length (for the
@@ -49,7 +47,7 @@ function ProgressRing({ fraction }: { fraction: number }) {
 }
 
 export function SessionHeader({
-  taskTitle, currentStep, stepIndex, totalSteps, progress, elapsed, formatTime, onBack, onSubmitStep, sessionStatus,
+  taskTitle, currentStep, stepIndex, totalSteps, progress, elapsed, formatTime, onBack, onSubmitStep,
   isFullscreen, onToggleFullscreen, pomodoroRemaining, pomodoroPhaseTotal, pomodoroCycle,
 }: SessionHeaderProps) {
   return (
@@ -59,7 +57,6 @@ export function SessionHeader({
         <span className="sm-task-title">{taskTitle}</span>
         <div className="sm-header-right">
           <WallClock />
-          {sessionStatus === "paused" && <span className="sm-paused-badge">PAUSED</span>}
           {pomodoroRemaining !== undefined && (
             <span className="sm-pomodoro-badge" title={`Cycle ${(pomodoroCycle || 0) + 1}`}>
               {pomodoroPhaseTotal ? <ProgressRing fraction={1 - pomodoroRemaining / pomodoroPhaseTotal} /> : null}

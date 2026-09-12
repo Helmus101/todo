@@ -9,6 +9,8 @@ export type ArtifactType =
   | "desmos"
   | "dictionary"
   | "sticky"
+  | "brief"        // read-only, formatted rendering of an Otto-authored CREATE_NOTE (headings/bold/tables) —
+                    // distinct from "sticky", which is the student's own plain hand-typed scratch note
   | "pdf"
   | "image"
   | "video"        // YouTube / embeddable video

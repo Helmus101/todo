@@ -668,6 +668,22 @@ export function App() {
         </LangContext.Provider>
       );
     }
+    // The task isn't in the current `tasks` list yet — either the dashboard's own load is still in flight
+    // (this used to silently fall through to the normal dashboard, which read as "the button did nothing")
+    // or the id is genuinely stale (task deleted/merged elsewhere). Show a spinner while `loaded` is still
+    // false; only report a real error once loading has actually finished and the task truly isn't there.
+    const enNow = status?.language === "en";
+    return loaded
+      ? (
+        <main className="list-wrap">
+          <div className="empty-state">
+            <h3>{enNow ? "Couldn't find that task" : "Tâche introuvable"}</h3>
+            <p>{enNow ? "It may have been removed or merged — go back and try again." : "Elle a peut-être été supprimée ou fusionnée — reviens en arrière et réessaie."}</p>
+            <button className="btn primary" onClick={() => navigate("tasks")}>{enNow ? "Back to tasks" : "Retour aux tâches"}</button>
+          </div>
+        </main>
+      )
+      : <div className="screen"><div className="brand boot"><Logo size={26} /> Otto</div><div className="spinner" /></div>;
   }
 
   // Eisenhower ranking with deadline/VIP/freshness tie-breaks — same bands/cards, just a better order.
@@ -2047,7 +2063,23 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
     }).catch(() => { if (!cached) { setLoaded(true); notify(en ? "Couldn't load this week." : "Impossible de charger la semaine.", "error"); } });
   }, [en, notify]);
   useEffect(() => { load(monday); }, [monday, load]);
-  useEffect(() => { setText(days[selected]?.logText || ""); setEditingDay(false); }, [selected, days]);
+  // `days` gets a new array reference on every background refresh (load()'s cache-then-network double-set,
+  // onDayReview after a flashcard review, save() itself) — resetting text/editingDay on every single one of
+  // those silently discarded in-progress edits, and on a page refresh could flash a saved entry then snap
+  // back to an empty textarea before the network response landed. Only force a reset when the student
+  // actually navigated to a different day/week (tracked via this ref); a `days` update while they're
+  // actively editing is left alone entirely, and a `days` update while they're NOT editing still re-syncs
+  // `text` (so a fresh fetch's content actually shows up) without touching `editingDay`.
+  const navKeyRef = useRef<string>("");
+  const editingDayRef = useRef(editingDay);
+  editingDayRef.current = editingDay;
+  useEffect(() => {
+    const key = `${monday}:${selected}`;
+    const navigated = navKeyRef.current !== key;
+    navKeyRef.current = key;
+    if (navigated) { setText(days[selected]?.logText || ""); setEditingDay(false); }
+    else if (!editingDayRef.current) { setText(days[selected]?.logText || ""); }
+  }, [selected, monday, days]);
   useEffect(() => {
     const cached = loadMonthCache(month);
     if (cached) { setMonthWeeks(cached.weeks); setMonthSummary(cached.summary); }
@@ -2688,7 +2720,9 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
     finally { setBusy(false); }
   };
 
-  if (!status) return null;
+  // A blank gap while `status` loads reads as "this section is stuck/slow" — a lightweight skeleton in the
+  // exact shape of the real tile makes the wait feel instant instead of leaving Sources looking empty.
+  if (!status) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /></div></div>;
   return (
     <div className="int-group">
       <div className="int-grid">
@@ -2811,7 +2845,8 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
   }, [load]);
 
   const L = useLang();
-  if (items === undefined) return null;
+  // Same reasoning as PronoteTile's skeleton — an empty gap while `items` loads reads as stuck, not loading.
+  if (items === undefined) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /><div className="int-tile int-tile-skel" /></div></div>;
   if (items === null || !items.length) return <div className="warn">{L("Google n'est pas encore activé sur ce serveur.", "Google isn't set up on this server yet.")}</div>;
   return (
     <div className="int-group">
