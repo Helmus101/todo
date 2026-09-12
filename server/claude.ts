@@ -3953,6 +3953,12 @@ export async function chatAboutTask(
     `or something they've pasted), you have NEVER seen it. Say so plainly and ask them to paste or describe ` +
     `the exercise — never invent a plausible-sounding exercise for a page you can't see, even one that fits ` +
     `the subject/level; a wrong guess at content they'll actually be graded on is worse than no guess.\n` +
+    `This is different from a real, named, findable work — a book, play, film, historical event, public figure. ` +
+    `For those, don't just hedge or guess from memory: use web_search first to check the actual title, author, ` +
+    `plot, dates, or details before answering, the same way you'd web_search a fact for a fiche. A student ` +
+    `asking about "La Machine de Turing" by Benoît Solès, or any specific play/book/text they're studying, ` +
+    `should get you actually looking it up, not a fuzzy half-remembered summary or an apology that you don't ` +
+    `have it memorized.\n` +
     `7. GIVE PRECISE FEEDBACK, NEVER GENERIC. When they show you something they wrote/tried, react to the ` +
     `SPECIFIC content, not the effort — name exactly what's actually wrong or missing FIRST (never open with ` +
     `vague praise like "good start!" or "nice effort" as a cushion), then name what genuinely worked, just as ` +

@@ -242,12 +242,16 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       const kak = normKey(k.anchorKey);
       if (!!ak && kak === ak) { matchedByAnchor = true; return true; }             // SAME anchor (same thread/event) → dup
       if (!!link && linkOf(k) === link) { matchedByAnchor = true; return true; }   // same source link → dup
-      // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER are different real-world items
-      // (two distinct emails/events). A genuinely NEW email must not be swallowed into a similarly-titled
-      // OLD *handled* task ("refresh finds nothing") — so across distinct anchors, don't let a DONE or
-      // DISMISSED task title-suppress a new one. But two ACTIVE same-title cards ARE worth merging (the
-      // user shouldn't see visual duplicates), and anchorless tasks (manual/agent-sweep) still title-dedupe.
-      if (!!ak && !!kak && kak !== ak && (k.status === "done" || k.status === "dismissed")) return false;
+      // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER are, unconditionally, different
+      // real-world items (two distinct emails/events/study-log days) — the anchor IS the identity, so a
+      // title/why fuzzy match below must never override it regardless of status. This used to only apply
+      // when the OTHER side was done/dismissed, which meant two ACTIVE anchored items (e.g. two different
+      // days' studylog entries whose AI-generated flashcard-deck titles happened to read as near-duplicates,
+      // like two "Grammaire allemande" decks from different days) could still fall through to sameTask()
+      // below and get silently collapsed into one, permanently discarding the loser's entry/flashcards —
+      // reported live as "I logged Tuesday and Wednesday, only Tuesday survived." Anchorless tasks
+      // (manual/agent-sweep) are unaffected — they still fall through to title-dedupe below.
+      if (!!ak && !!kak && kak !== ak) return false;
       // A DONE task with NO real anchor (an evergreen/recurring ask like "study philosophy" that the sweep
       // re-suggests under a slightly reworded title each time, not tied to one email/event) needs the SAME
       // looser cross-field match used for dismissed tasks below — the strict nearDup bar above is easily
