@@ -487,12 +487,14 @@ export function App() {
     // (sweepIfDue is a fast no-op until due), so this doesn't sweep more often. Also re-pull /api/status on
     // the same tick — account-level fields (language, in particular) can change in another tab/device, and
     // without this an already-open session would show a stale language until reload.
-    // Was 45s — every tick re-hydrates the Supabase-backed session (the FULL profile+tasks blob, see
-    // store.ts's SupabaseStore.get) on the server, so this interval is a direct multiplier on Supabase
-    // egress across every open tab/device. 90s still surfaces a new task well within a session (nowhere
-    // near the old 15-min problem this was built to fix), at half the request rate.
-    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 90_000);
-    const fullTick = setInterval(on, 5 * 60_000); // periodic budget refresh + cadence-gated sweep check
+    // Was 45s, then 90s — every tick re-hydrates the Supabase-backed session (the FULL profile+tasks blob,
+    // see store.ts's SupabaseStore.get) on the server, so this interval is a direct multiplier on Supabase
+    // egress across every open tab/device, confirmed live as the account's single biggest egress driver.
+    // 3 min still surfaces a new task well within a session (nowhere near the old 15-min problem this was
+    // built to fix) at a third of the 90s request rate; combined with the 60s server-side read cache
+    // (store.ts), this is a large, direct cut to the dominant recurring cost.
+    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 3 * 60_000);
+    const fullTick = setInterval(on, 15 * 60_000); // periodic budget refresh + cadence-gated sweep check — was 5min
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
   }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus, status?.pronoteConnected]);
 

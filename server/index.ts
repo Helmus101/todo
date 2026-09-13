@@ -1479,6 +1479,13 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
       else t.practiceProblem = undefined;
     } catch { /* best-effort — flashcards above already succeeded regardless */ }
     t.updatedAt = new Date().toISOString();
+    // Trim heavy artifacts off OLD studylog entries right here, not just in the once-daily sweep — a
+    // journal-only account (no Gmail/Pronote connected) never runs a sweep at all (server/jobs.ts's
+    // processSweep skips entirely with nothing connected), so this was the one place guaranteed to run
+    // exactly for the accounts most likely to accumulate this bloat: someone journaling daily. See
+    // trimOldStudylogArtifacts's own comment for why this exists (confirmed live as the dominant Supabase
+    // egress driver — permanent, ever-growing tasks each carrying a full deck+quiz).
+    req.session.tasks = tasks.trimOldStudylogArtifacts(req.session.tasks || []);
     // Awaited (not fire-and-forget) — this is THE write that actually creates the day's journal/flashcards
     // record, reported live as not reliably surviving in the cloud on serverless. See commit()'s own comment
     // for why the default fire-and-forget mode is genuinely at risk here.

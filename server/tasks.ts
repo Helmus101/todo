@@ -180,6 +180,33 @@ export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
   return [...active, ...handled];
 }
 
+// Studylog day/week tasks (server/index.ts's /api/studylog/*) are permanent — status stays "needs_review"
+// forever (see their own comment: never "done", so GET /api/reviews/due keeps seeing them), which means
+// pruneHandled above NEVER touches them: every day of journaling adds ONE MORE task that lives forever, each
+// carrying a full flashcard deck (+ a quiz, + a practice problem). After weeks of daily use this is genuinely
+// unbounded growth with no ceiling anywhere — confirmed live as the dominant driver of a fast-climbing
+// Supabase egress bill (every read/write ships the WHOLE profile+tasks blob). The fix isn't deleting old
+// journal history (the point of a journal is that it's still there later) — it's dropping the HEAVY, rarely-
+// revisited part (the generated deck/quiz/practice problem) off entries old enough that reopening them for
+// review is unlikely, while keeping `logText` (a few hundred bytes) and the title intact forever. A daily
+// entry keeps its full deck for 60 days; a weekly summary for 26 weeks (~6 months); a monthly summary is
+// small and rare enough (one per month) to just keep indefinitely.
+const STUDYLOG_DAY_ARTIFACT_TTL_MS = 60 * 86_400_000;
+const STUDYLOG_WEEK_ARTIFACT_TTL_MS = 26 * 7 * 86_400_000;
+export function trimOldStudylogArtifacts(list: WebTask[], now: Date = new Date()): WebTask[] {
+  return list.map((t) => {
+    if (t.source !== "studylog" || !t.logDate || !(t.flashcards?.length || t.quizzes?.length || t.practiceProblem)) return t;
+    const isWeek = t.logDate.startsWith("week:");
+    const isMonth = t.logDate.startsWith("month:");
+    if (isMonth) return t; // small and rare — never worth trimming
+    const dateStr = isWeek ? t.logDate.slice(5) : t.logDate;
+    const age = now.getTime() - (Date.parse(dateStr) || now.getTime());
+    const ttl = isWeek ? STUDYLOG_WEEK_ARTIFACT_TTL_MS : STUDYLOG_DAY_ARTIFACT_TTL_MS;
+    if (age < ttl) return t;
+    return { ...t, flashcards: undefined, quizzes: undefined, practiceProblem: undefined };
+  });
+}
+
 // Collapse formatting drift in an anchor ("gmail:18fAb", "GMAIL_18fab" → same) so the SAME thread/event
 // can't slip back in just because the model rephrased its id.
 const normKey = (s?: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -960,7 +987,7 @@ export function foldGenerated(existing: WebTask[], genTasks: {
     deduped.filter((t) => freshIds.has(t.id)).sort((a, b) => b.score - a.score).slice(0, MAX_NEW_PER_SWEEP).map((t) => t.id));
   const calmed = deduped.filter((t) => !freshIds.has(t.id) || keepNew.has(t.id));
   // Eisenhower ranking with deadline/VIP/freshness tie-breaks (was: bare score sort).
-  return pruneHandled(sortWithinQuadrant(calmed, highPriorityPeople), 120);
+  return trimOldStudylogArtifacts(pruneHandled(sortWithinQuadrant(calmed, highPriorityPeople), 120));
 }
 
 /** Add a task the user typed. No separate "clean up" pass anymore — it goes in with the raw title and runs
