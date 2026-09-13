@@ -189,10 +189,12 @@ export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
 // journal history (the point of a journal is that it's still there later) — it's dropping the HEAVY, rarely-
 // revisited part (the generated deck/quiz/practice problem) off entries old enough that reopening them for
 // review is unlikely, while keeping `logText` (a few hundred bytes) and the title intact forever. A daily
-// entry keeps its full deck for 60 days; a weekly summary for 26 weeks (~6 months); a monthly summary is
-// small and rare enough (one per month) to just keep indefinitely.
-const STUDYLOG_DAY_ARTIFACT_TTL_MS = 60 * 86_400_000;
-const STUDYLOG_WEEK_ARTIFACT_TTL_MS = 26 * 7 * 86_400_000;
+// entry keeps its full deck for 1 week (tightened from 60 days — direct instruction, egress is critical);
+// a weekly summary for 8 weeks (~2 months, tightened from 26); a monthly summary is small and rare enough
+// (one per month) to just keep indefinitely. The DECK is the expensive part (dozens of cards), not the
+// text — dropping decks and keeping logText saves far more than the reverse would.
+const STUDYLOG_DAY_ARTIFACT_TTL_MS = 7 * 86_400_000;
+const STUDYLOG_WEEK_ARTIFACT_TTL_MS = 8 * 7 * 86_400_000;
 export function trimOldStudylogArtifacts(list: WebTask[], now: Date = new Date()): WebTask[] {
   return list.map((t) => {
     if (t.source !== "studylog" || !t.logDate || !(t.flashcards?.length || t.quizzes?.length || t.practiceProblem)) return t;

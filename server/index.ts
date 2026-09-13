@@ -177,6 +177,12 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
   // higher-value-per-write paths (a day's journal save, a flashcard review) where a slightly slower
   // response is worth actually guaranteeing the data lands, while high-frequency routes (step-done,
   // confirm) keep the fire-and-forget default so they stay snappy.
+  // Trim heavy studylog artifacts (old flashcard decks/quizzes — see trimOldStudylogArtifacts's own
+  // comment) on EVERY commit, not just the journal-save route — this is the single choke point every write
+  // path passes through, so the very next action on an account (any account, not just ones actively
+  // journaling today) cleans up its existing backlog immediately instead of waiting on a future journal
+  // save. Cheap (a plain array map, no I/O) and a no-op for accounts with nothing old enough to trim.
+  if (req.session.tasks) req.session.tasks = tasks.trimOldStudylogArtifacts(req.session.tasks);
   await saveSession(req);
   if (!req.session.user) return;
   const email = req.session.user;
@@ -1479,16 +1485,10 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
       else t.practiceProblem = undefined;
     } catch { /* best-effort — flashcards above already succeeded regardless */ }
     t.updatedAt = new Date().toISOString();
-    // Trim heavy artifacts off OLD studylog entries right here, not just in the once-daily sweep — a
-    // journal-only account (no Gmail/Pronote connected) never runs a sweep at all (server/jobs.ts's
-    // processSweep skips entirely with nothing connected), so this was the one place guaranteed to run
-    // exactly for the accounts most likely to accumulate this bloat: someone journaling daily. See
-    // trimOldStudylogArtifacts's own comment for why this exists (confirmed live as the dominant Supabase
-    // egress driver — permanent, ever-growing tasks each carrying a full deck+quiz).
-    req.session.tasks = tasks.trimOldStudylogArtifacts(req.session.tasks || []);
     // Awaited (not fire-and-forget) — this is THE write that actually creates the day's journal/flashcards
     // record, reported live as not reliably surviving in the cloud on serverless. See commit()'s own comment
-    // for why the default fire-and-forget mode is genuinely at risk here.
+    // for why the default fire-and-forget mode is genuinely at risk here. (commit() itself now also trims
+    // old studylog artifacts on every call — see its own comment — so that no longer needs to happen here.)
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't make flashcards from that — try again." }); }
