@@ -547,7 +547,23 @@ export async function enqueueJob(userEmail: string, type: JobType, taskId?: stri
   const db = await jobsDb();
   if (db) {
     const { data: existing } = await db.from(JOBS).select("*").eq("idempotency_key", key).in("status", ["queued", "running"]).limit(1);
-    if (existing?.length) return existing[0] as Job;
+    if (existing?.length) {
+      const found = existing[0] as Job;
+      // A stale/still-in-flight job for this task previously swallowed a FRESH answer here: two step-run
+      // clicks (e.g. picking option A, then changing your mind to option B, or typing your own answer
+      // after the first click didn't seem to do anything) shared this same idempotency key, so the second
+      // call just returned the FIRST job untouched — its original `input.answer` (or lack of one) kept
+      // running while the student's actual answer was silently discarded, with no error anywhere (a 200
+      // response that looks identical to success). If this call carries real input, refresh the job's own
+      // input to match — a still-queued job then runs with the latest answer; a job already claimed and
+      // running can't be redirected mid-flight, but at least a subsequent retry sees the right answer
+      // instead of a stale/empty one.
+      if (input !== undefined) {
+        const { data: updated } = await db.from(JOBS).update({ input }).eq("id", found.id).select().single();
+        if (updated) return updated as Job;
+      }
+      return found;
+    }
     const { data, error } = await db.from(JOBS).insert({ user_email: userEmail, task_id: taskId ?? null, type, idempotency_key: key, input: input ?? null }).select().single();
     if (!error && data) return data as Job;
     // Unique-index race (another instance inserted first) → fetch the winner.
@@ -557,7 +573,12 @@ export async function enqueueJob(userEmail: string, type: JobType, taskId?: stri
     // fall through to the in-memory queue below
   }
   const active = memJobs.find((j) => j.idempotency_key === key && (j.status === "queued" || j.status === "running"));
-  if (active) return active;
+  if (active) {
+    // Same reasoning as the DB branch above — refresh a still-active job's input instead of silently
+    // discarding a fresh answer.
+    if (input !== undefined) active.input = input;
+    return active;
+  }
   const job: Job = { id: crypto.randomUUID(), user_email: userEmail, task_id: taskId ?? null, type, status: "queued", attempt_count: 0, max_attempts: 3, idempotency_key: key, input, created_at: new Date().toISOString() };
   memJobs.push(job);
   if (memJobs.length > 500) memJobs.splice(0, memJobs.length - 500);
