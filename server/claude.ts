@@ -16,15 +16,20 @@ export const EXECUTION_ENABLED = false;
 
 /** Backstop for step text: the prompt asks the model for a short one-liner, but it doesn't always comply
  *  (a long compound sentence slips through). A plain `.slice(0, N)` used to cut it off mid-word ("...fo")
- *  which read as broken, not just long — this cuts at the last word boundary instead so an over-long step
- *  is still a clean, if long, sentence rather than garbled. `max` is intentionally generous (well above
- *  the ~8-word target) since this is a safety net, not the primary length control — that's the prompt. */
-function truncateStepText(text: string, max = 110): string {
+ *  which read as broken, not just long — this cuts at the last word boundary instead. It used to then just
+ *  return that shortened string with nothing appended — reported live as steps reading like an unfinished
+ *  sentence ("Draft the 'last year' section: competitions run (investment/finance competitions teaching
+ *  critical investment") with no visual signal anything was cut. Now appends "…" whenever it actually
+ *  shortened the text, and `max` is tied to the prompt's own word-count target (≤8 words ordinary, ≤10 for
+ *  milestones) instead of one generous 110-char constant shared by both — the old cap was 40-50% more
+ *  generous than what it was meant to police, so an over-long model output could run deep into a subordinate
+ *  clause before the backstop ever kicked in. */
+function truncateStepText(text: string, max = 60): string {
   const t = text.trim();
   if (t.length <= max) return t;
   const cut = t.slice(0, max);
   const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim();
+  return (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim() + "…";
 }
 
 /** Validate a raw step's url/question/options exactly the same way regardless of which pass produced
@@ -286,8 +291,13 @@ const MISSION =
   `Otto is a companion for a STUDENT, not a do-it-all. Three things, in order:\n` +
   `1. BE PROACTIVE — surface tasks the student needs to do before they'd think to ask, from what's actually ` +
   `happening in their connected apps and calendar.\n` +
-  `2. STRUCTURE, DON'T OVERWHELM — break work into small, concrete, ordered steps so a big task feels doable ` +
-  `instead of a wall of dread. This is how you fight procrastination: clarity, not pressure.\n` +
+  `2. STRUCTURE, DON'T OVERWHELM — break GENUINELY MULTI-PART work into small, concrete, ordered steps so a ` +
+  `big task feels doable instead of a wall of dread. This is how you fight procrastination: clarity, not ` +
+  `pressure. But a task that's already ONE simple action (return a library book, bring a signed form, buy ` +
+  `one item, reply to a one-line message) is not multi-part — it needs a single step, or even none: just the ` +
+  `reminder itself. Manufacturing 3-4 steps out of something that's really one action ("go to the library",` +
+  ` "find the book", "return it", "confirm it's returned") is the OPPOSITE of this rule — it's clutter, not ` +
+  `structure. Match the plan's size to the task's real complexity, never pad it to look thorough.\n` +
   `3. EXECUTE ONLY THE PARTS THAT DON'T TEACH THE STUDENT ANYTHING AND DON'T NEED A HUMAN — logistics, ` +
   `scheduling, finding information, compiling reference material, drafting routine messages. NEVER the part ` +
   `that IS the learning: don't write the essay, don't solve the problem set, don't answer the exam question, ` +
@@ -1376,7 +1386,16 @@ export async function classifyCandidates(
     `the source items look. But (2) requires the SAME real event/thread/deadline — two candidates that merely ` +
     `SOUND alike (both mention "billing"/"credits"/"reset") but name a DIFFERENT company, service, or thread ` +
     `are unrelated and must stay two separate tasks; consolidating by topic-word overlap instead of a genuinely ` +
-    `shared event is the one failure mode to actively guard against here. SCORING & PRIORITIZATION: Score importance (0..1) and urgency (0..1) based on deadlines, effort required, and high-priority contacts/projects. Items with imminent deadlines, unfulfilled promises, or high-priority senders score urgency ≥ 0.7 and importance ≥ 0.7. For large complex requests, focus the task on the immediate, concrete next actionable step.\n` +
+    `shared event is the one failure mode to actively guard against here. (3) ONE ONGOING PROJECT, MULTIPLE ` +
+    `ARTIFACTS — this is the case (2) misses: not everything worth consolidating is prep for a single DATED ` +
+    `event. A club/committee/organization's ongoing work (an annual renewal, a recurring initiative) often ` +
+    `spans several different artifacts at once — a planning spreadsheet, a syllabus/doc draft, a form to fill, ` +
+    `an email to reply to — with no one calendar date anchoring all of it. If several candidates are plainly ` +
+    `part of the SAME real-world project or responsibility (same club/committee/initiative, same people ` +
+    `involved), that's still ONE task with several steps — one for the spreadsheet, one for the doc, one for ` +
+    `the form, one for the email — never a separate task per artifact. A student staring at 4-5 "tasks" that ` +
+    `are really one project is worse, not more organized, than one task with a real step list.\n` +
+    `SCORING & PRIORITIZATION: Score importance (0..1) and urgency (0..1) based on deadlines, effort required, and high-priority contacts/projects. Items with imminent deadlines, unfulfilled promises, or high-priority senders score urgency ≥ 0.7 and importance ≥ 0.7. For large complex requests, focus the task on the immediate, concrete next actionable step.\n` +
     `TITLES MUST BE SPECIFIC — name the actual person/company AND the actual subject, so the task is clear ` +
     `without opening anything. GOOD: "Reply to Chloe at BOND about the demo", "Send media-coverage docs to ` +
     `Paris Model Congress", "Confirm attendance to Guillaume's Aug call". BAD (too vague — never do this): ` +
@@ -3328,7 +3347,11 @@ export async function writeStepsFromContext(
           `steps over splitting one real action into its narrated sub-parts. Order them; set "dependsOn" to an ` +
           `earlier step's index (0-based, in THIS list) when one must ` +
           `happen first — e.g. an automatable step that's blocked until the user makes a call on an earlier one. ` +
-          `1 to 6 steps, omit "dependsOn" when a step doesn't wait on another.\n\n` +
+          `1 to 6 steps, omit "dependsOn" when a step doesn't wait on another. A SINGLE step is a completely ` +
+          `normal, GOOD outcome, not a fallback to avoid — most tasks that are really just "remember to do X" ` +
+          `(sign a form, bring an item, reply to one message, return something) are honestly just a reminder, ` +
+          `and forcing that into 3+ steps to look thorough is exactly the clutter this whole section exists to ` +
+          `prevent. Only reach for more steps when the task genuinely has multiple distinct actions.\n\n` +
           `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
           `graded/learning work itself (writing the essay, doing the research, forming the argument, solving the ` +
           `problem) as if it were already done or as Otto's job; that work always stays theirs. Every item must ` +
@@ -3370,7 +3393,8 @@ export async function writeStepsFromContext(
         const url = (own.url && linkUrls.has(own.url)) ? own.url
           : (matched?.url && linkUrls.has(matched.url)) ? matched.url : undefined;
         return {
-          text: truncateStepText(String(s?.text || "")),
+          // Milestones get a slightly higher cap (≤10-word prompt target vs ≤8 for ordinary steps).
+          text: truncateStepText(String(s?.text || ""), bigProject ? 70 : 60),
           automatable: bigProject ? false : !!s?.automatable,
           ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
           // Same validation as finalize()'s dependsOn handling — must point at a REAL other step in

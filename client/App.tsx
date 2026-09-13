@@ -472,6 +472,15 @@ export function App() {
   // Returning to the tab re-syncs the list (tasks finished elsewhere appear WITHOUT a manual reload) and
   // sweeps again if the watch interval has passed — so Otto keeps watching throughout the day, and the
   // list is never stuck waiting for a tab-switch to show up.
+  // Touch Pronote's session the MOMENT the app confirms it's connected — not just on the next focus/
+  // visibility event or the 15-min heartbeat tick below. Without this, opening the app after a long break
+  // (overnight, a weekend) waited up to 15 minutes before the first refresh attempt, during exactly the
+  // window where a stale token is most likely to have gone idle long enough to die. Separate from the main
+  // heartbeat effect below so it fires once per connect, not on every tick. touchPronoteSession itself
+  // (server/pronote.ts) is what actually rate-gates the real work (2h), so this is always a cheap call.
+  useEffect(() => {
+    if (connected && status?.pronoteConnected) void api.pronoteTouch();
+  }, [connected, status?.pronoteConnected]);
   useEffect(() => {
     if (!connected) return;
     // Opportunistic Pronote keepalive — piggybacks on this same "app is actually open" heartbeat rather
@@ -954,57 +963,66 @@ export function App() {
             <div className="dash-more">
               {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
                 <div className={`list-focus-wrap ${settled ? "settled" : ""}`}>
-                  {laterToday.length > 0 && (
-                    <div className="focus-group">
-                      <div className="focus-group-head">
-                        <span className="focus-title">{en ? "Later" : "Plus tard"}</span>
-                      </div>
-                      <div className="list">
-                        {laterToday.map((t, i) => (
-                          <TaskCardRow
-                            key={t.id}
-                            task={t}
-                            index={i}
-                            retrying={retryingIds.includes(t.id)}
-                            isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                            onOpen={() => navigate(`task/${t.id}`)}
-                            onChange={setTasks}
-                            onTask={patchTask}
-                            onConfirmed={flagJustDone}
-                            onEnterStudyMode={() => navigate(`study/${t.id}`)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {canWait.length > 0 && (
+                  {/* "Later" used to always render here, unconditionally — hero + "Also today" + "Later"
+                      meant up to 6 rows shown before anything ever collapsed, reported live as feeling
+                      crowded past 5. Later now shares the SAME "see more" gate as "Can wait" — a normal day
+                      shows at most hero + "Also today" (≤3 rows) before a single click reveals the rest. */}
+                  {(laterToday.length > 0 || canWait.length > 0) && (
                     <div className="focus-group">
                       {!showAllTasks ? (
                         <button className="btn xs ghost show-more-btn" onClick={() => setShowAllTasks(true)}>
-                          {en ? `See ${canWait.length} more task${canWait.length > 1 ? "s" : ""} for later…` : `Voir ${canWait.length} tâche${canWait.length > 1 ? "s" : ""} de plus pour plus tard…`}
+                          {en
+                            ? `See ${laterToday.length + canWait.length} more task${laterToday.length + canWait.length > 1 ? "s" : ""}…`
+                            : `Voir ${laterToday.length + canWait.length} tâche${laterToday.length + canWait.length > 1 ? "s" : ""} de plus…`}
                         </button>
                       ) : (
                         <>
-                          <div className="focus-group-head">
-                            <span className="focus-title">{en ? "Can wait" : "Peut attendre"}</span>
-                          </div>
-                          <div className="list">
-                            {canWait.map((t, i) => (
-                              <TaskCardRow
-                                key={t.id}
-                                task={t}
-                                index={i}
-                                retrying={retryingIds.includes(t.id)}
-                                isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
-                                onOpen={() => navigate(`task/${t.id}`)}
-                                onChange={setTasks}
-                                onTask={patchTask}
-                                onConfirmed={flagJustDone}
-                                onEnterStudyMode={() => navigate(`study/${t.id}`)}
-                              />
-                            ))}
-                          </div>
+                          {laterToday.length > 0 && (
+                            <>
+                              <div className="focus-group-head">
+                                <span className="focus-title">{en ? "Later" : "Plus tard"}</span>
+                              </div>
+                              <div className="list">
+                                {laterToday.map((t, i) => (
+                                  <TaskCardRow
+                                    key={t.id}
+                                    task={t}
+                                    index={i}
+                                    retrying={retryingIds.includes(t.id)}
+                                    isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
+                                    onOpen={() => navigate(`task/${t.id}`)}
+                                    onChange={setTasks}
+                                    onTask={patchTask}
+                                    onConfirmed={flagJustDone}
+                                    onEnterStudyMode={() => navigate(`study/${t.id}`)}
+                                  />
+                                ))}
+                              </div>
+                            </>
+                          )}
+                          {canWait.length > 0 && (
+                            <>
+                              <div className="focus-group-head">
+                                <span className="focus-title">{en ? "Can wait" : "Peut attendre"}</span>
+                              </div>
+                              <div className="list">
+                                {canWait.map((t, i) => (
+                                  <TaskCardRow
+                                    key={t.id}
+                                    task={t}
+                                    index={i}
+                                    retrying={retryingIds.includes(t.id)}
+                                    isNew={!seenTasks.has(t.id) && !isHandled(t.status) && !isInFlight(t.status)}
+                                    onOpen={() => navigate(`task/${t.id}`)}
+                                    onChange={setTasks}
+                                    onTask={patchTask}
+                                    onConfirmed={flagJustDone}
+                                    onEnterStudyMode={() => navigate(`study/${t.id}`)}
+                                  />
+                                ))}
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
                     </div>
@@ -2319,6 +2337,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [showKnows, setShowKnows] = useState(false);
   const [showStudentModel, setShowStudentModel] = useState(false);
   const [showErrorLog, setShowErrorLog] = useState(false);
+  const [showUsage, setShowUsage] = useState(false);
+  const [showAppearance, setShowAppearance] = useState(false);
+  const [showPersonalization, setShowPersonalization] = useState(false);
   useEffect(() => { void api.recordMetric("settings_opened", 1); }, []);
   const [themeBusy, setThemeBusy] = useState(false);
   const [patterns, setPatterns] = useState<{
@@ -2368,6 +2389,36 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             NEVER claim EU-only data residency here — the AI calls (server/claude.ts) go to DeepSeek, which has
             no confirmed EU residency and no DPA (see DATA_PROTECTION.md). Only state what's actually true. */}
         <div className="modal-row"><span className="lbl">{L("Confidentialité", "Privacy")}</span><span className="val">{L("Ton mot de passe Pronote est chiffré et jamais revendu. ", "Your Pronote password is encrypted and never resold. ")}<a href="/privacy">{L("Détails sur le traitement de tes données →", "Details on how your data is handled →")}</a></span></div>
+        <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
+        {/* GDPR self-serve: download everything stored (Art. 20, portability) and permanently delete it
+            (Art. 17, erasure) — no "email us and wait" step for either. */}
+        <div className="modal-row">
+          <span className="lbl">{L("Tes données", "Your data")}</span>
+          <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
+        </div>
+        <div className="modal-row">
+          <span className="lbl">{L("Supprimer le compte", "Delete account")}</span>
+          {/* Vermilion is reserved for exactly this — an irreversible action — everywhere else in the app;
+              this was the one destructive button styled as a plain .btn xs, indistinguishable from "Save". */}
+          <button
+            className="btn xs danger"
+            disabled={deletingAccount}
+            onClick={async () => {
+              if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
+              setDeletingAccount(true);
+              try { await api.deleteAccount(); window.location.href = "/"; }
+              catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
+            }}
+          >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
+        </div>
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.045s" }}>
+        <button className="sec-toggle" aria-expanded={showUsage} onClick={() => setShowUsage((v) => !v)}>
+          <h3>{L("Utilisation et coût", "Usage & cost")}</h3>
+          <span className={`caret ${showUsage ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showUsage && <div className="settings-reveal">
         {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn)}</span></div>}
         {/* Breakdown by WHAT spent it — added after a live "why is €0.30/day being spent with no interaction"
             question that the single total above couldn't answer on its own. sweep = the daily background scan,
@@ -2422,6 +2473,15 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             </span>
           </div>
         ) : null}
+        </div>}
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.05s" }}>
+        <button className="sec-toggle" aria-expanded={showAppearance} onClick={() => setShowAppearance((v) => !v)}>
+          <h3>{L("Apparence", "Appearance")}</h3>
+          <span className={`caret ${showAppearance ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showAppearance && <div className="settings-reveal">
         {/* Manual override for the density bandit (DENSITY_ARMS) — Otto suggests one from real session
             outcomes, but this always wins the moment it's touched, and never gets silently changed back.
             Three plain buttons, not a slider or a settings wall — this is a rare, low-stakes choice. */}
@@ -2469,6 +2529,77 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             ) : null}
           </span>
         </div>
+        </div>}
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
+        <h3>{L("Sources", "Sources")}</h3>
+        {/* Otto Lycée v1 originally scoped this to just Pronote + Gmail/Calendar/Drive for EVERY account —
+            correct for a French Bac student, but it silently hid the rest of Composio's catalog
+            (Slack/Notion/GitHub/Linear/…) from every account regardless of track, including IB/international
+            students who often lean on those tools for school coordination more than a French lycéen does.
+            Now gated by track: the narrow Lycée-only grid stays the default for "bac"/unset (unchanged for
+            existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
+        <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
+        <PronoteTile />
+        <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
+        <h3>{L("Préférences", "Preferences")}</h3>
+        <div className="set-list">
+          <label className="set-row">
+            <span className="set-text"><b>{L("Mettre Otto en pause", "Pause Otto")}</b><span className="settings-hint">{L("Arrête toute l'IA. Tes tâches restent en place.", "Stops all AI activity. Your tasks stay as they are.")}</span></span>
+            <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
+              const v = e.target.checked;
+              setPausedLocal(v); // optimistic — revert below on failure
+              void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
+                setPausedLocal(!v);
+                notify(err?.message || L("Impossible d'enregistrer ce réglage.", "Couldn't save this setting."), "error");
+              });
+            }} /><span className="switch-track" /></span>
+          </label>
+          <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
+        </div>
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
+        <h3>{L("Tes examens", "Your exams")}</h3>
+        <ExamsEditor profile={profile} onChanged={setProfile} />
+      </section>
+
+      {(() => {
+        // Not a claimed number — counted straight from each task's own audit trail (kind: "guardrail").
+        // Only shown once it's actually happened at least once: a brand-new account showing "0" would read
+        // as a hollow promise, not evidence. The raw expandable activity log this summary used to sit above
+        // was removed — the count alone is the useful trust signal; the line-by-line log wasn't.
+        const guardrailCount = tasks.flatMap((t) => t.audit || []).filter((a) => a.kind === "guardrail").length;
+        return guardrailCount > 0 ? (
+          <section className="settings-sec reveal" style={{ ["--d" as any]: "0.14s" }}>
+            <p className="settings-hint guardrail-stat">
+              <span aria-hidden="true">✦</span> {L(
+                `Otto a refusé de faire ton travail à ta place ${guardrailCount} fois — et a fait un guide à la place.`,
+                `Otto has declined to do your graded work ${guardrailCount} times — and made a guide instead.`,
+              )}
+            </p>
+          </section>
+        ) : null;
+      })()}
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
+        <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
+          <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
+          <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.16s" }}>
+        <button className="sec-toggle" aria-expanded={showPersonalization} onClick={() => setShowPersonalization((v) => !v)}>
+          <h3>{L("Personnalisation", "Personalization")}</h3>
+          <span className={`caret ${showPersonalization ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showPersonalization && <div className="settings-reveal">
         {/* Full transparency for everything Otto has learned — per direct instruction. Every line below
             comes from a REAL, already-running personalization mechanism (7 bandits + pattern recognition),
             never invented for display — a bandit with no evidence yet simply contributes no line, same
@@ -2567,6 +2698,10 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             </span>
           </div>
         ) : null}
+        </div>}
+      </section>
+
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.17s" }}>
         {/* Quiet by default (collapsed, count only) — a diagnostics drawer, not something to surface
             unprompted on a page meant to feel calm. Client-side only (see errorLog.ts): the last things
             that actually went wrong on THIS device, so a confusing toast that vanished in 12s can be
@@ -2597,90 +2732,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             </span>
           </div>
         ) : null}
-        <div className="modal-row"><span className="lbl">{L("Mentions légales", "Legal")}</span><span className="val"><a href="/privacy">{L("Confidentialité", "Privacy")}</a> · <a href="/terms">{L("CGU", "Terms")}</a></span></div>
-        {/* GDPR self-serve: download everything stored (Art. 20, portability) and permanently delete it
-            (Art. 17, erasure) — no "email us and wait" step for either. */}
-        <div className="modal-row">
-          <span className="lbl">{L("Tes données", "Your data")}</span>
-          <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
-        </div>
-        <div className="modal-row">
-          <span className="lbl">{L("Supprimer le compte", "Delete account")}</span>
-          {/* Vermilion is reserved for exactly this — an irreversible action — everywhere else in the app;
-              this was the one destructive button styled as a plain .btn xs, indistinguishable from "Save". */}
-          <button
-            className="btn xs danger"
-            disabled={deletingAccount}
-            onClick={async () => {
-              if (!window.confirm(L("Supprimer ton compte Otto (tâches, profil, connexions) ? Irréversible.", "Delete your Otto account (tasks, profile, connections)? This can't be undone."))) return;
-              setDeletingAccount(true);
-              try { await api.deleteAccount(); window.location.href = "/"; }
-              catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
-            }}
-          >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
-        </div>
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
-        <h3>{L("Sources", "Sources")}</h3>
-        {/* Otto Lycée v1 originally scoped this to just Pronote + Gmail/Calendar/Drive for EVERY account —
-            correct for a French Bac student, but it silently hid the rest of Composio's catalog
-            (Slack/Notion/GitHub/Linear/…) from every account regardless of track, including IB/international
-            students who often lean on those tools for school coordination more than a French lycéen does.
-            Now gated by track: the narrow Lycée-only grid stays the default for "bac"/unset (unchanged for
-            existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
-        <p className="settings-hint">{L("Otto lit ton Pronote (et ton Gmail/Calendar/Drive si tu les connectes) et prépare le travail — il ", "Otto reads your Pronote (and Gmail/Calendar/Drive if you connect them) and preps the work — it ")}<b>{L("n'envoie et ne rend jamais rien à ta place", "never sends or hands anything in for you")}</b>.</p>
-        <PronoteTile />
-        <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
-        <h3>{L("Préférences", "Preferences")}</h3>
-        <div className="set-list">
-          <label className="set-row">
-            <span className="set-text"><b>{L("Mettre Otto en pause", "Pause Otto")}</b><span className="settings-hint">{L("Arrête toute l'IA. Tes tâches restent en place.", "Stops all AI activity. Your tasks stay as they are.")}</span></span>
-            <span className="switch"><input type="checkbox" checked={paused} onChange={(e) => {
-              const v = e.target.checked;
-              setPausedLocal(v); // optimistic — revert below on failure
-              void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
-                setPausedLocal(!v);
-                notify(err?.message || L("Impossible d'enregistrer ce réglage.", "Couldn't save this setting."), "error");
-              });
-            }} /><span className="switch-track" /></span>
-          </label>
-          <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
-        </div>
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
-        <h3>{L("Tes examens", "Your exams")}</h3>
-        <ExamsEditor profile={profile} onChanged={setProfile} />
-      </section>
-
-      {(() => {
-        // Not a claimed number — counted straight from each task's own audit trail (kind: "guardrail").
-        // Only shown once it's actually happened at least once: a brand-new account showing "0" would read
-        // as a hollow promise, not evidence. The raw expandable activity log this summary used to sit above
-        // was removed — the count alone is the useful trust signal; the line-by-line log wasn't.
-        const guardrailCount = tasks.flatMap((t) => t.audit || []).filter((a) => a.kind === "guardrail").length;
-        return guardrailCount > 0 ? (
-          <section className="settings-sec reveal" style={{ ["--d" as any]: "0.14s" }}>
-            <p className="settings-hint guardrail-stat">
-              <span aria-hidden="true">✦</span> {L(
-                `Otto a refusé de faire ton travail à ta place ${guardrailCount} fois — et a fait un guide à la place.`,
-                `Otto has declined to do your graded work ${guardrailCount} times — and made a guide instead.`,
-              )}
-            </p>
-          </section>
-        ) : null;
-      })()}
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
-        <button className="sec-toggle" aria-expanded={showKnows} onClick={() => setShowKnows((v) => !v)}>
-          <h3>{L("Ce qu'Otto sait sur toi", "What Otto knows about you")}</h3>
-          <span className={`caret ${showKnows ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
       </section>
 
       {/* "How Otto sees you" — full visibility + one-click reset for profile.studentModel, the AI-synthesized
@@ -2697,8 +2748,8 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
         {showStudentModel && (
           <div className="settings-reveal">
             <p className="settings-hint">{L(
-              "Un résumé qu'Otto met à jour au plus une fois par jour à partir de ton activité (chat, journal, révisions) — comment tu raisonnes, ce qui a marché, ce qui progresse. Jamais partagé, jamais utilisé pour te noter.",
-              "A summary Otto updates at most once a day from your activity (chat, journal, reviews) — how you reason, what's worked, what's improving. Never shared, never used to grade you."
+              "Mis à jour au plus une fois par jour à partir de ton activité. Jamais partagé, jamais utilisé pour te noter.",
+              "Updated at most once a day from your activity. Never shared, never used to grade you."
             )}</p>
             {profile?.studentModel?.summary ? (
               <>

@@ -267,7 +267,7 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
 // periodic heartbeat, client/App.tsx), hit this — it just re-opens a session (rotating the token, exactly
 // like a real sweep would) and does nothing else. Gated to at most once per few hours per account so an
 // open tab doesn't hammer Pronote or burn the rotation budget for no reason.
-const TOUCH_MIN_GAP_MS = 4 * 60 * 60 * 1000; // 4h
+const TOUCH_MIN_GAP_MS = 2 * 60 * 60 * 1000; // 2h — tightened from 4h, direct instruction to make this as reliable as possible
 export async function touchPronoteSession(email: string): Promise<void> {
   const { pronote: stored } = await loadState(email);
   if (!stored || stored.needsReconnect) return; // nothing to renew, or already dead — only a real reconnect fixes that

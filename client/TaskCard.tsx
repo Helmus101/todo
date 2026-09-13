@@ -205,12 +205,15 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
       <button type="button" className="card-main" onClick={onOpen} aria-label={L(`Ouvrir : ${task.title}`, `Open: ${task.title}`)}>
         <span className="card-text">
           <span className="card-title">{isNew ? <span className="new-dot" title={L("Nouveau", "New")} /> : null}{stripStrayMarkdown(task.title)}</span>
-          {(task.sourceSubject || w || secondary || !isDone) ? (
+          {/* Compact row: at most subject + one of {due date, secondary text} — the quadrant word-label
+              used to also render here, stacking up to 4 distinct pieces into one 2-line-clamped span on
+              every ordinary task (direct instruction: cut crowding). Urgency is still visible via the
+              `when-soon` color treatment on the date itself; the full quadrant name stays in the expanded
+              hero/detail views where there's actual room for it. */}
+          {(task.sourceSubject || w || secondary) ? (
             <span className="card-sub">
               {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
-              {w && <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span>}
-              {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
-              {secondary}
+              {w ? <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span> : secondary}
             </span>
           ) : null}
         </span>
@@ -1021,6 +1024,18 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
 }) {
   const L = useLang();
   const artifactCount = (task.notes?.length || 0) + (task.flashcards?.length || 0) + (task.quizzes?.length || 0);
+  // Was always rendering EVERY chip inline, unconditionally — a task with a note plus several decks/quizzes
+  // across reruns made this block itself the crowded part of an otherwise-calm popup. Cap to a small number,
+  // same "cap + reveal" pattern the dashboard's own "See more" button uses, rather than a new one.
+  const CHIP_CAP = 3;
+  const [showAllChips, setShowAllChips] = useState(false);
+  const allChips = [
+    ...(task.notes || []).map((n) => ({ kind: "note" as const, item: n })),
+    ...(task.flashcards || []).map((f) => ({ kind: "deck" as const, item: f })),
+    ...(task.quizzes || []).map((qz) => ({ kind: "quiz" as const, item: qz })),
+  ];
+  const visibleChips = showAllChips ? allChips : allChips.slice(0, CHIP_CAP);
+  const hiddenCount = allChips.length - visibleChips.length;
   return (
     <>
       {task.did?.length ? (
@@ -1040,24 +1055,27 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
         <>
           <span className="prepared-label">{L("Créé pour toi", "Made for you")}</span>
           <div className="note-chips prepared-chips">
-            {task.notes?.map((n) => (
-              <button key={n.id} type="button" className="note-chip" onClick={() => onOpenNote(n.id)}>
-        <span className="note-chip-icon" aria-hidden="true">▤</span>
-                <span className="note-chip-text"><span className="note-chip-title">{n.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
+            {visibleChips.map((c) => c.kind === "note" ? (
+              <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenNote(c.item.id)}>
+                <span className="note-chip-icon" aria-hidden="true">▤</span>
+                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L("Fiche", "Note")}</span></span>
               </button>
-            ))}
-            {task.flashcards?.map((f) => (
-              <button key={f.id} type="button" className="note-chip" onClick={() => onOpenDeck(f.id)}>
+            ) : c.kind === "deck" ? (
+              <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenDeck(c.item.id)}>
                 <span className="note-chip-icon" aria-hidden="true">❏</span>
-                <span className="note-chip-text"><span className="note-chip-title">{f.title}</span><span className="note-chip-meta">{L(`${f.cards.length} cartes`, `${f.cards.length} cards`)}</span></span>
+                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.cards.length} cartes`, `${c.item.cards.length} cards`)}</span></span>
               </button>
-            ))}
-            {task.quizzes?.map((qz) => (
-              <button key={qz.id} type="button" className="note-chip" onClick={() => onOpenQuiz(qz.id)}>
+            ) : (
+              <button key={c.item.id} type="button" className="note-chip" onClick={() => onOpenQuiz(c.item.id)}>
                 <span className="note-chip-icon" aria-hidden="true">?</span>
-                <span className="note-chip-text"><span className="note-chip-title">{qz.title}</span><span className="note-chip-meta">{L(`${qz.questions.length} questions`, `${qz.questions.length} questions`)}</span></span>
+                <span className="note-chip-text"><span className="note-chip-title">{c.item.title}</span><span className="note-chip-meta">{L(`${c.item.questions.length} questions`, `${c.item.questions.length} questions`)}</span></span>
               </button>
             ))}
+            {hiddenCount > 0 ? (
+              <button type="button" className="btn xs ghost" onClick={() => setShowAllChips(true)}>
+                {L(`+${hiddenCount} de plus`, `+${hiddenCount} more`)}
+              </button>
+            ) : null}
           </div>
         </>
       ) : null}
