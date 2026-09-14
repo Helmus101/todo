@@ -1076,18 +1076,19 @@ export function makeNote(input: any): { note: TaskNote } | { error: string } {
   return { note: { id: randomUUID(), title, body, createdAt: new Date().toISOString() } };
 }
 
-export function makeDeck(input: any): { deck: TaskFlashcards } | { error: string } {
+// Hard product cap, direct instruction: no deck exceeds 50 cards, except a MONTHLY summary deck (more
+// material to cover across a whole month), capped at 100. Overrides the earlier "no real product cap" stance
+// for every other deck-producing path (daily/weekly journal decks, task-run/chat CREATE_FLASHCARDS).
+const DECK_CARD_CAP = 50;
+const MONTHLY_DECK_CARD_CAP = 100;
+export function makeDeck(input: any, maxCards: number = DECK_CARD_CAP): { deck: TaskFlashcards } | { error: string } {
   const title = String(input?.title || "Flashcards").trim().slice(0, 120) || "Flashcards";
   const cards = (Array.isArray(input?.cards) ? input.cards : [])
     // back's cap is well above front's: a practice-problem card's back is a full worked step-by-step
     // solution (see CARD_STYLE_RULE's rule 3 exception) — 300 chars silently chopped that off mid-solution.
     .map((c: any) => ({ front: String(c?.front || "").trim().slice(0, 300), back: String(c?.back || "").trim().slice(0, 900) }))
     .filter((c: { front: string; back: string }) => c.front && c.back)
-    // No real product cap — a student who names a specific count (e.g. "100 flashcards") should get it,
-    // not an arbitrary product-level ceiling; see CREATE_FLASHCARDS_TOOL's description for the model-side
-    // half of this. This slice is a sanity backstop only, against a malformed/runaway response, sized well
-    // above anything OUT.chat's own token budget could ever actually produce in one completion anyway.
-    .slice(0, 300);
+    .slice(0, maxCards);
   if (!cards.length) return { error: "ERROR: no valid cards (each needs a non-empty front and back)." };
   return { deck: { id: randomUUID(), title, cards, createdAt: new Date().toISOString() } };
 }
@@ -2132,8 +2133,9 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
               `near-duplicate cards that show up across different weeks into one, and weight the space each ` +
               `concept gets using the spaced-repetition signal below, NOT evenly — but otherwise keep FULL ` +
               `coverage of the month's distinct concepts, don't shrink down to a "highlights only" selection. A ` +
-              `month with many weeks of real material should produce a correspondingly large deck, up to 50 ` +
-              `cards (a hard technical ceiling on this reply's token budget, not a product opinion). ` +
+              `month with many weeks of real material should produce a correspondingly large deck, up to 100 ` +
+              `cards (a hard product ceiling — monthly decks get double the usual cap since they cover a ` +
+              `whole month's material). ` +
               `${CARD_STYLE_RULE}`) },
         { role: "user", content:
           `THIS MONTH'S WEEKLY DECKS:\n${weeksBlock}` +
@@ -2143,7 +2145,7 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
     }));
     const res = await makeReq(OUT.studylog, false);
     let out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res.choices[0]?.message?.content || "");
-    let result = out ? makeDeck(out) : { error: "no parseable JSON in the response" };
+    let result = out ? makeDeck(out, MONTHLY_DECK_CARD_CAP) : { error: "no parseable JSON in the response" };
     let tokens = usageOf(res);
     // FALLBACK: same reasoning as generateDailyStudyCards/generateWeeklyStudyDeck. Quiz split out into
     // generateMonthlyQuiz below — see generateWeeklyStudyDeck's own comment for why bundling it in was
@@ -2152,7 +2154,7 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
       console.log(`${new Date().toISOString()} [ai] generateMonthlyStudyDeck: first attempt unparseable, retrying with a smaller ask`);
       const res2 = await makeReq(5000, true);
       out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res2.choices[0]?.message?.content || "");
-      result = out ? makeDeck(out) : { error: "no parseable JSON in the retry either" };
+      result = out ? makeDeck(out, MONTHLY_DECK_CARD_CAP) : { error: "no parseable JSON in the retry either" };
       const t2 = usageOf(res2);
       tokens = { in: tokens.in + t2.in, out: tokens.out + t2.out, cachedIn: (tokens.cachedIn || 0) + (t2.cachedIn || 0) };
       if (!("deck" in result)) {
@@ -2172,7 +2174,7 @@ export async function generateMonthlyStudyDeck(weeks: { label: string; cards: { 
           ],
         }));
         out = firstJson<{ title?: string; cards?: { front?: string; back?: string }[] }>(res3.choices[0]?.message?.content || "");
-        result = out ? makeDeck(out) : { error: "no parseable JSON in the last-resort retry either" };
+        result = out ? makeDeck(out, MONTHLY_DECK_CARD_CAP) : { error: "no parseable JSON in the last-resort retry either" };
         const t3 = usageOf(res3);
         tokens = { in: tokens.in + t3.in, out: tokens.out + t3.out, cachedIn: (tokens.cachedIn || 0) + (t3.cachedIn || 0) };
         if (!("deck" in result)) {
