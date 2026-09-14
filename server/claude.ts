@@ -517,7 +517,7 @@ function profileBlock(p?: Profile): string {
     const sorted = [...p.grades].sort((a, b) => a.grade / a.scale - b.grade / b.scale);
     parts.push(`Grades by subject (self-reported, lowest first — weigh the LOW ones as needing more lead time/attention, not just what's due soonest): ${sorted.map((g) => `${g.subject} ${g.grade}/${g.scale}`).join(", ")}`);
   }
-  return parts.length ? `\nWHO THIS PERSON IS — their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things), not background:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
+  return parts.length ? `\nWHO THIS PERSON IS — their stated preferences are INSTRUCTIONS to follow (what to include, skip, prioritize, and how to phrase/do things) for THIS TASK, not background. "Key people"/"Ongoing projects" are context to help you understand and phrase THIS task correctly — they are NEVER license to write a step about a different person/project just because it's named here. A person or project only belongs in this task's steps if the task is actually ABOUT them:\n${parts.map((x) => `- ${x}`).join("\n")}\n` : "";
 }
 
 /** Render live Pronote homework/exams for a single task's run/chat context — the candidate-discovery pass
@@ -721,7 +721,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // mid-JSON, firstJson() returned null on the unbalanced braces, and the whole thing silently produced NO
 // deck with a 200-success response — see the fix at generateDailyStudyCards' own prompt (capped at 40, not
 // "no cap") and the route-level error surfacing this budget bump pairs with.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 500, studentModel: 2000 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -2229,7 +2229,11 @@ export async function generateMonthlyQuiz(weeks: { label: string; cards: { front
 // validateThemeTokens) — a value that fails validation for ANY reason is dropped silently, never applied
 // partially-trusted. Nothing here can inject a selector, a URL, a script, or any CSS beyond "this token
 // equals this color/number". Rare and opt-in by design (a Settings button click, not automatic/periodic) —
-// this is exactly the kind of one-off interactive action OUT.theme's tiny budget and cost profile suit.
+// cheap and infrequent enough that OUT.theme's budget doesn't need to be stingy. It WAS 500 — far too tight
+// for a reasoning model whose hidden reasoning tokens count against max_tokens (see DeepSeek v4 notes
+// elsewhere in this file): the model's real JSON output routinely got cut off mid-object before it ever
+// finished, firstJson returned null on the unbalanced braces, and the button silently 502'd — "personalize
+// my theme" looking broken every time, reported live. Raised to 2000, matching sibling one-shot JSON calls.
 /** One-shot, opt-in, best-effort: propose a small personalized palette from a short account summary. Empty
  *  result (never throws) on ANY failure — the caller falls back to the current theme unchanged. */
 export async function generateThemeTokens(summary: string, profile?: Profile): Promise<{ tokens: ThemeTokens; tokensUsed: { in: number; out: number; cachedIn: number } }> {
@@ -2435,6 +2439,15 @@ const RUN_SYSTEM =
   `note in "synthesis" that it's mass mail and needs no reply, and stop there.\n` +
   `NO AUTONOMOUS EMAIL, EVER — not even to the user's own inbox. Never draft an email addressed to the user or to summarize findings for the user — put summary briefs directly in "synthesis"/"context" or in a Google Doc/Sheet artifact. Never create steps like 'Draft an email to the user'.\n` +
   `STEPS MUST BE TASK-SPECIFIC — Every step in "steps" MUST be directly related to the task title. Do NOT generate unrelated follow-up tasks, project tasks, or separate initiatives. For example, if the task is "Find summer clothes", steps should be about researching styles, finding stores, checking prices — NOT about college apps, restaurant partnerships, or any other unrelated project. Stay strictly focused on the specific task title.\n` +
+  `IF YOUR SEARCHES COME UP EMPTY, SAY SO — NEVER QUESTION WHAT THE TASK IS OR IMPROVISE ALTERNATIVES. When ` +
+  `the task's title/why names a specific thing to find or act on (a message, a thread, a document) and your ` +
+  `Gmail/Drive/Calendar searches for it genuinely turn up nothing, that's a normal, honest outcome — say so ` +
+  `plainly in "synthesis" (e.g. "Couldn't find the messages this refers to — they may be in an app Otto can't ` +
+  `search, or already handled") and hand back ONE honest manual step ("Find/paste the messages so Otto can ` +
+  `help", or similar). What you must NEVER do: write a step second-guessing what the task itself wants ("determine ` +
+  `what the user actually wants done"), or branch into multiple hypothetical "if the goal is X... if the goal ` +
+  `is Y..." steps pulling in OTHER unrelated obligations from context to cover your uncertainty. An honest ` +
+  `"I couldn't find it" beats a confused guess dressed up as a plan, every time.\n` +
   `INCLUDE LINKS IN RECOMMENDATIONS — When you recommend specific stores, brands, products, or resources in your steps, context, or artifacts, ALWAYS include the actual URLs you found via web_search. Do not just mention names without links. For example: "Research summer styles at [Zara](https://www.zara.com) and [H&M](https://www.hm.com)" or "Check [Uniqlo's summer collection](https://www.uniqlo.com) for lightweight options." The same rule applies to app results: if "context"/"did" names a SPECIFIC email, doc, sheet, or file you found, put its real URL in "links" — never describe finding something without giving a way to open it.\n` +
   `CALENDAR INVITES: create/update the event freely — but it lands on the user's calendar SILENTLY, with NO ` +
   `emails to anyone (you cannot notify attendees yourself). If the event SHOULD invite people, do NOT email them; ` +
@@ -2845,7 +2858,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // completely useless to the user. Catches: narrating what the user asked for, narrating the act of
   // searching/checking/retrieving itself (in EITHER first- or third-person, "I searched" / "Assistant
   // retrieved"), and a search described as having failed with no follow-up fact stated.
-  const META_NARRATION = /\b(user (requested|asked (for|about)|wants?)\b|(?:^|\. )(?:the )?assistant \w+ed\b|performed (a )?searches?\b|conduct(?:ed)? (a )?search(?:es)?\b|search(?:ed|ing)? (across|through|multiple|for)\b.{0,40}\bwithout (success|results?|luck)\b|checked (multiple|several|various)\b|looked (into|through) (multiple|several|various)\b|across multiple (google )?services\b|\bread emails? about\b|\bretrieved (?:the |a )?calendar event\b)/i;
+  const META_NARRATION = /\b(user (requested|asked (for|about)|wants?)\b|(?:^|\. )(?:the )?assistant \w+ed\b|performed (a )?searches?\b|conduct(?:ed)? (a )?search(?:es)?\b|search(?:ed|ing)? (across|through|multiple|for)\b.{0,40}\bwithout (success|results?|luck)\b|checked (multiple|several|various)\b|looked (into|through) (multiple|several|various)\b|across multiple (google )?services\b|\bread emails? about\b|\bretrieved (?:the |a )?calendar event\b|\b(ran|did|made) (several|multiple|a few)\b.{0,40}\b(lookups?|searches?|queries)\b|\breturned (empty|no|nothing)\b|\bcame (up|back) empty\b)/i;
   // MISSION INTEGRITY: catches a claim that Otto did the student's actual graded/learning work FOR them —
   // the one line the whole "companion, not do-it-all" mission is built around. Checked against synthesis/did
   // (the model's own narrative of what it produced), the same place every other claim-verification check in
@@ -3023,7 +3036,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "research. Read whatever's relevant (the Gmail thread / Calendar event / Drive doc behind this, " +
                 "or any other connected app that plausibly bears on it) before you submit. If you genuinely " +
                 "checked and none apply, say so explicitly in \"context\" — but only after actually trying.";
-            } else if (META_NARRATION.test(draft.context) && canBounce) {
+            } else if ((META_NARRATION.test(draft.context) || (Array.isArray(draft.did) && draft.did.some((d: string) => META_NARRATION.test(d)))) && canBounce) {
               // Observed live: "context" describing the REQUEST or the SEARCH PROCESS instead of what was
               // actually found ("User requested information about Gabrielle; performed searches across
               // multiple Google services") — technically non-empty, completely worthless to the user. This
