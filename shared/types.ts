@@ -789,6 +789,12 @@ export interface WebTask {
    *  below), which is what actually exercises DOING the calculation instead of recognizing it among
    *  options. Singular (not an array) — one genuinely worthwhile problem beats a padded list. */
   practiceProblem?: DailyPracticeProblem;
+  /** Feynman-technique gap-check on the day's own written entry (Study Journal only — see checkFeynmanGap
+   *  in server/claude.ts): does the student's own explanation actually hold together in plain words, or does
+   *  it go vague/circular somewhere? Set only when a real gap was found (most entries clear this and leave
+   *  it unset — quiet by default, never "could be more detailed" nagging). Cleared on the entry's next save
+   *  since a rewritten entry needs a fresh check, not yesterday's flagged spot lingering. */
+  feynmanGap?: string;
   /** Human-readable log of what Otto actually did on this task — a tool call, an artifact created, or a
    *  guardrail refusing to do the student's graded work. Exists so a parent/teacher can verify "never does
    *  the work" is enforced in practice, not just claimed — see the audit panel on the task card. Capped

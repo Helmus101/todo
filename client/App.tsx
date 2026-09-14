@@ -2248,6 +2248,15 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
                   <PracticeProblemCard problem={dayTask.practiceProblem} taskId={dayTask.id} />
                 </div>
               ) : null}
+              {/* Feynman-technique gap-check on the entry's OWN explanation (server/claude.ts's
+                  checkFeynmanGap) — quiet, only shown when a real gap was actually found (most entries clear
+                  this silently). Not a form to fill in: the point is to notice the gap and go find the
+                  answer, in the cours or by asking Otto in chat — not to answer it here on the spot. */}
+              {dayTask?.feynmanGap ? (
+                <p className="studylog-feynman-gap">
+                  <span aria-hidden="true">◐</span> {dayTask.feynmanGap}
+                </p>
+              ) : null}
             </div>
           ) : (
             <>

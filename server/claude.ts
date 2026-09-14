@@ -1915,6 +1915,53 @@ export async function generateDailyPracticeProblem(logText: string, profile?: Pr
   } catch { return null; }
 }
 
+// Same core mechanic as chatAboutTask's system prompt rule 4 ("CHECK IT LANDED — THE FEYNMAN LOOP":
+// explaining something back in your own plain words is the real test of understanding — wherever it goes
+// vague, circular, or leans on a term you can't unpack, that's the gap) — applied here to the student's own
+// WRITTEN journal entry instead of a live chat turn. generateDailyStudyCards already turns this same text
+// into flashcards; this is a separate, best-effort, non-blocking call (same posture as
+// generateDailyPracticeProblem right above) precisely BECAUSE the daily-save round trip is deliberately kept
+// small and fast (see generateDailyStudyCards's own comment) — bolting a second judgment call onto that one
+// request would make the single most frequent AI action in the app slower/less reliable for a nice-to-have.
+// A failure here costs nothing: the entry saved and the flashcards generated regardless.
+export async function checkFeynmanGap(logText: string, profile?: Profile): Promise<{ gap: string; tokens: { in: number; out: number; cachedIn: number } } | null> {
+  const raw = String(logText || "").trim();
+  if (raw.length < 40) return null; // too short to genuinely contain an explanation worth checking
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model,
+      max_tokens: 300,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content:
+          languageLine(profile) + trackLine(profile) +
+          `Read the student's own written explanation of what they learned today, below. Judge it exactly like ` +
+          `the Feynman technique: does it actually hold together end to end in plain words, or does it go ` +
+          `vague, circular, or lean on a term/fact it never actually unpacks (e.g. "mitosis splits the cell ` +
+          `because that's how it works", "the derivative just gives the rate")? Most entries are genuinely ` +
+          `fine — a short, honest recap of what was studied, not a rigorous proof — so only flag a REAL gap, ` +
+          `not "could be more detailed" or "could add an example." If you flag one, write ONE short, specific, ` +
+          `plain-spoken question pointing at that exact spot (mirror how a tutor would ask it out loud, not a ` +
+          `graded-feedback tone) — the same move as asking "you said X 'just happens' — what actually makes it ` +
+          `happen?", never a generic "can you elaborate?" If the entry is too short/logistics-only to contain ` +
+          `any real explanation to check (e.g. "did exercises 3-5", "reviewed vocab"), or it genuinely holds ` +
+          `together, output {"gap": null}.\n\n` +
+          `Return ONLY this JSON: {"gap": "..." | null}.` },
+        { role: "user", content: `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""` },
+      ],
+    }));
+    const out = firstJson<{ gap?: string | null }>(res.choices[0]?.message?.content || "");
+    const gap = String(out?.gap || "").trim().slice(0, 300);
+    if (!gap) return null;
+    const tokens = usageOf(res);
+    console.log(`${new Date().toISOString()} [ai] checkFeynmanGap: 1 gap flagged, ${tokens.in} in / ${tokens.out} out tokens`);
+    return { gap, tokens };
+  } catch { return null; }
+}
+
 /** End-of-week summary deck: synthesizes across the week's daily entries, weighted by a REAL spaced-
  *  repetition signal (Leitner box breakdown — see spacedRepetitionBlock/nextLeitnerReview) rather than
  *  either re-testing everything evenly or only tracking "wrong or not". Also decides, per week, whether a

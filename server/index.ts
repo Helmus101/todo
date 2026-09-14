@@ -12,7 +12,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "./store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
@@ -1484,6 +1484,14 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
       if (pp) { addUsage(req.session.profile ||= emptyProfile(), pp.tokens, "studylog"); t.practiceProblem = pp.problem; }
       else t.practiceProblem = undefined;
     } catch { /* best-effort — flashcards above already succeeded regardless */ }
+    // Feynman-technique gap-check on the entry itself — same "separate, best-effort, never blocks the
+    // flashcards" posture as the practice problem above. Cleared then re-set fresh on every save (a
+    // rewritten entry deserves its own check, not a stale flag from a previous version of the text).
+    try {
+      const fg = await checkFeynmanGap(text, req.session.profile);
+      if (fg) { addUsage(req.session.profile ||= emptyProfile(), fg.tokens, "studylog"); t.feynmanGap = fg.gap; }
+      else t.feynmanGap = undefined;
+    } catch { /* best-effort */ }
     t.updatedAt = new Date().toISOString();
     // Awaited (not fire-and-forget) — this is THE write that actually creates the day's journal/flashcards
     // record, reported live as not reliably surviving in the cloud on serverless. See commit()'s own comment
