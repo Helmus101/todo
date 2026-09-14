@@ -14,22 +14,21 @@ import { hasAssignmentText } from "./discover.ts";
 // gated: only sends/calendar-writes/updates-to-existing-docs are withheld from the agent (see runTask).
 export const EXECUTION_ENABLED = false;
 
-/** Backstop for step text: the prompt asks the model for a short one-liner, but it doesn't always comply
- *  (a long compound sentence slips through). A plain `.slice(0, N)` used to cut it off mid-word ("...fo")
- *  which read as broken, not just long — this cuts at the last word boundary instead. It used to then just
- *  return that shortened string with nothing appended — reported live as steps reading like an unfinished
- *  sentence ("Draft the 'last year' section: competitions run (investment/finance competitions teaching
- *  critical investment") with no visual signal anything was cut. Now appends "…" whenever it actually
- *  shortened the text, and `max` is tied to the prompt's own word-count target (≤8 words ordinary, ≤10 for
- *  milestones) instead of one generous 110-char constant shared by both — the old cap was 40-50% more
- *  generous than what it was meant to police, so an over-long model output could run deep into a subordinate
- *  clause before the backstop ever kicked in. */
-function truncateStepText(text: string, max = 60): string {
+/** Backstop for step text — NOT a length editor. The prompt asks for a short one-liner (≤8 words ordinary,
+ *  ≤10 for milestones); when the model complies, this is a no-op. When it doesn't, a mid-sentence chop
+ *  (with or without "…" tacked on) reads as broken either way — a step should be concise OR complete, never
+ *  a fragment presented as finished. So this only steps in on a genuinely pathological, far-oversized
+ *  output (`max` is generous, well beyond any real one-liner) — and even then it cuts at the last COMPLETE
+ *  sentence it can find (a period/!/?), never mid-clause, so what's left always reads as a whole thought,
+ *  just a shorter one. Normal over-by-a-few-words output (the common case) passes through untouched. */
+function truncateStepText(text: string, max = 220): string {
   const t = text.trim();
   if (t.length <= max) return t;
   const cut = t.slice(0, max);
+  const lastSentenceEnd = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
+  if (lastSentenceEnd > 30) return cut.slice(0, lastSentenceEnd + 1).trim();
   const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim() + "…";
+  return (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim();
 }
 
 /** Validate a raw step's url/question/options exactly the same way regardless of which pass produced
@@ -3404,7 +3403,14 @@ export async function writeStepsFromContext(
           `problem) as if it were already done or as Otto's job; that work always stays theirs. Every item must ` +
           `be directly about "${task.title}" — no unrelated tangents; the context above may mention OTHER people/` +
           `threads/obligations that came up during research but aren't actually part of this task — don't turn ` +
-          `those into steps just because they're in the context. If the assignment references a specific ` +
+          `those into steps just because they're in the context. Concretely: if step N names a completely ` +
+          `different person, organization, or obligation than the task's own title/why (a club project's steps ` +
+          `suddenly including "contact so-and-so for an unrelated application", "fix a bug in a different app", ` +
+          `"reply to a professor about something else entirely") — that step belongs to a DIFFERENT task, not ` +
+          `this one, even if it showed up in the same research pass. A step list is one project's real sub-` +
+          `actions, never a general to-do dump of everything the student happens to have going on. If in doubt ` +
+          `whether a candidate step actually belongs here, leave it out — a shorter, coherent list beats a ` +
+          `longer one that reads as random. If the assignment references a specific ` +
           `textbook/manuel page or exercise number with no attachment link actually containing that page's ` +
           `text, don't write a step that pretends to know what's on it — the step should be the honest one ` +
           `("Open the manuel to p.X, ex.Y" or "Paste the exercise text so Otto can help"), never a guess at ` +
@@ -3440,8 +3446,7 @@ export async function writeStepsFromContext(
         const url = (own.url && linkUrls.has(own.url)) ? own.url
           : (matched?.url && linkUrls.has(matched.url)) ? matched.url : undefined;
         return {
-          // Milestones get a slightly higher cap (≤10-word prompt target vs ≤8 for ordinary steps).
-          text: truncateStepText(String(s?.text || ""), bigProject ? 70 : 60),
+          text: truncateStepText(String(s?.text || "")),
           automatable: bigProject ? false : !!s?.automatable,
           ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
           // Same validation as finalize()'s dependsOn handling — must point at a REAL other step in
