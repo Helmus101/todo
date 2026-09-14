@@ -978,6 +978,13 @@ export function foldGenerated(existing: WebTask[], genTasks: {
       id, title: g.title, why: g.why, when, whenApprox: !g.when, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: g.status || "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
+      // Also surface the anchor source (the actual email/event/attachment this task is about) as a
+      // student-facing link, not just internal dedup evidence — a task that concludes "no action needed"
+      // never invokes any run-time link-finding logic, which used to mean the source was captured in the
+      // data model but structurally invisible to the student: no way to open the original email themselves
+      // without re-finding it in their inbox. `links` may still get replaced/extended once the task actually
+      // runs (see RUN_SYSTEM's link rule), but it should never START empty when a real source is known.
+      links: evidence,
       sourceDetail: g.sourceDetail, sourceSubject: g.sourceSubject, sourceDue: g.sourceDue,
       ...(g.steps ? { steps: g.steps } : {}),
     });
@@ -1146,7 +1153,17 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
       const old = prior.find((o) => nearDup(o.text, s.text));
       return old ? { ...s, done: true, doneAt: old.doneAt, result: s.result || old.result } : s;
     });
-    task.links = out.links?.length ? out.links : undefined; // links to the draft/doc/event it made, so the user can open it
+    // Merge, don't replace — this used to overwrite `links` wholesale with only what THIS run produced,
+    // which silently dropped the task's own anchor link (the source email/event, set at generation time —
+    // see generate()'s own comment) whenever a run legitimately found nothing new to add (e.g. "no action
+    // needed" on an informational email). The student was left with no way to open the original item.
+    // Dedup by URL, anchor link(s) first so they always survive even if the cap below has to trim something.
+    {
+      const seenUrls = new Set<string>();
+      const merged = [...(task.evidence || []), ...(task.links || []), ...(out.links || [])]
+        .filter((l) => l?.url && !seenUrls.has(l.url) && (seenUrls.add(l.url), true));
+      task.links = merged.length ? merged.slice(0, 5) : undefined;
+    }
     task.firstAction = out.firstAction; // the anti-procrastination hook — undefined when finalize() withheld it
     task.notes = out.notes?.length ? [...(task.notes || []), ...out.notes].slice(-ARTIFACT_CAP) : task.notes; // in-app fiches, accumulated (a rerun can add another)
     task.flashcards = out.flashcards?.length ? [...(task.flashcards || []), ...out.flashcards].slice(-ARTIFACT_CAP) : task.flashcards;
