@@ -226,19 +226,45 @@ const rankStatus = (t: WebTask) => {
     : c === "queued" ? 2 : 1;
 };
 const betterOf = (a: WebTask, b: WebTask) => rankStatus(b) > rankStatus(a) ? b : a; // ties keep `a` (added first)
+const dedupeLinksByUrl = (lists: (TaskLink[] | undefined)[], cap: number): TaskLink[] => {
+  const seen = new Set<string>();
+  const out: TaskLink[] = [];
+  for (const list of lists) for (const l of list || []) {
+    if (!l?.url || seen.has(l.url)) continue;
+    seen.add(l.url);
+    out.push(l);
+    if (out.length >= cap) return out;
+  }
+  return out;
+};
 /** The source's VERBATIM context (Pronote's énoncé/subject/due) must survive a merge even when the
  *  more-progressed copy is the one that lacks it — which is the normal case: a freshly classified card
  *  carries `sourceDetail`, and it gets absorbed into an older, higher-ranked `ready`/`done` copy that
  *  predates the field. Whole-object winner-takes-all silently drops it, and the artifact goes generic
  *  again with nothing in the logs. (Same class of bug as the `track` field dropping out of
- *  mergeProfileStates.) Prefer the winner's own value; fall back to either side's. */
+ *  mergeProfileStates.) Prefer the winner's own value; fall back to either side's.
+ *  `links`/`evidence` get the SAME treatment, unioned rather than winner-takes-all — this is the merge-path
+ *  half of the anchor-link fix (runById's own run-path merge, tasks.ts, is the other half): two devices/
+ *  sessions each acting on the same task can each end up with a different link (one opens the source email,
+ *  the other adds a drafted doc, or one side is just a newer copy carrying the anchor and the other a stale
+ *  pre-fix snapshot without it) — winner-takes-all here would silently drop the loser's link(s), including
+ *  possibly the task's own anchor. Evidence first in the union so the anchor survives the cap even when
+ *  several `links` entries exist on both sides. */
 const carrySource = (winner: WebTask, a: WebTask, b: WebTask): WebTask => {
   const sourceDetail = winner.sourceDetail ?? a.sourceDetail ?? b.sourceDetail;
   const sourceSubject = winner.sourceSubject ?? a.sourceSubject ?? b.sourceSubject;
   const sourceDue = winner.sourceDue ?? a.sourceDue ?? b.sourceDue;
-  return (sourceDetail === winner.sourceDetail && sourceSubject === winner.sourceSubject && sourceDue === winner.sourceDue)
-    ? winner
-    : { ...winner, sourceDetail, sourceSubject, sourceDue };
+  const evidence = dedupeLinksByUrl([a.evidence, b.evidence], 3);
+  const links = dedupeLinksByUrl([a.evidence, b.evidence, a.links, b.links], 5);
+  const sourceChanged = sourceDetail !== winner.sourceDetail || sourceSubject !== winner.sourceSubject || sourceDue !== winner.sourceDue;
+  const linksChanged = links.length !== (winner.links || []).length || evidence.length !== (winner.evidence || []).length;
+  if (!sourceChanged && !linksChanged) return winner;
+  return {
+    ...winner,
+    ...(sourceChanged ? { sourceDetail, sourceSubject, sourceDue } : {}),
+    ...(evidence.length ? { evidence } : {}),
+    ...(links.length ? { links } : {}),
+  };
 };
 // Titles must near-match, or (same source AND same trigger). The old cross-field checks (title vs why)
 // were loose enough to swallow genuinely NEW tasks into old done ones — "Refresh finds nothing".
@@ -1237,9 +1263,11 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   if ((out.steps || []).some((s) => !s.automatable && !s.synthetic)) { step.automatable = false; step.done = false; }
   else { step.done = true; step.doneAt = new Date().toISOString(); step.question = undefined; step.options = undefined; } // answered + done → no stale question
   // Surface anything this step produced (a draft/doc/…) alongside the task's other artifacts, deduped by URL.
-  if (out.links?.length) {
-    const seen = new Set((task.links || []).map((l) => l.url));
-    task.links = [...(task.links || []), ...out.links.filter((l) => !seen.has(l.url))].slice(0, 3);
+  // `task.evidence` fallback included for consistency with runById's merge (this task's own anchor link
+  // should already be in `task.links` by this point from generation time, so this rarely does anything —
+  // but a step run must never be the one path that can end up dropping it either).
+  if (out.links?.length || task.evidence?.length) {
+    task.links = dedupeLinksByUrl([task.evidence, task.links, out.links], 3);
   }
   const freshArtifacts = extractArtifacts(out, out.createdDocIds);
   if (freshArtifacts.length) {

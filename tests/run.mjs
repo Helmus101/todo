@@ -899,6 +899,29 @@ const mergedNotes = mergeTaskLists([deviceA], [deviceB])[0].notes;
 check("both devices' notes survive the merge", mergedNotes?.length === 2 && mergedNotes.some((n) => n.id === "n1") && mergedNotes.some((n) => n.id === "n2"));
 check("unioned artifacts come out chronological (createdAt order), not loser-appended-last", mergedNotes[0].id === "n1" && mergedNotes[1].id === "n2");
 
+section("links/evidence survive a merge (carrySource) — the same anchor-link-dropping bug, one layer up");
+// Two devices/sessions each end up with a DIFFERENT link for the same task (one opened the source email,
+// the other added a drafted doc) — winner-takes-all used to silently drop the loser's link(s) entirely,
+// including possibly the task's own anchor. carrySource now unions both sides by url.
+const emailLink = { label: "Open in Gmail", url: "https://mail.google.com/mail/u/0/#inbox/abc123" };
+const draftDocLink = { label: "Draft", url: "https://docs.google.com/document/d/xyz789" };
+const linkDeviceA = { ...taskBase, id: "z", updatedAt: "2026-01-01T00:00:00Z", evidence: [emailLink] };
+const linkDeviceB = { ...taskBase, id: "z", updatedAt: "2026-01-02T00:00:00Z", links: [draftDocLink] };
+const mergedLinks = mergeTaskLists([linkDeviceA], [linkDeviceB])[0];
+check("the anchor (evidence) survives even though the winning copy never had it", mergedLinks.evidence?.some((l) => l.url === emailLink.url));
+check("the loser's own link survives too, unioned rather than dropped", mergedLinks.links?.some((l) => l.url === draftDocLink.url));
+check("the anchor link is also folded into the student-facing links list", mergedLinks.links?.some((l) => l.url === emailLink.url));
+const dedupedLinks = dedupeTasks([{ ...linkDeviceA, status: "done" }, { ...linkDeviceB, id: "fresh" }]);
+check("dedupeTasks unions links the same way carrySource does for mergeTaskLists", dedupedLinks.length === 1 && dedupedLinks[0].links?.some((l) => l.url === emailLink.url) && dedupedLinks[0].links?.some((l) => l.url === draftDocLink.url));
+const dupLinkDeviceB = { ...taskBase, id: "z", updatedAt: "2026-01-02T00:00:00Z", evidence: [emailLink], links: [emailLink, draftDocLink] };
+check("no duplicate entries when both sides already share the same url", mergeTaskLists([linkDeviceA], [dupLinkDeviceB])[0].links?.filter((l) => l.url === emailLink.url).length === 1);
+
+section("foldGenerated attaches the anchor's own link to task.links, not just task.evidence, at creation time");
+const anchorUrl = "https://mail.google.com/mail/u/0/#inbox/abc123";
+const foldedWithLink = foldGenerated([], [{ title: "Reply to Roger", why: "Roger emailed today", source: "gmail", risk: "low", urgency: 0.5, importance: 0.5, anchorKey: "gmail:abc", link: anchorUrl }]);
+check("a fresh candidate's links immediately include its own source URL — visible to the student before any run ever happens", foldedWithLink[0]?.links?.some((l) => l.url === anchorUrl));
+check("the same URL is still in evidence too (internal dedup matching untouched)", foldedWithLink[0]?.evidence?.some((l) => l.url === anchorUrl));
+
 section("assignmentBlock — the run/chat prompt's own view of the assignment");
 check("empty when there's no real sourceDetail", assignmentBlock({}) === "");
 const ab = assignmentBlock({ sourceSubject: "Physique-Chimie", sourceDetail: "Exercices 12 à 15 p.87 — mécanique du point", sourceDue: "2026-09-02T08:00:00Z" });

@@ -3838,6 +3838,8 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // Backstop the model's own "omit when..." instructions rather than trust them blindly: only keep
   // firstAction when there's actually a real user step left to unblock, and never for a big project (a
   // milestone list already sets the direction — see FIRST ACTION in RUN_SYSTEM).
+  // 90, not the default: firstAction is a UI badge/nudge, not a step — deliberately tighter than a step's
+  // own backstop, not a leftover from before truncateStepText's default was widened.
   const firstActionText = out?.firstAction?.text ? truncateStepText(String(out.firstAction.text), 90) : "";
   const firstActionMinutes = Number(out?.firstAction?.minutes);
   const firstAction = (firstActionText && !out?.isBigProject && steps.some((s) => !s.automatable)) ? {
