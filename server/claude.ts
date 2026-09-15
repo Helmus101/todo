@@ -2,7 +2,9 @@ import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens, WebTask } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
-import { dedupeFacts, sameFact, errorLogBySubject, gradesBySubject } from "../shared/types.ts";
+import { dedupeFacts, sameFact, errorLogBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
+import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
+import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 import { hasAssignmentText } from "./discover.ts";
@@ -248,14 +250,22 @@ export function studentModelLine(p?: Profile): string {
  *  task belongs to — subject-matched, not global, since an error from a different subject is noise here.
  *  This data already existed and was fully built (CRUD routes, its own tab) but was never once read into an
  *  AI prompt before — free signal, zero new AI cost, just wiring. */
-export function errorLogLine(p: Profile | undefined, subject: string | undefined): string {
+export function errorLogLine(p: Profile | undefined, subject: string | undefined, trend?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }): string {
   if (!subject) return "";
   const match = errorLogBySubject(p?.errorLog).find((g) => g.subject.toLowerCase() === subject.toLowerCase());
-  if (!match?.entries.length) return "";
+  // Trend context (server/patterns.ts's aggregateSubjectSignals — the same signal the dashboard's weak-
+  // subject boost already uses) layered on top of the error log, when the caller has it handy: an
+  // error-log entry alone doesn't say whether the subject is improving or sliding, this does.
+  let trendLine = "";
+  if (trend?.trend) trendLine = ` Recent quiz/flashcard performance in ${subject} is trending ${trend.trend} ` +
+    `(${Math.round(trend.correctRate * 100)}% correct over ${trend.attempts} attempts) — ` +
+    (trend.trend === "down" ? "worth being a bit more careful/patient here right now." :
+      trend.trend === "up" ? "they're genuinely improving here, it's fine to nudge a bit further." : "");
+  if (!match?.entries.length) return trendLine ? `\n${trendLine.trim()}\n` : "";
   const recent = match.entries.slice(0, 5); // errorLogBySubject already sorts newest-first within a subject
   return `\nPAST MISTAKES THEY'VE LOGGED IN ${subject.toUpperCase()} (their own error journal — bring one up ` +
     `by name if it's genuinely the same kind of slip right now, e.g. "this is the same mix-up as the one you ` +
-    `logged about X" — never just recite the list):\n` +
+    `logged about X" — never just recite the list).${trendLine}\n` +
     recent.map((e) => `- Q: "${e.question}" — mistake: "${e.mistake}"${e.fix ? ` — fix they noted: "${e.fix}"` : ""}`).join("\n") + "\n";
 }
 /** Flashcards on THIS task sitting at Leitner box 1 (gotten wrong / never advanced) — weakCardFronts
@@ -721,7 +731,9 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // mid-JSON, firstJson() returned null on the unbalanced braces, and the whole thing silently produced NO
 // deck with a 200-success response — see the fix at generateDailyStudyCards' own prompt (capped at 40, not
 // "no cap") and the route-level error surfacing this budget bump pairs with.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 5000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000 } as const;
+// rescue was 5000 (< run's 8000) — backwards for a pass whose whole job is to recover from the main pass
+// truncating: it was structurally MORE likely to truncate too, not less. Raised to match run's ceiling.
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -1620,16 +1632,21 @@ const STUDENT_MODEL_SYS =
   `think/reason (not just what subjects they're in), any recurring misconception or pattern of mistake worth ` +
   `watching for, what kind of explanation or approach has actually worked for them before, a genuine interest ` +
   `or project worth drawing a future analogy from, and how they seem to be growing/changing over time (don't ` +
-  `just restate today's snapshot). Write it as if for a tutor picking up where the last one left off — plain, ` +
-  `specific, no praise-speak, no clinical/diagnostic labels, nothing invented beyond what the data supports. ` +
-  `This text may later be shown directly to the student themselves, so nothing that would feel judgmental or ` +
-  `surveillance-like if they read it verbatim. Output plain prose only, no headers, no bullet points.`;
+  `just restate today's snapshot). When the data below shows real per-subject signal for two or more subjects ` +
+  `(a correct-rate trend, a mistake pattern, a focus-time pattern), structure part of the summary around those ` +
+  `subjects individually (e.g. "In Math HL specifically: ...") instead of one undifferentiated paragraph — but ` +
+  `never manufacture a per-subject aside when the data doesn't actually support one. Write it as if for a ` +
+  `tutor picking up where the last one left off — plain, specific, no praise-speak, no clinical/diagnostic ` +
+  `labels, nothing invented beyond what the data supports. This text may later be shown directly to the ` +
+  `student themselves, so nothing that would feel judgmental or surveillance-like if they read it verbatim. ` +
+  `Output plain prose only, no headers, no bullet points.`;
 
-/** Assembles a small (~800-1000 token) text blob purely from data already resident in `profile`/`list` — no
- *  new AI call, no raw full chat history. Returns undefined when there's genuinely nothing to synthesize
- *  from yet (true cold start), so synthesizeStudentModel can skip the call entirely rather than spending one
- *  to say "not enough data". */
-function buildStudentModelInputs(profile: Profile, list: WebTask[]): string | undefined {
+/** Assembles a small (~800-1000 token) text blob purely from data already resident in `profile`/`list` (plus
+ *  the bandit posteriors the caller already loaded for the sweep — see synthesizeStudentModel) — no new AI
+ *  call, no raw full chat history. Returns undefined when there's genuinely nothing to synthesize from yet
+ *  (true cold start), so synthesizeStudentModel can skip the call entirely rather than spending one to say
+ *  "not enough data". */
+function buildStudentModelInputs(profile: Profile, list: WebTask[], banditStates?: Partial<Record<"chatstyle" | "pomodoro" | "ordering", BanditState>>): string | undefined {
   const parts: string[] = [];
   const errLog = errorLogBySubject(profile.errorLog).flatMap((g) => g.entries).slice(0, 10);
   if (errLog.length) {
@@ -1641,8 +1658,44 @@ function buildStudentModelInputs(profile: Profile, list: WebTask[]): string | un
   if (weakFronts.length) parts.push(`Flashcards still shaky (Leitner box 1, gotten wrong / never advanced): ${weakFronts.slice(0, 15).join("; ")}`);
   const grades = gradesBySubject(profile.grades);
   if (grades.length) parts.push(`Current grade averages (weakest first, /20): ${grades.map((g) => `${g.subject} ${g.avg20.toFixed(1)}`).join(", ")}`);
+  // Per-subject correct-rate + trend from flashcards/quizzes (server/patterns.ts) — the same data the
+  // dashboard's weak-subject boost already uses, now also feeding the synthesis so it can name which
+  // subjects are genuinely improving vs. sliding, not just restate a flat grade average.
+  const subjectSignals = aggregateSubjectSignals(list).filter((s) => s.attempts >= 3);
+  if (subjectSignals.length) {
+    parts.push(`Per-subject correct-rate from recent flashcard/quiz activity (trend where known):\n` +
+      subjectSignals.map((s) => `- ${s.subject}: ${Math.round(s.correctRate * 100)}% correct over ${s.attempts} attempts${s.trend ? ` (trending ${s.trend})` : ""}`).join("\n"));
+  }
   if (profile.about?.trim()) parts.push(`What they've told Otto about themselves: ${profile.about.trim()}`);
   if (profile.projects?.length) parts.push(`Projects/interests on record: ${profile.projects.slice(0, 5).join("; ")}`);
+  // Real working rhythm (server/patterns.ts) — when confident, gives the synthesis something concrete to
+  // reference about when this student actually shows up, not just what they study.
+  const engagement = predictNextEngagement(profile);
+  if (engagement && engagement.confidence >= 0.3) {
+    const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    parts.push(`Most likely to actually engage: ${WEEKDAYS[engagement.weekday]} around ${engagement.hour}:00 local time.`);
+  }
+  // Subject-specific focus windows (shared/types.ts) — only once there's enough per-subject history.
+  const subjectFocusLines: string[] = [];
+  for (const s of subjectSignals) {
+    const peak = learnedProductiveHourForSubject(profile, s.subject);
+    if (peak && peak.confidence >= 0.3) subjectFocusLines.push(`${s.subject} around ${peak.hour}:00`);
+  }
+  if (subjectFocusLines.length) parts.push(`Subjects they tend to be most focused on at a specific time of day: ${subjectFocusLines.join("; ")}`);
+  // Learned behavioral preferences from the bandits (server/bandit.ts) — how this student learns best, not
+  // just what they're weak on. Only included once each bandit has real evidence (leadingArm's own gate).
+  if (banditStates) {
+    const now = new Date();
+    const key = banditContextKey(now, profile);
+    const prefLines: string[] = [];
+    const chat = banditStates.chatstyle && leadingArm(CHAT_STYLE_ARMS, banditStates.chatstyle, key);
+    if (chat) prefLines.push(`responds best to a "${chat.arm.id}" chat style`);
+    const pomo = banditStates.pomodoro && leadingArm(POMODORO_ARMS, banditStates.pomodoro, key);
+    if (pomo && pomo.arm.enabled) prefLines.push(`focuses best with ~${pomo.arm.workMinutes}-minute work blocks`);
+    const ordering = banditStates.ordering && leadingArm(ORDERING_ARMS, banditStates.ordering, key);
+    if (ordering) prefLines.push(`does best with tasks ordered "${ordering.arm.id}"`);
+    if (prefLines.length) parts.push(`Learned behavioral preferences (from observed session outcomes, not self-reported): ${prefLines.join("; ")}.`);
+  }
   // Recent student-side chat highlights — the last 1-2 things THEY said (not Otto's replies) from a handful
   // of recently-active task threads, as a compression input, not a full re-read of the conversation.
   const chatHighlights = list
@@ -1656,10 +1709,12 @@ function buildStudentModelInputs(profile: Profile, list: WebTask[]): string | un
 
 /** Cheap, bounded synthesis of profile.studentModel — the ONE new AI-spend site this feature adds, and it
  *  lives INSIDE the existing 4pm sweep window (server/jobs.ts's processSweep), never a 4th AI-spend window.
- *  Small model tier, small max_tokens, small input: a compression pass over data Otto already has. Returns
- *  undefined if there's nothing worth synthesizing yet, spending zero tokens. */
-export async function synthesizeStudentModel(profile: Profile, list: WebTask[]): Promise<{ summary: string; tokens: { in: number; out: number; cachedIn: number } } | undefined> {
-  const inputs = buildStudentModelInputs(profile, list);
+ *  Small model tier, small max_tokens, small input: a compression pass over data Otto already has.
+ *  `banditStates` is optional (best-effort — the caller loads them from store.ts; a load failure there just
+ *  means this synthesis runs without the "learned behavioral preferences" section, never blocks the sweep).
+ *  Returns undefined if there's nothing worth synthesizing yet, spending zero tokens. */
+export async function synthesizeStudentModel(profile: Profile, list: WebTask[], banditStates?: Partial<Record<"chatstyle" | "pomodoro" | "ordering", BanditState>>): Promise<{ summary: string; tokens: { in: number; out: number; cachedIn: number } } | undefined> {
+  const inputs = buildStudentModelInputs(profile, list, banditStates);
   if (!inputs) return undefined;
   try {
     const client = deepseekClient();
@@ -2526,6 +2581,11 @@ const RUN_SYSTEM =
   `PERMISSION_REQUIRED: If you call a tool (like updating a doc or creating a calendar event) and it returns ` +
   `"PERMISSION_REQUIRED", you CANNOT do it yourself this run. Instead, add it to your "steps" list with ` +
   `automatable=true AND needsPermission=true so the user can explicitly approve it with one click.\n` +
+  `RECONNECT_NEEDED: If a tool result contains "RECONNECT_NEEDED", that app's CONNECTION is broken (expired/` +
+  `revoked token) — this is NOT the same as a search coming back empty, and you must never treat it as "nothing ` +
+  `found" or silently work around it with another app. Add a step naming exactly which app needs reconnecting ` +
+  `(e.g. "Reconnect Gmail in Settings — Otto can't check your inbox until then"), automatable=false, and keep ` +
+  `going with whatever OTHER sources you still have access to rather than abandoning the whole task.\n` +
   `WRITE GOOD STEPS — each step is ONE concrete action: imperative verb + the specific thing, concise (≤ ~12 ` +
   `words), no hedging or explanation. Good: "Send the draft reply to Sarah", "Pick the offsite date", "Approve ` +
   `& publish the brief". Bad: vague ("follow up"), bundled ("check email and update the doc and tell the team"), ` +
@@ -2987,7 +3047,18 @@ export async function runTask(task: { title: string; why: string; source?: strin
       if (out) return withTokens(finalize(out, textContent, profileUpdates));
       if (i < MAX - 1) {
         if (textContent) messages.push({ role: "assistant", content: textContent });
-        messages.push({ role: "user", content: "You still have not used any tools. Read the connected apps and do the work now. Do not answer with prose until you have actually acted." });
+        // A truncated completion (finish_reason "length") is a DIFFERENT failure than "the model just
+        // hasn't used any tools yet" — DeepSeek's hidden reasoning tokens eat into max_tokens before the
+        // visible JSON (see OUT's own comment), so a long synthesis/steps payload can get cut off mid-object,
+        // firstJson() returns null on the unbalanced braces, and the old single nudge ("use your tools")
+        // was actively wrong here — the model HAD done the work, it just couldn't fit reporting it. Nudge it
+        // to say less instead of telling it to go do more (which only makes the next attempt even longer).
+        const truncated = res.choices[0]?.finish_reason === "length";
+        messages.push({ role: "user", content: truncated
+          ? "Your last reply was cut off before finishing the JSON — it was too long. Call submit again with a SHORTER result: fewer/terser steps, a one-sentence synthesis, no restating context. Output ONLY the tool call, nothing else."
+          : textContent
+          ? "That wasn't valid JSON and you didn't call a tool. Call submit with the final result as a real tool call, or use a real tool — not prose."
+          : "You still have not used any tools. Read the connected apps and do the work now. Do not answer with prose until you have actually acted." });
         continue;
       }
       break; // last round, no tools, no parseable JSON → fall through to the rescue + honest fallback (never throw)
@@ -3268,6 +3339,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
     if (submitted) return withTokens(submitted);
   }
   // Rescue path: if the model never called submit, ask it once (without tools) to produce a final JSON result.
+  let rescueText = "";
   try {
     const client = deepseekClient();
     const transcript = messages.map((m) => {
@@ -3275,48 +3347,65 @@ export async function runTask(task: { title: string; why: string; source?: strin
       const content = typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? "");
       return `${role.toUpperCase()}: ${content}`;
     }).join("\n\n").slice(-24000);
-    const rescue: any = await client.chat.completions.create({
+    const rescueSystem =
+      "You must output STRICT JSON only: {context:string,synthesis:string,did:array,steps:array,links:array,sendables:array}. " +
+      "did = one short past-tense bullet per action ACTUALLY performed with tools (empty if none). " +
+      "Report ONLY what the transcript shows was ACTUALLY DONE with tools. synthesis = one short past-tense " +
+      "sentence of performed actions ('Created X', 'Drafted Y'); if nothing was created or written, say " +
+      "plainly what was found and put ALL remaining work in steps (each {text, automatable}) — do NOT " +
+      "describe the user or summarize their life. links = ONLY artifacts CREATED this run (URLs from " +
+      "create-tool results in the transcript, each with a label saying what it IS); NEVER list pre-existing " +
+      "files that were merely read. Fabricating a result is worse than admitting the run fell short. If a tool " +
+      "result in the transcript contains RECONNECT_NEEDED, add a step naming which app needs reconnecting in " +
+      "Settings — that's a broken connection, not an empty search result.";
+    const runRescue = (maxTokens: number, concise: boolean) => client.chat.completions.create({
       model: actualModel,
-      max_tokens: OUT.rescue,
+      max_tokens: maxTokens,
       response_format: { type: "json_object" }, // FORCE parseable JSON — without this the rescue sometimes
       // returned prose, so finalize threw and the run fell to the defeatist fallback. JSON mode makes the
       // rescue reliably usable, so a run that gathered ANY context produces a real result.
       messages: [
-        {
-          role: "system",
-          content:
-            "You must output STRICT JSON only: {context:string,synthesis:string,did:array,steps:array,links:array,sendables:array}. " +
-            "did = one short past-tense bullet per action ACTUALLY performed with tools (empty if none). " +
-            "Report ONLY what the transcript shows was ACTUALLY DONE with tools. synthesis = one short past-tense " +
-            "sentence of performed actions ('Created X', 'Drafted Y'); if nothing was created or written, say " +
-            "plainly what was found and put ALL remaining work in steps (each {text, automatable}) — do NOT " +
-            "describe the user or summarize their life. links = ONLY artifacts CREATED this run (URLs from " +
-            "create-tool results in the transcript, each with a label saying what it IS); NEVER list pre-existing " +
-            "files that were merely read. Fabricating a result is worse than admitting the run fell short.",
-        },
+        { role: "system", content: rescueSystem + (concise ? " Keep it SHORT: a one-sentence synthesis, at most 3 terse steps — your previous attempt was cut off for being too long." : "") },
         { role: "user", content: transcript },
       ],
     });
-    const text = rescue.choices[0]?.message?.content || "";
-    const out = firstJson<RunOutput>(text);
-    if (out) return withTokens(finalize(out, text, profileUpdates));
+    let rescue: any = await runRescue(OUT.rescue, false);
+    // Same truncation-vs-genuine-failure distinction as the main loop above: a cut-off completion gets ONE
+    // retry with an explicit "be shorter" instruction rather than being treated as a dead end identical to
+    // a model that never produced anything at all.
+    if (rescue.choices[0]?.finish_reason === "length") rescue = await runRescue(OUT.rescue, true);
+    rescueText = rescue.choices[0]?.message?.content || "";
+    const out = firstJson<RunOutput>(rescueText);
+    if (out) return withTokens(finalize(out, rescueText, profileUpdates));
   } catch {
-    // fall through to the throw below
+    // fall through to the fallback below
   }
   // No usable result even after the rescue pass. Do NOT throw: throwing sends the task back through the
   // job queue's retry (observed live: the SAME non-converging run replays 3× at 130–240k tokens each, then
   // fails terminally — a huge burn to keep re-discovering a vacuous task has nothing to do). A genuinely
   // transient tool/API error is already handled per-round above, so reaching here means the agent RAN but
-  // couldn't converge on a concrete action. Return an HONEST result instead — no fabricated "executed"
-  // claim, no artifact — so the task lands in a visible "needs you" state and the expensive loop stops.
+  // couldn't converge on a concrete action.
+  //
+  // Return an HONEST result — no fabricated "executed" claim, no artifact — but NOT the old vague "This one
+  // needs your call — take it from here" + "Open and handle: <title>" filler: that read as Otto having done
+  // nothing at all, with no way for the student to tell the AI what it's actually missing. Turn it into a
+  // real, answerable question instead, using the EXISTING step-level question/options mechanism (see
+  // sanitizeStepExtras above) that until now only the model itself chose to use mid-run, never the harness
+  // on this terminal fallback path. Once answered, a normal re-run has the missing fact and can proceed.
   const sourceUrl = (task.links || []).find((l) => l?.url)?.url;
+  const missingContext = String(task.sourceDetail || task.why || "").trim();
+  // Capped well under sanitizeStepExtras' 200-char limit — a question truncated mid-sentence would be
+  // exactly the kind of confusing half-output this fallback exists to replace.
+  const question = missingContext
+    ? `I searched your apps and the web but couldn't find enough to prepare "${task.title.slice(0, 40)}". Can you paste the actual instructions/text (or a photo)?`
+    : `I couldn't tell what "${task.title.slice(0, 40)}" actually needs — what's the specific task here?`;
   return withTokens(finalize({
-    synthesis: "This one needs your call — take it from here.",
+    synthesis: "Couldn't prepare this on my own — I need one detail from you first.",
     did: [],
-    steps: [{ text: `Open and handle: ${task.title.slice(0, 70)}`, automatable: false, ...(sourceUrl ? { url: sourceUrl } : {}) }],
+    steps: [{ text: `Answer Otto's question about "${task.title.slice(0, 50)}"`, automatable: true, question, ...(sourceUrl ? { url: sourceUrl } : {}) }],
     links: [],
     sendables: [],
-  }, "", profileUpdates));
+  }, rescueText, profileUpdates));
   } finally {
     console.log(`${new Date().toISOString()} [ai] runTask "${task.title.slice(0, 50)}": ${rounds} rounds, ${tokIn} in / ${tokOut} out tokens`);
   }
@@ -3932,7 +4021,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up" },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" } },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -3987,7 +4076,7 @@ export async function chatAboutTask(
       `few attempts. If it comes up naturally (don't force it into an unrelated reply), acknowledge that ` +
       `genuinely — a tutor who's watched them improve, not one meeting them for the first time.\n`
     : "";
-  const sys = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject) + weakCardLine(task) + styleLine +
+  const sys = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + weakCardLine(task) + styleLine +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +

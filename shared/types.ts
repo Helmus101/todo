@@ -75,6 +75,15 @@ export interface Profile {
   // comment for why a periodic halving is used instead of per-event timestamps (the grids are running
   // counters, not a log; halving is the cheap approximation of "recent activity counts more").
   activityDecayedAt?: string;
+  // Same idea as activityHours, but split per subject — the "when am I actually focused on THIS subject"
+  // signal (e.g. Math HL in the evening, French in the morning), which the flat global histogram can't tell
+  // apart when a student's subjects skew toward different times of day. Capped to the student's top ~6
+  // most-active subjects (see SUBJECT_ACTIVITY_CAP in bumpActivityHour's own comment) so a profile with many
+  // one-off subjects doesn't grow unbounded — the least-active tracked subject is evicted to make room for a
+  // new one, same "recent/frequent wins" posture as the decay below. Same 24-length local-hour buckets and
+  // halving policy as activityHours, decayed independently per subject (no shared activityDecayedAt, since
+  // subjects start being tracked at different times).
+  subjectActivityHours?: Record<string, { hours: number[]; decayedAt?: string }>;
   // Daily cap on AUTOMATIC task execution (sweep's own auto-run-top-3 AND the kick loop's catch-up, see
   // server/jobs.ts's autoRunBudgetLeft/recordAutoRuns) — a real per-day ceiling on passive AI spend that
   // happens with zero user interaction, distinct from the monthly $ budget (which is too coarse to catch
@@ -391,7 +400,7 @@ const ACTIVITY_DECAY_INTERVAL_MS = 30 * 86_400_000;
  *  this file); persistence is just "this profile gets saved" like any other profile field. Periodically
  *  halves both grids (see ACTIVITY_DECAY_INTERVAL_MS) so old habits fade rather than accumulating forever —
  *  the cheap approximation of recency-weighting for a running counter that has no per-event timestamps. */
-export function bumpActivityHour(profile: Profile, now: Date = new Date()): void {
+export function bumpActivityHour(profile: Profile, now: Date = new Date(), subject?: string): void {
   let hours = profile.activityHours?.length === 24 ? [...profile.activityHours] : new Array(24).fill(0);
   let grid = profile.activityWeekdayHours?.length === 168 ? [...profile.activityWeekdayHours] : new Array(168).fill(0);
   const lastDecay = Date.parse(profile.activityDecayedAt || "") || 0;
@@ -409,6 +418,54 @@ export function bumpActivityHour(profile: Profile, now: Date = new Date()): void
   grid[wd * 24 + h] = (grid[wd * 24 + h] || 0) + 1;
   profile.activityHours = hours;
   profile.activityWeekdayHours = grid;
+  if (subject) bumpSubjectActivityHour(profile, subject, now, h);
+}
+
+/** Cap on how many subjects get their own tracked activity histogram (see Profile.subjectActivityHours's own
+ *  comment for why this exists) — small enough to bound profile size, big enough to cover a real course load. */
+const SUBJECT_ACTIVITY_CAP = 6;
+function bumpSubjectActivityHour(profile: Profile, subject: string, now: Date, hour: number): void {
+  const map = { ...(profile.subjectActivityHours || {}) };
+  let entry = map[subject];
+  if (!entry) {
+    if (Object.keys(map).length >= SUBJECT_ACTIVITY_CAP) {
+      // Evict the least-active tracked subject to make room — "recent/frequent wins", same posture as decay.
+      let weakest: string | null = null, weakestTotal = Infinity;
+      for (const [subj, e] of Object.entries(map)) {
+        const total = e.hours.reduce((s, n) => s + (n || 0), 0);
+        if (total < weakestTotal) { weakest = subj; weakestTotal = total; }
+      }
+      if (weakest) delete map[weakest];
+    }
+    entry = { hours: new Array(24).fill(0) };
+  } else {
+    entry = { hours: [...entry.hours], decayedAt: entry.decayedAt };
+  }
+  const lastDecay = Date.parse(entry.decayedAt || "") || 0;
+  if (lastDecay && now.getTime() - lastDecay >= ACTIVITY_DECAY_INTERVAL_MS) {
+    entry.hours = entry.hours.map((n) => n / 2);
+    entry.decayedAt = now.toISOString();
+  } else if (!lastDecay) {
+    entry.decayedAt = now.toISOString();
+  }
+  entry.hours[hour] = (entry.hours[hour] || 0) + 1;
+  map[subject] = entry;
+  profile.subjectActivityHours = map;
+}
+
+/** Same cold-start-gated "most active hour" read as learnedProductiveHour, scoped to one subject's own
+ *  histogram — null when that subject isn't tracked yet or doesn't have enough evidence. `minTotal` is lower
+ *  than the global 20 since a single subject naturally accumulates slower than overall activity. */
+export function learnedProductiveHourForSubject(profile: Profile | undefined, subject: string, minTotal = 12): { hour: number; confidence: number } | null {
+  const hours = profile?.subjectActivityHours?.[subject]?.hours;
+  if (!hours || hours.length !== 24) return null;
+  const total = hours.reduce((s, n) => s + (n || 0), 0);
+  if (total < minTotal) return null;
+  let best = 0;
+  for (let i = 1; i < 24; i++) if ((hours[i] || 0) > (hours[best] || 0)) best = i;
+  const share = (hours[best] || 0) / total;
+  const evidenceFactor = Math.min(1, total / 60);
+  return { hour: best, confidence: Math.max(0, Math.min(1, share * evidenceFactor)) };
 }
 
 /** This student's own learned "most active" local hour, or null when there isn't enough history to trust

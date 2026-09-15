@@ -5,7 +5,7 @@ import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningS
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml } from "../server/pronote.ts";
@@ -1432,6 +1432,23 @@ section("bumpActivityHour / learnedProductiveHour — the 'when am I actually wo
   check("below minTotal (default 20) stays null even with a clear single bump", learnedProductiveHour(sparse) === null);
 }
 
+section("bumpActivityHour subject tracking — per-subject focus-time reads");
+{
+  const p = { timezone: "UTC" };
+  check("no subject history yet -> null", learnedProductiveHourForSubject(p, "Maths") === null);
+  for (let i = 0; i < 15; i++) bumpActivityHour(p, new Date("2026-07-20T09:00:00Z"), "Maths");
+  for (let i = 0; i < 3; i++) bumpActivityHour(p, new Date("2026-07-20T20:00:00Z"), "Maths");
+  for (let i = 0; i < 5; i++) bumpActivityHour(p, new Date("2026-07-20T08:00:00Z"), "French");
+  check("global grid still bumped alongside the per-subject one", p.activityHours[9] === 15);
+  check("per-subject grid learns that subject's own peak hour", learnedProductiveHourForSubject(p, "Maths")?.hour === 9);
+  check("a different subject has its own independent grid", p.subjectActivityHours["French"].hours[8] === 5);
+  check("an untracked subject stays null even once others have history", learnedProductiveHourForSubject(p, "Physics") === null);
+  const capped = { timezone: "UTC" };
+  const subjects = ["A", "B", "C", "D", "E", "F", "G"];
+  for (const s of subjects) bumpActivityHour(capped, new Date("2026-07-20T09:00:00Z"), s);
+  check("subject histogram count stays capped (least-active evicted)", Object.keys(capped.subjectActivityHours).length <= 6);
+}
+
 section("server/patterns.ts — pattern recognition (predict the student's next move)");
 {
   // predictNextEngagement — 2026-07-20 is a Monday (weekday 1).
@@ -1476,6 +1493,8 @@ section("server/patterns.ts — pattern recognition (predict the student's next 
   check("boosts a task in a weak subject", weakSubjectBoost({ sourceSubject: "Maths" }, ["Maths"]) > 0);
   check("no boost for a subject not flagged weak", weakSubjectBoost({ sourceSubject: "Anglais" }, ["Maths"]) === 0);
   check("no boost for a task with no subject at all", weakSubjectBoost({}, ["Maths"]) === 0);
+  check("a weak subject trending down gets a bigger boost than flat-weak", weakSubjectBoost({ sourceSubject: "Maths" }, ["Maths"], [{ subject: "Maths", correctRate: 0.4, attempts: 5, trend: "down" }]) >
+    weakSubjectBoost({ sourceSubject: "Maths" }, ["Maths"], [{ subject: "Maths", correctRate: 0.4, attempts: 5, trend: "flat" }]));
 
   // twoMinuteRuleBoost — GTD's two-minute rule
   check("boosts a task whose smallest first action is 2 minutes or less", twoMinuteRuleBoost({ firstAction: { minutes: 2 } }) > 0);

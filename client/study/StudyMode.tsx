@@ -667,15 +667,19 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         try { densityArmId = localStorage.getItem("otto-density-arm") || undefined; } catch { /* ignore */ }
         void api.submitSessionOutcome(env.pomodoroArmId, completedPlanned, idleRatioAtEnd, undefined, env.audioArmId, densityArmId).catch(() => {});
       }
-      void api.recordMetric("study_idle_ratio", idleRatioAtEnd, env.template);
+      // `context` carries the task's own subject (when known) so Settings can later break "study &
+      // concentration" down per subject, not just the global 30-day average — see getStudyMetricsSummary's
+      // optional subject filter (server/store.ts).
+      const subjectCtx = task.sourceSubject || "";
+      void api.recordMetric("study_idle_ratio", idleRatioAtEnd, env.template, subjectCtx);
       // How often a session ends WITHOUT ever completing the planned length — a coarse distraction/focus
       // proxy (see the personalization ask's "how often you exit study mode, to measure focus and
       // concentration") independent of which Pomodoro arm was running, so it's collected even for a
       // resumed/older environment with no recorded arm at all.
-      void api.recordMetric("study_exit_early", (env.pomodoroEnabled ? (env.pomodoroCycles || 0) >= 1 : elapsedSeconds >= 600) ? 0 : 1, task.source);
-      void api.recordMetric("study_session_duration_seconds", elapsedSeconds, env.template);
-      void api.recordMetric("study_session_break_seconds", breakSeconds, env.template);
-      if (env.pomodoroCycles) void api.recordMetric("study_pomodoro_cycles_completed", env.pomodoroCycles, env.pomodoroArmId || "n/a");
+      void api.recordMetric("study_exit_early", (env.pomodoroEnabled ? (env.pomodoroCycles || 0) >= 1 : elapsedSeconds >= 600) ? 0 : 1, task.source, subjectCtx);
+      void api.recordMetric("study_session_duration_seconds", elapsedSeconds, env.template, subjectCtx);
+      void api.recordMetric("study_session_break_seconds", breakSeconds, env.template, subjectCtx);
+      if (env.pomodoroCycles) void api.recordMetric("study_pomodoro_cycles_completed", env.pomodoroCycles, env.pomodoroArmId || "n/a", subjectCtx);
       if (review) void api.recordMetric("study_review_submitted", 1);
       void api.recordMetric("study_desk_artifact_count", env.artifacts.length, env.template);
     }

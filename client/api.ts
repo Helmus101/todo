@@ -162,6 +162,8 @@ export const api = {
   patternsSummary: (): Promise<{
     predictedEngagement: { weekday: number; hour: number; confidence: number } | null;
     weakSubjects: string[];
+    subjectMastery: { subject: string; correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }[];
+    subjectFocus: { subject: string; peak: { hour: number; confidence: number } }[];
     bandits: Record<string, { armId: string; confidence: number } | null>;
     studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number } | null;
   }> =>

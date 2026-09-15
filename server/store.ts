@@ -383,7 +383,7 @@ const STUDY_METRIC_NAMES = [
  *  comment: "a flexible collection point... ahead of specific uses being built for it"). This is that first
  *  real read. Best-effort/in-memory-aware like everything else here: falls back to memOutcomes when there's
  *  no Supabase client, so this works in local/dev too, not just against a live table. */
-export async function getStudyMetricsSummary(email: string, windowDays = 30): Promise<StudyMetricsSummary> {
+export async function getStudyMetricsSummary(email: string, windowDays = 30, subject?: string): Promise<StudyMetricsSummary> {
   const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
   const decisionKeys = STUDY_METRIC_NAMES.map((n) => `metric:${n}`);
   let rows: SessionOutcome[] = [];
@@ -397,6 +397,11 @@ export async function getStudyMetricsSummary(email: string, windowDays = 30): Pr
   } else {
     rows = memOutcomes.filter((o) => o.userEmail === email && decisionKeys.includes(o.decisionKey) && o.at >= since);
   }
+  // Optional per-subject slice — `context` carries the task's sourceSubject on these rows (see
+  // client/study/StudyMode.tsx's endSession), empty for sessions with no identifiable subject. Filtering
+  // here (not a separate query) keeps this the single source of truth for both the global and per-subject
+  // reads, so they can never silently drift apart.
+  if (subject) rows = rows.filter((r) => r.context === subject);
   const byName = (n: typeof STUDY_METRIC_NAMES[number]) => rows.filter((r) => r.decisionKey === `metric:${n}`);
   const durations = byName("study_session_duration_seconds");
   const breaks = byName("study_session_break_seconds");

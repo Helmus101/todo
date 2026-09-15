@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour } from "../shared/types.ts";
+import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "./store.ts";
@@ -231,7 +231,7 @@ function stampFirstAction(task: WebTask, email?: string, profile?: Profile): voi
   // every genuine action this function is called for (confirm/step-run/step-done), not gated by the
   // write-once firstActionAt check below, since a rich hourly histogram needs every engagement, not just
   // the first one per task.
-  if (profile) bumpActivityHour(profile);
+  if (profile) bumpActivityHour(profile, new Date(), task.sourceSubject);
   if (task.firstActionAt) return;
   task.firstActionAt = new Date().toISOString();
   if (email && task.shownAt) {
@@ -751,8 +751,9 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       // anything: it was computed, displayed, and never touched the dashboard it was describing. Always-on
       // (unlike orderingBoost's arms, which are a bandit EXPERIMENT), since struggling with a subject is a
       // real, unconditional reason to see that subject's tasks a little sooner, not something to A/B test.
-      const weakSubjects = predictWeakSubjects(aggregateSubjectSignals(req.session.tasks));
-      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects) + twoMinuteRuleBoost(t);
+      const subjectSignals = aggregateSubjectSignals(req.session.tasks);
+      const weakSubjects = predictWeakSubjects(subjectSignals);
+      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects, subjectSignals) + twoMinuteRuleBoost(t);
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; } }
     } catch {
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
@@ -792,9 +793,24 @@ app.get("/api/patterns/summary", requireAuth, ah(async (req, res) => {
   // a storage hiccup here must never blank out the rest of this summary.
   let studyMetrics = null;
   try { studyMetrics = await getStudyMetricsSummary(email); } catch { /* best-effort */ }
+  // Per-subject mastery (correct-rate + trend, already computed above for weakSubjects) — surfaced directly
+  // rather than only as the derived weak-subject list, so "What Otto knows about you" can show the full
+  // picture ("Physics 82%, trending up") not just a binary weak/not-weak flag. Sorted weakest-first, same as
+  // predictWeakSubjects's own ordering, so the most actionable subject reads first.
+  const subjectMastery = signals
+    .filter((s) => s.attempts >= 3)
+    .sort((a, b) => a.correctRate - b.correctRate)
+    .map((s) => ({ subject: s.subject, correctRate: s.correctRate, attempts: s.attempts, trend: s.trend }));
+  // Per-subject focus-time reads (shared/types.ts's learnedProductiveHourForSubject) — only surfaced once
+  // there's real evidence for that subject, same cold-start gating as the global "most active around" line.
+  const subjectFocus = signals
+    .map((s) => ({ subject: s.subject, peak: learnedProductiveHourForSubject(profile, s.subject) }))
+    .filter((s): s is { subject: string; peak: { hour: number; confidence: number } } => !!s.peak && s.peak.confidence >= 0.3);
   res.json({
     predictedEngagement: predictNextEngagement(profile),
     weakSubjects,
+    subjectMastery,
+    subjectFocus,
     bandits,
     studyMetrics,
   });
@@ -985,10 +1001,12 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // surfacing already handles that), not something to raise unprompted inside an encouraging tutoring
     // chat. Best-effort, reuses the SAME aggregation the weak-subject prediction already computes.
     let growthTrend: "up" | undefined;
+    let subjectSignal: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" } | undefined;
     try {
       if (t.sourceSubject) {
         const signal = aggregateSubjectSignals(req.session.tasks || []).find((s) => s.subject === t.sourceSubject);
         if (signal?.trend === "up") growthTrend = "up";
+        if (signal) subjectSignal = { correctRate: signal.correctRate, attempts: signal.attempts, trend: signal.trend };
       }
     } catch { /* best-effort */ }
     const out = await chatAboutTask(
@@ -997,10 +1015,10 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
-    bumpActivityHour(profile);
+    bumpActivityHour(profile, new Date(), t.sourceSubject);
     profile.lastTutorActivityAt = new Date().toISOString(); // drives shouldRefreshStudentModel's "real activity" gate
     void recordMetric(req.session.user!, "chat_message_sent", 1);
     void recordMetric(req.session.user!, "chat_message_length_chars", message.length);
@@ -1273,7 +1291,7 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   card.review = { seen: (prev?.seen || 0) + 1, correct: (prev?.correct || 0) + (correct ? 1 : 0), lastAt: new Date().toISOString(), dueAt, box };
   deck!.lastReviewedAt = new Date().toISOString();
   task.updatedAt = new Date().toISOString();
-  if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
+  if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "flashcard_review", correct ? 1 : 0, task.source || "n/a");
   await commit(req, { awaitCloud: true });
   // "How often you go back and redo flashcards" signal — a card seen several times with a low correct-rate
@@ -1303,7 +1321,7 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   // Every other activity site (flashcard review, chat, journal save) feeds bumpActivityHour — a quiz attempt
   // is exactly the same kind of "the student is actively working right now" signal, but was missing here,
   // leaving a real gap in the "when is this student actually active" pattern (predictNextEngagement).
-  if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
+  if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "quiz_attempt_score_ratio", score / total, task.source || "n/a");
   await commit(req, { awaitCloud: true });
   res.json(req.session.tasks || []);
@@ -1342,7 +1360,7 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
   const correct = practiceAnswerMatches(answer, problem.answer);
   problem.attempt = { answer, correct, at: new Date().toISOString() };
   task.updatedAt = new Date().toISOString();
-  if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
+  if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), task.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "practice_problem_attempted", 1);
   void recordMetric(req.session.user!, "practice_problem_correct", correct ? 1 : 0);
   await commit(req, { awaitCloud: true });
@@ -1437,7 +1455,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   // (flashcards still empty after a real try) also always retries, same as before.
   const textChanged = t.logText !== text;
   t.logText = text;
-  if (req.session.profile) { bumpActivityHour(req.session.profile); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
+  if (req.session.profile) { bumpActivityHour(req.session.profile, new Date(), t.sourceSubject); req.session.profile.lastTutorActivityAt = new Date().toISOString(); }
   void recordMetric(req.session.user!, "journal_entry_saved", 1);
   void recordMetric(req.session.user!, "journal_entry_length_chars", text.length);
   if (t.flashcards?.length && !textChanged) {

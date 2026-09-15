@@ -146,9 +146,14 @@ export function orderingBoost(task: { sourceSubject?: string; steps?: unknown[] 
  *  worth surfacing next, without replacing the existing urgency/importance ranking (see sortWithinQuadrant
  *  in shared/types.ts, which this is meant to layer on top of, not fight). Capped small (0.15) so a weak
  *  subject can move a task up within its quadrant, never override a genuinely more urgent one from another. */
-export function weakSubjectBoost(task: { sourceSubject?: string }, weakSubjects: string[]): number {
-  if (!task.sourceSubject) return 0;
-  return weakSubjects.includes(task.sourceSubject) ? 0.15 : 0;
+export function weakSubjectBoost(task: { sourceSubject?: string }, weakSubjects: string[], signals?: SubjectSignal[]): number {
+  if (!task.sourceSubject || !weakSubjects.includes(task.sourceSubject)) return 0;
+  // A weak subject that's ALSO trending down is a stronger signal than a flat-weak one — mirrors the same
+  // trend-aware reasoning predictWeakSubjects already applies to its own threshold, just applied to the
+  // score boost too. Still capped at the same 0.15 ceiling as every other boost in this file (orderingBoost,
+  // twoMinuteRuleBoost) — this reorders WITHIN reason, never overrides a genuinely more urgent task.
+  const trend = signals?.find((s) => s.subject === task.sourceSubject)?.trend;
+  return trend === "down" ? 0.15 : 0.1;
 }
 
 /** GTD's two-minute rule: if it genuinely takes two minutes or less, do it now instead of filing it away for

@@ -17,7 +17,7 @@ import { pronoteConnected, pronoteGrades, pronoteHomework, pronoteTests, applyPr
 import type { AcademicContext } from "./claude.ts";
 import { replanMilestones } from "./milestones.ts";
 import { computeWorkload } from "./workload.ts";
-import { contextKey as banditContextKey, chooseArm, GRANULARITY_ARMS } from "./bandit.ts";
+import { contextKey as banditContextKey, chooseArm, GRANULARITY_ARMS, type BanditState } from "./bandit.ts";
 import { predictNextEngagement } from "./patterns.ts";
 import { reportError } from "./sentry.ts";
 
@@ -192,7 +192,18 @@ async function processSweep(job: store.Job): Promise<string> {
   // account (or one already refreshed today) costs nothing — best-effort, must never block the sweep itself.
   if (shouldRefreshStudentModel(profile)) {
     try {
-      const synth = await claude.synthesizeStudentModel(profile, next);
+      // Best-effort: a bandit-state load hiccup just means the synthesis runs without the "learned
+      // behavioral preferences" section below, never blocks the studentModel refresh itself.
+      let banditStates: Partial<Record<"chatstyle" | "pomodoro" | "ordering", BanditState>> | undefined;
+      try {
+        const [chatstyle, pomodoro, ordering] = await Promise.all([
+          store.loadBanditState(email, "chatstyle"),
+          store.loadBanditState(email, "pomodoro"),
+          store.loadBanditState(email, "ordering"),
+        ]);
+        banditStates = { chatstyle, pomodoro, ordering };
+      } catch { /* best-effort */ }
+      const synth = await claude.synthesizeStudentModel(profile, next, banditStates);
       if (synth) {
         profile.studentModel = { summary: synth.summary, updatedAt: new Date().toISOString(), basedOnActivityAt: profile.lastTutorActivityAt };
         addUsage(profile, synth.tokens, "student_model");

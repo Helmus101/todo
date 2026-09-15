@@ -2353,6 +2353,8 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [themeBusy, setThemeBusy] = useState(false);
   const [patterns, setPatterns] = useState<{
     predictedEngagement: { weekday: number; hour: number } | null; weakSubjects: string[];
+    subjectMastery: { subject: string; correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }[];
+    subjectFocus: { subject: string; peak: { hour: number; confidence: number } }[];
     bandits: Record<string, { armId: string; confidence: number } | null>;
     studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number } | null;
   } | null>(null);
@@ -2661,6 +2663,31 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                     patterns.bandits.chatstyle.armId === "socratic" ? "Chat with Otto: you do best when Otto asks questions rather than explaining directly." : "Chat with Otto: you do best with a parallel worked example.",
                   )}</li>
                 ) : null}
+              </ul>
+            </span>
+          </div>
+        ) : null}
+        {/* Per-subject mastery — the same aggregateSubjectSignals data behind the "might be worth reviewing"
+            line above, now shown in full (every subject with enough attempts, not just the weak ones), plus
+            the subject-specific focus-time reads (shared/types.ts's learnedProductiveHourForSubject) once
+            there's enough per-subject evidence. Real data only — nothing renders below the cold-start floor. */}
+        {patterns && (patterns.subjectMastery?.length > 0 || patterns.subjectFocus?.length > 0) ? (
+          <div className="modal-row">
+            <span className="lbl">{L("Par matière", "By subject")}</span>
+            <span className="val settings-hint">
+              <ul className="personalization-list">
+                {(patterns.subjectMastery || []).map((s: { subject: string; correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }) => (
+                  <li key={s.subject}>{L(
+                    `${s.subject} : ${Math.round(s.correctRate * 100)} % de bonnes réponses sur ${s.attempts} tentatives${s.trend ? ` (${s.trend === "up" ? "en progrès" : s.trend === "down" ? "en baisse" : "stable"} ${s.trend === "up" ? "↑" : s.trend === "down" ? "↓" : "→"})` : ""}.`,
+                    `${s.subject}: ${Math.round(s.correctRate * 100)}% correct over ${s.attempts} attempts${s.trend ? ` (${s.trend === "up" ? "improving" : s.trend === "down" ? "slipping" : "steady"} ${s.trend === "up" ? "↑" : s.trend === "down" ? "↓" : "→"})` : ""}.`,
+                  )}</li>
+                ))}
+                {(patterns.subjectFocus || []).map((s: { subject: string; peak: { hour: number; confidence: number } }) => (
+                  <li key={`focus-${s.subject}`}>{L(
+                    `Tu es le plus concentré en ${s.subject} vers ${s.peak.hour}h.`,
+                    `You focus best on ${s.subject} around ${s.peak.hour}:00.`,
+                  )}</li>
+                ))}
               </ul>
             </span>
           </div>
