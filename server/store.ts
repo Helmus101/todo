@@ -25,11 +25,23 @@ export interface StoredPlaid { accessToken: string; itemId: string; institutionN
  *  encryption (server/crypto.ts) — this interface always holds the LIVE plaintext token in memory, only
  *  the DB row is encrypted. */
 export interface StoredPronote { url: string; username: string; kind: number; token: string; deviceUUID: string; navigatorIdentifier?: string;
+  /** The real Pronote password, encrypted at rest exactly like `token` above — a deliberate, explicit
+   *  tradeoff (direct instruction, after being told the security cost plainly): Pronote's rotating token
+   *  dies for reasons entirely outside Otto's control (its own short session lifetime, opening the official
+   *  Pronote app, general fragility), and once it's dead there was previously NO way to recover without the
+   *  student re-entering their password — reported live, repeatedly, as "Pronote keeps disconnecting."
+   *  Storing the password lets runPronoteSessionOnce silently fall back to a fresh credentialed login
+   *  whenever the token dies, so a dead token is no longer something the student ever has to notice or act
+   *  on. This IS a bigger liability than the token alone if the database is ever compromised (a real school
+   *  login, not a revocable credential) — accepted knowingly, not an oversight. */
+  password?: string;
   /** Set when a session attempt fails with a genuinely dead token (SessionExpiredError/BadCredentialsError,
    *  not a transient network/portal blip) — without this, a dead token looks IDENTICAL to "no homework
    *  today" forever: pronoteConnected() only checks that a row exists, so the student sees an empty task
    *  list with no signal to reconnect. Cleared on the next successful session (see runPronoteSessionOnce)
-   *  and on a fresh connectPronote(). */
+   *  and on a fresh connectPronote(). With the password-fallback above, this now only ever gets set when
+   *  BOTH the token AND a fresh password-based login fail — i.e. the password itself is stale (changed at
+   *  school), the one case that genuinely requires the student to act. */
   needsReconnect?: boolean;
   /** Last time a session was opened for ANY reason (sweep, task run, or the opportunistic client-side
    *  "touch" — see touchPronoteSession in pronote.ts) — lets the touch path skip re-opening a session (and
@@ -243,7 +255,7 @@ export async function loadState(email?: string): Promise<AccountState> {
   const d = data as any;
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
   const pronote = d?.pronote && d.pronote.token
-    ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token) }
+    ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token), ...(d.pronote.password ? { password: decryptSecret(d.pronote.password) } : {}) }
     : undefined;
   const plaid = d?.plaid && d.plaid.accessToken
     ? { ...(d.plaid as StoredPlaid), accessToken: decryptSecret(d.plaid.accessToken) }
@@ -264,7 +276,7 @@ export async function saveState(email: string | undefined, state: AccountState, 
   // save. Omitting the key from the upsert payload leaves the existing column value alone.
   if ("google" in state) row.google = state.google ?? null;
   if ("pronote" in state) {
-    row.pronote = state.pronote ? { ...state.pronote, token: encryptSecret(state.pronote.token) } : null;
+    row.pronote = state.pronote ? { ...state.pronote, token: encryptSecret(state.pronote.token), ...(state.pronote.password ? { password: encryptSecret(state.pronote.password) } : {}) } : null;
   }
   if ("plaid" in state) {
     row.plaid = state.plaid ? { ...state.plaid, accessToken: encryptSecret(state.plaid.accessToken) } : null;

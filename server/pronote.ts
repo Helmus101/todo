@@ -141,7 +141,7 @@ export async function connectPronote(email: string, opts: { url: string; usernam
       const refresh = await withPronoteTimeout("loginCredentials", pronote.loginCredentials(session, { url, kind, username, password: opts.password, deviceUUID }));
       // needsReconnect is deliberately omitted (not set false) — a fresh successful login has nothing to
       // carry forward from any prior dead-token flag; a full replacement object naturally clears it.
-      const stored: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier };
+      const stored: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier, password: opts.password };
       const current = await loadState(email);
       await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored });
       return { ok: true };
@@ -220,44 +220,88 @@ async function notifyPronoteReconnectNeeded(email: string, profile: Profile): Pr
   await sendSystemEmail(email, { to: email, subject, body, primaryAccounts: profile.primaryAccounts });
 }
 
-/** Open a fresh Pronote session from the stored token, run `fn`, then persist the ROTATED token (pawnote
- *  issues a new one on every login) before returning — skipping that would lock the next read out. Never
- *  throws; a login/read failure returns undefined and is logged (best-effort, same pattern as the rest of
- *  the discovery pipeline — one flaky source must not break the whole sweep). */
+/** Actually perform one login+fn pass, given a pre-built session and login promise — shared by both the
+ *  token attempt and the credential-fallback attempt below so the "save rotated token, run fn, clean up
+ *  the presence interval" logic exists exactly once. */
+async function withPronoteSession<T>(
+  email: string, deviceUUID: string, loginPromise: Promise<{ url: string; username: string; kind: pronote.AccountKind; token: string; navigatorIdentifier?: string }>,
+  session: pronote.SessionHandle, fn: (session: pronote.SessionHandle) => Promise<T>, extra: Partial<StoredPronote>,
+): Promise<T> {
+  const refresh = await loginPromise;
+  const rotated: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier, lastTouchedAt: new Date().toISOString(), ...extra };
+  await saveRotatedToken(email, rotated);
+  try { return await fn(session); }
+  finally { if (session.presence) pronote.clearPresenceInterval(session); }
+}
+
+/** Open a fresh Pronote session and run `fn` — token login first (fast, doesn't touch Pronote's own
+ *  password-login rate limiting), and on a genuinely dead token (SessionExpiredError/BadCredentialsError,
+ *  not a transient blip), SILENTLY fall back to a fresh credentialed login using the stored encrypted
+ *  password before ever bothering the student. This is the fix for "Pronote keeps disconnecting": Pronote's
+ *  rotating token dies for reasons entirely outside Otto's control (its own short session lifetime, opening
+ *  the official Pronote app, general fragility) — previously that meant an immediate "reconnect" prompt;
+ *  now it's just a second, invisible login attempt. `needsReconnect` only ever gets set when BOTH attempts
+ *  fail with a credentials error — the one case that genuinely means the password itself is stale (changed
+ *  at school) and truly needs the student. Never throws; a failure of both attempts returns undefined and is
+ *  logged, same as before. */
 async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.SessionHandle) => Promise<T>): Promise<T | undefined> {
   const { pronote: stored } = await loadState(email);
   if (!stored) return undefined;
   try {
     const session = pronote.createSessionHandle();
-    const refresh = await withPronoteTimeout("loginToken", pronote.loginToken(session, {
+    return await withPronoteSession(email, stored.deviceUUID, withPronoteTimeout("loginToken", pronote.loginToken(session, {
       url: stored.url, username: stored.username, kind: stored.kind as pronote.AccountKind, token: stored.token,
       deviceUUID: stored.deviceUUID, navigatorIdentifier: stored.navigatorIdentifier,
-    }));
-    const rotated: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID: stored.deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier, lastTouchedAt: new Date().toISOString() };
-    await saveRotatedToken(email, rotated);
-    try { return await fn(session); }
-    finally { if (session.presence) pronote.clearPresenceInterval(session); }
-  } catch (e: any) {
-    // A genuinely dead token (not a transient portal/network blip) looks identical to "no homework today"
-    // to every caller (pronoteHomework/Tests/Grades all collapse this to []) — flag it so pronoteConnected
-    // can tell the student to reconnect instead of silently showing an empty list forever. Best-effort:
-    // this must never throw on top of the real error being handled below.
-    if (e instanceof pronote.SessionExpiredError || e instanceof pronote.BadCredentialsError) {
-      const current = await loadState(email).catch(() => undefined);
-      if (current) {
-        void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, needsReconnect: true } }).catch(() => {});
-        // Direct instruction: don't just leave this as a passive Settings badge the student has to notice on
-        // their own — actively tell them. Only on the FALSE→true transition (stored.needsReconnect was not
-        // already set) so a broken connection doesn't re-email on every single sweep attempt while it stays
-        // broken; the next successful reconnect clears needsReconnect entirely (see the login path above),
-        // so this fires again if it ever breaks a second time, same as the first.
-        if (!stored.needsReconnect) void notifyPronoteReconnectNeeded(email, current.profile).catch(() => {});
-      }
+    })), session, fn, { password: stored.password });
+  } catch (tokenErr: any) {
+    if (!(tokenErr instanceof pronote.SessionExpiredError || tokenErr instanceof pronote.BadCredentialsError)) {
+      console.warn("[pronote] session failed:", tokenErr?.message || tokenErr);
+      if (!isExpectedPronoteError(tokenErr)) reportError("pronote-session", tokenErr, { email });
+      return undefined;
     }
-    console.warn("[pronote] session failed:", e?.message || e);
-    if (!isExpectedPronoteError(e)) reportError("pronote-session", e, { email });
-    return undefined;
+    if (!stored.password) {
+      // Pre-existing connections made before the password-fallback fix have no stored password to fall
+      // back to — same behavior as before: flag reconnect-needed and notify.
+      await flagNeedsReconnect(email, stored, tokenErr);
+      return undefined;
+    }
+    try {
+      const session2 = pronote.createSessionHandle();
+      const result = await withPronoteSession(email, stored.deviceUUID, withPronoteTimeout("loginCredentials", pronote.loginCredentials(session2, {
+        url: stored.url, kind: stored.kind as pronote.AccountKind, username: stored.username, password: stored.password, deviceUUID: stored.deviceUUID,
+      })), session2, fn, { password: stored.password });
+      console.log(`${new Date().toISOString()} [pronote] token had died — self-healed via a fresh credentialed login, student never saw a reconnect prompt`);
+      return result;
+    } catch (credErr: any) {
+      if (credErr instanceof pronote.SessionExpiredError || credErr instanceof pronote.BadCredentialsError) {
+        // Both the token AND a fresh password login failed — the password itself is genuinely stale.
+        await flagNeedsReconnect(email, stored, credErr);
+      } else {
+        console.warn("[pronote] session failed (credential fallback):", credErr?.message || credErr);
+        if (!isExpectedPronoteError(credErr)) reportError("pronote-session-fallback", credErr, { email });
+      }
+      return undefined;
+    }
   }
+}
+
+/** A genuinely dead token AND a dead password fallback (or no password stored to fall back to) looks
+ *  identical to "no homework today" to every caller (pronoteHomework/Tests/Grades all collapse this to []) —
+ *  flag it so pronoteConnected can tell the student to reconnect instead of silently showing an empty list
+ *  forever. Best-effort: this must never throw on top of the real error being handled by the caller. */
+async function flagNeedsReconnect(email: string, stored: StoredPronote, e: any): Promise<void> {
+  const current = await loadState(email).catch(() => undefined);
+  if (current) {
+    void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, needsReconnect: true } }).catch(() => {});
+    // Direct instruction: don't just leave this as a passive Settings badge the student has to notice on
+    // their own — actively tell them. Only on the FALSE→true transition (stored.needsReconnect was not
+    // already set) so a broken connection doesn't re-email on every single sweep attempt while it stays
+    // broken; the next successful reconnect clears needsReconnect entirely, so this fires again if it ever
+    // breaks a second time, same as the first.
+    if (!stored.needsReconnect) void notifyPronoteReconnectNeeded(email, current.profile).catch(() => {});
+  }
+  console.warn("[pronote] session failed (token + credential fallback both dead):", e?.message || e);
+  if (!isExpectedPronoteError(e)) reportError("pronote-session", e, { email });
 }
 
 // Vercel Hobby's cron only runs once/day (see server/index.ts's /api/cron/drain comment), so the daily
