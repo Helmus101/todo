@@ -98,7 +98,14 @@ export function estimateWhen(quadrant: Quadrant, now: Date = new Date()): string
 export function applyDeadlineUrgency<T extends { when?: string; urgency: number; importance: number; quadrant: Quadrant; score: number; status?: string }>(list: T[], now_: Date = new Date()): T[] {
   const now = now_.getTime();
   for (const t of list) {
-    if (t.status && t.status !== "ready") continue;
+    // BUG (found live): this used to require status === "ready" exactly — but foldGenerated() (the main
+    // Pronote/Gmail task-generation path) lands every freshly classified task in "needs_review", not
+    // "ready". That's the status most actual homework/deadline-bearing tasks sit in on the dashboard, so
+    // this anti-procrastination boost was silently never applying to them — reported live as "a task due
+    // next week ranks above one due tomorrow." Skip only tasks that are actually finished (done/dismissed);
+    // every other live status (needs_review, ready, queued, executing, failed_retryable) should still climb
+    // in urgency as its deadline nears.
+    if (t.status && isHandled(t.status as any)) continue;
     const due = Date.parse(t.when || "");
     if (Number.isNaN(due)) continue;
     const daysLeft = (due - now) / 86_400_000;

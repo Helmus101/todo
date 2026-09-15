@@ -1,3 +1,5 @@
+import { Mic, MicOff, Volume2 } from "lucide-react";
+
 // Presentational only — deliberately dumb. One switch: "voice mode" on/off. ON means always-listening
 // (no push-to-talk tap needed per turn) AND auto-speaking Otto's replies — the two used to be separate
 // controls (a mic-tap button + a speaker toggle), which was confusing and, worse, meant tapping the mic
@@ -5,6 +7,10 @@
 // voiceMode preference, the send/speak wiring) lives in each call site (AskOttoPanel.tsx, TaskCard.tsx's
 // TaskChat) since they already own their own chat state; this just renders the shared UI so the two
 // surfaces don't drift into slightly different voice experiences.
+// Real lucide icons instead of emoji — a 🎙/🔊 emoji renders differently (or not at all) across OS/browser
+// combinations and reads ambiguous at a glance; a crossed-out mic vs. a plain mic vs. a speaker icon is
+// unambiguous regardless of platform, matching every other icon in the app (BookOpen, etc. already use
+// lucide-react).
 interface VoiceControlsProps {
   supported: boolean;
   voiceModeOn: boolean;
@@ -36,7 +42,7 @@ export function VoiceControls({ supported, voiceModeOn, listening, speaking, int
         aria-label={title}
         aria-pressed={voiceModeOn}
       >
-        {speaking ? "🔊" : "🎙"}
+        {speaking ? <Volume2 size={16} /> : voiceModeOn ? <Mic size={16} /> : <MicOff size={16} />}
       </button>
     </div>
   );

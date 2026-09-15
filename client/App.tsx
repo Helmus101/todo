@@ -2994,7 +2994,7 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
  *  welcome + name → how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
  *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
  *  finishing (or "Skip") clears the otto-onboard flag. */
-const OB_STEPS = 6;
+const OB_STEPS = 7;
 /** Otto Lycée v1: onboarding is now just name → what Otto does → connect Pronote (the ONE data source) →
  *  done. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone — every extra sign-in step is a
  *  dropout for a lycéen without a work Google account, and Pronote's connect flow (URL + identifiants,
@@ -3143,7 +3143,30 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
           </div>
         )}
 
+        {/* A short map of the sidebar — the app's biggest "confusing at first" complaint wasn't the concept
+            (step 2 already covers that), it was landing on the dashboard with 6 unexplained tabs and no
+            idea what each one is for. One line per tab, not a full feature tour — enough to remove the
+            "where do I even click" hesitation without turning onboarding into a chore. */}
         {step === 5 && (
+          <div className="onboard-step">
+            <h2>{L("Où trouver quoi", "Where to find things")}</h2>
+            <p className="onboard-lead">{L("Un rapide topo de la barre latérale — tu peux toujours revenir ici plus tard.", "A quick map of the sidebar — you can always come back to this later.")}</p>
+            <div className="ob-tour">
+              <div className="ob-tour-row"><b>{L("Tâches", "Tasks")}</b><span>{L("Ton plan du jour, classé par priorité réelle (urgent + important d'abord).", "Your plan for today, ranked by real priority (urgent + important first).")}</span></div>
+              <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Note ce que tu as appris chaque jour — Otto en fait des fiches et un résumé de semaine.", "Log what you learned each day — Otto turns it into flashcards and a week summary.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Étudier", "Study")}</b><span>{L("Un espace de concentration : minuteur, musique, notes, et Otto pour t'aider en direct.", "A focus workspace: timer, music, notes, and Otto to help live.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Journal d'erreurs", "Error log")}</b><span>{L("Ce que tu rates le plus souvent en contrôle, pour réviser ce qui compte vraiment.", "What you get wrong most on tests, so you review what actually matters.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Finances", "Finance")}</b><span>{L("Optionnel : relie ta banque pour qu'Otto te rappelle tes factures.", "Optional: link your bank so Otto reminds you about bills.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Connexions (Pronote, Gmail…), langue, et tout ce qu'Otto sait sur toi.", "Connections (Pronote, Gmail…), language, and everything Otto knows about you.")}</span></div>
+            </div>
+            <div className="onboard-actions onboard-actions-split">
+              <button className="btn ghost" onClick={() => setStep(4)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(6)}>{L("Suivant", "Next")}</button>
+            </div>
+          </div>
+        )}
+
+        {step === 6 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
