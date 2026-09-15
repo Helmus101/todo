@@ -13,7 +13,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } f
 import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, enqueueJob, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "./store.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
@@ -1243,15 +1243,17 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), a
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (!task || !task.steps?.[index]) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
-  try {
-    const job = await enqueueJob(req.session.user!, "execute_step", id, { index, ...(answer ? { answer } : {}) });
-    if (job.type !== "execute_step") { res.status(409).json({ error: "Otto is still working on this task — try again in a moment." }); return; }
-    stampFirstAction(task, req.session.user, req.session.profile);
-    if (!isInFlight(task.status)) task.status = "queued";
-    task.updatedAt = new Date().toISOString();
-    await commit(req);
-    res.json(task);
-  } catch (e: any) { reportError("tasks-step-run", e, { taskId: id, index }); res.status(500).json({ error: e?.message || "run failed" }); }
+  stampFirstAction(task, req.session.user, req.session.profile);
+  // Routed through runViaJob (same helper /run and /revise already use) instead of a bare enqueueJob —
+  // this used to only ENQUEUE and return immediately, relying entirely on the client's 4s "kick loop" (or,
+  // worse, a stuck "running" job from an earlier attempt whose lock had expired) to ever actually process
+  // it. Observed live: tapping an answer on a step's inline question ("Which version should Eric receive?")
+  // looked like it did nothing — the click succeeded, the optimistic "Otto's on it…" text appeared, and then
+  // nothing happened for a long time (or ever, if the kick loop's tab had since closed). runViaJob drains
+  // the job INLINE (bounded, within this request's own timeout budget) and reclaims an expired stale lock
+  // the same way /run and /revise already do, plus reports an honest 409/error instead of silently
+  // discarding the answer when a different job type is already active on this task.
+  await runViaJob(req, res, "execute_step", { index, ...(answer ? { answer } : {}) });
 });
 // Mark a step done/undone (a manual step the user did, or after the client opened a URL step).
 app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), async (req, res) => {
