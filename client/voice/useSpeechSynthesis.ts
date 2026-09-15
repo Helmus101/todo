@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/** Strip the markdown Otto's replies use (headings, **bold**/*italic*, [links](url), GFM table pipes,
- *  bullet markers) down to plain readable prose — read aloud verbatim, "hashtag hashtag" and literal
+/** Strip the markdown Otto's replies use (headings, bold/italic emphasis markers, [links](url), GFM table
+ *  pipes, bullet markers) down to plain readable prose — read aloud verbatim, "hashtag hashtag" and literal
  *  pipe/asterisk characters would be nonsense. Deliberately a small standalone pass rather than reusing
  *  renderChatText/renderNoteBody (client/ui.tsx) — those build React trees for on-screen display, this only
  *  ever needs a flat string for TTS, so duplicating the handful of regexes here is simpler than threading a
