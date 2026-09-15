@@ -223,7 +223,7 @@ async function notifyPronoteReconnectNeeded(email: string, profile: Profile): Pr
 /** Actually perform one login+fn pass, given a pre-built session and login promise — shared by both the
  *  token attempt and the credential-fallback attempt below so the "save rotated token, run fn, clean up
  *  the presence interval" logic exists exactly once. */
-async function withPronoteSession<T>(
+async function loginAndRun<T>(
   email: string, deviceUUID: string, loginPromise: Promise<{ url: string; username: string; kind: pronote.AccountKind; token: string; navigatorIdentifier?: string }>,
   session: pronote.SessionHandle, fn: (session: pronote.SessionHandle) => Promise<T>, extra: Partial<StoredPronote>,
 ): Promise<T> {
@@ -249,7 +249,7 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
   if (!stored) return undefined;
   try {
     const session = pronote.createSessionHandle();
-    return await withPronoteSession(email, stored.deviceUUID, withPronoteTimeout("loginToken", pronote.loginToken(session, {
+    return await loginAndRun(email, stored.deviceUUID, withPronoteTimeout("loginToken", pronote.loginToken(session, {
       url: stored.url, username: stored.username, kind: stored.kind as pronote.AccountKind, token: stored.token,
       deviceUUID: stored.deviceUUID, navigatorIdentifier: stored.navigatorIdentifier,
     })), session, fn, { password: stored.password });
@@ -267,7 +267,7 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
     }
     try {
       const session2 = pronote.createSessionHandle();
-      const result = await withPronoteSession(email, stored.deviceUUID, withPronoteTimeout("loginCredentials", pronote.loginCredentials(session2, {
+      const result = await loginAndRun(email, stored.deviceUUID, withPronoteTimeout("loginCredentials", pronote.loginCredentials(session2, {
         url: stored.url, kind: stored.kind as pronote.AccountKind, username: stored.username, password: stored.password, deviceUUID: stored.deviceUUID,
       })), session2, fn, { password: stored.password });
       console.log(`${new Date().toISOString()} [pronote] token had died — self-healed via a fresh credentialed login, student never saw a reconnect prompt`);
