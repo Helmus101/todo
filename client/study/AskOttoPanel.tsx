@@ -3,7 +3,7 @@ import type { WebTask } from "../../shared/types.ts";
 import { renderChatText, useThinkingWord, LangContext } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
-import { useAutoSpeakPref } from "../voice/useAutoSpeakPref.ts";
+import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
 
 interface AskOttoPanelProps {
@@ -14,7 +14,7 @@ interface AskOttoPanelProps {
   sending: boolean;
   error: string | null;
   pendingMsg: string | null;
-  onSend: (override?: string) => void;
+  onSend: (override?: string, voiceMode?: boolean) => void;
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
@@ -36,39 +36,58 @@ export function AskOttoPanel({
   const en = useContext(LangContext) === "en";
   const speechLang = en ? "en-US" : "fr-FR";
   const synth = useSpeechSynthesis(speechLang);
-  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => onSend(text) });
-  const [autoSpeak, toggleAutoSpeak] = useAutoSpeakPref();
-  const onMicClick = () => {
-    if (synth.speaking) { synth.cancel(); recog.start(); }
-    else if (recog.listening) recog.stop();
-    else recog.start();
-  };
+  const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
+  // Fires per detected utterance while listening — ignore a stray recognition result that lands while a
+  // previous message is still in flight rather than firing a second send on top of it.
+  const sendingRef = useRef(sending);
+  sendingRef.current = sending;
+  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => { if (!sendingRef.current) onSend(text, true); } });
+  // Voice mode is ONE switch: on = always listening (no push-to-talk tap needed between turns) AND
+  // auto-speaking replies. Turning it on starts listening immediately; turning it off stops everything.
+  useEffect(() => {
+    if (voiceModeOn) recog.start();
+    else { recog.abort(); synth.cancel(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceModeOn]);
+  // Pause listening while Otto is actually talking (avoids the mic picking up Otto's own voice from the
+  // speakers and treating it as the next thing to respond to), and resume the instant he's done — the
+  // whole point of "always on" is the student never has to tap anything between turns.
+  const wasSpeakingRef = useRef(false);
+  useEffect(() => {
+    if (!voiceModeOn) return;
+    if (synth.speaking && !wasSpeakingRef.current) recog.stop();
+    else if (!synth.speaking && wasSpeakingRef.current) recog.start();
+    wasSpeakingRef.current = synth.speaking;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [synth.speaking, voiceModeOn]);
   // Speak the reply once it arrives — tracked by chat length so a re-render (not a new message) never
-  // re-triggers it, and so switching autoSpeak on mid-conversation only speaks FUTURE replies, not the
+  // re-triggers it, and so turning voice mode on mid-conversation only speaks FUTURE replies, not the
   // whole history at once.
   const spokenCountRef = useRef(0);
   useEffect(() => {
     const chat = task.chat || [];
     if (chat.length > spokenCountRef.current) {
       const last = chat[chat.length - 1];
-      if (autoSpeak && last?.role === "assistant") synth.speak(last.text);
+      if (voiceModeOn && last?.role === "assistant") synth.speak(last.text);
     }
     spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.chat?.length, autoSpeak]);
+  }, [task.chat?.length, voiceModeOn]);
   // A one-shot spoken filler for the wait — NOT the cycling thinking-word text (that changes every 1.4s;
   // speaking a new phrase every 1.4s would be unusable), just a single line so a voice-mode student isn't
   // sitting in total silence during the 15-20s+ a multi-step tutor turn can take (see runTask's own latency
-  // notes in server/claude.ts — this app has no streaming yet, so the reply arrives as one block).
+  // notes in server/claude.ts — this app has no streaming yet, so the reply arrives as one block). Real
+  // replies in voice mode are also told server-side (the `voiceMode` flag sent with the message) to answer
+  // in 2-3 short spoken sentences, so this filler is covering seconds, not the old worst-case full length.
   const spokenFillerRef = useRef(false);
   useEffect(() => {
-    if (sending && autoSpeak && !spokenFillerRef.current) {
+    if (sending && voiceModeOn && !spokenFillerRef.current) {
       synth.speak(en ? "Let me think about that." : "Laisse-moi réfléchir.");
       spokenFillerRef.current = true;
     }
     if (!sending) spokenFillerRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sending, autoSpeak]);
+  }, [sending, voiceModeOn]);
   // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
   // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
   // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a
@@ -132,7 +151,7 @@ export function AskOttoPanel({
       {error ? (
         <div className="sm-ai-error">
           {error}
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend()} disabled={sending}>Retry</button>
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>Retry</button>
         </div>
       ) : null}
 
@@ -145,21 +164,20 @@ export function AskOttoPanel({
           placeholder="What do you need help with?"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
           disabled={sending}
           autoFocus
         />
         <VoiceControls
           supported={recog.supported}
+          voiceModeOn={voiceModeOn}
           listening={recog.listening}
           speaking={synth.speaking}
           interimTranscript={recog.interimTranscript}
-          autoSpeak={autoSpeak}
-          onToggleAutoSpeak={toggleAutoSpeak}
-          onMicClick={onMicClick}
+          onToggle={toggleVoiceMode}
           en={en}
         />
-        <button className="sm-btn sm-btn-primary" onClick={() => onSend()} disabled={sending || !input.trim()}>
+        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
           Send
         </button>
       </div>

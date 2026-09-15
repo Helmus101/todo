@@ -3524,7 +3524,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .sm-ai-input-row {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto;
   align-items: end;
   gap: var(--space-2);
   padding: var(--space-3);
@@ -3540,19 +3540,15 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   background: var(--surface); font-size: 15px; cursor: pointer;
   transition: background var(--duration-base) var(--ease), border-color var(--duration-base) var(--ease);
 }
+/* voice mode is ON but momentarily paused (between utterances, or while Otto is speaking) — dimmer than
+   active listening so the always-on state still reads as visually "on" without pulsing constantly. */
+.voice-mic-idle-on { border-color: var(--accent); opacity: 0.7; }
 .voice-mic-listening { border-color: var(--accent); background: var(--accent-soft); animation: voice-pulse 1.3s ease-in-out infinite; }
 .voice-mic-speaking { border-color: var(--accent); background: var(--accent-soft); }
 @keyframes voice-pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
   50% { box-shadow: 0 0 0 6px transparent; }
 }
-.voice-autospeak-btn {
-  width: 30px; height: 30px; flex: none;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--line); border-radius: 50%;
-  background: var(--surface); font-size: 13px; cursor: pointer; opacity: 0.55;
-}
-.voice-autospeak-btn.active { opacity: 1; border-color: var(--accent); background: var(--accent-soft); }
 .voice-interim {
   position: absolute; bottom: calc(100% + 6px); right: 0;
   max-width: 220px; padding: 6px 10px;

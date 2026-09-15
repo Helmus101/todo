@@ -55,10 +55,27 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     return () => { window.speechSynthesis.onvoiceschanged = null; };
   }, [supported]);
 
+  // Prefer an actually-good-sounding voice over whatever the browser defaults to (often a dated local
+  // "espeak"-quality voice) — score by: exact language match beats base-language-only match; a named
+  // network/cloud voice (Chrome's "Google …", Edge/Safari's "Natural"/"Enhanced"/"Premium" voices) beats a
+  // generic local one; `localService === false` (network-backed, generally higher fidelity) is a tiebreaker.
   const pickVoice = useCallback((): SpeechSynthesisVoice | undefined => {
     const voices = voicesRef.current;
-    return voices.find((v) => v.lang.toLowerCase().startsWith(lang.toLowerCase()))
-      || voices.find((v) => v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+    const base = lang.slice(0, 2).toLowerCase();
+    const score = (v: SpeechSynthesisVoice): number => {
+      let s = 0;
+      const vLang = v.lang.toLowerCase();
+      if (vLang === lang.toLowerCase()) s += 8;
+      else if (vLang.startsWith(base)) s += 4;
+      else return -1; // wrong language entirely — never usable regardless of quality
+      if (/google|natural|enhanced|premium|neural/i.test(v.name)) s += 3;
+      if (!v.localService) s += 1;
+      return s;
+    };
+    return voices
+      .map((v) => ({ v, s: score(v) }))
+      .filter((x) => x.s >= 0)
+      .sort((a, b) => b.s - a.s)[0]?.v;
   }, [lang]);
 
   const speakNext = useCallback(() => {
@@ -68,6 +85,9 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     utter.lang = lang;
     const voice = pickVoice();
     if (voice) utter.voice = voice;
+    // A hair faster than the 1.0 default reads as more natural/conversational for short spoken replies —
+    // browser TTS at exactly 1.0 tends to sound slightly plodding.
+    utter.rate = 1.05;
     utter.onend = () => { if (!cancelledRef.current) speakNext(); };
     utter.onerror = () => { if (!cancelledRef.current) speakNext(); };
     window.speechSynthesis.speak(utter);

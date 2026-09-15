@@ -25,15 +25,9 @@ declare global {
 
 export interface UseSpeechRecognitionOptions {
   lang: string;
-  /** false (default, v1/push-to-talk) = one utterance per start() call, auto-stops after `silenceMs` of
-   *  no new speech. true = kept for the hands-free fast-follow (see the voice-mode plan) — not wired to any
-   *  UI yet, but the hook already supports it so that mode is a config flip, not a rewrite. */
-  continuous?: boolean;
-  /** How long to wait after the last recognized word before treating the utterance as done and auto-
-   *  stopping — this IS the "auto-sends after you stop talking" behavior, no second tap required. */
-  silenceMs?: number;
-  /** Fires once an utterance is considered complete (silence timeout, or manual stop()) with the final
-   *  transcript text. Never fires with an empty/whitespace-only transcript. */
+  /** Fires once per detected utterance (the browser's own voice-activity endpointing — a natural pause in
+   *  speech — marks a result `isFinal`), not once per start()/stop() cycle. In continuous/always-on mode
+   *  this can fire many times across one long-running listen session. Never fires with empty/whitespace text. */
   onResult: (transcript: string) => void;
 }
 
@@ -42,74 +36,102 @@ export interface UseSpeechRecognition {
   listening: boolean;
   /** Live, not-yet-final text while listening — for showing "hearing you..." feedback in the UI. */
   interimTranscript: string;
+  /** Starts listening and KEEPS listening across multiple utterances/pauses — this is the "always on" mic:
+   *  it does not stop after one sentence. Call `stop()`/`abort()` to actually turn it off. If the underlying
+   *  recognizer ends on its own (some browsers cap a single session at ~60s, or drop it on a network blip),
+   *  it's transparently restarted as long as nothing called stop()/abort() in the meantime. */
   start: () => void;
   stop: () => void;
   abort: () => void;
 }
 
-/** Push-to-talk (and, later, hands-free) speech-to-text via the browser's free, built-in Web Speech API —
- *  no server round trip, no paid STT vendor. Feature-detects: `supported` is false on browsers with no
- *  SpeechRecognition (Firefox, most notably) so callers can hide voice UI entirely rather than show a
- *  mic button that silently does nothing. */
-export function useSpeechRecognition({ lang, continuous = false, silenceMs = 1200, onResult }: UseSpeechRecognitionOptions): UseSpeechRecognition {
+/** Always-on speech-to-text via the browser's free, built-in Web Speech API — no server round trip, no paid
+ *  STT vendor. Feature-detects: `supported` is false on browsers with no SpeechRecognition (Firefox, most
+ *  notably) so callers can hide voice UI entirely rather than show a mic button that silently does nothing. */
+export function useSpeechRecognition({ lang, onResult }: UseSpeechRecognitionOptions): UseSpeechRecognition {
   const Ctor = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : undefined;
   const supported = !!Ctor;
   const [listening, setListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
   const recRef = useRef<SpeechRecognitionLike | null>(null);
-  const finalRef = useRef("");
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onResultRef = useRef(onResult);
   onResultRef.current = onResult;
+  // Set true for the duration of an intended listening session (from start() to stop()/abort()) — onend
+  // checks this to decide "the browser dropped the session on its own, restart it" vs "the user/app actually
+  // wanted this to stop." Without this distinction, mic-always-on mode would silently go dead the moment
+  // Chrome's own session cap or a transient network hiccup ended the underlying recognizer.
+  const keepAliveRef = useRef(false);
 
-  const clearSilenceTimer = () => { if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; } };
-
-  const stop = useCallback(() => {
-    clearSilenceTimer();
-    recRef.current?.stop();
-  }, []);
-
-  const abort = useCallback(() => {
-    clearSilenceTimer();
-    finalRef.current = "";
-    recRef.current?.abort();
-    setListening(false);
-    setInterimTranscript("");
-  }, []);
-
-  const start = useCallback(() => {
-    if (!Ctor || listening) return;
+  const createAndStart = useCallback(() => {
+    if (!Ctor) return;
     const rec = new Ctor();
     rec.lang = lang;
-    rec.continuous = continuous;
+    rec.continuous = true;      // don't stop after one utterance — this IS the always-on behavior
     rec.interimResults = true;
-    finalRef.current = "";
-    setInterimTranscript("");
     rec.onresult = (e) => {
       let interim = "";
+      // Each `isFinal` result is ONE complete utterance per the browser's own pause detection — fire
+      // onResult immediately per utterance rather than accumulating across the whole session, so a long
+      // always-on listen produces one message per natural turn instead of one giant run-on block.
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) finalRef.current += r[0].transcript;
-        else interim += r[0].transcript;
+        if (r.isFinal) {
+          const text = r[0].transcript.trim();
+          if (text) onResultRef.current(text);
+        } else {
+          interim += r[0].transcript;
+        }
       }
       setInterimTranscript(interim);
-      // Reset the silence-to-auto-stop timer on every new word — only fires once speech has genuinely
-      // paused, not after a fixed delay from when listening started.
-      clearSilenceTimer();
-      silenceTimerRef.current = setTimeout(() => rec.stop(), silenceMs);
     };
-    rec.onerror = () => { clearSilenceTimer(); setListening(false); };
+    rec.onerror = (e) => {
+      // "no-speech" fires constantly in always-on mode (every silent gap) — not a real error, just Chrome's
+      // way of saying "nothing detected in this stretch." Let onend's restart logic handle it; don't tear
+      // down listening state over it. A genuinely fatal error (e.g. "not-allowed" — mic permission denied)
+      // DOES stop listening for real, since restarting would just fail again forever.
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        keepAliveRef.current = false;
+        setListening(false);
+      }
+    };
     rec.onend = () => {
-      clearSilenceTimer();
-      setListening(false);
       setInterimTranscript("");
-      const text = finalRef.current.trim();
-      if (text) onResultRef.current(text);
+      if (keepAliveRef.current) {
+        // The recognizer stopped on its own (session cap / blip) but the app still wants to be listening —
+        // restart transparently. A brief microtask delay avoids some browsers' "already started" race when
+        // onend and a fresh start() land in the same tick.
+        setTimeout(() => { if (keepAliveRef.current) createAndStartRef.current?.(); }, 50);
+      } else {
+        setListening(false);
+      }
     };
     recRef.current = rec;
     setListening(true);
     rec.start();
-  }, [Ctor, lang, continuous, silenceMs, listening]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Ctor, lang]);
+  // createAndStart recreates itself via a stable ref so onend's restart-on-drop can always call the LATEST
+  // version (closing over current `lang`) without needing to be listed as an onend dependency.
+  const createAndStartRef = useRef(createAndStart);
+  createAndStartRef.current = createAndStart;
+
+  const start = useCallback(() => {
+    if (!Ctor || keepAliveRef.current) return;
+    keepAliveRef.current = true;
+    createAndStart();
+  }, [Ctor, createAndStart]);
+
+  const stop = useCallback(() => {
+    keepAliveRef.current = false;
+    recRef.current?.stop();
+  }, []);
+
+  const abort = useCallback(() => {
+    keepAliveRef.current = false;
+    recRef.current?.abort();
+    setListening(false);
+    setInterimTranscript("");
+  }, []);
 
   useEffect(() => () => abort(), [abort]);
 

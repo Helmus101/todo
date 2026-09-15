@@ -21,7 +21,7 @@ import {
 } from "./ui.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
-import { useAutoSpeakPref } from "./voice/useAutoSpeakPref.ts";
+import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
 /**
@@ -416,14 +416,14 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   }, [chatSending]);
   // `override` lets voice input send a just-transcribed message directly without racing chatInput's async
   // state update (see AskOttoPanel.tsx's sendChat for the identical reasoning).
-  const sendChat = async (override?: string) => {
+  const sendChat = async (override?: string, voiceMode?: boolean) => {
     const message = (override ?? chatInput).trim();
     if (!message || chatSending) return;
     const stepIndex = chatStep; // captured before clearing
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message); setChatStep(null);
     // Merge the WHOLE returned task, not just `chat` — a tutor turn can create notes/decks/quizzes, and the
     // assistant's chat entry references them by id (task.notes/flashcards/quizzes).
-    try { const { task: updated } = await api.chat(task.id, message, stepIndex ?? undefined); onTask({ ...task, ...updated }); }
+    try { const { task: updated } = await api.chat(task.id, message, stepIndex ?? undefined, undefined, voiceMode); onTask({ ...task, ...updated }); }
     catch (e: any) { setChatError(e?.message || L("Envoi impossible — réessaie.", "Couldn't send that — try again.")); setChatInput(message); }
     finally { setChatSending(false); setPendingMsg(null); }
   };
@@ -1096,7 +1096,7 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
 
 function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, inputRef, endRef, onOpenNote, onOpenDeck, onOpenQuiz }: {
   task: WebTask; input: string; setInput: (v: string) => void; sending: boolean; error: string | null;
-  pendingMsg: string | null; slow: boolean; verySlow: boolean; onSend: (override?: string) => void;
+  pendingMsg: string | null; slow: boolean; verySlow: boolean; onSend: (override?: string, voiceMode?: boolean) => void;
   inputRef: MutableRefObject<HTMLTextAreaElement | null>; endRef: MutableRefObject<HTMLDivElement | null>;
   onOpenNote: (id: string) => void; onOpenDeck: (id: string) => void; onOpenQuiz: (id: string) => void;
 }) {
@@ -1105,32 +1105,42 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   const thinkingWord = useThinkingWord(sending);
   const speechLang = en ? "en-US" : "fr-FR";
   const synth = useSpeechSynthesis(speechLang);
-  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => onSend(text) });
-  const [autoSpeak, toggleAutoSpeak] = useAutoSpeakPref();
-  const onMicClick = () => {
-    if (synth.speaking) { synth.cancel(); recog.start(); }
-    else if (recog.listening) recog.stop();
-    else recog.start();
-  };
+  const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
+  const sendingRef = useRef(sending);
+  sendingRef.current = sending;
+  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => { if (!sendingRef.current) onSend(text, true); } });
+  useEffect(() => {
+    if (voiceModeOn) recog.start();
+    else { recog.abort(); synth.cancel(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceModeOn]);
+  const wasSpeakingRef = useRef(false);
+  useEffect(() => {
+    if (!voiceModeOn) return;
+    if (synth.speaking && !wasSpeakingRef.current) recog.stop();
+    else if (!synth.speaking && wasSpeakingRef.current) recog.start();
+    wasSpeakingRef.current = synth.speaking;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [synth.speaking, voiceModeOn]);
   const spokenCountRef = useRef(0);
   useEffect(() => {
     const chat = task.chat || [];
     if (chat.length > spokenCountRef.current) {
       const last = chat[chat.length - 1];
-      if (autoSpeak && last?.role === "assistant") synth.speak(last.text);
+      if (voiceModeOn && last?.role === "assistant") synth.speak(last.text);
     }
     spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task.chat?.length, autoSpeak]);
+  }, [task.chat?.length, voiceModeOn]);
   const spokenFillerRef = useRef(false);
   useEffect(() => {
-    if (sending && autoSpeak && !spokenFillerRef.current) {
+    if (sending && voiceModeOn && !spokenFillerRef.current) {
       synth.speak(en ? "Let me think about that." : "Laisse-moi réfléchir.");
       spokenFillerRef.current = true;
     }
     if (!sending) spokenFillerRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sending, autoSpeak]);
+  }, [sending, voiceModeOn]);
   return (
     <section className="task-chat">
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>
@@ -1189,7 +1199,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
         <div className="rewrite-error">
           {error}
           {/* onSend restores the input to the failed message on error, so retrying is just calling it again. */}
-          <button type="button" className="btn xs ghost" onClick={() => onSend()} disabled={sending}>{L("Réessayer", "Retry")}</button>
+          <button type="button" className="btn xs ghost" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>{L("Réessayer", "Retry")}</button>
         </div>
       ) : null}
       <div className="chat-row">
@@ -1198,20 +1208,19 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
           className="chat-input" rows={1} aria-label={L("Ton message pour Otto", "Your message to Otto")}
           placeholder={L("ex : je bloque à la question 3…", "e.g. I'm stuck on question 3…")}
           value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
           disabled={sending}
         />
         <VoiceControls
           supported={recog.supported}
+          voiceModeOn={voiceModeOn}
           listening={recog.listening}
           speaking={synth.speaking}
           interimTranscript={recog.interimTranscript}
-          autoSpeak={autoSpeak}
-          onToggleAutoSpeak={toggleAutoSpeak}
-          onMicClick={onMicClick}
+          onToggle={toggleVoiceMode}
           en={en}
         />
-        <button className="chat-send" aria-label={L("Envoyer", "Send")} disabled={sending || !input.trim()} onClick={() => onSend()}>
+        <button className="chat-send" aria-label={L("Envoyer", "Send")} disabled={sending || !input.trim()} onClick={() => onSend(undefined, voiceModeOn)}>
           <span aria-hidden="true">↑</span>
         </button>
       </div>

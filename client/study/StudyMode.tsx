@@ -850,7 +850,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   // `override` lets a caller (voice input) send a just-transcribed message directly, instead of relying on
   // `chatInput` state having already caught up — setChatInput(transcript) then immediately calling sendChat()
   // would race React's async state update and send the PREVIOUS chatInput value, not the new transcript.
-  const sendChat = useCallback(async (override?: string) => {
+  const sendChat = useCallback(async (override?: string, voiceMode?: boolean) => {
     const message = (override ?? chatInput).trim();
     if (!message || chatSending || !env) return;
     const stepIndex = env.currentSubtaskIndex;
@@ -859,7 +859,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     const materials = env.materials.filter((m) => m.text?.trim()).map((m) => ({ label: m.label, text: m.text! }));
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try {
-      const { task: updated } = await api.chat(task.id, message, stepIndex, materials.length ? materials : undefined);
+      const { task: updated } = await api.chat(task.id, message, stepIndex, materials.length ? materials : undefined, voiceMode);
       onTaskUpdate({ ...task, ...updated });
     } catch (e: any) {
       setChatError(e?.message || "Couldn't send that — try again.");

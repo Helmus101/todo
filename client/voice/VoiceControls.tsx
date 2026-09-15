@@ -1,46 +1,42 @@
-// Presentational only — deliberately dumb. State (the two Web Speech hooks, the autoSpeak preference, the
-// send/speak wiring) lives in each call site (AskOttoPanel.tsx, TaskCard.tsx's TaskChat) since they already
-// own their own chat state; this just renders the mic button + "speak replies aloud" toggle both surfaces
-// share, so the two don't drift into two slightly different UIs for the same feature.
+// Presentational only — deliberately dumb. One switch: "voice mode" on/off. ON means always-listening
+// (no push-to-talk tap needed per turn) AND auto-speaking Otto's replies — the two used to be separate
+// controls (a mic-tap button + a speaker toggle), which was confusing and, worse, meant tapping the mic
+// ended the session after one utterance instead of staying on. State (the two Web Speech hooks, the
+// voiceMode preference, the send/speak wiring) lives in each call site (AskOttoPanel.tsx, TaskCard.tsx's
+// TaskChat) since they already own their own chat state; this just renders the shared UI so the two
+// surfaces don't drift into slightly different voice experiences.
 interface VoiceControlsProps {
   supported: boolean;
+  voiceModeOn: boolean;
   listening: boolean;
   speaking: boolean;
   interimTranscript: string;
-  autoSpeak: boolean;
-  onToggleAutoSpeak: () => void;
-  onMicClick: () => void;
+  onToggle: () => void;
   en: boolean;
 }
 
-export function VoiceControls({ supported, listening, speaking, interimTranscript, autoSpeak, onToggleAutoSpeak, onMicClick, en }: VoiceControlsProps) {
+export function VoiceControls({ supported, voiceModeOn, listening, speaking, interimTranscript, onToggle, en }: VoiceControlsProps) {
   if (!supported) return null; // no SpeechRecognition on this browser (e.g. Firefox) — hide, don't show a dead button
-  const state = listening ? "listening" : speaking ? "speaking" : "idle";
-  const title = listening
-    ? (en ? "Listening… tap to stop" : "Écoute en cours… touche pour arrêter")
+  const state = speaking ? "speaking" : listening ? "listening" : voiceModeOn ? "idle-on" : "off";
+  const title = !voiceModeOn
+    ? (en ? "Turn on voice mode — talk to Otto hands-free" : "Activer le mode vocal — parle à Otto en mains libres")
     : speaking
-    ? (en ? "Speaking… tap to interrupt" : "Otto parle… touche pour interrompre")
-    : (en ? "Talk to Otto" : "Parler à Otto");
+    ? (en ? "Otto is speaking — tap to turn off voice mode" : "Otto parle — touche pour désactiver le mode vocal")
+    : listening
+    ? (en ? "Listening — tap to turn off voice mode" : "Écoute en cours — touche pour désactiver le mode vocal")
+    : (en ? "Voice mode on — tap to turn off" : "Mode vocal activé — touche pour désactiver");
   return (
     <div className="voice-controls">
-      {listening && interimTranscript ? <span className="voice-interim">{interimTranscript}</span> : null}
+      {voiceModeOn && listening && interimTranscript ? <span className="voice-interim">{interimTranscript}</span> : null}
       <button
         type="button"
         className={`voice-mic-btn voice-mic-${state}`}
-        onClick={onMicClick}
+        onClick={onToggle}
         title={title}
         aria-label={title}
+        aria-pressed={voiceModeOn}
       >
-        {speaking ? "⏸" : "🎙"}
-      </button>
-      <button
-        type="button"
-        className={`voice-autospeak-btn ${autoSpeak ? "active" : ""}`}
-        onClick={onToggleAutoSpeak}
-        title={en ? "Speak Otto's replies aloud" : "Lire les réponses d'Otto à voix haute"}
-        aria-pressed={autoSpeak}
-      >
-        {autoSpeak ? "🔊" : "🔇"}
+        {speaking ? "🔊" : "🎙"}
       </button>
     </div>
   );
