@@ -2208,6 +2208,13 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
         <button type="button" role="tab" aria-selected={tab === "flashcards"} className={`seg-btn ${tab === "flashcards" ? "on" : ""}`} onClick={() => setTab("flashcards")}>{L("Cartes", "Flashcards")}</button>
       </div>
 
+      {/* The spaced-repetition system (Leitner boxes, see nextLeitnerReview in shared/types.ts) was otherwise
+          entirely invisible from Journal — the ONE place a student would expect to see "you have cards due
+          for review," reported live as "i never see this." The cross-task /api/reviews/due signal already
+          existed but was buried in the dashboard's "This week" popover, nowhere near the Journal tab where
+          these decks actually live. */}
+      <DueReviews lang={lang} />
+
       {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded /> : (
       <>
       <div className="studylog-weeknav">

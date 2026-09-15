@@ -60,10 +60,11 @@ export function weakCardFronts(dayTasks: WebTask[]): string[] {
 }
 
 /** Full Leitner-box breakdown across a set of study-log tasks — the real spaced-repetition signal, not
- *  just "wrong or not". Box 1-2 = weak/new, needs frequent re-exposure; box 3 = getting there; box 4-5 =
- *  well-retained, due for only a light touch or can be skipped so review time goes to what actually needs
- *  it (the whole point of spaced repetition: stop spending equal time on everything). A card with no review
- *  history yet (never reviewed) is reported at box 0, distinct from box 1 (reviewed and gotten wrong). */
+ *  just "wrong or not". Two boxes (see LEITNER_BOX_LABEL, shared/types.ts): box 1 = "Learning" (weak/new,
+ *  needs frequent re-exposure), box 2 = "Known" (due for only a light touch or can be skipped so review
+ *  time goes to what actually needs it — the whole point of spaced repetition: stop spending equal time on
+ *  everything). A card with no review history yet (never reviewed) is reported at box 0, distinct from
+ *  box 1 (reviewed and gotten wrong). */
 export function leitnerBoxBreakdown(dayTasks: WebTask[]): { front: string; box: number }[] {
   const out: { front: string; box: number }[] = [];
   for (const dt of dayTasks) for (const deck of dt.flashcards || []) for (const c of deck.cards) out.push({ front: c.front, box: c.review?.box ?? 0 });

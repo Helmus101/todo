@@ -1248,18 +1248,18 @@ section("expandStep substep url — bounded to the task's own links");
   check("substep url NOT on the task is dropped, never fabricated", propose({ text: "Fill in the form", url: "https://totally-invented.example/register" }).url === undefined);
 }
 
-section("nextLeitnerReview — flashcard spaced-repetition schedule");
+section("nextLeitnerReview — flashcard spaced-repetition schedule (simplified to 2 boxes: Learning/Known)");
 {
   const now = new Date("2026-08-25T12:00:00Z");
   const first = nextLeitnerReview(undefined, true, now);
-  check("first-ever correct review starts at box 1", first.box === 1);
+  check("first-ever correct review starts at box 1 (\"Learning\")", first.box === 1);
   check("box 1 schedules 1 day out", Date.parse(first.dueAt) - now.getTime() === 1 * 86_400_000);
-  const advanced = nextLeitnerReview(2, true, now);
-  check("correct review advances the box", advanced.box === 3);
-  check("box 3 schedules 4 days out", Date.parse(advanced.dueAt) - now.getTime() === 4 * 86_400_000);
-  const capped = nextLeitnerReview(5, true, now);
-  check("box caps at 5, never grows unbounded", capped.box === 5);
-  const missed = nextLeitnerReview(4, false, now);
+  const advanced = nextLeitnerReview(1, true, now);
+  check("correct review advances box 1 → box 2 (\"Known\")", advanced.box === 2);
+  check("box 2 schedules 7 days out", Date.parse(advanced.dueAt) - now.getTime() === 7 * 86_400_000);
+  const capped = nextLeitnerReview(2, true, now);
+  check("box caps at 2, never grows unbounded", capped.box === 2);
+  const missed = nextLeitnerReview(2, false, now);
   check("a missed review resets to box 1 regardless of prior progress", missed.box === 1);
 }
 

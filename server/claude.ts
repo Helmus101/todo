@@ -1863,22 +1863,21 @@ const QUIZ_STYLE_RULE =
 
 /** Turns a Leitner box breakdown (server/tasks.ts's leitnerBoxBreakdown) into the spaced-repetition
  *  instruction block for a summary deck's prompt. This is the real spacing signal, not just "wrong or
- *  right": box 0/1 (never tested, or tested and missed) needs frequent re-exposure — heavy weight in the
- *  new deck; box 2-3 (getting there) needs a periodic touch, not every time; box 4-5 (well-retained) should
- *  get LESS space here, not equal space — spaced repetition's whole premise is that review time should
- *  concentrate on what's shaky, not spread evenly across everything ever learned. */
+ *  right": box 0/1 (never tested, or currently "Learning") needs frequent re-exposure — heavy weight in
+ *  the new deck; box 2 ("Known") should get LESS space here, not equal space — spaced repetition's whole
+ *  premise is that review time should concentrate on what's shaky, not spread evenly across everything ever
+ *  learned. Two boxes now (was five, per LEITNER_BOX_LABEL in shared/types.ts) — simpler for a student to
+ *  actually understand at a glance ("Learning" vs "Known"), so this only needs a weak/strong split, not a
+ *  three-tier one. */
 function spacedRepetitionBlock(boxBreakdown: { front: string; box: number }[], periodLabel: string): string {
   if (!boxBreakdown.length) return "";
   const weak = boxBreakdown.filter((c) => c.box <= 1).map((c) => c.front);
-  const mid = boxBreakdown.filter((c) => c.box >= 2 && c.box <= 3).map((c) => c.front);
-  const strong = boxBreakdown.filter((c) => c.box >= 4).map((c) => c.front);
+  const strong = boxBreakdown.filter((c) => c.box >= 2).map((c) => c.front);
   let block = `\n\nSPACED-REPETITION SIGNAL FROM ${periodLabel} (Leitner box per card — use this to decide how ` +
     `much space each concept gets in the new deck, don't weight everything evenly):\n`;
-  if (weak.length) block += `- NEVER TESTED YET OR GOTTEN WRONG (box 0-1) — these need the MOST space, re-tested a genuinely ` +
+  if (weak.length) block += `- NEVER TESTED YET OR STILL "LEARNING" (box 0-1) — these need the MOST space, re-tested a genuinely ` +
     `different way, not copy-pasted: ${weak.slice(0, 25).map((f) => `"${f}"`).join(", ")}\n`;
-  if (mid.length) block += `- PARTIALLY SOLID (box 2-3) — a periodic touch is enough, don't over-invest here: ` +
-    `${mid.slice(0, 15).map((f) => `"${f}"`).join(", ")}\n`;
-  if (strong.length) block += `- WELL-RETAINED (box 4-5) — give these the LEAST space (a light check-in at most, or skip ` +
+  if (strong.length) block += `- "KNOWN" (box 2) — give these the LEAST space (a light check-in at most, or skip ` +
     `entirely in favor of the weaker concepts above) — re-testing something already solid wastes review time ` +
     `that spaced repetition says should go elsewhere: ${strong.slice(0, 15).map((f) => `"${f}"`).join(", ")}\n`;
   return block;
@@ -2129,8 +2128,8 @@ export async function generateWeeklyStudyDeck(entries: { date: string; logText: 
               `every distinct concept the week actually contained, up to 50 cards (a hard technical ceiling on ` +
               `this reply's token budget, not a product opinion) — aim for full coverage, not a "highlights" ` +
               `selection. WITHIN that coverage, WEIGHT HEAVILY toward what's in the spaced-repetition signal ` +
-              `below as never-tested-or-wrong (box 0-1): those concepts should make up a CLEARLY LARGER share of ` +
-              `the deck than partially-solid or well-retained ones — re-tested a genuinely different way each ` +
+              `below as never-tested-or-still-"Learning" (box 0-1): those concepts should make up a CLEARLY LARGER ` +
+              `share of the deck than "Known" ones — re-tested a genuinely different way each ` +
               `time, not copy-pasted — since the whole point of a week-end review is catching what didn't stick ` +
               `the first time, not re-visiting everything evenly. ${CARD_STYLE_RULE}`) },
         { role: "user", content:

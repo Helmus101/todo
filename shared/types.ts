@@ -889,12 +889,15 @@ export interface TaskNote {
   createdAt: string;
 }
 
-// Leitner spacing schedule for flashcard review (box 1 = review again tomorrow, box 5 = review again in
-// 16 days) — simple, proven, and enough to make retrieval practice compound over time instead of a deck
-// being a one-shot artifact. Shared by client (optimistic update) and server (source of truth).
-export const LEITNER_INTERVAL_DAYS = [1, 2, 4, 8, 16];
+// Leitner spacing schedule for flashcard review — simplified to TWO boxes (was five): box 1 = "Learning"
+// (review again tomorrow), box 2 = "Known" (review again in a week). A 5-box scale was more precise but
+// meant nothing to a student glancing at a card ("what does box 3 even mean?") — two boxes map onto a
+// plain-language label (LEITNER_BOX_LABEL below) that's actually legible in the UI. Shared by client
+// (optimistic update) and server (source of truth).
+export const LEITNER_INTERVAL_DAYS = [1, 7];
+export const LEITNER_BOX_LABEL = ["Learning", "Known"] as const;
 export function nextLeitnerReview(prevBox: number | undefined, correct: boolean, now: Date = new Date()): { box: number; dueAt: string } {
-  const box = correct ? Math.min(5, (prevBox || 0) + 1) : 1;
+  const box = correct ? Math.min(2, (prevBox || 0) + 1) : 1;
   const days = LEITNER_INTERVAL_DAYS[box - 1];
   return { box, dueAt: new Date(now.getTime() + days * 86_400_000).toISOString() };
 }
@@ -904,7 +907,7 @@ export interface TaskFlashcards {
   title: string;
   cards: {
     front: string; back: string;
-    /** Per-card drill history. `box` (1-5, Leitner) is now the ACTUAL spacing schedule FlashcardDeck writes
+    /** Per-card drill history. `box` (1-2, Leitner — see LEITNER_BOX_LABEL above) is now the ACTUAL spacing schedule FlashcardDeck writes
      *  on every review (see reviewCard in client/ui.tsx) — a correct review advances the box (and pushes
      *  `dueAt` further out per LEITNER_INTERVAL_DAYS), a miss resets to box 1. `ease`/`dueAt` were already
      *  here as SM-2 groundwork before any reviewer surfaced them; `dueAt` is now genuinely used (by `box`'s

@@ -9,7 +9,7 @@
 import { useEffect, useState, useCallback, useRef, useContext, createContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
-import { canonStatus, practiceAnswerMatches } from "../shared/types.ts";
+import { canonStatus, practiceAnswerMatches, LEITNER_BOX_LABEL } from "../shared/types.ts";
 import { api } from "./api.ts";
 
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
@@ -643,6 +643,15 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
         <div className="deck-card-inner" style={skipFlipAnim ? { transition: "none" } : undefined}>
           <div className="deck-card-face deck-card-front">
             <span className="deck-face-label">{L("Question", "Front")}</span>
+            {/* Spaced repetition is otherwise entirely invisible to the student — reviews happen, boxes move,
+                nothing on screen ever shows it. Two boxes now (LEITNER_BOX_LABEL, shared/types.ts): "Learning"
+                (box 0-1, still needs frequent review) vs "Known" (box 2, spaced further out). No badge at all
+                for a card with no review history yet — it hasn't earned either label. */}
+            {card!.review?.box ? (
+              <span className={`deck-box-badge deck-box-${card!.review.box}`}>
+                {L(card!.review.box >= 2 ? "Acquis" : "En cours", LEITNER_BOX_LABEL[Math.min(card!.review.box, 2) - 1])}
+              </span>
+            ) : null}
             <div className="deck-face-text">{formatMath(stripStrayMarkdown(card!.front))}</div>
           </div>
           <div className="deck-card-face deck-card-back">
