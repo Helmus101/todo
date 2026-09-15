@@ -1488,8 +1488,23 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     }
     flashcardArmId = chooseArm(FLASHCARD_ARMS, banditState, banditKey).arm.id;
   } catch { /* best-effort — generation below still proceeds with the default style */ }
+  // REAL spaced-repetition reinforcement from PREVIOUS days — not "recently got wrong within N days" (that's
+  // not what spaced repetition means), but cards whose own Leitner schedule says they're due for review
+  // RIGHT NOW, exactly the same due-ness check GET /api/reviews/due uses. A box-1 card comes back in a day
+  // or two; a box-4 card the student clearly knows won't resurface for weeks — the schedule decides, not a
+  // fixed lookback window. Excludes today's own (still-being-written) entry and week/month summary decks.
+  // Weakest-first (lowest box) and capped, since this is reinforcement, not the point of today's deck.
+  const nowMs = Date.now();
+  const priorWeakCards = list
+    .filter((x) => x.source === "studylog" && x.logDate && x.logDate !== date && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:"))
+    .flatMap((x) => (x.flashcards || []).flatMap((deck) => deck.cards
+      .filter((c) => c.review?.dueAt && Date.parse(c.review.dueAt) <= nowMs)
+      .map((c) => ({ front: c.front, box: c.review!.box || 1 }))))
+    .sort((a, b) => a.box - b.box)
+    .slice(0, 6)
+    .map((c) => c.front);
   try {
-    const result = await generateDailyStudyCards(text, req.session.profile, flashcardArmId);
+    const result = await generateDailyStudyCards(text, req.session.profile, flashcardArmId, priorWeakCards);
     if (result) addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
     t.flashcards = result ? [result.deck] : [];
     if (result) void recordMetric(req.session.user!, "flashcard_deck_created", result.deck.cards.length, "daily");

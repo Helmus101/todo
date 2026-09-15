@@ -1896,9 +1896,19 @@ const FLASHCARD_STYLE_TEXT: Record<string, string> = {
   thorough: " Lean toward the more THOROUGH end of what CARD_STYLE_RULE allows — don't hesitate to include worked steps/context where it genuinely helps recall.",
 };
 
-export async function generateDailyStudyCards(logText: string, profile?: Profile, styleArm?: string): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
+export async function generateDailyStudyCards(logText: string, profile?: Profile, styleArm?: string, weakCards?: string[]): Promise<{ deck: TaskFlashcards; quiz?: TaskQuiz; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const raw = String(logText || "").trim();
   if (!raw) return null;
+  // A handful of cards the student got wrong on a PREVIOUS day (Leitner box 1 — see weakCardFronts in
+  // tasks.ts, which computes the same signal for week/month summaries) — reinforcement, not the point of
+  // today's deck. Capped small and phrased as a secondary ask so it can never crowd out today's own content
+  // (a day with 6 genuine topics shouldn't turn into "6 topics + 8 old mistakes").
+  const weakBlock = weakCards?.length
+    ? `\n\nA FEW THINGS THEY GOT WRONG ON A PREVIOUS DAY (weak spots, for light reinforcement only — do NOT ` +
+      `let this outweigh today's own content): ${weakCards.slice(0, 6).join("; ")}. If 1-2 of these genuinely ` +
+      `connect to today's material, fold a card for them in naturally; otherwise add at most 1-2 short standalone ` +
+      `review cards for the ones most worth re-testing. Never more than 2 cards total from this list.`
+    : "";
   // DELIBERATELY SIMPLE: this call runs on every single daily save (the most frequent AI action in the
   // whole app), so it needs to be small and fast above almost everything else. An earlier version of this
   // asked for full topic coverage + a guaranteed practice problem per subject + an optional bundled quiz +
@@ -1930,7 +1940,7 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
           `that really has more to cover either.` +
           (concise ? " Keep it SHORT and reliable this time: short precise backs, no worked solutions, at most 15 cards." : ` ${CARD_STYLE_RULE}${FLASHCARD_STYLE_TEXT[styleArm || ""] || ""}`) },
         { role: "user", content:
-          `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""\n\n` +
+          `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""${weakBlock}\n\n` +
           `Return JSON: {"title": short label (≤8 words, name the actual topic(s)), "cards": [{"front": "...", "back": "..."}, ...]}.` },
       ],
     }));
