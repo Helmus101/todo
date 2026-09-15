@@ -1,6 +1,10 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useContext } from "react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText, useThinkingWord } from "../ui.tsx";
+import { renderChatText, useThinkingWord, LangContext } from "../ui.tsx";
+import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
+import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
+import { useAutoSpeakPref } from "../voice/useAutoSpeakPref.ts";
+import { VoiceControls } from "../voice/VoiceControls.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -10,7 +14,7 @@ interface AskOttoPanelProps {
   sending: boolean;
   error: string | null;
   pendingMsg: string | null;
-  onSend: () => void;
+  onSend: (override?: string) => void;
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
@@ -29,6 +33,42 @@ export function AskOttoPanel({
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const thinkingWord = useThinkingWord(sending);
+  const en = useContext(LangContext) === "en";
+  const speechLang = en ? "en-US" : "fr-FR";
+  const synth = useSpeechSynthesis(speechLang);
+  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => onSend(text) });
+  const [autoSpeak, toggleAutoSpeak] = useAutoSpeakPref();
+  const onMicClick = () => {
+    if (synth.speaking) { synth.cancel(); recog.start(); }
+    else if (recog.listening) recog.stop();
+    else recog.start();
+  };
+  // Speak the reply once it arrives — tracked by chat length so a re-render (not a new message) never
+  // re-triggers it, and so switching autoSpeak on mid-conversation only speaks FUTURE replies, not the
+  // whole history at once.
+  const spokenCountRef = useRef(0);
+  useEffect(() => {
+    const chat = task.chat || [];
+    if (chat.length > spokenCountRef.current) {
+      const last = chat[chat.length - 1];
+      if (autoSpeak && last?.role === "assistant") synth.speak(last.text);
+    }
+    spokenCountRef.current = chat.length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.chat?.length, autoSpeak]);
+  // A one-shot spoken filler for the wait — NOT the cycling thinking-word text (that changes every 1.4s;
+  // speaking a new phrase every 1.4s would be unusable), just a single line so a voice-mode student isn't
+  // sitting in total silence during the 15-20s+ a multi-step tutor turn can take (see runTask's own latency
+  // notes in server/claude.ts — this app has no streaming yet, so the reply arrives as one block).
+  const spokenFillerRef = useRef(false);
+  useEffect(() => {
+    if (sending && autoSpeak && !spokenFillerRef.current) {
+      synth.speak(en ? "Let me think about that." : "Laisse-moi réfléchir.");
+      spokenFillerRef.current = true;
+    }
+    if (!sending) spokenFillerRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sending, autoSpeak]);
   // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
   // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
   // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a
@@ -92,7 +132,7 @@ export function AskOttoPanel({
       {error ? (
         <div className="sm-ai-error">
           {error}
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onSend} disabled={sending}>Retry</button>
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend()} disabled={sending}>Retry</button>
         </div>
       ) : null}
 
@@ -109,7 +149,17 @@ export function AskOttoPanel({
           disabled={sending}
           autoFocus
         />
-        <button className="sm-btn sm-btn-primary" onClick={onSend} disabled={sending || !input.trim()}>
+        <VoiceControls
+          supported={recog.supported}
+          listening={recog.listening}
+          speaking={synth.speaking}
+          interimTranscript={recog.interimTranscript}
+          autoSpeak={autoSpeak}
+          onToggleAutoSpeak={toggleAutoSpeak}
+          onMicClick={onMicClick}
+          en={en}
+        />
+        <button className="sm-btn sm-btn-primary" onClick={() => onSend()} disabled={sending || !input.trim()}>
           Send
         </button>
       </div>

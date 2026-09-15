@@ -19,6 +19,10 @@ import {
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
   withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
 } from "./ui.tsx";
+import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
+import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
+import { useAutoSpeakPref } from "./voice/useAutoSpeakPref.ts";
+import { VoiceControls } from "./voice/VoiceControls.tsx";
 
 /**
  * The leave animation + API call for finishing or dismissing a task. Extracted so the collapsed row and the
@@ -410,8 +414,10 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
     const id2 = setTimeout(() => setChatVerySlow(true), 15000);
     return () => { clearTimeout(id1); clearTimeout(id2); };
   }, [chatSending]);
-  const sendChat = async () => {
-    const message = chatInput.trim();
+  // `override` lets voice input send a just-transcribed message directly without racing chatInput's async
+  // state update (see AskOttoPanel.tsx's sendChat for the identical reasoning).
+  const sendChat = async (override?: string) => {
+    const message = (override ?? chatInput).trim();
     if (!message || chatSending) return;
     const stepIndex = chatStep; // captured before clearing
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message); setChatStep(null);
@@ -1090,12 +1096,41 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
 
 function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, inputRef, endRef, onOpenNote, onOpenDeck, onOpenQuiz }: {
   task: WebTask; input: string; setInput: (v: string) => void; sending: boolean; error: string | null;
-  pendingMsg: string | null; slow: boolean; verySlow: boolean; onSend: () => void;
+  pendingMsg: string | null; slow: boolean; verySlow: boolean; onSend: (override?: string) => void;
   inputRef: MutableRefObject<HTMLTextAreaElement | null>; endRef: MutableRefObject<HTMLDivElement | null>;
   onOpenNote: (id: string) => void; onOpenDeck: (id: string) => void; onOpenQuiz: (id: string) => void;
 }) {
   const L = useLang();
+  const en = L("fr", "en") === "en";
   const thinkingWord = useThinkingWord(sending);
+  const speechLang = en ? "en-US" : "fr-FR";
+  const synth = useSpeechSynthesis(speechLang);
+  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => onSend(text) });
+  const [autoSpeak, toggleAutoSpeak] = useAutoSpeakPref();
+  const onMicClick = () => {
+    if (synth.speaking) { synth.cancel(); recog.start(); }
+    else if (recog.listening) recog.stop();
+    else recog.start();
+  };
+  const spokenCountRef = useRef(0);
+  useEffect(() => {
+    const chat = task.chat || [];
+    if (chat.length > spokenCountRef.current) {
+      const last = chat[chat.length - 1];
+      if (autoSpeak && last?.role === "assistant") synth.speak(last.text);
+    }
+    spokenCountRef.current = chat.length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task.chat?.length, autoSpeak]);
+  const spokenFillerRef = useRef(false);
+  useEffect(() => {
+    if (sending && autoSpeak && !spokenFillerRef.current) {
+      synth.speak(en ? "Let me think about that." : "Laisse-moi réfléchir.");
+      spokenFillerRef.current = true;
+    }
+    if (!sending) spokenFillerRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sending, autoSpeak]);
   return (
     <section className="task-chat">
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>
@@ -1154,7 +1189,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
         <div className="rewrite-error">
           {error}
           {/* onSend restores the input to the failed message on error, so retrying is just calling it again. */}
-          <button type="button" className="btn xs ghost" onClick={onSend} disabled={sending}>{L("Réessayer", "Retry")}</button>
+          <button type="button" className="btn xs ghost" onClick={() => onSend()} disabled={sending}>{L("Réessayer", "Retry")}</button>
         </div>
       ) : null}
       <div className="chat-row">
@@ -1166,7 +1201,17 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); } }}
           disabled={sending}
         />
-        <button className="chat-send" aria-label={L("Envoyer", "Send")} disabled={sending || !input.trim()} onClick={onSend}>
+        <VoiceControls
+          supported={recog.supported}
+          listening={recog.listening}
+          speaking={synth.speaking}
+          interimTranscript={recog.interimTranscript}
+          autoSpeak={autoSpeak}
+          onToggleAutoSpeak={toggleAutoSpeak}
+          onMicClick={onMicClick}
+          en={en}
+        />
+        <button className="chat-send" aria-label={L("Envoyer", "Send")} disabled={sending || !input.trim()} onClick={() => onSend()}>
           <span aria-hidden="true">↑</span>
         </button>
       </div>

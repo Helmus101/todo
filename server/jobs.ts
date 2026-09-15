@@ -215,7 +215,7 @@ async function processSweep(job: store.Job): Promise<string> {
   // stale — the remaining milestones shift out to stay realistic. Deterministic, no AI call (replanMilestones).
   for (const t of next) {
     if (isHandled(t.status) || !t.steps?.some((s) => s.targetDate)) continue;
-    const { steps, changed } = replanMilestones(t.steps);
+    const { steps, changed } = replanMilestones(t.steps, new Date(), tzOf(profile));
     if (changed) t.steps = steps;
   }
   await commitUser(email, profile, next);

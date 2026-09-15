@@ -261,8 +261,8 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
     }
     if (!stored.password) {
       // Pre-existing connections made before the password-fallback fix have no stored password to fall
-      // back to — same behavior as before: flag reconnect-needed and notify.
-      await flagNeedsReconnect(email, stored, tokenErr);
+      // back to, so there's no second attempt to wait on — same behavior as before: flag immediately.
+      await flagNeedsReconnect(email, stored, tokenErr, { immediate: true });
       return undefined;
     }
     try {
@@ -288,10 +288,26 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
 /** A genuinely dead token AND a dead password fallback (or no password stored to fall back to) looks
  *  identical to "no homework today" to every caller (pronoteHomework/Tests/Grades all collapse this to []) —
  *  flag it so pronoteConnected can tell the student to reconnect instead of silently showing an empty list
- *  forever. Best-effort: this must never throw on top of the real error being handled by the caller. */
-async function flagNeedsReconnect(email: string, stored: StoredPronote, e: any): Promise<void> {
+ *  forever. Best-effort: this must never throw on top of the real error being handled by the caller.
+ *
+ *  One-strike grace period (unless `immediate`): observed live — a student kept getting the "reconnect"
+ *  email while Settings always showed "connected," because a single momentary Pronote-side blip (its own
+ *  server briefly flaky/rate-limited, not the password actually being wrong) was enough to trip BOTH the
+ *  token attempt and the immediate password-fallback attempt at once, get reported as "genuinely dead," and
+ *  self-heal on the very next sweep/touch — by which point the email had already gone out for nothing. The
+ *  FIRST double-failure now only records `firstFailedAt` (silent, no email); only a SECOND, separate
+ *  double-failure while that's still set actually flags `needsReconnect` and notifies the student. A
+ *  successful login in between (loginAndRun's full-replacement stored object) clears `firstFailedAt`
+ *  automatically, so this is a real "confirmed twice" bar, not a fixed delay. `immediate` skips this for the
+ *  no-stored-password case, which has no second attempt to wait on in the first place. */
+async function flagNeedsReconnect(email: string, stored: StoredPronote, e: any, opts?: { immediate?: boolean }): Promise<void> {
   const current = await loadState(email).catch(() => undefined);
   if (current) {
+    if (!opts?.immediate && !stored.firstFailedAt) {
+      void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, firstFailedAt: new Date().toISOString() } }).catch(() => {});
+      console.warn("[pronote] session failed once (token + credential fallback) — waiting for a second failure before flagging reconnect:", e?.message || e);
+      return;
+    }
     void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, needsReconnect: true } }).catch(() => {});
     // Direct instruction: don't just leave this as a passive Settings badge the student has to notice on
     // their own — actively tell them. Only on the FALSE→true transition (stored.needsReconnect was not

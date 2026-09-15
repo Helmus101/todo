@@ -1027,20 +1027,43 @@ export function validateThemeTokens(raw: unknown): ThemeTokens {
 // otherwise compare normalized text (trim, collapse whitespace, case-insensitive, strip a leading "x=" /
 // "y=" echo of the variable being solved for, drop a trailing unit-less "." ). Deliberately NOT fuzzy beyond
 // this — a genuinely wrong answer must still register as wrong, this only forgives formatting noise.
+// Parses a plain decimal OR a simple "a/b" fraction (whole numbers on each side, e.g. "7/2", "-3/4") to its
+// numeric value — NaN if neither shape matches. makePracticeProblem's own prompt (server/claude.ts) tells
+// the student they may answer "as a decimal (or as a fraction if you prefer, written like 7/2)", but plain
+// Number() has no idea what to do with "/" and returns NaN for it, so a numerically exact fraction answer
+// ("7/2" for a correct answer of 3.5, or vice versa) was marked wrong outright — the format instructions
+// promised something the checker never actually implemented.
+function parseNumericOrFraction(s: string): number {
+  const cleaned = s.replace(/,/g, "");
+  const direct = Number(cleaned);
+  if (Number.isFinite(direct)) return direct;
+  const frac = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
+  if (frac) {
+    const num = Number(frac[1]), den = Number(frac[2]);
+    if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) return num / den;
+  }
+  return NaN;
+}
 export function practiceAnswerMatches(given: string, correct: string): boolean {
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/^[a-z]\s*=\s*/, "").replace(/\.$/, "");
   const g = norm(given), c = norm(correct);
   if (!g) return false;
   if (g === c) return true;
-  const gn = Number(g.replace(/,/g, "")), cn = Number(c.replace(/,/g, ""));
+  const gn = parseNumericOrFraction(g), cn = parseNumericOrFraction(c);
   if (Number.isFinite(gn) && Number.isFinite(cn)) return Math.abs(gn - cn) < 1e-6 * Math.max(1, Math.abs(cn));
   // Leading-number fallback: makePracticeProblem's own prompt (server/claude.ts) tells the STUDENT to
   // include a unit ("format" field says so explicitly) and stores the correct answer WITH one too ("84 m") —
   // but a student who types just the number ("84") has the numerically exact right answer, only missing
   // the unit string. The plain Number() parse above fails the moment either side has trailing unit text, so
   // without this a perfectly correct "84" was marked wrong against "84 m". Compares just the leading numeric
-  // token on each side; only reachable when the whole-string parse above didn't already resolve it.
-  const leadingNum = (s: string) => { const m = s.match(/^-?\d+(?:[.,]\d+)?(?:e-?\d+)?/); return m ? Number(m[0].replace(",", ".")) : NaN; };
+  // token on each side; only reachable when the whole-string parse above didn't already resolve it. Also
+  // fraction-aware (e.g. "7/2 m") for the same reason as the whole-string parse above.
+  const leadingNum = (s: string) => {
+    const fracMatch = s.match(/^-?\d+(?:\.\d+)?\s*\/\s*-?\d+(?:\.\d+)?/);
+    if (fracMatch) return parseNumericOrFraction(fracMatch[0]);
+    const m = s.match(/^-?\d+(?:[.,]\d+)?(?:e-?\d+)?/);
+    return m ? Number(m[0].replace(",", ".")) : NaN;
+  };
   const gln = leadingNum(g), cln = leadingNum(c);
   if (Number.isFinite(gln) && Number.isFinite(cln)) return Math.abs(gln - cln) < 1e-6 * Math.max(1, Math.abs(cln));
   return false;

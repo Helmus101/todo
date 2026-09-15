@@ -3524,11 +3524,41 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .sm-ai-input-row {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: end;
   gap: var(--space-2);
   padding: var(--space-3);
   border-top: 1px solid var(--line-soft);
+}
+/* Voice mode controls (client/voice/VoiceControls.tsx) — shared by AskOttoPanel and TaskCard's TaskChat, so
+   one set of rules covers both surfaces. */
+.voice-controls { display: flex; align-items: center; gap: var(--space-2); position: relative; }
+.voice-mic-btn {
+  width: 34px; height: 34px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 50%;
+  background: var(--surface); font-size: 15px; cursor: pointer;
+  transition: background var(--duration-base) var(--ease), border-color var(--duration-base) var(--ease);
+}
+.voice-mic-listening { border-color: var(--accent); background: var(--accent-soft); animation: voice-pulse 1.3s ease-in-out infinite; }
+.voice-mic-speaking { border-color: var(--accent); background: var(--accent-soft); }
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
+.voice-autospeak-btn {
+  width: 30px; height: 30px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 50%;
+  background: var(--surface); font-size: 13px; cursor: pointer; opacity: 0.55;
+}
+.voice-autospeak-btn.active { opacity: 1; border-color: var(--accent); background: var(--accent-soft); }
+.voice-interim {
+  position: absolute; bottom: calc(100% + 6px); right: 0;
+  max-width: 220px; padding: 6px 10px;
+  background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
+  font-size: var(--text-xs); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0,0,0,0.08));
 }
 /* Grows from one line up to 3 (~80px at this font/line-height/padding), then scrolls internally — see the
    auto-resize effect in AskOttoPanel.tsx. resize:none because the height is script-driven, not user-dragged. */

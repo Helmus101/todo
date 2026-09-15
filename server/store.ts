@@ -43,6 +43,13 @@ export interface StoredPronote { url: string; username: string; kind: number; to
    *  BOTH the token AND a fresh password-based login fail — i.e. the password itself is stale (changed at
    *  school), the one case that genuinely requires the student to act. */
   needsReconnect?: boolean;
+  /** ISO stamp of the FIRST time both the token AND a fresh password login failed, before `needsReconnect`
+   *  is actually set — a one-strike grace period (see flagNeedsReconnect in pronote.ts) so a single
+   *  transient blip (Pronote's own server briefly flaky, a momentary rate-limit) doesn't immediately read as
+   *  "your password is stale" and email the student a reconnect prompt for something that self-heals on the
+   *  very next attempt. Only escalates to needsReconnect+email on a SECOND separate failure while this is
+   *  still set. Cleared by any successful login (loginAndRun's full-replacement object has no such field). */
+  firstFailedAt?: string;
   /** Last time a session was opened for ANY reason (sweep, task run, or the opportunistic client-side
    *  "touch" — see touchPronoteSession in pronote.ts) — lets the touch path skip re-opening a session (and
    *  rotating the token again) if one already happened recently, instead of hammering Pronote every time a

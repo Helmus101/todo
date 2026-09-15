@@ -831,6 +831,16 @@ check("the slipped milestone snaps to today", replanned.steps[1].targetDate === 
 check("later milestones shift by the same slip amount, preserving spacing", replanned.steps[2].targetDate === "2026-06-26" && replanned.steps[3].targetDate === "2026-07-07");
 const noSlip = replanMilestones([{ text: "Submit", automatable: false, targetDate: "2026-07-01" }], msNow);
 check("nothing changes when no milestone has slipped", noSlip.changed === false);
+// Regression: "today" must be the STUDENT's own local calendar day, not the server's (UTC) — this server
+// runs in UTC, so just after local midnight in a positive-offset zone (e.g. CET/CEST), the UTC day is still
+// YESTERDAY. A bare now.toISOString() read "today" as the wrong day for that whole window, silently
+// snapping/reading a milestone's targetDate one day off from what the student actually saw (observed live:
+// a date landing on Tuesday when it should've read Wednesday).
+const justAfterMidnightParis = new Date("2026-06-15T23:00:00Z"); // 01:00 CEST (UTC+2) on the 16th — still the 15th in UTC
+const tzReplanned = replanMilestones([{ text: "Gather sources", automatable: false, targetDate: "2026-06-10" }], justAfterMidnightParis, "Europe/Paris");
+check("snaps to the STUDENT's local today, not the server's UTC today", tzReplanned.steps[0].targetDate === "2026-06-16");
+const tzReplannedUtc = replanMilestones([{ text: "Gather sources", automatable: false, targetDate: "2026-06-10" }], justAfterMidnightParis);
+check("falls back to UTC when no timezone is known", tzReplannedUtc.steps[0].targetDate === "2026-06-15");
 
 // ── Pronote → sourceDetail/Subject/Due plumbing (the "extension of Pronote" root-cause fix) ────────────
 section("pronoteToItems carries the real énoncé + subject");
@@ -1314,6 +1324,15 @@ section("practiceAnswerMatches — loose-but-not-fuzzy free-response checking");
   check("a number typed with no space before the unit still matches", practiceAnswerMatches("84m", "84 m"));
   check("still rejects a genuinely wrong number even with matching units on both sides", !practiceAnswerMatches("80 m", "84 m"));
   check("decimal number without unit matches decimal WITH unit", practiceAnswerMatches("3.5", "3.5 s"));
+  // Regression: the prompt explicitly tells the student they may answer "as a decimal (or as a fraction if
+  // you prefer, written like 7/2)" — but plain Number("7/2") is NaN, so a numerically exact fraction answer
+  // used to be marked wrong outright against a decimal-formatted correct answer.
+  check("a fraction answer matches the equivalent decimal correct answer", practiceAnswerMatches("7/2", "3.5"));
+  check("a decimal answer matches the equivalent fraction correct answer", practiceAnswerMatches("3.5", "7/2"));
+  check("a fraction answer matches an equivalent fraction correct answer", practiceAnswerMatches("7/2", "14/4"));
+  check("a negative fraction is parsed correctly", practiceAnswerMatches("-7/2", "-3.5"));
+  check("a genuinely wrong fraction still fails", !practiceAnswerMatches("7/2", "3"));
+  check("a fraction answer with a unit still matches via the leading-number fallback", practiceAnswerMatches("7/2 m", "3.5 m"));
 }
 
 section("looksLikeStem / makePracticeProblem — daily practice-problem generation gate + validation");
