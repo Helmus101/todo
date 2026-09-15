@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -389,6 +389,15 @@ const finPh = finalize({ context: "c", synthesis: "Drafted.", steps: [], links: 
 check("placeholder recipient still dropped", finPh.sendables.length === 0);
 const fin3 = finalize({ context: "c", synthesis: "Booked nothing.", steps: [{ text: "Pick a date", automatable: false }], links: [docLink], sendables: [] }, "", []);
 check("real steps are never overwritten", fin3.steps.length === 1 && fin3.steps[0].text === "Pick a date");
+// Regression: synthesis (the field runStep copies verbatim into a single step's own `result`, shown right
+// under it in the UI) opening with search-process narration must be stripped even when the run otherwise
+// produced real steps/links — the earlier "blank out only when nothing else was produced" gate didn't cover
+// this, which is exactly how "Ran several additional Drive/Gmail queries that came back empty" reached a
+// student's screen as a step's result.
+const finMeta = finalize({ context: "c", synthesis: "Ran several additional Drive/Gmail queries that came back empty.", steps: [{ text: "Pick a date", automatable: false }], links: [], sendables: [] }, "", []);
+check("meta-narration synthesis never reaches the user — replaced by the generic steps-exist fallback", !/ran|quer|came back empty/i.test(finMeta.synthesis));
+const finMetaThenReal = finalize({ context: "c", synthesis: "Searched Gmail with no luck. Drafted a reply to Sarah.", steps: [], links: [], sendables: [{ app: "gmail", label: "Send reply", subject: "Re", body: "hi", draftId: "r-1" }] }, "", []);
+check("only the leading meta-narration sentence is stripped, real content after it survives", finMetaThenReal.synthesis === "Drafted a reply to Sarah.");
 let finThrew = false;
 try { finalize({ context: "", synthesis: "Let me first check the calendar and then I'll draft it.", steps: [], links: [], sendables: [] }, "", []); }
 catch { finThrew = true; }
@@ -923,11 +932,31 @@ check("a fresh candidate's links immediately include its own source URL — visi
 check("the same URL is still in evidence too (internal dedup matching untouched)", foldedWithLink[0]?.evidence?.some((l) => l.url === anchorUrl));
 
 section("assignmentBlock — the run/chat prompt's own view of the assignment");
-check("empty when there's no real sourceDetail", assignmentBlock({}) === "");
+check("empty when there's no real sourceDetail and no source at all", assignmentBlock({}) === "");
 const ab = assignmentBlock({ sourceSubject: "Physique-Chimie", sourceDetail: "Exercices 12 à 15 p.87 — mécanique du point", sourceDue: "2026-09-02T08:00:00Z" });
 check("quotes the teacher's real wording", ab.includes("Exercices 12 à 15 p.87 — mécanique du point"));
 check("carries the subject", ab.includes("Physique-Chimie"));
 check("frames it as never-invent", /never invent/i.test(ab));
+// Pronote-scoped subject grounding (no sourceDetail yet, e.g. a bare test placeholder) — only trusted for
+// source === "pronote", since most tasks aren't school-related and a guessed subject would mislead more
+// often than it'd help.
+check("Pronote task with no sourceDetail still gets a subject line", assignmentBlock({ source: "pronote", sourceSubject: "Math AA HL" }).includes("Math AA HL"));
+check("non-Pronote task with a subject but no sourceDetail gets NO subject line", assignmentBlock({ source: "gmail", sourceSubject: "Math AA HL" }) === "");
+check("manual task with a subject but no sourceDetail gets NO subject line", assignmentBlock({ source: "manual", sourceSubject: "Math AA HL" }) === "");
+
+section("dropForeignEntitySteps — cross-task contamination backstop");
+{
+  const task = { title: "Prep the Math AA HL practice paper for Friday", why: "Upcoming Math AA HL test" };
+  const onTopic = { text: "Open the Math AA HL paper and list its questions" };
+  const foreign1 = { text: "Contact Pierre Cotteau de Simencourt about the IEO France finals date" };
+  const foreign2 = { text: "Follow up with the Cardin Foundation about the research grant" };
+  check("keeps a step naming no proper-noun entity at all", dropForeignEntitySteps(task, [], [onTopic]).length === 1);
+  check("drops a step naming a person absent from title/why/sourceDetail/links", dropForeignEntitySteps(task, [], [foreign1]).length === 0);
+  check("drops a step naming a place absent from title/why/sourceDetail/links", dropForeignEntitySteps(task, [], [foreign2]).length === 0);
+  check("keeps the on-topic step while dropping the foreign ones from a mixed batch", dropForeignEntitySteps(task, [], [onTopic, foreign1, foreign2]).length === 1);
+  const taskWithDetail = { title: "Reply to Kosova", why: "Follow up with Professor Kosova about IEO France", sourceDetail: "" };
+  check("a name present in the task's own why is NOT flagged as foreign", dropForeignEntitySteps(taskWithDetail, [], [{ text: "Send Professor Kosova the drafted follow-up email" }]).length === 1);
+}
 
 section("dueLine — always-shown due-date + server-computed days-until for chat");
 check("empty when there's no due date at all", dueLine(undefined) === "");

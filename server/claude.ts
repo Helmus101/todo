@@ -555,9 +555,20 @@ function academicBlock(a?: AcademicContext): string {
  *  Before this existed, the énoncé was read by the classifier and then dropped, so a run only ever saw
  *  "Physique homework" — which is exactly why fiches came out generic ("revoir le cours") instead of
  *  being about mécanique du point. */
-export function assignmentBlock(t: { sourceSubject?: string; sourceDetail?: string; sourceDue?: string }): string {
-  if (!t.sourceDetail?.trim()) return "";
+export function assignmentBlock(t: { source?: string; sourceSubject?: string; sourceDetail?: string; sourceDue?: string }): string {
   const fmt = (iso?: string) => { if (!iso) return ""; try { return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }); } catch { return iso; } };
+  if (!t.sourceDetail?.trim()) {
+    // No énoncé text yet (e.g. a bare Pronote test placeholder) — still worth telling the model the SUBJECT
+    // when it's a trusted, structured fact (Pronote is the only source where sourceSubject is a real course
+    // name, not a guess). Deliberately scoped to source === "pronote" only: most tasks aren't school-related
+    // at all, so stamping a "Subject" header on every task (Gmail/Calendar/manual/Drive-derived) would be
+    // wrong more often than it'd help — for those, the task TITLE stays the anchor, which already works well.
+    if (t.source === "pronote" && t.sourceSubject) {
+      return `\nSubject: ${t.sourceSubject}. This is a school subject — everything you look up and every ` +
+        `artifact you build must be about THIS subject, at this level.\n`;
+    }
+    return "";
+  }
   const due = fmt(t.sourceDue);
   return `\nTHE ASSIGNMENT ITSELF — copied VERBATIM from Pronote; these are the teacher's own words.\n` +
     `This is the SUBJECT MATTER of this task, not background context. Everything you look up and every\n` +
@@ -695,6 +706,62 @@ function isFolderHousekeepingDrift(title: string, steps: { text: string }[]): bo
   if (!steps.length) return false;
   if (/\b(organi[sz]e|folder|clean ?up|file management|sort (my|the) files)\b/i.test(title)) return false; // legitimately about this
   return steps.every((s) => FOLDER_HOUSEKEEPING_STEP.test(s.text));
+}
+
+// Capitalized single words that are common in step/artifact text but aren't proper-noun ENTITIES worth
+// checking (sentence starters, weekday/month names, Otto's own name, generic time words) — excluded so the
+// entity heuristic below doesn't flag ordinary sentences.
+const ENTITY_STOPWORDS = new Set([
+  "the", "a", "an", "this", "that", "these", "those", "otto", "today", "tomorrow", "tonight", "next", "start",
+  "open", "read", "write", "send", "check", "review", "finish", "complete", "prepare", "monday", "tuesday",
+  "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february", "march", "april", "may",
+  "june", "july", "august", "september", "october", "november", "december",
+  // Common imperative step-starting verbs — steps in this app are always phrased as instructions ("Contact
+  // X about Y", "Follow up with Z"), so the sentence-leading verb routinely sits right next to a real name
+  // and would otherwise greedily merge into the entity span (e.g. "Follow Cardin Foundation" instead of just
+  // "Cardin Foundation"), or get flagged as its own bogus single-word entity.
+  "follow", "contact", "email", "call", "text", "ask", "tell", "remind", "confirm", "book", "buy", "pay",
+  "attend", "join", "submit", "upload", "download", "print", "sign", "schedule", "cancel", "draft", "reply",
+  "message", "notify", "invite", "meet", "visit", "bring", "return", "pick", "drop", "set", "plan", "add",
+  "remove", "update", "fix", "look", "find", "gather", "collect", "organize", "continue", "keep", "take",
+  "give", "share", "post", "publish", "go", "get",
+]);
+/** Extract proper-noun-like spans (1-3 consecutive capitalized words, e.g. "Pierre Cotteau", "19th
+ *  arrondissement" won't match since it doesn't start capitalized — deliberately simple/interpretable, no
+ *  NER model, same posture as every other pattern-matching backstop in this file) from a piece of text. */
+function extractEntities(text: string): string[] {
+  const matches = text.match(/\b[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b/g) || [];
+  const out: string[] = [];
+  for (const m of matches) {
+    // Trim leading/trailing stopwords off the matched span first — a sentence-starting verb ("Send",
+    // "Contact") sitting right before a real name greedily joins the regex match ("Send Professor Kosova"),
+    // which would wrongly fail the allowlist check even when "Professor Kosova" alone is legitimate.
+    const words = m.split(/\s+/);
+    let start = 0, end = words.length;
+    while (start < end && ENTITY_STOPWORDS.has(words[start].toLowerCase())) start++;
+    while (end > start && ENTITY_STOPWORDS.has(words[end - 1].toLowerCase())) end--;
+    const trimmed = words.slice(start, end);
+    if (trimmed.length) out.push(trimmed.join(" "));
+  }
+  return out;
+}
+function textMentionsEntity(haystack: string, entity: string): boolean {
+  return haystack.toLowerCase().includes(entity.toLowerCase());
+}
+/** Cross-task contamination backstop: a step (or artifact title) naming a SPECIFIC person/place/
+ *  organization that appears NOWHERE in the task's own title/why/sourceDetail/links is very likely bleed-in
+ *  from an unrelated thread the research pass happened to read along the way — observed live: a Math AA HL
+ *  task's steps included "Contact Pierre Cotteau de Simencourt about the IEO France finals date" and "Start
+ *  the 19th arrondissement sampling/data collection", real obligations from OTHER tasks, not this one. The
+ *  research `context` a run reads from is, by definition, where this pollution originates (it legitimately
+ *  contains snippets from other threads the model read along the way), so it can't be used as the allowlist
+ *  here — only the task's own already-scoped fields can. Drops flagged items individually (same posture as
+ *  dropTrivialSteps) rather than rejecting the whole batch: most items in a contaminated draft are still
+ *  legitimate, and an entity absent from title/why isn't necessarily wrong (a name first surfaced by
+ *  legitimate research, e.g. a teacher's name in the énoncé, is caught by including sourceDetail below). */
+export function dropForeignEntitySteps<T extends { text: string }>(task: { title: string; why: string; sourceDetail?: string }, links: TaskLink[], steps: T[]): T[] {
+  const allow = `${task.title} ${task.why} ${task.sourceDetail || ""} ${links.map((l) => l.label).join(" ")}`;
+  return steps.filter((s) => extractEntities(s.text).every((e) => textMentionsEntity(allow, e)));
 }
 
 // DeepSeek retired "deepseek-chat"/"deepseek-reasoner" in favor of "deepseek-v4-flash" (fast/cheap) and
@@ -3109,21 +3176,27 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "research. Read whatever's relevant (the Gmail thread / Calendar event / Drive doc behind this, " +
                 "or any other connected app that plausibly bears on it) before you submit. If you genuinely " +
                 "checked and none apply, say so explicitly in \"context\" — but only after actually trying.";
-            } else if ((META_NARRATION.test(draft.context) || (Array.isArray(draft.did) && draft.did.some((d: string) => META_NARRATION.test(d)))) && canBounce) {
+            } else if ((META_NARRATION.test(draft.context) || META_NARRATION.test(draft.synthesis) || (Array.isArray(draft.did) && draft.did.some((d: string) => META_NARRATION.test(d)))) && canBounce) {
               // Observed live: "context" describing the REQUEST or the SEARCH PROCESS instead of what was
               // actually found ("User requested information about Gabrielle; performed searches across
-              // multiple Google services") — technically non-empty, completely worthless to the user. This
-              // is the single biggest driver of INCONSISTENT quality across tasks: when research comes up
+              // multiple Google services") — technically non-empty, completely worthless to the user. Also
+              // checks `synthesis` now: this is the field runStep (server/tasks.ts) copies verbatim into a
+              // single step's own `result` (shown right under it in the UI as "Ran several additional Drive/
+              // Gmail queries that came back empty") — it was never covered here even though synthesis's own
+              // tool description explicitly forbids exactly this ("no caveats, no explaining what you
+              // couldn't do"), so this exact meta-narration leak reached the UI through the one field this
+              // check didn't look at. This is the single biggest driver of INCONSISTENT quality across tasks: when research comes up
               // thin, the model defaults to narrating its own effort instead of either digging further or
               // admitting a SPECIFIC gap. Reject it every time — no finishBacks cap, this is a content-shape
               // defect, not a judgment call to relax under round pressure.
-              content = "REJECTED: \"context\" describes the REQUEST or your SEARCH PROCESS, not what you " +
-                "actually found — \"User requested X\" / \"performed searches across Y\" is worthless filler. " +
-                "Replace it with the real substantive facts (names, dates, what a thread/doc/event actually " +
-                "says) — dig further with another targeted search/read if you don't have enough yet. If you " +
-                "genuinely found nothing after a real attempt, state the SPECIFIC gap (e.g. \"no upcoming " +
-                "meetings with Gabrielle; her last email was 3 weeks ago about the budget\"), never a vague " +
-                "description of the search itself.";
+              content = "REJECTED: \"context\"/\"synthesis\" describes the REQUEST or your SEARCH PROCESS, not " +
+                "what you actually found — \"User requested X\" / \"performed searches across Y\" / \"ran " +
+                "several queries that came back empty\" is worthless filler. Replace it with the real " +
+                "substantive facts (names, dates, what a thread/doc/event actually says) — dig further with " +
+                "another targeted search/read if you don't have enough yet. If you genuinely found nothing " +
+                "after a real attempt, state the SPECIFIC gap (e.g. \"no upcoming meetings with Gabrielle; " +
+                "her last email was 3 weeks ago about the budget\"), never a vague description of the search " +
+                "itself.";
             } else if (!draft.steps.length && canBounce) {
               // Otto never actually executes (plan-only), so "steps" is the ONE thing every task must leave
               // the user. Zero steps reads as "did nothing useful" even when research happened, so never
@@ -3141,6 +3214,18 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 `found a file/folder during research and fixated on organizing it instead of using what's in it ` +
                 `to prepare for the real task. Discard those steps and write ones that substantively address ` +
                 `"${task.title}" itself.`;
+            } else if (dropForeignEntitySteps(task, draft.links, draft.steps).length < draft.steps.length / 2 && canBounce) {
+              // Cross-task bleed-in: MOST steps name a specific person/place/organization absent from this
+              // task's own title/why/sourceDetail/links — the same "read broadly during research, turned
+              // unrelated obligations into steps" failure mode as the folder-housekeeping check above, just
+              // caught by named entities instead of a fixed keyword list. See dropForeignEntitySteps's own
+              // comment for the observed-live example (a Math AA HL task's steps naming "Pierre Cotteau" and
+              // "the 19th arrondissement" — real obligations, just from OTHER tasks).
+              finishBacks++;
+              content = `REJECTED: most of your "steps" name people/places/organizations that have nothing to ` +
+                `do with "${task.title}" — you likely read an unrelated email/doc/thread during research and ` +
+                `turned it into a step. Every step must be about THIS task only; drop anything about a person, ` +
+                `place, or obligation not actually mentioned in this task's own title/details.`;
             } else if (/\bfound\b[^.]{0,60}\b(documents?|emails?|files?|spreadsheets?)\b/i.test(`${draft.context} ${(draft.did || []).join(" ")}`) && !draft.links.length && canBounce) {
               // "I found the relevant documents and emails" with nothing in links is a report of work the
               // user can't act on — they have no way to open what was supposedly found.
@@ -3173,6 +3258,17 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // pass itself drifted off-topic — never let a second-pass failure produce a WORSE result.
               const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps, draft.did, profile, draft.isBigProject);
               draft.steps = (stepsMatchTitle(task.title, refined) && !isFolderHousekeepingDrift(task.title, refined)) ? refined : draft.steps;
+              // Final per-step filter: the bounce check above catches a MAJORITY-foreign draft, but a
+              // minority of individually-contaminated steps can still slip through a draft that's otherwise
+              // fine — drop just those, same "keep the legitimate majority" posture as dropTrivialSteps.
+              draft.steps = dropForeignEntitySteps(task, draft.links, draft.steps);
+              // Same check applied to artifact TITLES (not full bodies — academic content is legitimately
+              // dense with subject vocabulary that would false-positive on a body-level check; a title is a
+              // much safer surface, e.g. a note titled "IEO France Finals Prep" attached to a Math AA HL task
+              // is exactly the same bleed-in this whole check exists to catch).
+              if (draft.notes?.length) draft.notes = draft.notes.filter((n) => extractEntities(n.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
+              if (draft.flashcards?.length) draft.flashcards = draft.flashcards.filter((d) => extractEntities(d.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
+              if (draft.quizzes?.length) draft.quizzes = draft.quizzes.filter((q) => extractEntities(q.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
               submitted = draft; content = "submitted";
             }
           }
@@ -3427,7 +3523,7 @@ export async function writeStepsFromContext(
   // student-facing action items and was writing them WITHOUT either, so steps came out tailored to a
   // generic "Physics homework" instead of the specific énoncé and the specific student's situation. Every
   // caller already has these fields on hand (runTask's own `task` param carries them straight through).
-  task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string; sourceDue?: string },
+  task: { title: string; why: string; source?: string; sourceSubject?: string; sourceDetail?: string; sourceDue?: string },
   context: string,
   links: TaskLink[],
   fallbackSteps: TaskStep[],
@@ -3856,14 +3952,14 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // ALSO drop dead-end bullets: a "searched X — no results / couldn't find / not found" line is NOT a
   // meaningful action to the user, it's noise about a failed attempt. This section should show only what
   // Otto actually PRODUCED or PREPPED, never a log of things that came up empty.
-  const DEAD_END = /\bno (results?|matches?|contacts?|entries|records|response|reply|emails?|luck|info(?:rmation)?)\b|\bnothing (?:found|available|to)\b|\bcouldn'?t\b|\bcould not\b|\bunable to\b|\bnot? found\b|\bno .{0,20}\bfound\b|\bfailed to\b|\bwithout success\b/i;
+  const DEAD_END = /\bno (results?|matches?|contacts?|entries|records|response|reply|emails?|luck|info(?:rmation)?)\b|\bnothing (?:found|available|to)\b|\bcouldn'?t\b|\bcould not\b|\bunable to\b|\bnot? found\b|\bno .{0,20}\bfound\b|\bfailed to\b|\bwithout success\b|\bcame (?:back|up) (?:empty|with nothing)\b/i;
   // A fabricated placeholder recipient/fact ("name@example.com", "[email]") is worse than admitting the
   // contact is unknown — drop any bullet that leans on one, so a made-up address never reads as a real action.
   const PLACEHOLDER = /@example\.(?:com|org|net)\b|@(?:test|placeholder|domain|email)\.\w+|\[[^\]]*\b(?:email|address|name|phone|contact)\b[^\]]*\]|\bplaceholder\b/i;
   // "did" = things PRODUCED, not the looking that preceded them. A bullet that merely describes investigation
   // ("Searched Gmail for X", "Checked Contacts", "Looked through Drive", "Scrolled contacts") is a MEANS, not
   // a result — drop it. Real wins start with produce-verbs (drafted/created/wrote/updated/added/prepared/…).
-  const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted|retrieved|retrieve|fetched|fetch|pulled up|located|listed|list|viewed|view|got|fetching)\b/i;
+  const INVESTIGATIVE = /^(searched|search|checked|check|looked|look|scrolled|scroll|browsed|scanned|scan|examined|inspected|explored|queried|tried to|attempted|reviewed|read|opened|combed|dug|hunted|retrieved|retrieve|fetched|fetch|pulled up|located|listed|list|viewed|view|got|fetching|ran|run)\b/i;
   const did: string[] = (Array.isArray(out?.did) ? out.did : [])
     .map((d: any) => {
       // Handle objects that might be returned by the AI instead of strings
@@ -3880,6 +3976,18 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // did — if the run PRODUCED nothing (no did, no artifact), blank it so the card leads with "what's left"
   // instead of a report of what came up empty. (Kept when there IS a produced result to describe.)
   if (synthesis && !did.length && !links.length && !sendables.length && (DEAD_END.test(synthesis) || INVESTIGATIVE.test(synthesis))) synthesis = "";
+  // A synthesis that OPENS with an investigative verb ("Ran several additional Drive/Gmail queries that came
+  // back empty") is meta-narration about the search PROCESS regardless of whether other work got produced
+  // this run — synthesis's own tool description explicitly forbids this shape ("no explaining what you
+  // couldn't do or why"). This is the field runStep (server/tasks.ts) copies verbatim into a single step's
+  // own `result`, shown right under that step in the UI — observed live reaching the student that way even
+  // on a run that otherwise had did/links, which the narrower blank-out above doesn't cover. Unlike the
+  // blank-out above (which clears an empty-run synthesis entirely), this only strips the OPENING
+  // process-narration sentence and keeps the rest, in case a later sentence has real content.
+  if (synthesis && INVESTIGATIVE.test(synthesis)) {
+    const rest = synthesis.replace(/^[^.!?]*[.!?]\s*/, "").trim();
+    synthesis = INVESTIGATIVE.test(rest) ? "" : rest;
+  }
   void fallbackText; // kept in the signature for call-site compatibility; intentionally unused as content
   // A completely empty result (no report, no steps, no artifacts) is a FAILED run, not a quiet success —
   // throwing routes it to the honest-failure path (task returns to ready + client auto-retries).
@@ -4016,7 +4124,7 @@ const CHAT_TOKEN_CEILING = 40_000;
  * MUST already be read-only-scoped by the caller — this function does not scope it itself.
  */
 export async function chatAboutTask(
-  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean; substeps?: { text: string; done: boolean }[] }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string; flashcards?: TaskFlashcards[]; quizzes?: TaskQuiz[] },
+  task: { title: string; why: string; context?: string; steps?: { text: string; done?: boolean; substeps?: { text: string; done: boolean }[] }[]; source?: string; sourceDetail?: string; sourceSubject?: string; sourceDue?: string; flashcards?: TaskFlashcards[]; quizzes?: TaskQuiz[] },
   history: { role: "user" | "assistant"; text: string }[],
   message: string,
   profile?: Profile,
