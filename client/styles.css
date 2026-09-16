@@ -42,6 +42,13 @@
   --radius-sm: 9px;
   --radius-xs: 6px;
   --radius-pill: 999px;     /* self-documenting name for the "fully round" literal, not scale drift */
+  /* Two more steps, added around the existing three (never renumbered — every existing var(--radius*) use
+     is untouched) so a component that wants something smaller than a chip or bigger than a card has a real
+     token instead of a magic number. Matches the varied radius range (4px-32px) of the Apple-style
+     reference the "make it feel like this" pass was modeled on. */
+  --radius-2xs: 4px;        /* tight corners — small tags, inline badges */
+  --radius-lg: 20px;        /* a card that wants to read softer/bigger than the standard --radius */
+  --radius-xl: 28px;        /* a hero panel / full-bleed section */
   /* 4px-grid spacing scale — introduced to replace hand-picked px values with a small, deliberate set
      (Apple's own base unit). Chosen to cover the padding/gap range already in use (4px-48px) without
      over-fragmenting; existing values map onto the nearest step during the token-migration pass. */
@@ -69,15 +76,31 @@
   --weight-medium: 500;
   --weight-semibold: 600;
   --weight-bold: 700;
+  /* Tracking scale — Otto's headings already hand-typed a tight-tracking-on-big-text style close to this
+     (-0.015em to -0.04em on .list-head/.settings-title/etc.); this just names the two steps that recur so
+     a NEW heading reaches for a token instead of picking its own number. Ratios modeled on the Apple-style
+     reference (display -0.034em, h2 -0.028em, h3 -0.019em) — Otto's own values already cluster right around
+     these, so existing headings are left as they are rather than churned for a near-invisible nudge. */
+  --tracking-tight: -0.02em;   /* medium headings (h2-scale) */
+  --tracking-tighter: -0.03em; /* large/hero headings (display-scale) */
   /* Motion scale — --ease was already the dominant curve; --ease-bounce names the second curve that was
-     hand-typed 5 separate times with no token. Durations collapse 18 hand-picked values to 3 steps. */
+     hand-typed 5 separate times with no token. Durations collapse 18 hand-picked values to 3 steps.
+     --ease-out/--ease-house added alongside (not replacing --ease, which hundreds of existing transitions
+     already reference — swapping its value would be an unreviewed app-wide motion change) for new elevated-
+     surface work that wants the softer "settle into place" feel of the Apple-style reference. */
   --ease-bounce: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-house: cubic-bezier(0.16, 1, 0.3, 1);
   --duration-fast: 140ms;
   --duration-base: 220ms;
   --duration-slow: 400ms;
-  --shadow-pop: 0 8px 30px rgba(16, 19, 23, 0.12); /* overlays/modals only */
-  --shadow-card: 0 1px 2px rgba(16, 19, 23, 0.04), 0 1px 1px rgba(16, 19, 23, 0.03);
-  --shadow-card-hover: 0 14px 28px rgba(16, 19, 23, 0.10), 0 3px 8px rgba(16, 19, 23, 0.06);
+  /* Softer, more diffuse shadows — was a tighter/harder blur+spread; the reference's whole shadow language
+     leans on a large blur radius + negative spread + very low opacity (e.g. its own
+     "0 24px 70px -40px rgba(...,0.12)") so an elevated surface reads as floating/soft rather than a hard
+     drop-shadow. Same ink-based color (16,19,23) as before, just re-tuned blur/spread/alpha to match. */
+  --shadow-pop: 0 2px 6px rgba(16, 19, 23, 0.05), 0 28px 60px -32px rgba(16, 19, 23, 0.28); /* overlays/modals only */
+  --shadow-card: 0 1px 2px rgba(16, 19, 23, 0.03), 0 1px 1px rgba(16, 19, 23, 0.02);
+  --shadow-card-hover: 0 2px 6px rgba(16, 19, 23, 0.05), 0 24px 48px -28px rgba(16, 19, 23, 0.22);
   /* Translucent sticky-bar fill + the generic hover wash. Both were hardcoded light values with no dark
      override, so in dark mode the topbar stayed near-WHITE against a near-black page. */
   --bar: rgba(250, 250, 250, 0.85);
@@ -226,7 +249,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .btn.xs::after { content: ""; position: absolute; inset: -5px -3px; background: rgba(0, 0, 0, 0.01); }
 .btn.big { height: 48px; padding: 0 22px; font-size: var(--text-md); border-radius: var(--radius-sm); transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), transform var(--duration-base) var(--ease), box-shadow var(--duration-base) var(--ease); }
 @media (hover: hover) {
-  .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(var(--accent-rgb), 0.28); }
+  .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 2px 6px rgba(var(--accent-rgb), 0.1), 0 20px 40px -20px rgba(var(--accent-rgb), 0.4); }
 }
 .btn.primary.big:active { transform: translateY(0); }
 .btn.opt { background: var(--surface); }               /* MCQ option — secondary look */
@@ -762,7 +785,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   padding-bottom: calc(20px + env(safe-area-inset-bottom));
   padding-left: calc(20px + env(safe-area-inset-left));
   padding-right: calc(20px + env(safe-area-inset-right));
-  animation: modalPop 0.18s var(--ease);
+  animation: modalPop 0.22s var(--ease-house);
 }
 /* A note/deck's own capped-height inner scrollbox made sense in a small floating desktop card — full-bleed
    at every width it just produces a second, confusingly independent scroll region. Let the single outer
@@ -874,10 +897,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-btn-back { display: block; margin: var(--space-2) auto 0; }
 .study-help { margin-top: var(--space-3); border-top: 1px solid var(--line-soft); padding-top: var(--space-2); }
 .study-help-toggle { display: block; margin: 0 auto; }
-.study-help-panel { margin-top: var(--space-2); background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: 10px; padding: var(--space-2); }
+.study-help-panel { margin-top: var(--space-2); background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: var(--space-2); }
 .study-help-log { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
 .study-help-empty { font-size: 12px; color: var(--ink-3); margin: 0; }
-.study-help-msg { font-size: 13px; line-height: 1.4; margin: 0; padding: 6px 10px; border-radius: 8px; max-width: 92%; }
+.study-help-msg { font-size: 13px; line-height: 1.4; margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); max-width: 92%; }
 .study-help-msg.user { align-self: flex-end; background: var(--accent-soft); }
 .study-help-msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--line-soft); }
 .study-help-sender { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 2px; }
@@ -1026,7 +1049,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* Quick dismiss × — hidden until row hover (or always on touch), muted until you hover it. */
 .card-x {
   flex: none; width: 24px; height: 24px; border: none; background: none; color: var(--ink-3);
-  font-size: 18px; line-height: 1; border-radius: 8px; opacity: 0; cursor: pointer;
+  font-size: 18px; line-height: 1; border-radius: var(--radius-sm); opacity: 0; cursor: pointer;
   transition: opacity var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 /* .card-x is a sibling of .card-main now (buttons can't nest), so the hover-reveal is scoped to the whole
@@ -1145,7 +1168,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 }
 @media (hover: hover) { .prepared-chips .note-chip:hover { border-color: var(--ink-3); background: var(--bg-2); } }
 .prepared-chips .note-chip:active { transform: scale(0.99); }
-.note-chip-icon { flex: none; font-size: 18px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--bg-2); }
+.note-chip-icon { flex: none; font-size: 18px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); background: var(--bg-2); }
 .note-chip-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .note-chip-title { font-size: var(--text-base); font-weight: var(--weight-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-chip-meta { font-size: 11.5px; color: var(--ink-3); }
@@ -1182,7 +1205,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
      composer sits flush under it on a notched phone in the full-bleed mobile modal. */
   padding: var(--space-2) 0 calc(2px + env(safe-area-inset-bottom));
 }
-.chat-msg { font-size: var(--text-base); line-height: 1.48; padding: 10px 14px; border-radius: 16px; max-width: 88%; white-space: pre-line; box-shadow: 0 1px 1px rgba(16,19,23,0.04); }
+.chat-msg { font-size: var(--text-base); line-height: 1.48; padding: 10px 14px; border-radius: var(--radius); max-width: 88%; white-space: pre-line; box-shadow: var(--shadow-card); }
 /* renderChatText emits <p>/<ul> blocks for assistant replies — a longer multi-paragraph reply used to read
    as one dense blob (6px between paragraphs, no visible sender) — reported live. More breathing room
    between blocks, plus a real sender label (was screen-reader-only) so a bubble reads as a structured
@@ -1288,7 +1311,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .links a { font-size: 13px; font-weight: var(--weight-medium); color: var(--accent); }
 .links a:hover { text-decoration: underline; }
 /* Inline markdown links parsed out of "did"/step text — a small button, not a bare underlined URL. */
-.inline-link { display: inline-flex; align-items: center; font-weight: var(--weight-medium); color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 4px; text-decoration: none; }
+.inline-link { display: inline-flex; align-items: center; font-weight: var(--weight-medium); color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: var(--radius-2xs); text-decoration: none; }
 .inline-link:hover { text-decoration: underline; }
 
 /* Milestone stepper — a big IB project's targetDate steps, shown as a segmented progress bar above
@@ -1537,7 +1560,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .int-tile-skel { height: 46px; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3, var(--line-soft)) 37%, var(--bg-2) 63%); background-size: 400% 100%; animation: int-skel-shine 1.4s ease infinite; }
 @keyframes int-skel-shine { 0% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
 .int-tile-block + .int-tile-block .int-tile { border-top: 1px solid var(--line-soft); }
-.int-logo { width: 24px; height: 24px; border-radius: 8px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
+.int-logo { width: 24px; height: 24px; border-radius: var(--radius-sm); flex: none; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
 /* PRONOTE's logo is a wide wordmark (not a square icon like the others) — contain + a white backing so
    it stays legible regardless of theme, instead of stretching to fill a square box. */
 .pronote-logo { display: inline-flex; align-items: center; justify-content: center; background: #fff; padding: 3px; }
@@ -1596,9 +1619,9 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .onboard-card {
   position: relative; width: min(480px, 100%); max-height: 90vh; overflow-y: auto;
   -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop); padding: 30px 32px 32px;
-  animation: rise var(--duration-slow) var(--ease);
+  animation: rise var(--duration-slow) var(--ease-house);
 }
 @keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 .onboard-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
@@ -1620,7 +1643,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .ob-state > div { display: flex; flex-direction: column; gap: 2px; }
 .ob-state b { font-size: 14px; font-weight: 600; }
 .ob-state span:last-child { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
-.ob-state-btn { width: 100%; background: none; border: none; text-align: left; border-radius: 8px; cursor: pointer; transition: background var(--duration-fast) var(--ease); }
+.ob-state-btn { width: 100%; background: none; border: none; text-align: left; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast) var(--ease); }
 .ob-state-btn:hover { background: var(--accent-soft); }
 .ob-dot { flex: none; width: 11px; height: 11px; border-radius: 50%; margin-top: var(--space-1); }
 .ob-dot.done { background: var(--accent); }
@@ -1672,10 +1695,10 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .login-main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .login-card {
   width: min(380px, 100%);
-  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop); padding: 28px;
   display: flex; flex-direction: column; gap: 14px;
-  animation: rise var(--duration-slow) var(--ease);
+  animation: rise var(--duration-slow) var(--ease-house);
 }
 .login-title { font-size: var(--text-xl); font-weight: 700; letter-spacing: -0.02em; }
 .login-sub { font-size: var(--text-base); color: var(--ink-2); margin-top: -8px; }
@@ -1752,7 +1775,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .hero-demo-label { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: var(--weight-medium); color: var(--ink-2); margin-bottom: 10px; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); animation: pulse 2s infinite; }
 .demo-window {
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop); overflow: hidden;
 }
 .demo-titlebar { display: flex; gap: 6px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
@@ -1835,11 +1858,11 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .showcase-sec h2 { max-width: 900px; margin: 0 auto 28px; font-size: clamp(1.5rem, 3vw, 1.9rem); font-weight: 700; letter-spacing: -0.03em; text-align: center; }
 .showcase-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; max-width: 900px; margin: 0 auto; }
 .showcase-card {
-  display: flex; flex-direction: column; gap: 4px; padding: 18px; border-radius: var(--radius); background: var(--surface);
+  display: flex; flex-direction: column; gap: 4px; padding: 18px; border-radius: var(--radius-lg); background: var(--surface);
   border: 1px solid var(--line); text-decoration: none; color: inherit; position: relative;
-  transition: transform var(--duration-base) var(--ease), box-shadow var(--duration-base) var(--ease);
+  transition: transform var(--duration-slow) var(--ease-house), box-shadow var(--duration-slow) var(--ease-house);
 }
-.showcase-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-pop); }
+.showcase-card:hover { transform: translateY(-5px) scale(1.01); box-shadow: var(--shadow-pop); }
 .showcase-card h3 { font-size: var(--text-md); font-weight: var(--weight-semibold); letter-spacing: -0.01em; margin-top: 14px; }
 .showcase-card p { font-size: 13px; color: var(--ink-2); line-height: 1.55; padding-right: 20px; }
 .showcase-arrow { position: absolute; top: 16px; right: 16px; color: var(--ink-3); font-size: 16px; }
@@ -1848,7 +1871,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .showcase-bar { width: 8px; border-radius: 3px 3px 0 0; background: var(--accent); opacity: 0.55; }
 .showcase-week-labels { display: none; } /* labels are decorative-only context; the bars carry the visual */
 .showcase-card-flip { flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
-.showcase-flashcard { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 11px; font-weight: var(--weight-medium); box-shadow: 0 2px 8px rgba(16, 19, 23, 0.08); }
+.showcase-flashcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xs); padding: 6px 10px; font-size: 11px; font-weight: var(--weight-medium); box-shadow: var(--shadow-card); }
 .showcase-boxes { display: flex; gap: 4px; }
 .showcase-box { width: 16px; height: 16px; border-radius: 4px; background: var(--line-soft); color: var(--ink-3); font-size: 9px; display: flex; align-items: center; justify-content: center; }
 .showcase-box.on { background: var(--accent); color: #fff; }
@@ -1979,7 +2002,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 .landing-nav { display: flex; align-items: center; justify-content: space-between; height: 72px; }
 .nav-acts { display: flex; gap: 10px; }
 .hero { text-align: center; padding: 60px 0 40px; display: flex; flex-direction: column; align-items: center; gap: var(--space-4); }
-.badge { font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--bg-2); padding: 4px 12px; border-radius: 16px; }
+.badge { font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--bg-2); padding: 4px 12px; border-radius: var(--radius-pill); }
 .hero h1 { font-family: var(--display); font-size: clamp(2.2rem, 5vw, 3.6rem); font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; max-width: 720px; }
 .hero-sub { font-size: 17px; color: var(--ink-2); max-width: 580px; line-height: 1.55; }
 .hero-cta { display: flex; gap: var(--space-3); margin-top: var(--space-2); }
@@ -3569,7 +3592,7 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   max-width: 220px; padding: 6px 10px;
   background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
   font-size: var(--text-xs); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0,0,0,0.08));
+  box-shadow: var(--shadow-card-hover);
 }
 /* Grows from one line up to 3 (~80px at this font/line-height/padding), then scrolls internally — see the
    auto-resize effect in AskOttoPanel.tsx. resize:none because the height is script-driven, not user-dragged. */

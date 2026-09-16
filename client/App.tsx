@@ -582,7 +582,7 @@ export function App() {
       const sweepEn = status?.language === "en";
       if (stillRunning) notify(sweepEn ? "Still checking — hang on a moment." : "Vérification en cours — patiente un instant.");
       else if (/^(skipped:|sweep )/.test(serverNote)) notify(sweepSkipMessage(serverNote, sweepEn), /budget|paused|connected/i.test(serverNote) ? "error" : "info");
-      else if (!t.length) notify(sweepEn ? "Nothing to do right now — nothing new in Pronote." : "Rien à faire pour l'instant — rien de nouveau sur Pronote.");
+      else if (!t.length) notify(sweepEn ? "You're all set — nothing new from Pronote yet." : "Tu es tranquille — rien de nouveau sur Pronote pour l'instant.");
       else if (!fresh.length) notify(sweepEn
         ? `Checked — no new tasks${needsYou ? `; ${needsYou} still need${needsYou === 1 ? "s" : ""} you` : "; everything's already on your list"}.`
         : `Vérifié — rien de nouveau${needsYou ? ` ; ${needsYou} tâche${needsYou === 1 ? "" : "s"} ${needsYou === 1 ? "attend" : "attendent"} encore toi` : " ; tout est déjà sur ta liste"}.`);
@@ -863,7 +863,7 @@ export function App() {
               {live.length === 0
                 ? (doneToday > 0
                     ? (en ? "That's everything for today." : "C'est tout pour aujourd'hui.")
-                    : (en ? "Nothing waiting on you right now." : "Rien ne t'attend pour l'instant."))
+                    : (en ? "You're all caught up." : "Tu es à jour."))
                 : (en
                     ? `${live.length} thing${live.length > 1 ? "s" : ""} left today${doneToday > 0 ? ` — ${doneToday} already done` : ""}.`
                     : `${live.length} chose${live.length > 1 ? "s" : ""} à faire aujourd'hui${doneToday > 0 ? ` — ${doneToday} déjà faite${doneToday > 1 ? "s" : ""}` : ""}.`)}
@@ -936,7 +936,7 @@ export function App() {
                   <div className="empty-state">
                     <div className="empty-mark done"><span className="empty-check">✓</span></div>
                     <h3>{en ? `All caught up${who ? `, ${who}` : ""}` : `Tout est à jour${who ? `, ${who}` : ""}`}</h3>
-                    <p>{en ? "Nothing waiting for you right now. Otto keeps watching your Pronote." : "Rien ne t'attend pour l'instant. Otto continue de surveiller ton Pronote."}</p>
+                    <p>{en ? "You're all caught up — Otto's still keeping an eye on your Pronote." : "Tu es à jour — Otto continue de surveiller ton Pronote."}</p>
                   </div>
                 );
               })() : (
@@ -1398,7 +1398,7 @@ function TaskSkeleton() {
     <div className="loading-screen" aria-busy="true" aria-live="polite">
       <div className="loading-head">
         <span className="spinner sm" />
-        <span className="loading-msg">{L("Chargement de tes tâches…", "Loading your tasks…")}</span>
+        <span className="loading-msg">{L("Récupération de ta journée…", "Pulling up your day…")}</span>
       </div>
       <div className="list" aria-hidden="true">
         {widths.map((w, i) => (
@@ -1450,7 +1450,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("language", v)); }
     catch (e: any) {
       setLang(prev);
-      notify(e?.message || L("Impossible d'enregistrer la langue.", "Couldn't save the language."), "error");
+      notify(e?.message || L("Ta langue n'a pas été enregistrée — réessaie.", "Your language didn't save — give it another try."), "error");
     }
   };
   // Track: onboarding's copy has always claimed this is "changeable any time in Settings" — it wasn't
@@ -1462,7 +1462,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     const prev = track;
     setTrackState(v);
     try { onChanged?.(await api.setProfilePreference("track", v)); }
-    catch (e: any) { setTrackState(prev); notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
+    catch (e: any) { setTrackState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
   };
   // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
   // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
@@ -1472,7 +1472,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     const v = yearLevel.trim();
     if (v === (profile?.yearLevel || "")) return;
     try { onChanged?.(await api.setProfilePreference("yearLevel", v)); }
-    catch (e: any) { notify(e?.message || L("Impossible d'enregistrer.", "Couldn't save."), "error"); }
+    catch (e: any) { notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
   };
   return (
     <>
@@ -2150,7 +2150,7 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
       if (text.trim() && !fresh?.flashcards?.length) {
         notify(en ? "Saved, but couldn't make flashcards from that — try saving again." : "Enregistré, mais impossible de créer les cartes — réessaie d'enregistrer.", "error");
       }
-    } catch (e: any) { notify(e?.message || (en ? "Couldn't save — try again." : "Enregistrement impossible — réessaie."), "error"); }
+    } catch (e: any) { notify(e?.message || (en ? "That didn't save — give it another try." : "Ça n'a pas été enregistré — réessaie."), "error"); }
     finally { setSaving(false); }
   };
   const genSummary = async () => {
@@ -2587,7 +2587,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
               setPausedLocal(v); // optimistic — revert below on failure
               void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
                 setPausedLocal(!v);
-                notify(err?.message || L("Impossible d'enregistrer ce réglage.", "Couldn't save this setting."), "error");
+                notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
               });
             }} /><span className="switch-track" /></span>
           </label>
@@ -3761,7 +3761,7 @@ function ProfileEditor() {
   useEffect(load, []);
   if (loadError) return <p className="rewrite-error">{L("Impossible de charger ton profil.", "Couldn't load your profile.")} <button type="button" className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button></p>;
   if (!p) return <p className="muted small">{L("Chargement…", "Loading…")}</p>;
-  const saveErr = () => L("Enregistrement impossible — réessaie.", "Couldn't save — try again.");
+  const saveErr = () => L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try.");
   const count = (p.name ? 1 : 0) + (p.about ? 1 : 0) + p.preferences.length + p.people.length + p.projects.length + p.courses.length;
   const lists = [
     { key: "preference" as const, label: L("Préférences", "Preferences"), items: p.preferences },

@@ -1257,7 +1257,7 @@ function SendableReview({ task, onTask }: {
     catch (e: any) {
       // Edit stays pending — the box keeps the user's text so nothing is lost — but say so instead of
       // letting the spinner just stop with no explanation.
-      notify(e?.message || L("Enregistrement impossible — réessaie.", "Couldn't save — try again."), "error");
+      notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error");
     }
     finally { setSavingDraft(null); }
   };

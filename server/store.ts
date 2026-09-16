@@ -178,6 +178,41 @@ export async function createUser(email: string, passHash: string): Promise<boole
   } catch (e) { console.warn("[store] createUser threw:", (e as any)?.message || e); return false; }
 }
 
+/** Stamp a one-time password-reset token on the account, replacing any prior one (only the latest link a
+ *  student requested should ever work — an old, possibly-forwarded email shouldn't stay valid forever).
+ *  Best-effort like the rest of this file's writes — a failure here just means the email never goes out,
+ *  never a half-applied reset. */
+export async function setResetToken(email: string, token: string, expiresAt: string): Promise<boolean> {
+  if (!client) return false;
+  try {
+    const { error } = await client.from(USERS).update({ reset_token: token, reset_token_expires_at: expiresAt }).eq("email", email);
+    if (error) { console.warn("[store] setResetToken failed:", error.message); return false; }
+    return true;
+  } catch (e) { console.warn("[store] setResetToken threw:", (e as any)?.message || e); return false; }
+}
+
+/** Look up the account a still-valid (not expired) reset token belongs to. Expiry is checked here (not just
+ *  trusted from the token alone) so a stale row left behind by an unused request can never be replayed. */
+export async function getUserByResetToken(token: string): Promise<{ email: string } | null> {
+  if (!client || !token) return null;
+  try {
+    const { data } = await client.from(USERS).select("email,reset_token_expires_at").eq("reset_token", token).maybeSingle();
+    if (!data || !data.reset_token_expires_at || Date.parse(data.reset_token_expires_at) < Date.now()) return null;
+    return { email: data.email };
+  } catch (e) { console.warn("[store] getUserByResetToken threw:", (e as any)?.message || e); return null; }
+}
+
+/** Set a new password hash and clear the reset token in the same write — a used (or expired) token must
+ *  never work a second time. */
+export async function setPassHash(email: string, passHash: string): Promise<boolean> {
+  if (!client) return false;
+  try {
+    const { error } = await client.from(USERS).update({ pass_hash: passHash, reset_token: null, reset_token_expires_at: null }).eq("email", email);
+    if (error) { console.warn("[store] setPassHash failed:", error.message); return false; }
+    return true;
+  } catch (e) { console.warn("[store] setPassHash threw:", (e as any)?.message || e); return false; }
+}
+
 /**
  * Mirror the signup into Supabase's own Auth users table (Authentication tab in the dashboard), so accounts
  * are visible there too — not just in `weave_web_users`. Otto's actual login still runs on its own bcrypt
