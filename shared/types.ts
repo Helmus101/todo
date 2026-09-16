@@ -1091,6 +1091,7 @@ export interface ConnectionStatus {
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
+  csrfToken?: string;         // synchronizer-token CSRF defense (server/index.ts's requireAuth) — only present when loggedIn
 }
 
 // Study Mode types for the focused study environment feature

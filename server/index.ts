@@ -6,6 +6,9 @@ import type { RequestHandler } from "express";
 import compression from "compression";
 import session from "express-session";
 import bcrypt from "bcryptjs";
+// A fixed dummy hash to compare against on login when the account doesn't exist — see the login route's
+// own comment (timing side-channel fix). Computed once at boot (bcrypt is deliberately slow; not per-request).
+const DUMMY_PASS_HASH = bcrypt.hashSync("otto-dummy-password-for-timing-safety", 10);
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
@@ -32,6 +35,7 @@ declare module "express-session" {
     lastGenTime?: string; // ISO timestamp of the last generation (for continuous monitoring)
     studySessions?: StudySession[]; // study session history
     studyProfile?: StudyProfile; // adaptive study profile
+    csrfToken?: string; // synchronizer-token CSRF defense — see requireAuth's own comment
   }
 }
 
@@ -101,7 +105,18 @@ const CSP = [
   // https://drive.google.com: a Drive FILE preview (e.g. a PDF/image uploaded to Drive rather than a
   // native Doc/Sheet/Slide) — DocumentArtifact.tsx converts a normal .../view share link to .../preview,
   // but the CSP still has to list the origin itself or the frame never even attempts to load.
-  "frame-src 'self' blob: https://open.spotify.com https://docs.google.com https://drive.google.com https://www.youtube-nocookie.com https://www.desmos.com https://*.padlet.com https://*.padlet.org https://cdn.plaid.com",
+  // Broadened to any https: origin (was a fixed allowlist: Spotify/Docs/Drive/YouTube/Desmos/Padlet/Plaid
+  // only) — DocumentArtifact.tsx now deliberately attempts to embed ANY http(s) URL a student pastes as a
+  // study material, and the allowlist was silently defeating that: CSP blocks the iframe before it even
+  // loads, no console error a student would notice, on every host not in the list (confirmed live: a
+  // core-econ.org textbook page that sends no X-Frame-Options was STILL blocked by this CSP, not by the
+  // page's own headers). The actual security backstop for arbitrary embedded content is the iframe's own
+  // sandbox attribute (DocumentArtifact.tsx: allow-scripts + allow-forms + allow-popups, deliberately WITHOUT
+  // allow-same-origin — a malicious page runs in an opaque origin, can't read/write Otto's cookies or DOM,
+  // can't top-navigate the outer page) — CSP's job here is letting the browser attempt the load at all, not
+  // re-doing the isolation the sandbox already provides. 'self'/blob: kept for the student's own uploaded
+  // PDFs/images (same-page blob: URLs) and same-origin needs.
+  "frame-src 'self' blob: https:",
   "font-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -278,8 +293,25 @@ function stampFirstAction(task: WebTask, email?: string, profile?: Profile): voi
 // than adding a second one — every route that already has its own try/catch is unaffected either way.
 const ah = (fn: RequestHandler): RequestHandler => (req, res, next) => { Promise.resolve(fn(req, res, next)).catch(next); };
 
+// CSRF protection for every authenticated, state-changing request. Security-audit finding: the app had NO
+// CSRF defense beyond the session cookie's `sameSite: "lax"` attribute — real, but not equivalent to a real
+// per-request token (lax blocks cross-site simple-form POSTs in modern browsers, but is not designed as the
+// sole CSRF defense and offers no protection against any GET-based state change or a browser/proxy that
+// weakens lax enforcement). This is a standard "synchronizer token" pattern: a random token lives in
+// `req.session.csrfToken` (server-side only, tied to the session), and is handed to the CLIENT once via
+// `/api/status`'s own JSON response — a cross-origin attacker page cannot read that response body (no
+// permissive CORS is set anywhere in this app), so it can never learn the token to forge a request with it.
+// The legitimate same-origin client reads it once and attaches it as the `x-csrf-token` header on every
+// mutating request (see client/api.ts's `req()`); this middleware verifies the header matches the session's
+// token before any authenticated GET-mutating-as-a-side-effect-free-read route proceeds.
+const CSRF_HEADER = "x-csrf-token";
 const requireAuth: RequestHandler = (req, res, next) => {
   if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
+  if (!req.session.csrfToken) req.session.csrfToken = randomBytes(24).toString("hex");
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    const header = req.headers[CSRF_HEADER];
+    if (header !== req.session.csrfToken) { res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." }); return; }
+  }
   next();
 };
 
@@ -351,8 +383,13 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
     // new account's cloud row. A fresh signup always starts from empty state.
     req.session.profile = { ...emptyProfile(), ageConsentAt: new Date().toISOString() };
     req.session.tasks = [];
+    // Generated here (not left to /api/status's lazy path) so the VERY FIRST authenticated mutating call a
+    // fresh signup makes (e.g. the onboarding flow's language preference save, which fires before the next
+    // status poll) already has a valid token to send — otherwise requireAuth would reject that first call
+    // with no way for the client to have known the token yet.
+    req.session.csrfToken = randomBytes(24).toString("hex");
     void recordEvent(email, "signup", {});
-    saveSession(req).then(() => res.json({ ok: true }));
+    saveSession(req).then(() => res.json({ ok: true, csrfToken: req.session.csrfToken }));
   });
 }));
 
@@ -364,7 +401,13 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
   // wrong path (retyping/resetting a password that was never the actual problem). Same check signup has.
   if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase) — sign-in can't work until that's set." }); return; }
   const u = await getUser(email);
-  if (!u || !bcrypt.compareSync(password, u.pass_hash)) {
+  // Timing side-channel fix: bcrypt.compareSync used to be skipped entirely when `u` is null (no such
+  // account), so a login attempt for a NONEXISTENT email returned near-instantly while a real email with a
+  // wrong password paid the full bcrypt cost — an attacker measuring response latency could enumerate valid
+  // account emails despite an identical response body. Always run bcrypt against SOME hash (a real one, or
+  // this fixed dummy) so a nonexistent account takes the same time as a wrong password on a real one.
+  const validPassword = bcrypt.compareSync(password, u?.pass_hash || DUMMY_PASS_HASH);
+  if (!u || !validPassword) {
     void recordEvent(email, "login_failed", {}); // never the password — email only, for brute-force visibility
     res.status(401).json({ error: "Wrong email or password." });
     return;
@@ -378,9 +421,12 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
     const restored = await loadState(email);
     req.session.profile = restored.profile;
     req.session.tasks = restored.tasks;
+    // See the signup handler's identical comment — generated here so the token is available immediately,
+    // not only after the client's next /api/status poll.
+    req.session.csrfToken = randomBytes(24).toString("hex");
     void recordEvent(email, "login", {});
     await saveSession(req);
-    res.json({ ok: true });
+    res.json({ ok: true, csrfToken: req.session.csrfToken });
   });
 }));
 
@@ -673,6 +719,13 @@ app.get("/api/status", ah(async (req, res) => {
     language: req.session.profile?.language === "en" ? "en" : "fr",
     customTheme: req.session.profile?.customTheme,
   };
+  // Hand the CSRF synchronizer token to the client here — this is the ONE place it's ever transmitted (see
+  // requireAuth's own comment). Generated lazily so an already-logged-in session picks one up on its next
+  // status poll without needing to log out/in. Never exposed when logged out — nothing to protect yet.
+  if (req.session.user) {
+    if (!req.session.csrfToken) req.session.csrfToken = randomBytes(24).toString("hex");
+    s.csrfToken = req.session.csrfToken;
+  }
   res.json(s);
 }));
 

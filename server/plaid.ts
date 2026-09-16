@@ -16,6 +16,7 @@ import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } fro
 import { createHash } from "node:crypto";
 import { loadState, saveState, type StoredPlaid } from "./store.ts";
 import { reportError } from "./sentry.ts";
+import { credentialEncryptionConfigured } from "./crypto.ts";
 
 // Plaid's client_user_id must be an opaque per-user identifier, NOT the email itself — Plaid's API rejects
 // a raw email with "should not contain sensitive information like an email" (a real 400, hit live). A
@@ -116,6 +117,14 @@ export async function createLinkToken(email: string): Promise<{ linkToken: strin
 /** Step 2 — the client hands back Link's public_token after a successful bank login; exchange it for a
  *  long-lived access_token and persist it (encrypted, see StoredPlaid's own comment). */
 export async function exchangePublicToken(email: string, publicToken: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Same refusal gate connectPronote() already has, and for the same reason: encryptSecret (crypto.ts)
+  // stays non-fatal and fails OPEN (silently stores plaintext) when CREDENTIAL_ENCRYPTION_KEY is missing —
+  // a deliberate tradeoff so one misconfigured feature can't crash the whole app. But a bank access_token is
+  // exactly the class of secret that tradeoff must never apply to; refuse here rather than silently writing
+  // a real bank credential to the database in plaintext.
+  if (!credentialEncryptionConfigured()) {
+    return { ok: false, error: "Bank connections aren't available right now — this server isn't yet configured to store financial credentials securely. Try again later or contact support." };
+  }
   try {
     const exch = await client().itemPublicTokenExchange({ public_token: publicToken });
     const accessToken = exch.data.access_token;

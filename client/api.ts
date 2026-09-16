@@ -7,6 +7,12 @@ export interface IntegrationsResp { ready: boolean; items: IntegrationItem[]; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// CSRF synchronizer token (see server/index.ts's requireAuth for the full defense-in-depth reasoning) —
+// handed to us once via /api/status's own JSON body (a cross-origin attacker page can't read that response,
+// no permissive CORS is set anywhere on this API), cached here, and attached to every mutating request
+// below. `api.status()` is the one place that ever sets this.
+let csrfToken: string | null = null;
+
 // Best-effort read of the account's chosen language, straight from what App.tsx already persists on every
 // status load — this module has no React context to read LangContext from. Several server error strings
 // (paused/budget gates — server/index.ts) are hardcoded English regardless of the account's language, so
@@ -41,6 +47,14 @@ function translateServerError(msg: string): string {
  *      server response. A genuine server error returns JSON {error} (content-type json) and is NOT retried.
  */
 async function req(url: string, init?: RequestInit, retries = 6): Promise<Response> {
+  // Attach the CSRF token to every mutating request — GET/HEAD are read-only and exempt server-side too
+  // (see requireAuth), so no point adding the header there. `csrfToken` is null before the first successful
+  // /api/status call (e.g. the very first request of a fresh page load); that's fine, those early requests
+  // are pre-login and unauthenticated anyway (requireAuth's check only applies once req.session.user exists).
+  const method = (init?.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && csrfToken) {
+    init = { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": csrfToken } };
+  }
   for (let attempt = 0; ; attempt++) {
     try {
       const r = await fetch(url, init);
@@ -85,13 +99,17 @@ const j = async (r: Response) => {
 };
 const post = (url: string, body?: unknown) =>
   req(url, { method: "POST", headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).then(j);
-// Auth posts surface the server's error message instead of throwing, so the form can show it.
-const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: string }> =>
+// Auth posts surface the server's error message instead of throwing, so the form can show it. Login/signup
+// hand back a fresh CSRF token directly in this response (rather than only via the next /api/status poll)
+// so the very first authenticated mutating call right after signup (e.g. onboarding's language-preference
+// save) already has a valid token — capture it here, the one place both routes' responses are read.
+const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: string; csrfToken?: string }> =>
   req(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-    .then(async (r) => ({ ok: r.ok, ...(await r.json().catch(() => ({}))) }));
+    .then(async (r) => ({ ok: r.ok, ...(await r.json().catch(() => ({}))) }))
+    .then((res) => { if (res.csrfToken) csrfToken = res.csrfToken; return res; });
 
 export const api = {
-  status: (): Promise<ConnectionStatus> => req("/api/status").then(j),
+  status: (): Promise<ConnectionStatus> => req("/api/status").then(j).then((s: ConnectionStatus) => { if (s.csrfToken) csrfToken = s.csrfToken; return s; }),
   signup: (email: string, password: string, consent: boolean) => authPost("/api/auth/signup", { email, password, consent }),
   login: (email: string, password: string) => authPost("/api/auth/login", { email, password }),
   integrations: (): Promise<IntegrationsResp> => req("/api/integrations").then(j),
