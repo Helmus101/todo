@@ -668,8 +668,8 @@ export function App() {
     };
     return (
       <LangContext.Provider value={preLoginLang}>
-        {route === "login" || route === "signup"
-          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async (isNew) => { signedOutRef.current = false; if (isNew) { await onNewAccount(); startOnboard(); } await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : "login"} />
+        {route === "login" || route === "signup" || route === "reset-password"
+          ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async (isNew) => { signedOutRef.current = false; if (isNew) { await onNewAccount(); startOnboard(); } await loadStatus(); navigate("tasks"); }} initialMode={route === "signup" ? "signup" : route === "reset-password" ? "reset" : "login"} />
           : route === "unlimited"
           ? <LoginPage status={status} lang={preLoginLang} onLangChange={setLandingLang} onDone={async () => { signedOutRef.current = false; await loadStatus(); navigate("unlimited"); }} initialMode="login" />
           : <Landing lang={preLoginLang} onLangChange={setLandingLang} />}
@@ -3206,17 +3206,48 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
 }
 
 /** Dedicated login / sign-up PAGE (routes /login and /signup). Its own clean, centered card. */
-function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status: ConnectionStatus; lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void; onDone: (isNew?: boolean) => void; initialMode: "login" | "signup" }) {
+function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status: ConnectionStatus; lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void; onDone: (isNew?: boolean) => void; initialMode: "login" | "signup" | "reset" }) {
   const en = lang === "en";
   const L = (fr: string, e: string) => (en ? e : fr);
-  const [mode, setMode] = useState<"login" | "signup">(initialMode);
+  const [mode, setMode] = useState<"login" | "signup" | "forgot" | "reset">(initialMode);
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [consent, setConsent] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // The reset link's token lives in the URL's query string, which the app's own client-side router
+  // (routeOf/navigate, above) deliberately drops — read it directly off the page's FIRST load instead of
+  // through the route state. A reset link opened with no token, or an already-used/expired one, still shows
+  // the form; the actual validation happens server-side when they submit (resetToken's error covers both).
+  const [resetToken] = useState(() => new URLSearchParams(window.location.search).get("token") || "");
+  const [resetSent, setResetSent] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
   const submit = async () => {
-    if (busy || !email.trim() || !pw || (mode === "signup" && !consent)) return;
+    if (busy) return;
+    if (mode === "forgot") {
+      if (!email.trim()) return;
+      setBusy(true); setErr("");
+      try {
+        await api.forgotPassword(email.trim(), lang);
+        setResetSent(true); // always show the same "check your email" outcome — never reveal whether the account exists
+      } catch {
+        setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
+      } finally { setBusy(false); }
+      return;
+    }
+    if (mode === "reset") {
+      if (!pw) return;
+      setBusy(true); setErr("");
+      try {
+        const r = await api.resetPassword(resetToken, pw);
+        if (r.ok) { setResetDone(true); setTimeout(() => onDone(false), 1200); }
+        else setErr(r.error || L("Une erreur est survenue.", "Something went wrong."));
+      } catch {
+        setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
+      } finally { setBusy(false); }
+      return;
+    }
+    if (!email.trim() || !pw || (mode === "signup" && !consent)) return;
     setBusy(true); setErr("");
     try {
       const r = mode === "signup" ? await api.signup(email.trim(), pw, consent) : await api.login(email.trim(), pw);
@@ -3227,6 +3258,18 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
       setBusy(false);
     }
   };
+  const titles: Record<typeof mode, string> = {
+    signup: L("Crée ton compte", "Create your account"),
+    login: L("Content de te revoir", "Welcome back"),
+    forgot: L("Mot de passe oublié", "Forgot password"),
+    reset: L("Choisis un nouveau mot de passe", "Choose a new password"),
+  };
+  const subs: Record<typeof mode, string> = {
+    signup: L("Deux champs et c'est parti — tu connectes Pronote ensuite.", "Two fields and you're in — connect Pronote next."),
+    login: L("Connecte-toi pour reprendre où tu en étais.", "Log in to pick up where Otto left off."),
+    forgot: L("On t'envoie un lien pour en choisir un nouveau.", "We'll email you a link to pick a new one."),
+    reset: L("Ce lien ne fonctionne qu'une seule fois.", "This link only works once."),
+  };
   return (
     <div className="login-page">
       <header className="landing-nav">
@@ -3235,29 +3278,51 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
       </header>
       <main className="login-main">
         <div className="login-card">
-          <h1 className="login-title">{mode === "signup" ? L("Crée ton compte", "Create your account") : L("Content de te revoir", "Welcome back")}</h1>
-          <p className="login-sub">{mode === "signup" ? L("Deux champs et c'est parti — tu connectes Pronote ensuite.", "Two fields and you're in — connect Pronote next.") : L("Connecte-toi pour reprendre où tu en étais.", "Log in to pick up where Otto left off.")}</p>
+          <h1 className="login-title">{titles[mode]}</h1>
+          <p className="login-sub">{subs[mode]}</p>
           {/* "Supabase"/an env-var name means nothing to a student — say what's actually broken instead. */}
           {!status.cloud && <div className="warn">{L("Les comptes ne sont pas encore activés sur ce serveur.", "Accounts aren't set up on this server yet.")}</div>}
-          <label className="field"><span>{L("Email", "Email")}</span>
-            <input className="addinput" type="email" autoComplete="email" placeholder={L("toi@email.com", "you@email.com")} value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
-          </label>
-          <label className="field"><span>{L("Mot de passe", "Password")}</span>
-            <input className="addinput" type="password" autoComplete={mode === "signup" ? "new-password" : "current-password"} placeholder={L("6 caractères minimum", "At least 6 characters")} value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} />
-          </label>
-          {/* RGPD Art.8: under-15s need a parent to set the account up (see Privacy Policy) — a required,
-              recorded checkbox instead of the previous text-only claim with no actual signal captured. */}
-          {mode === "signup" && (
-            <label className="field-check">
-              <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-              <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
-            </label>
+          {mode === "forgot" && resetSent ? (
+            <p className="settings-hint">{L("Si un compte existe avec cette adresse, un e-mail vient de partir avec un lien de réinitialisation.", "If an account exists with that address, an email with a reset link just went out.")}</p>
+          ) : mode === "reset" && resetDone ? (
+            <p className="settings-hint">{L("Mot de passe mis à jour — connexion en cours…", "Password updated — logging you in…")}</p>
+          ) : (
+            <>
+              {mode !== "reset" && (
+                <label className="field"><span>{L("Email", "Email")}</span>
+                  <input className="addinput" type="email" autoComplete="email" placeholder={L("toi@email.com", "you@email.com")} value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+                </label>
+              )}
+              {mode !== "forgot" && (
+                <label className="field"><span>{mode === "reset" ? L("Nouveau mot de passe", "New password") : L("Mot de passe", "Password")}</span>
+                  <input className="addinput" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder={L("8 caractères minimum", "At least 8 characters")} value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submit(); }} autoFocus={mode === "reset"} />
+                </label>
+              )}
+              {/* RGPD Art.8: under-15s need a parent to set the account up (see Privacy Policy) — a required,
+                  recorded checkbox instead of the previous text-only claim with no actual signal captured. */}
+              {mode === "signup" && (
+                <label className="field-check">
+                  <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                  <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
+                </label>
+              )}
+              {err && <div className="autherr">{err}</div>}
+              <button className="btn primary big" disabled={busy || (mode === "forgot" ? !email.trim() : mode === "reset" ? !pw : !email.trim() || !pw || (mode === "signup" && !consent))} onClick={() => void submit()}>
+                {busy ? "…" : mode === "signup" ? L("Créer le compte", "Create account") : mode === "forgot" ? L("Envoyer le lien", "Send link") : mode === "reset" ? L("Changer le mot de passe", "Change password") : L("Se connecter", "Log in")}
+              </button>
+            </>
           )}
-          {err && <div className="autherr">{err}</div>}
-          <button className="btn primary big" disabled={busy || !email.trim() || !pw || (mode === "signup" && !consent)} onClick={() => void submit()}>{busy ? "…" : mode === "signup" ? L("Créer le compte", "Create account") : L("Se connecter", "Log in")}</button>
-          <button className="btn ghost" onClick={() => { setMode((m) => (m === "signup" ? "login" : "signup")); setErr(""); }}>
-            {mode === "signup" ? L("Déjà un compte ? Se connecter", "Have an account? Log in") : L("Nouveau ici ? Créer un compte", "New here? Create an account")}
-          </button>
+          {mode === "login" && (
+            <button className="btn ghost" onClick={() => { setMode("forgot"); setErr(""); setResetSent(false); }}>{L("Mot de passe oublié ?", "Forgot password?")}</button>
+          )}
+          {(mode === "login" || mode === "signup") && (
+            <button className="btn ghost" onClick={() => { setMode((m) => (m === "signup" ? "login" : "signup")); setErr(""); }}>
+              {mode === "signup" ? L("Déjà un compte ? Se connecter", "Have an account? Log in") : L("Nouveau ici ? Créer un compte", "New here? Create an account")}
+            </button>
+          )}
+          {mode === "forgot" && (
+            <button className="btn ghost" onClick={() => { setMode("login"); setErr(""); setResetSent(false); }}>{L("← Retour à la connexion", "← Back to login")}</button>
+          )}
           <a className="login-back" href="/">{L("← Retour à l'accueil", "← Back to home")}</a>
           <div className="login-legal">{L("En continuant, tu acceptes nos ", "By continuing you agree to our ")}<a href="/terms">{L("conditions", "Terms")}</a> {L("et notre", "&")} <a href="/privacy">{L("politique de confidentialité", "Privacy Policy")}</a>.</div>
         </div>

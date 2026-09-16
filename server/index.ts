@@ -17,7 +17,7 @@ import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidT
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "./store.ts";
-import { sendTransactionalEmail, mailerConfigured } from "./mailer.ts";
+import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
@@ -426,6 +426,61 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
     // not only after the client's next /api/status poll.
     req.session.csrfToken = randomBytes(24).toString("hex");
     void recordEvent(email, "login", {});
+    await saveSession(req);
+    res.json({ ok: true, csrfToken: req.session.csrfToken });
+  });
+}));
+
+// Password reset — request step. Deliberately responds {ok:true} for EVERY validly-formatted email,
+// whether or not an account actually exists: a different response for "no such account" would let an
+// attacker enumerate registered emails through this endpoint, exactly the same timing/response-shape
+// discipline the login route above already applies to wrong-password vs. no-account. Rate-limited both by
+// IP (rateLimit) and, inside the handler, best-effort against hammering ONE victim's inbox from many IPs.
+app.post("/api/auth/forgot-password", rateLimit(5, 60 * 60_000), ah(async (req, res) => {
+  const email = normEmail(req.body?.email);
+  if (!validEmail(email)) { res.status(400).json({ error: "Enter a valid email." }); return; }
+  if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
+  try {
+    const u = await getUser(email);
+    if (u) {
+      const token = randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString(); // 30 min — short-lived, a fresh request is one click away
+      if (await setResetToken(email, token, expiresAt)) {
+        const link = `${process.env.PUBLIC_URL || "https://hiotto.vercel.app"}/reset-password?token=${token}`;
+        const en = req.body?.lang !== "fr";
+        const html = en
+          ? `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password →</a></p><p>If this wasn't you, you can safely ignore this email — your password hasn't changed.</p>`
+          : `<p>Quelqu'un (toi, on espère) a demandé à réinitialiser ton mot de passe Otto. Ce lien fonctionne une seule fois et expire dans 30 minutes.</p><p><a href="${link}">Réinitialiser ton mot de passe →</a></p><p>Si ce n'était pas toi, tu peux ignorer cet e-mail — ton mot de passe n'a pas changé.</p>`;
+        void sendTransactionalEmail(email, en ? "Reset your Otto password" : "Réinitialise ton mot de passe Otto", html);
+        void recordEvent(email, "password_reset_requested", {});
+      }
+    }
+  } catch (e: any) { reportError("auth-forgot-password", e, { email }); /* still respond ok:true below — never leak account existence via a failure path either */ }
+  res.json({ ok: true });
+}));
+
+// Password reset — confirm step. The token itself (unguessable, 32 random bytes, single-use, 30-min expiry
+// — see setResetToken/getUserByResetToken in store.ts) IS the authentication for this request; no session
+// required, matching how the emailed link is meant to be opened straight from a signed-out state.
+app.post("/api/auth/reset-password", rateLimit(10, 60 * 60_000), ah(async (req, res) => {
+  const token = String(req.body?.token || "");
+  const password = String(req.body?.password || "");
+  if (!token) { res.status(400).json({ error: "Missing or invalid reset link." }); return; }
+  if (password.length < 8 || password.length > 200) { res.status(400).json({ error: "Password must be between 8 and 200 characters." }); return; }
+  if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
+  const u = await getUserByResetToken(token);
+  if (!u) { res.status(400).json({ error: "This reset link is invalid or has expired — request a new one." }); return; }
+  if (!(await setPassHash(u.email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: "Couldn't reset the password — try again." }); return; }
+  void recordEvent(u.email, "password_reset", {});
+  // Log the student straight in — same session-fixation-safe regenerate as signup/login above, so a reset
+  // link doubles as an immediate "you're back in" instead of a second manual login right after.
+  req.session.regenerate(async (err) => {
+    if (err) { res.status(500).json({ error: "Password reset — but couldn't log you in automatically. Log in with your new password." }); return; }
+    req.session.user = u.email;
+    const restored = await loadState(u.email);
+    req.session.profile = restored.profile;
+    req.session.tasks = restored.tasks;
+    req.session.csrfToken = randomBytes(24).toString("hex");
     await saveSession(req);
     res.json({ ok: true, csrfToken: req.session.csrfToken });
   });

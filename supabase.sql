@@ -26,8 +26,16 @@ alter table weave_web_state add column if not exists plaid jsonb;         -- per
 create table if not exists weave_web_users (
   email text primary key,
   pass_hash text not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  reset_token text,                          -- one-time password-reset token (see server/store.ts's setResetToken/getUserByResetToken) — null when no reset is pending
+  reset_token_expires_at timestamptz         -- expiry for the token above; a request past this is treated as invalid
 );
+-- If you created this table from an earlier version, add the newer columns:
+alter table weave_web_users add column if not exists reset_token text;
+alter table weave_web_users add column if not exists reset_token_expires_at timestamptz;
+-- Reset tokens are looked up by value (getUserByResetToken), not by email — index it, and only the
+-- (rare, small) subset of rows that actually have a pending reset, so the index stays cheap.
+create index if not exists weave_web_users_reset_token on weave_web_users (reset_token) where reset_token is not null;
 alter table weave_web_users enable row level security;
 -- Remove any permissive policy an older run of this file created.
 drop policy if exists "weave_web_users server access" on weave_web_users;

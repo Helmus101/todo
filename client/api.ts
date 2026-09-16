@@ -112,6 +112,12 @@ export const api = {
   status: (): Promise<ConnectionStatus> => req("/api/status").then(j).then((s: ConnectionStatus) => { if (s.csrfToken) csrfToken = s.csrfToken; return s; }),
   signup: (email: string, password: string, consent: boolean) => authPost("/api/auth/signup", { email, password, consent }),
   login: (email: string, password: string) => authPost("/api/auth/login", { email, password }),
+  // Always resolves {ok:true} on a validly-formatted email — the server never reveals whether an account
+  // actually exists (see server/index.ts's own comment on why), so the client can't and shouldn't try to
+  // distinguish "sent" from "no such account" either.
+  forgotPassword: (email: string, lang: "fr" | "en"): Promise<{ ok: boolean; error?: string }> =>
+    post("/api/auth/forgot-password", { email, lang }),
+  resetPassword: (token: string, password: string) => authPost("/api/auth/reset-password", { token, password }),
   integrations: (): Promise<IntegrationsResp> => req("/api/integrations").then(j),
   integrationAccounts: (app: string): Promise<{ accounts: ConnectedAccount[] }> => req(`/api/integrations/${app}/accounts`).then(j),
   disconnectIntegration: (app: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect`),
