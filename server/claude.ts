@@ -4222,7 +4222,16 @@ export interface ChatResult {
 // up, maybe make ONE thing, then talk" — never a research pass. Also caps how many artifacts one message
 // can produce (a wall of chips defeats the point of a CONVERSATION) and a small total-token ceiling so a
 // pathological turn can't cost like a small run.
-const CHAT_MAX_ROUNDS = 3;
+// Was 3 — reproduced live: "find these on Decathlon" (several gear items) needs its OWN web_search per
+// item when the model doesn't batch them into one completion's tool_calls, so round 0 searches item 1,
+// round 1 searches item 2, and round 2 (the LAST round) has `tools` stripped and is forced to answer in
+// plain text — with no room left to search item 3 first. That alone isn't fatal (the forced round still
+// usually produces SOME reply), but it means a genuinely multi-item lookup gets cut short after 2 real
+// searches, and if the forced final completion's hidden reasoning tokens (DeepSeek v4 — see OUT's own
+// comment elsewhere) eat the whole budget while synthesizing several tool results into one answer, it can
+// come back GENUINELY EMPTY — which the caller then reports to the user as a hard 502 ("Otto couldn't
+// reply just now"), even though nothing actually crashed. Raised to give a multi-lookup turn real headroom.
+const CHAT_MAX_ROUNDS = 5;
 const CHAT_MAX_ARTIFACTS = 2;
 const CHAT_TOKEN_CEILING = 40_000;
 
@@ -4618,6 +4627,21 @@ export async function chatAboutTask(
           const u = usageOf(retryRes);
           result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn;
           textContent = retryRes.choices?.[0]?.message?.content || "";
+          // A turn that just gathered several tool results (e.g. multiple web_search calls for different
+          // items) can still come back empty here — reasoning through how to SYNTHESIZE all of it can itself
+          // exhaust max_tokens, even with tools stripped. One more attempt, explicitly asking for the
+          // shortest possible answer, needs far less headroom to actually fit — this is what used to reach
+          // the user as a hard "Otto couldn't reply" 502 despite nothing having actually failed.
+          if (!textContent.trim()) {
+            console.log(`${new Date().toISOString()} [chat] round ${round}: second empty completion, retrying once more asking for ONE short sentence`);
+            const shortRes: any = await retryRequest(() => client.chat.completions.create({
+              model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+              messages: [...apiMessages, { role: "user" as const, content: "Reply in ONE short sentence only — just the single most useful fact/answer, no explanation, no formatting." }],
+            }), 1, 400);
+            const u2 = usageOf(shortRes);
+            result.tokens.in += u2.in; result.tokens.out += u2.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u2.cachedIn;
+            textContent = shortRes.choices?.[0]?.message?.content || "";
+          }
         } catch (e: any) { console.error(`[chat] empty-completion retry also failed: ${e?.message || e}`); }
         return finish(textContent);
       }

@@ -1217,8 +1217,12 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // the generic "I'm here — what part of this is giving you trouble?" line — indistinguishable from Otto
     // actually being unhelpful. Surface it as a real error instead: nothing gets written to the chat
     // history (the student's own message stays unanswered, not answered-with-a-lie), and the client shows
-    // an actual "couldn't reply" state with a retry, not an in-character bubble.
-    if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+    // an actual "couldn't reply" state with a retry, not an in-character bubble. 500, not 502 — this app
+    // decided the reply failed (an empty/errored AI completion), nothing upstream/gateway-level actually
+    // broke; 502 was misleading in the browser console (read as an infra crash) for what's really an
+    // in-app soft failure — reported live as confusing "Bad Gateway" errors that had nothing to do with
+    // any gateway.
+    if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
     if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
     // Score the chat-style arm: the only IMMEDIATELY observable outcome of one turn is whether the guardrail
     // held (a genuinely unhelpful/off-boundary reply) — a richer "did they send a follow-up" reward would
@@ -1298,7 +1302,7 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(asy
   await commit(req);
   // Same fix as the main task chat route above — a real failure must surface as an error, not as the
   // generic "I'm here" line rendered like a normal hint.
-  if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(502).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+  if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
   res.json({ reply: out.reply });
 }));
 
