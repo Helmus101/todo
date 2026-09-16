@@ -16,7 +16,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } f
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
@@ -314,26 +314,38 @@ const ah = (fn: RequestHandler): RequestHandler => (req, res, next) => { Promise
 // token before any authenticated GET-mutating-as-a-side-effect-free-read route proceeds.
 const CSRF_HEADER = "x-csrf-token";
 const requireAuth: RequestHandler = (req, res, next) => {
-  if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
-  if (!req.session.csrfToken) req.session.csrfToken = randomBytes(24).toString("hex");
-  // Echo the CURRENT token back on every authenticated response (success AND the 403 below) — not just at
-  // login/signup/status. Reported live as routine background calls (pronote/touch, metrics) failing with a
-  // hard 403 out of nowhere: the client's cached token was minted from an earlier response, but session
-  // persistence (Supabase-backed store, server/store.ts's makeSessionStore) has no hard guarantee that a
-  // csrfToken set on one request has landed in the store before the NEXT request's session read — two
-  // near-simultaneous requests right after login (status + pronote/touch + metrics, all fired together) can
-  // each load a session snapshot missing the other's just-set token, hit the `if (!req.session.csrfToken)`
-  // branch above, and mint a SECOND, different token — permanently diverging from what the client holds,
-  // with no way to self-correct before this fix. Setting this header on every response (not just a 403) lets
-  // the client opportunistically stay in sync even when nothing failed, closing the race instead of only
-  // reacting after the user already saw an error.
-  res.setHeader(CSRF_HEADER, req.session.csrfToken);
-  if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
-    const header = req.headers[CSRF_HEADER];
-    if (header !== req.session.csrfToken) { res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." }); return; }
-  }
-  next();
+  void requireAuthAsync(req, res, next);
 };
+async function requireAuthAsync(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
+  if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
+  // A session that (per THIS request's read) has no token yet cannot fairly be checked against a header —
+  // the client can't possibly have a token that didn't exist. Mint one, skip the check for this ONE
+  // request, and move on; the real check applies to every request after. This is the ONLY case where a
+  // mutating request proceeds without a verified token, and it's not attacker-controllable (a session's
+  // apparent lack of a token is either a genuine first-touch or the staleness race described below, never
+  // something a forged cross-site request can induce).
+  const hadToken = !!req.session.csrfToken;
+  if (!hadToken) req.session.csrfToken = randomBytes(24).toString("hex");
+  if (hadToken && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    const header = req.headers[CSRF_HEADER];
+    if (header !== req.session.csrfToken) {
+      // Cross-instance staleness self-heal: makeSessionStore's own GET_CACHE_TTL_MS (server/store.ts, 3min
+      // per-warm-instance) means the copy of the session THIS lambda instance is holding can lag behind a
+      // token another instance minted/refreshed moments ago — reported live as persistent 403s on routine
+      // background calls (pronote/touch, /api/metrics) that never resolved no matter how many times the
+      // client retried, because a retry could just as easily land on another equally-stale instance. Before
+      // rejecting, check the CURRENT value directly in Supabase (bypassing every instance's cache) — if the
+      // client's header actually matches that, this instance's copy was simply behind, not the client.
+      const fresh = await peekSessionCsrfToken(req.sessionID);
+      if (fresh && fresh === header) { req.session.csrfToken = fresh; }
+      else { res.setHeader(CSRF_HEADER, req.session.csrfToken); res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." }); return; }
+    }
+  }
+  // Echo the CURRENT (possibly just-reconciled) token back on every authenticated response — lets the
+  // client opportunistically stay in sync even when nothing failed, not just recover after an error.
+  res.setHeader(CSRF_HEADER, req.session.csrfToken!);
+  next();
+}
 
 // Per-account rate limiter for the expensive AI/Composio endpoints (and login/signup), so a runaway client
 // loop, a leaked session, or a brute-force attempt can't run up the bill or bypass auth throttling. Keyed

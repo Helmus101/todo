@@ -81,6 +81,24 @@ export const cloudEnabled = (): boolean => !!client;
 const USERS = "weave_web_users";
 const SESSIONS = "weave_web_sessions";
 
+/** Bypass-cache read of a session's csrfToken, straight from Supabase — used by requireAuth (server/index.ts)
+ *  to self-heal the exact cross-instance staleness makeSessionStore's own GET_CACHE_TTL_MS (3min, per-warm-
+ *  instance) can cause: two Vercel lambda instances serving the same session concurrently each keep their
+ *  OWN in-memory copy, so instance A minting/refreshing a token doesn't reach instance B's cached copy for
+ *  up to 3 minutes — a request landing on B in that window sees a "mismatch" that's really just staleness,
+ *  not a forged request, and previously hard-403'd every time regardless of how many times the client
+ *  retried with the "genuinely" fresh token (each retry could just as easily land on another stale instance).
+ *  Reported live as persistent 403s on routine background calls (pronote/touch, /api/metrics) that never
+ *  self-resolved. Returns null (never throws) if cloud is off, the row is missing, or the read fails —
+ *  callers must treat that as "can't confirm," never as a positive mismatch. */
+export async function peekSessionCsrfToken(sid: string): Promise<string | null> {
+  if (!client) return null;
+  try {
+    const { data } = await client.from(SESSIONS).select("sess").eq("sid", sid).maybeSingle();
+    return (data?.sess as any)?.csrfToken ?? null;
+  } catch { return null; }
+}
+
 /**
  * A persistent express-session store backed by Supabase, so logins AND working state (tasks/profile)
  * survive server restarts + deploys — not just the cloud account row, but the live session. Without this,
