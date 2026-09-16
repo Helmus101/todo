@@ -46,7 +46,7 @@ function translateServerError(msg: string): string {
  *   2. fetch RESOLVES with a 5xx whose body is NOT JSON — that's the proxy's own error page, not a real
  *      server response. A genuine server error returns JSON {error} (content-type json) and is NOT retried.
  */
-async function req(url: string, init?: RequestInit, retries = 6): Promise<Response> {
+async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = false): Promise<Response> {
   // Attach the CSRF token to every mutating request — GET/HEAD are read-only and exempt server-side too
   // (see requireAuth), so no point adding the header there. `csrfToken` is null before the first successful
   // /api/status call (e.g. the very first request of a fresh page load); that's fine, those early requests
@@ -58,6 +58,21 @@ async function req(url: string, init?: RequestInit, retries = 6): Promise<Respon
   for (let attempt = 0; ; attempt++) {
     try {
       const r = await fetch(url, init);
+      // requireAuth (server/index.ts) echoes the session's CURRENT csrf token on every authenticated
+      // response, success or not — pick it up opportunistically so this tab self-heals if the session
+      // store ever holds a different token than what we last saw (see that middleware's own comment for
+      // the exact race: two near-simultaneous requests right after login can each mint a token before the
+      // other's write lands). Keeps this tab in sync without waiting for the NEXT /api/status poll.
+      const freshToken = r.headers.get("x-csrf-token");
+      if (freshToken) csrfToken = freshToken;
+      // A genuine CSRF mismatch (403, and the header above just handed us the CORRECT token) is retried
+      // ONCE with that fresh token instead of surfacing a hard error — reported live as routine background
+      // calls (pronote/touch, /api/metrics) failing outright on the exact race described above. Bounded to
+      // one retry and never re-entered (isCsrfRetry) so a genuinely stale/logged-out session still fails
+      // fast rather than looping.
+      if (r.status === 403 && !isCsrfRetry && freshToken && freshToken !== (init?.headers as any)?.["x-csrf-token"]) {
+        return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": freshToken } }, retries, true);
+      }
       if (r.status >= 500 && attempt < retries) {
         const ct = r.headers.get("content-type") || "";
         if (!ct.includes("application/json")) { await sleep(500 + attempt * 250); continue; } // proxy error page → retry

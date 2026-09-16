@@ -1216,7 +1216,15 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     // fully (as if freshly generated) instead of burying it as a one-line step. Deduped against the list;
     // inherits the source account so its own execution routes to the right inbox. The job layer auto-runs them.
     for (const f of out.followUps || []) {
-      if (!f.title || list.some((x) => !isHandled(x.status) && nearDup(x.title, f.title))) continue;
+      if (!f.title) continue;
+      // Against the PARENT task itself, LOOSER than the strict cross-list check below (looseDup, same bar
+      // already used for "is this a reworded resurfacing of X" elsewhere in this file) — a follow-up that's
+      // really just this task's own goal restated is the single most common failure mode here (observed
+      // live: "ensure gear is ready for a trip" spawning "create a packing list" AND "make sure nothing is
+      // left behind" as two MORE separate tasks about the identical obligation), and it's compared against
+      // ONE specific, known task rather than a fuzzy match across the whole list, so a looser bar is safe.
+      const restatesParent = looseDup(f.title, task.title) || looseDup(f.title, task.why) || (f.why && looseDup(f.why, task.why));
+      if (restatesParent || list.some((x) => !isHandled(x.status) && nearDup(x.title, f.title))) continue;
       const e = eisenhower(0.5, 0.6);
       list.push({
         id: randomUUID(), title: f.title.slice(0, 120), why: f.why || `Follow-up from "${task.title}"`,

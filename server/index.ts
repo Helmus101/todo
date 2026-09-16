@@ -316,6 +316,18 @@ const CSRF_HEADER = "x-csrf-token";
 const requireAuth: RequestHandler = (req, res, next) => {
   if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
   if (!req.session.csrfToken) req.session.csrfToken = randomBytes(24).toString("hex");
+  // Echo the CURRENT token back on every authenticated response (success AND the 403 below) — not just at
+  // login/signup/status. Reported live as routine background calls (pronote/touch, metrics) failing with a
+  // hard 403 out of nowhere: the client's cached token was minted from an earlier response, but session
+  // persistence (Supabase-backed store, server/store.ts's makeSessionStore) has no hard guarantee that a
+  // csrfToken set on one request has landed in the store before the NEXT request's session read — two
+  // near-simultaneous requests right after login (status + pronote/touch + metrics, all fired together) can
+  // each load a session snapshot missing the other's just-set token, hit the `if (!req.session.csrfToken)`
+  // branch above, and mint a SECOND, different token — permanently diverging from what the client holds,
+  // with no way to self-correct before this fix. Setting this header on every response (not just a 403) lets
+  // the client opportunistically stay in sync even when nothing failed, closing the race instead of only
+  // reacting after the user already saw an error.
+  res.setHeader(CSRF_HEADER, req.session.csrfToken);
   if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     const header = req.headers[CSRF_HEADER];
     if (header !== req.session.csrfToken) { res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." }); return; }
