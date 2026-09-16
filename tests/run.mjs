@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -989,6 +989,15 @@ section("dropSiblingBleedSteps — cross-task bleed backstop #2 (non-entity cont
   check("with no sibling tasks, nothing is dropped (never over-filter without evidence)", dropSiblingBleedSteps(task, [], [noEntityBleed1, noEntityBleed2]).length === 2);
   const genericStep = { text: "Draft the outline and get feedback before finishing" };
   check("a generic, low-overlap-with-everything step is NOT penalized just for being unspecific", dropSiblingBleedSteps(task, siblings, [genericStep]).length === 1);
+
+  // Same check, applied to an ARTIFACT's title (note/flashcard deck/quiz) instead of a step's text — the
+  // entity-based title check alone misses the same non-proper-noun bleed dropSiblingBleedSteps exists to
+  // catch for steps.
+  const onTopicNote = { title: "Math AA HL — Prior Knowledge Summary" };
+  const bleedingNote = { title: "19th Arrondissement Canvassing Plan" };
+  check("keeps an on-topic artifact title", dropSiblingBleedTitles(task, siblings, [onTopicNote]).length === 1);
+  check("drops an artifact title that matches a sibling task's own vocabulary better", dropSiblingBleedTitles(task, siblings, [bleedingNote]).length === 0);
+  check("with no sibling tasks, artifact titles are never dropped", dropSiblingBleedTitles(task, [], [bleedingNote]).length === 1);
 }
 
 section("dueLine — always-shown due-date + server-computed days-until for chat");

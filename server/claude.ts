@@ -787,24 +787,41 @@ function keywordOverlap(words: string[], allow: string): number {
   const allowWords = new Set(stepBleedKeywords(allow));
   return words.filter((w) => allowWords.has(w)).length;
 }
+/** Shared scoring for both step text and artifact titles below: does this text's own vocabulary match some
+ *  SIBLING task clearly better than it matches the task it's supposedly for? Same conservative "clear win
+ *  only" bar as the callers' own doc comments — a short/generic/empty text never counts against itself. */
+function bleedsToSibling(text: string, task: { title: string; why: string; sourceDetail?: string }, siblingTasks: { title: string; why?: string }[]): boolean {
+  const words = stepBleedKeywords(text);
+  if (!words.length) return false;
+  const ownScore = keywordOverlap(words, `${task.title} ${task.why} ${task.sourceDetail || ""}`);
+  let bestSibling = 0;
+  for (const sib of siblingTasks) {
+    const score = keywordOverlap(words, `${sib.title} ${sib.why || ""}`);
+    if (score > bestSibling) bestSibling = score;
+  }
+  return (ownScore === 0 && bestSibling >= 2) || (bestSibling >= ownScore + 2);
+}
 export function dropSiblingBleedSteps<T extends { text: string }>(
   task: { title: string; why: string; sourceDetail?: string },
   siblingTasks: { title: string; why?: string }[],
   steps: T[],
 ): T[] {
   if (!siblingTasks.length) return steps;
-  const ownAllow = `${task.title} ${task.why} ${task.sourceDetail || ""}`;
-  return steps.filter((s) => {
-    const words = stepBleedKeywords(s.text);
-    if (!words.length) return true; // nothing to score — don't penalize a short/generic step
-    const ownScore = keywordOverlap(words, ownAllow);
-    let bestSibling = 0;
-    for (const sib of siblingTasks) {
-      const score = keywordOverlap(words, `${sib.title} ${sib.why || ""}`);
-      if (score > bestSibling) bestSibling = score;
-    }
-    return !((ownScore === 0 && bestSibling >= 2) || (bestSibling >= ownScore + 2));
-  });
+  return steps.filter((s) => !bleedsToSibling(s.text, task, siblingTasks));
+}
+/** Same cross-task bleed check as dropSiblingBleedSteps, applied to an ARTIFACT's title (note/flashcard
+ *  deck/quiz) instead of a step's text — the entity-based check already run against artifact titles
+ *  (extractEntities, alongside `finalize`'s callers) misses the same non-proper-noun bleed dropSiblingBleedSteps
+ *  exists to catch for steps (e.g. a note titled "19th Arrondissement Canvassing Plan" attached to a Math AA
+ *  HL task has no capitalized entity absent from the task's own fields, but obviously belongs to a different,
+ *  real task in the account). */
+export function dropSiblingBleedTitles<T extends { title: string }>(
+  task: { title: string; why: string; sourceDetail?: string },
+  siblingTasks: { title: string; why?: string }[],
+  items: T[],
+): T[] {
+  if (!siblingTasks.length) return items;
+  return items.filter((it) => !bleedsToSibling(it.title, task, siblingTasks));
 }
 
 // DeepSeek retired "deepseek-chat"/"deepseek-reasoner" in favor of "deepseek-v4-flash" (fast/cheap) and
@@ -2766,6 +2783,16 @@ const RUN_SYSTEM =
   `they can open, and give a short recommendation in "synthesis". Their part should be just the final pick or ` +
   `click — NEVER "go figure it out". E.g. "book a Boston restaurant" → research a few fitting spots, link each ` +
   `(Resy/the restaurant site), recommend one with a one-line why; the step is just "Pick one & book".\n` +
+  `ONE MISSING DETAIL NEVER BLOCKS THE WHOLE TASK: observed live — "ensure suitable gear/clothing is ready for a ` +
+  `Tromsø trip" came back with EVERY step about confirming the exact travel dates by email, and nothing else — no ` +
+  `weather lookup, no packing list — because the model treated "dates unconfirmed" as blocking the ENTIRE task. ` +
+  `It doesn't: Tromsø's typical weather/what-to-pack for the relevant season is knowable from web_search RIGHT ` +
+  `NOW regardless of the exact date, and a packing checklist (CREATE_NOTE) is useful whether the trip is the 3rd ` +
+  `or the 10th. Before treating anything as blocked, split the task into what genuinely NEEDS the missing detail ` +
+  `vs. what doesn't, then DO the unblocked part now (research the destination/season, build the checklist/brief, ` +
+  `whatever doesn't actually depend on the missing fact) using your best inference of the missing detail (state ` +
+  `the assumption, per ASK — INFER FIRST above) — and leave ONLY the genuinely date/detail-dependent piece as a ` +
+  `step or question. A task is never "0% done, 100% blocked" just because one fact is outstanding.\n` +
   `ALWAYS SURFACE WHAT YOU MADE: whenever you create or draft something (a Google Doc/Sheet/Slides deck, a ` +
   `calendar event, a task, an issue/PR or comment), put a LINK to it in submit's "links" so the user can open ` +
   `and review it. Build the URL from the id the tool returned — Doc: https://docs.google.com/document/d/<id>/edit, ` +
@@ -3341,9 +3368,9 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // dense with subject vocabulary that would false-positive on a body-level check; a title is a
               // much safer surface, e.g. a note titled "IEO France Finals Prep" attached to a Math AA HL task
               // is exactly the same bleed-in this whole check exists to catch).
-              if (draft.notes?.length) draft.notes = draft.notes.filter((n) => extractEntities(n.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
-              if (draft.flashcards?.length) draft.flashcards = draft.flashcards.filter((d) => extractEntities(d.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
-              if (draft.quizzes?.length) draft.quizzes = draft.quizzes.filter((q) => extractEntities(q.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
+              if (draft.notes?.length) draft.notes = dropSiblingBleedTitles(task, siblingTasks || [], draft.notes.filter((n) => extractEntities(n.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e))));
+              if (draft.flashcards?.length) draft.flashcards = dropSiblingBleedTitles(task, siblingTasks || [], draft.flashcards.filter((d) => extractEntities(d.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e))));
+              if (draft.quizzes?.length) draft.quizzes = dropSiblingBleedTitles(task, siblingTasks || [], draft.quizzes.filter((q) => extractEntities(q.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e))));
               // Final per-step filter, run UNCONDITIONALLY (not gated by `canBounce` like the whole-array
               // check above) — this is what actually closes the gap: the whole-array bounce checks earlier
               // in this chain all short-circuit once `canBounce` goes false, so a majority-contaminated draft

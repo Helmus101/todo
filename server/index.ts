@@ -37,6 +37,13 @@ declare module "express-session" {
     studySessions?: StudySession[]; // study session history
     studyProfile?: StudyProfile; // adaptive study profile
     csrfToken?: string; // synchronizer-token CSRF defense — see requireAuth's own comment
+    // Sticky per-session cache for the dashboard-ordering bandit arm (see ORDERING_ARMS in bandit.ts and
+    // /api/tasks' own comment on the fix this backs) — Thompson Sampling draws a genuinely random sample
+    // EVERY call by design, so without this the arm (and therefore the score nudge applied to every live
+    // task) was being re-rolled on every single dashboard poll, visibly reshuffling near-tied tasks at
+    // random. Cached per `key` (bandit.ts's contextKey — time-of-day/weekend/track bucket) so the arm stays
+    // fixed for as long as that bucket does, only re-drawn when it actually changes (e.g. morning → afternoon).
+    orderingArmCache?: { key: string; armId: string };
   }
 }
 
@@ -889,8 +896,17 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
     try {
       const live = req.session.tasks.filter((t) => !isHandled(t.status));
       const orderingKey = banditContextKey(new Date(), req.session.profile);
-      const orderingState = await loadBanditState(req.session.user!, "ordering");
-      const orderingArm = chooseArm(ORDERING_ARMS, orderingState, orderingKey).arm.id;
+      // Cache the drawn arm per context key instead of re-sampling on every poll — Thompson Sampling is a
+      // genuinely random draw by design (see chooseArm's own doc comment), so calling it fresh on every
+      // /api/tasks request (fired on nearly every click, per the gzip comment above) was reshuffling
+      // near-tied tasks' order at random, reported live as "the order of tasks keeps randomly changing."
+      // Only re-draws when the bucket itself changes (e.g. morning → afternoon — see contextKey).
+      let orderingArm = req.session.orderingArmCache?.key === orderingKey ? req.session.orderingArmCache.armId : undefined;
+      if (!orderingArm) {
+        const orderingState = await loadBanditState(req.session.user!, "ordering");
+        orderingArm = chooseArm(ORDERING_ARMS, orderingState, orderingKey).arm.id;
+        req.session.orderingArmCache = { key: orderingKey, armId: orderingArm };
+      }
       const subjectFreq = subjectFrequency(live);
       // Weak-subject nudge (patterns.ts's weakSubjectBoost) — same "what did you get wrong lately" signal
       // already shown in Settings' "Otto has noticed" panel, but until now never actually fed back into
@@ -899,7 +915,12 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       // real, unconditional reason to see that subject's tasks a little sooner, not something to A/B test.
       const subjectSignals = aggregateSubjectSignals(req.session.tasks);
       const weakSubjects = predictWeakSubjects(subjectSignals);
-      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects, subjectSignals) + twoMinuteRuleBoost(t);
+      // Use each task's OWN recorded arm once it has one (stamped write-once below, at first exposure) —
+      // never the arm freshly picked/cached for THIS request — so a task's boost (and therefore its
+      // position relative to its neighbors) never shifts just because the account is now in a different
+      // ordering-bandit bucket than when it first appeared. Only a task that hasn't been shown yet uses
+      // the current session's arm.
+      for (const t of live) t.score = (t.score || 0) + orderingBoost(t, t.orderingArmId || orderingArm, subjectFreq) + weakSubjectBoost(t, weakSubjects, subjectSignals) + twoMinuteRuleBoost(t);
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) { t.shownAt = now; t.orderingArmId = orderingArm; } }
     } catch {
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
