@@ -104,13 +104,13 @@ export async function makeSessionStore(): Promise<session.Store | undefined> {
   // client's own 45s poll (client/App.tsx) repeats that every cycle for every open tab. A short in-memory
   // cache (per warm process — helps a long-running server fully, and helps a serverless deployment for
   // requests landing on the same warm instance within the window) collapses that burst into one real read.
-  // Was 4s — long enough to absorb one page load's request burst, but the client's actual poll cadence
-  // (client/App.tsx: ~90s-5min between ticks) is far outside that window, so almost every poll still paid
-  // for a full round trip. Raised to 60s (real egress cost, confirmed live): a genuinely stale cross-device
-  // read now takes up to a minute to self-heal instead of ~4s, which is an acceptable tradeoff for a
-  // single-student account where near-simultaneous multi-device edits are rare — same-instance writes
-  // update the cache immediately regardless (see set() below), so this only affects cross-instance staleness.
-  const GET_CACHE_TTL_MS = 60_000;
+  // Was 4s, then 60s. Raised further to 3min (direct egress reduction, requested after a real Supabase
+  // egress-cap outage) — same reasoning as before, just a bigger window: same-instance writes still update
+  // the cache immediately (see set() below), so this only affects CROSS-instance/cross-device staleness,
+  // which now takes up to 3min to self-heal instead of 1min. Acceptable for a single-student account where
+  // near-simultaneous multi-device edits are rare; if that tradeoff ever bites, lower this back down rather
+  // than reverting to the old 60s/4s — the egress savings compound with every open tab/poll tick.
+  const GET_CACHE_TTL_MS = 180_000;
   // Bounded so this can't grow forever on a long-running server (a serverless deployment recycles the
   // process anyway) — every distinct sid that's ever hit get()/set() would otherwise sit in memory until
   // process restart, and a session blob can be sizeable (see comment above). A Map preserves insertion
@@ -240,8 +240,11 @@ async function withRetry<T>(label: string, op: () => Promise<{ data: T; error: {
 // weight multiple times over. Same pattern as makeSessionStore's cache above, same reasoning for the same
 // 4s→60s change: the client's real poll cadence is tens of seconds to minutes, not sub-4s, so the short TTL
 // was barely collapsing anything beyond one request's own internal double-read (e.g. commit()'s background
-// syncCloud re-loading state that was just loaded moments earlier to build the response).
-const STATE_CACHE_TTL_MS = 60_000;
+// syncCloud re-loading state that was just loaded moments earlier to build the response). Raised again to
+// 3min (matching makeSessionStore's cache) after a real Supabase egress-cap outage — every extra minute of
+// TTL directly removes read volume, compounding across every open tab's poll and every `loadState` call
+// scattered through index.ts/pronote.ts/jobs.ts (see that file's own comment on this).
+const STATE_CACHE_TTL_MS = 180_000;
 const STATE_CACHE_MAX = 500;
 const stateCache = new Map<string, { at: number; state: AccountState }>();
 function cacheSetState(email: string, state: AccountState) {

@@ -481,12 +481,24 @@ export function App() {
   useEffect(() => {
     if (connected && status?.pronoteConnected) void api.pronoteTouch();
   }, [connected, status?.pronoteConnected]);
+  const lastFocusSyncRef = useRef(0);
   useEffect(() => {
     if (!connected) return;
     // Opportunistic Pronote keepalive — piggybacks on this same "app is actually open" heartbeat rather
     // than a new timer; server/pronote.ts's touchPronoteSession gates the real work to at most once per
     // few hours, so calling this every tick here costs nothing beyond one cheap request.
-    const on = () => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); if (status?.pronoteConnected) void api.pronoteTouch(); } };
+    // Throttled to at most once per 60s — this fires on EVERY tab focus/visibilitychange event, and each
+    // firing is FOUR separate requests (tasks, status, budget, sweep-check). A student alt-tabbing back and
+    // forth a lot used to re-trigger all four every single time, which is real, avoidable egress on top of
+    // the interval poll above — a focus-driven refresh is about being more RESPONSIVE than the timer, not
+    // about firing literally every time the tab regains focus.
+    const on = () => {
+      if (document.hidden || signedOutRef.current) return;
+      const now = Date.now();
+      if (now - lastFocusSyncRef.current < 60_000) return;
+      lastFocusSyncRef.current = now;
+      void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); if (status?.pronoteConnected) void api.pronoteTouch();
+    };
     document.addEventListener("visibilitychange", on);
     window.addEventListener("focus", on);
     // A backend-generated task (from cron, another device, or a queued-but-not-auto-run item) is only ever
@@ -496,13 +508,15 @@ export function App() {
     // (sweepIfDue is a fast no-op until due), so this doesn't sweep more often. Also re-pull /api/status on
     // the same tick — account-level fields (language, in particular) can change in another tab/device, and
     // without this an already-open session would show a stale language until reload.
-    // Was 45s, then 90s — every tick re-hydrates the Supabase-backed session (the FULL profile+tasks blob,
-    // see store.ts's SupabaseStore.get) on the server, so this interval is a direct multiplier on Supabase
-    // egress across every open tab/device, confirmed live as the account's single biggest egress driver.
-    // 3 min still surfaces a new task well within a session (nowhere near the old 15-min problem this was
-    // built to fix) at a third of the 90s request rate; combined with the 60s server-side read cache
-    // (store.ts), this is a large, direct cut to the dominant recurring cost.
-    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 3 * 60_000);
+    // Was 45s, then 90s, then 3min. Raised again to 5min after a real Supabase egress-cap outage — every
+    // tick re-hydrates the Supabase-backed session (the FULL profile+tasks blob, see store.ts's
+    // SupabaseStore.get) on the server, so this interval is a direct multiplier on Supabase egress across
+    // every open tab/device, confirmed live as the account's single biggest egress driver. On Vercel the
+    // server-side read cache (store.ts, now 3min) only helps when a request happens to land on the SAME warm
+    // serverless instance — fewer polls is the one lever that reduces total request volume regardless of
+    // that, so this and the cache TTL bump are complementary, not redundant. 5 min still surfaces a new task
+    // well within a normal session.
+    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 5 * 60_000);
     const fullTick = setInterval(on, 15 * 60_000); // periodic budget refresh + cadence-gated sweep check — was 5min
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
   }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus, status?.pronoteConnected]);
