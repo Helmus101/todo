@@ -1282,9 +1282,9 @@ function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) =
   // now it renders standalone inside the "This week" popover (WeekRailFab), so a silent null here just
   // reads as "the popup doesn't work": you click the button and nothing shows up, loading or genuinely
   // empty look identical (blank). Say which one it actually is instead.
-  if (!days) return <p className="muted small">{en ? "Loading…" : "Chargement…"}</p>;
+  if (!days) return <p className="muted small">{en ? "Finding time for everything…" : "Recherche du temps pour tout…"}</p>;
   if (error) return <p className="rewrite-error small">{en ? "Couldn't load this week." : "Impossible de charger la semaine."} <button type="button" className="btn xs ghost" onClick={load}>{en ? "Retry" : "Réessayer"}</button></p>;
-  if (days.every((d) => d.items.length === 0)) return <p className="muted small">{en ? "Nothing due this week." : "Rien de prévu cette semaine."}</p>;
+  if (days.every((d) => d.items.length === 0)) return <p className="muted small">{en ? "Your week is still open." : "Ta semaine est encore libre."}</p>;
 
   const max = Math.max(1, ...days.map((d) => d.totalEffort));
   // Baselined against days that actually have something due (not the whole week) — see server/workload.ts's
@@ -1746,9 +1746,9 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
       </div>
 
       {!loaded ? (
-        <p className="muted small">{L("Chargement…", "Loading…")}</p>
+        <p className="muted small">{L("Récupération de ton journal…", "Pulling up your log…")}</p>
       ) : groups.length === 0 ? (
-        <p className="muted small" style={{ marginTop: "var(--space-3)" }}>{L("Pas encore d'erreurs notées — ajoute la première ci-dessus.", "No mistakes logged yet — add your first one above.")}</p>
+        <p className="muted small" style={{ marginTop: "var(--space-3)" }}>{L("Pas encore d'erreurs notées — ajoute la première ci-dessus.", "Nothing logged yet — add your first mistake above.")}</p>
       ) : (
         <div className="errorlog-groups" style={{ marginTop: "var(--space-4)" }}>
           {groups.map((g) => (
@@ -2245,7 +2245,7 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
         ))}
       </div>
 
-      {!loaded ? <p className="muted small">{L("Chargement…", "Loading…")}</p> : (
+      {!loaded ? <p className="muted small">{L("Récupération de ton journal…", "Pulling up your journal…")}</p> : (
         <>
           {/* Once a day has a deck, that IS the view — the entry textarea only comes back if you explicitly
               ask to edit. This is the point of the whole redesign: flashcards (and the quiz, when Otto made
@@ -3957,7 +3957,7 @@ function AddTask({ onAdded }: { onAdded: Dispatch<SetStateAction<WebTask[]>> }) 
       <span className="add-plus" aria-hidden="true">+</span>
       <input
         className="add-task-input"
-        placeholder={L("Ajouter un devoir, une révision, un rendez-vous…", "Add homework, revision, an appointment…")}
+        placeholder={L("Qu'est-ce qu'il faut faire ?", "What needs to get done?")}
         value={text}
         disabled={busy}
         onChange={(e) => setText(e.target.value)}
