@@ -764,6 +764,49 @@ export function dropForeignEntitySteps<T extends { text: string }>(task: { title
   return steps.filter((s) => extractEntities(s.text).every((e) => textMentionsEntity(allow, e)));
 }
 
+/** Cross-task bleed backstop #2, alongside dropForeignEntitySteps above: that check only catches steps
+ *  naming a capitalized proper-noun ENTITY absent from this task's own fields — it misses bleed-in with no
+ *  such entity, observed live on the SAME incident its own comment cites: a "Prep for Math HL prior
+ *  knowledge test" task whose steps included "Scout the 19th arrondissement — the 7th is started..." (no
+ *  capitalized entity: ordinals aren't proper nouns) and "Push Otto to classmates (app is ready...)" ("Otto"
+ *  is in ENTITY_STOPWORDS on purpose, since the app's own name shows up constantly in legitimate steps).
+ *  Both are real content from OTHER tasks in the SAME account ("Scout the 19th arrondissement" belongs to a
+ *  door-to-door/canvassing task; "Push Otto to classmates" to a promote-the-app task) — the strongest signal
+ *  available for exactly this failure is comparing a step's own vocabulary against the account's OTHER real
+ *  tasks, not just against a fixed entity allowlist. Deliberately requires a CLEAR win for another task
+ *  (own overlap is zero while some sibling scores >=2 shared keywords, or a sibling beats the task's own
+ *  score by >=2) so ordinary generically-phrased steps ("Draft the outline", "Get feedback") — which
+ *  legitimately share little vocabulary with a short title — are never penalized for being unspecific; only
+ *  dropped when a REAL sibling task is a demonstrably better match. Titles/why only for siblings (never
+ *  links/artifacts/sourceDetail) — this is a post-hoc filter over already-generated text, never fed back
+ *  into the model's own context, so it can't itself become a new leak vector. */
+function stepBleedKeywords(text: string): string[] {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter((w) => w.length >= 4 && !STOPWORDS.has(w));
+}
+function keywordOverlap(words: string[], allow: string): number {
+  const allowWords = new Set(stepBleedKeywords(allow));
+  return words.filter((w) => allowWords.has(w)).length;
+}
+export function dropSiblingBleedSteps<T extends { text: string }>(
+  task: { title: string; why: string; sourceDetail?: string },
+  siblingTasks: { title: string; why?: string }[],
+  steps: T[],
+): T[] {
+  if (!siblingTasks.length) return steps;
+  const ownAllow = `${task.title} ${task.why} ${task.sourceDetail || ""}`;
+  return steps.filter((s) => {
+    const words = stepBleedKeywords(s.text);
+    if (!words.length) return true; // nothing to score — don't penalize a short/generic step
+    const ownScore = keywordOverlap(words, ownAllow);
+    let bestSibling = 0;
+    for (const sib of siblingTasks) {
+      const score = keywordOverlap(words, `${sib.title} ${sib.why || ""}`);
+      if (score > bestSibling) bestSibling = score;
+    }
+    return !((ownScore === 0 && bestSibling >= 2) || (bestSibling >= ownScore + 2));
+  });
+}
+
 // DeepSeek retired "deepseek-chat"/"deepseek-reasoner" in favor of "deepseek-v4-flash" (fast/cheap) and
 // "deepseek-v4-pro" (heavier reasoning) — calls with an old name now fail outright with a 400. Map the old
 // names forward so an existing deployment's DEEPSEEK_MODEL=deepseek-chat env var doesn't start hard-failing
@@ -2901,7 +2944,7 @@ async function planResearch(task: { title: string; why: string; sourceSubject?: 
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
-export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext): Promise<RunOutput> {
+export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext, siblingTasks?: { title: string; why?: string }[]): Promise<RunOutput> {
   // The audit trail (logAudit below) is shown to the student/parent verbatim (client/TaskCard.tsx's
   // Activity log) — it must follow the account's own language like everything else, not default to
   // French regardless (see the identical `fr` flag in chatAboutTask).
@@ -3147,6 +3190,27 @@ export async function runTask(task: { title: string; why: string; source?: strin
     }
     messages.push({ role: "assistant", content: res.choices[0]?.message?.content || "", tool_calls: toolUses });
     let submitted: RunOutput | null = null;
+    // Final contamination backstop, checked right before EITHER submit path (plan-only or execute-now)
+    // accepts a draft — independent of the plan-only branch's own `canBounce`-gated checks above/below,
+    // which can all be skipped once `finishBacks`/rounds run low, letting a majority-contaminated draft
+    // through untouched (this was the actual root cause of "steps belong to a different task" recurring
+    // despite dropForeignEntitySteps already existing — see that function's and dropSiblingBleedSteps's own
+    // comments). Returns a rejection string when contamination is severe enough to bounce (only when bounce
+    // budget remains); otherwise filters what it can and always returns null (never blocks acceptance
+    // outright, and never leaves `steps` empty — see the empty-steps rejection elsewhere in this loop for
+    // why an empty plan is never acceptable either).
+    const checkStepContamination = (d: RunOutput): string | null => {
+      const before = d.steps.length;
+      let filtered = dropForeignEntitySteps(task, d.links, d.steps);
+      filtered = dropSiblingBleedSteps(task, siblingTasks || [], filtered);
+      if (before > 0 && filtered.length < before / 2 && finishBacks < 2 && (MAX - 1 - i) >= 2) {
+        return `REJECTED: most of your "steps" turned out to be about OTHER tasks/obligations, not ` +
+          `"${task.title}" itself — you likely read something unrelated during research and turned it into a ` +
+          `step. Discard those and write steps that are genuinely about THIS task only.`;
+      }
+      d.steps = filtered.length ? filtered : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}` } as any];
+      return null;
+    };
     for (const tu of toolUses) {
       const input = parseToolArgs((tu as any).function?.arguments);
       let content = "ok";
@@ -3273,10 +3337,6 @@ export async function runTask(task: { title: string; why: string; source?: strin
               // pass itself drifted off-topic — never let a second-pass failure produce a WORSE result.
               const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps, draft.did, profile, draft.isBigProject);
               draft.steps = (stepsMatchTitle(task.title, refined) && !isFolderHousekeepingDrift(task.title, refined)) ? refined : draft.steps;
-              // Final per-step filter: the bounce check above catches a MAJORITY-foreign draft, but a
-              // minority of individually-contaminated steps can still slip through a draft that's otherwise
-              // fine — drop just those, same "keep the legitimate majority" posture as dropTrivialSteps.
-              draft.steps = dropForeignEntitySteps(task, draft.links, draft.steps);
               // Same check applied to artifact TITLES (not full bodies — academic content is legitimately
               // dense with subject vocabulary that would false-positive on a body-level check; a title is a
               // much safer surface, e.g. a note titled "IEO France Finals Prep" attached to a Math AA HL task
@@ -3284,7 +3344,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
               if (draft.notes?.length) draft.notes = draft.notes.filter((n) => extractEntities(n.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
               if (draft.flashcards?.length) draft.flashcards = draft.flashcards.filter((d) => extractEntities(d.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
               if (draft.quizzes?.length) draft.quizzes = draft.quizzes.filter((q) => extractEntities(q.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e)));
-              submitted = draft; content = "submitted";
+              // Final per-step filter, run UNCONDITIONALLY (not gated by `canBounce` like the whole-array
+              // check above) — this is what actually closes the gap: the whole-array bounce checks earlier
+              // in this chain all short-circuit once `canBounce` goes false, so a majority-contaminated draft
+              // on a round that's already used its bounce budget used to sail straight through untouched.
+              const bleedReject = checkStepContamination(draft);
+              if (bleedReject) { finishBacks++; content = bleedReject; }
+              else { submitted = draft; content = "submitted"; }
             }
           }
           else {
@@ -3339,7 +3405,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
           } else {
             // did[] must be backed by a real write: if nothing was written, drop bullets that claim creation.
             if (!wroteAny) draft.did = draft.did.filter((d) => !CLAIM_VERBS.test(d));
-            submitted = draft; content = "submitted";
+            // Same cross-task contamination backstop as the plan-only path above — execute-now mode's
+            // steps[] is meant to hold only what genuinely needs the user, but is generated by the same
+            // research loop and is just as susceptible to bleed-in from unrelated threads/docs read along
+            // the way.
+            const bleedReject = checkStepContamination(draft);
+            if (bleedReject) { finishBacks++; content = bleedReject; }
+            else { submitted = draft; content = "submitted"; }
           }
           }
         }

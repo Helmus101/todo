@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -966,6 +966,29 @@ section("dropForeignEntitySteps — cross-task contamination backstop");
   check("keeps the on-topic step while dropping the foreign ones from a mixed batch", dropForeignEntitySteps(task, [], [onTopic, foreign1, foreign2]).length === 1);
   const taskWithDetail = { title: "Reply to Kosova", why: "Follow up with Professor Kosova about IEO France", sourceDetail: "" };
   check("a name present in the task's own why is NOT flagged as foreign", dropForeignEntitySteps(taskWithDetail, [], [{ text: "Send Professor Kosova the drafted follow-up email" }]).length === 1);
+}
+
+section("dropSiblingBleedSteps — cross-task bleed backstop #2 (non-entity contamination)");
+{
+  // Reproduces the live incident: "Prep for Math HL prior knowledge test" came back with a steps list
+  // that's almost entirely from OTHER real tasks in the same account — including two steps with NO
+  // capitalized proper-noun entity at all (so dropForeignEntitySteps alone can't catch them), which is
+  // exactly the gap this second backstop closes.
+  const task = { title: "Prep for Math HL prior knowledge test", why: "Refresh prerequisite topics ahead of the Math HL prior knowledge test" };
+  const siblings = [
+    { title: "Write the Business Club's plan for the year", why: "Annual plan covering the 7th and 19th arrondissement outreach" },
+    { title: "Push Otto to classmates", why: "App is ready, promotion hasn't happened — post the link in a class group" },
+  ];
+  const onTopic = { text: "Continue drilling the Math AA HL deck before Friday's test" };
+  const noEntityBleed1 = { text: "Scout the 19th arrondissement — the 7th is started, the 19th is still untouched" };
+  const noEntityBleed2 = { text: "Push Otto to classmates (app is ready, promotion hasn't happened)" };
+  check("keeps the genuinely on-topic step", dropSiblingBleedSteps(task, siblings, [onTopic]).length === 1);
+  check("drops a non-entity step that matches a sibling task's own vocabulary better", dropSiblingBleedSteps(task, siblings, [noEntityBleed1]).length === 0);
+  check("drops a second non-entity bleed step naming the app-promotion sibling", dropSiblingBleedSteps(task, siblings, [noEntityBleed2]).length === 0);
+  check("mixed batch keeps only the on-topic step", dropSiblingBleedSteps(task, siblings, [onTopic, noEntityBleed1, noEntityBleed2]).length === 1);
+  check("with no sibling tasks, nothing is dropped (never over-filter without evidence)", dropSiblingBleedSteps(task, [], [noEntityBleed1, noEntityBleed2]).length === 2);
+  const genericStep = { text: "Draft the outline and get feedback before finishing" };
+  check("a generic, low-overlap-with-everything step is NOT penalized just for being unspecific", dropSiblingBleedSteps(task, siblings, [genericStep]).length === 1);
 }
 
 section("dueLine — always-shown due-date + server-computed days-until for chat");

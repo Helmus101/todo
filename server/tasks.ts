@@ -1168,7 +1168,12 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     const withArtifacts = extras?.withAllowedArtifacts && priorArtifactIds.length ? extras.withAllowedArtifacts(priorArtifactIds) : extras;
     const scoped = withArtifacts ? scopeTools(withArtifacts, task) : undefined;
     if (extras && scoped) console.log(`${new Date().toISOString()} [tasks] run "${task.title.slice(0, 40)}": ${scoped.tools.length}/${extras.tools.length} tools after scoping`);
-    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, scoped, academic);
+    // Other real tasks in this account — titles/why only — let the model's own output be checked for
+    // cross-task bleed (see dropSiblingBleedSteps in claude.ts): content that matches a SIBLING task's own
+    // vocabulary better than this task's is almost certainly leaked from that other task's research, not
+    // genuinely relevant here.
+    const siblingTasks = list.filter((t) => t.id !== id).map((t) => ({ title: t.title, why: t.why }));
+    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, scoped, academic, siblingTasks);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     // A raw/placeholder title gets tightened as a side effect of THIS run (no separate "clean up" pass
@@ -1260,7 +1265,8 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
       : `\nInfo from the user for this step: "${answer.trim()}". Use it.`
     : "";
   const focus = (decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text) + qa;
-  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, extras, academic);
+  const siblingTasks = list.filter((t) => t.id !== id).map((t) => ({ title: t.title, why: t.why }));
+  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, extras, academic, siblingTasks);
   addUsage(profile, out.tokens, "autorun");
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);
