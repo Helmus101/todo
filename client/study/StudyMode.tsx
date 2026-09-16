@@ -536,13 +536,20 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     }
   }, [env, updateEnv, persistEnv]);
 
-  const addMaterialLink = useCallback((url: string, label: string) => {
-    if (!env || !url.trim()) return;
+  const addMaterialLink = useCallback((rawUrl: string, label: string) => {
+    if (!env || !rawUrl.trim()) return;
+    // A bare domain typed without a scheme ("google.com", "www.bbc.com/news") used to get stored verbatim —
+    // an <a href="google.com"> or <iframe src="google.com"> both resolve that as a RELATIVE path on Otto's
+    // OWN site (rewriting to something like https://hiotto.vercel.app/google.com), not the external site the
+    // student meant, so both the embed and the "open in a new tab" fallback silently pointed at a 404 on
+    // Otto's own domain instead of the real website. Normalize by prepending https:// whenever no scheme is
+    // present, exactly what every browser address bar already does for the same input.
+    const url = /^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : `https://${rawUrl.trim()}`;
     const mat: StudyMaterial = {
       id: crypto.randomUUID(),
-      label: label.trim() || url,
+      label: label.trim() || rawUrl.trim(),
       type: /youtube\.com|youtu\.be/.test(url) ? "video" : "link",
-      url: url.trim(),
+      url,
       source: /youtube\.com|youtu\.be/.test(url) ? "youtube" : "link",
     };
     updateEnv({ materials: [...env.materials, mat] });
