@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
-import { emptyProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary } from "./store.ts";
@@ -547,6 +547,43 @@ app.get("/api/account/export", requireAuth, rateLimit(5, 60_000), async (req, re
     res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "Couldn't export your data — try again." });
+  }
+});
+
+// Account-to-account data transfer, second half: takes a file produced by GET /api/account/export (any
+// account — typically a different one, e.g. moving off a Supabase org that's hit its egress cap, see
+// scripts/migrate-account.ts for the offline equivalent) and MERGES it into the CURRENTLY LOGGED-IN
+// account. "Merge" not "replace": reuses the exact same cross-device merge logic the app already relies on
+// (mergeTaskLists/mergeProfileStates in server/tasks.ts, also used by jobs.ts and the migration script) so
+// importing into a non-empty account never silently drops what's already there — tasks/journal entries/
+// error-log rows/flashcard decks union by id, profile facts dedupe, and per-field "most recent wins" rules
+// apply exactly as they do for a normal multi-device sync. Connection secrets (Pronote/Google/Plaid tokens)
+// are deliberately NOT imported — the export never included the live secret in the first place (see the
+// comment above /api/account/export), so this route can't accidentally move a credential into an account
+// that shouldn't have it; the user reconnects those normally after moving.
+app.post("/api/account/import", requireAuth, rateLimit(5, 60_000), express.json({ limit: "20mb" }), async (req, res) => {
+  const email = req.session.user!;
+  const body = req.body;
+  if (!body || typeof body !== "object" || (!body.profile && !Array.isArray(body.tasks))) {
+    res.status(400).json({ error: "That doesn't look like an Otto export file." });
+    return;
+  }
+  try {
+    const incomingProfile = normalizeProfile(body.profile);
+    const incomingTasks: WebTask[] = Array.isArray(body.tasks) ? body.tasks : [];
+    const current = cloudEnabled() ? await loadState(email) : { profile: req.session.profile || emptyProfile(), tasks: req.session.tasks || [] };
+    const mergedProfile = tasks.mergeProfileStates(current.profile, incomingProfile);
+    const mergedTasks = tasks.mergeTaskLists(current.tasks || [], incomingTasks);
+    if (cloudEnabled()) {
+      await saveState(email, { ...(current as any), profile: mergedProfile, tasks: mergedTasks });
+    } else {
+      req.session.profile = mergedProfile;
+      req.session.tasks = mergedTasks;
+    }
+    void recordEvent(email, "account_imported", { importedTasks: incomingTasks.length });
+    res.json({ ok: true, tasksAfter: mergedTasks.length, errorLogAfter: mergedProfile.errorLog?.length || 0 });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Couldn't import that file — try again." });
   }
 });
 

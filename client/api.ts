@@ -246,6 +246,9 @@ export const api = {
   // GDPR self-serve: erasure (Art. 17) and portability (Art. 20) — no "email us and wait" step needed.
   deleteAccount: (): Promise<{ ok: boolean; errors: string[] }> => post("/api/account/delete"),
   exportDataUrl: (): string => "/api/account/export",
+  // Other half of portability: takes the parsed JSON from a file produced by exportDataUrl() (any account,
+  // typically a different one) and merges it into the currently signed-in account.
+  importData: (data: unknown): Promise<{ ok: boolean; tasksAfter: number; errorLogAfter: number }> => post("/api/account/import", data),
   setPaused: (paused: boolean): Promise<Profile> => post("/api/settings/pause", { paused }).then(normalizeProfile),
   goUnlimited: (): Promise<Profile> => post("/api/settings/unlimited").then(normalizeProfile),
   smokeTest: (): Promise<{ app: string; step: string; ok: boolean; detail?: string }[]> => post("/api/settings/smoke"),

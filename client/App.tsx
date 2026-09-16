@@ -2384,6 +2384,26 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const [importingData, setImportingData] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
+  const onImportFile = async (file: File) => {
+    setImportingData(true);
+    try {
+      const text = await file.text();
+      let parsed: any;
+      try { parsed = JSON.parse(text); }
+      catch { throw new Error(L("Ce fichier n'est pas un export Otto valide.", "That file isn't a valid Otto export.")); }
+      const result = await api.importData(parsed);
+      notify(L(`Importé — ${result.tasksAfter} tâches, ${result.errorLogAfter} erreurs au total.`, `Imported — ${result.tasksAfter} tasks, ${result.errorLogAfter} error-log entries in total now.`));
+      loadProfile();
+      onChanged();
+    } catch (e: any) {
+      notify(e?.message || L("Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again."), "error");
+    } finally {
+      setImportingData(false);
+      if (importFileRef.current) importFileRef.current.value = "";
+    }
+  };
   // A failed profile load used to leave `profile` at null forever with no signal — every `profile?.x` below
   // just silently reads as "empty account" (0 grades, restricted integrations by default) instead of "this
   // didn't load." Track it explicitly so Settings can say so instead of quietly looking like a fresh account.
@@ -2427,6 +2447,20 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
         <div className="modal-row">
           <span className="lbl">{L("Tes données", "Your data")}</span>
           <span className="val"><a href={api.exportDataUrl()} download>{L("Télécharger mes données", "Download my data")}</a></span>
+        </div>
+        {/* Other half of portability: move everything (journal, error log, flashcards, tasks) from one
+            account into this one, e.g. after switching Supabase accounts — see scripts/migrate-account.ts
+            for the offline equivalent of the same merge. Imports MERGE into whatever's already here, never
+            replace it, so this is safe to run on an account that already has data. */}
+        <div className="modal-row">
+          <span className="lbl">{L("Importer des données", "Import data")}</span>
+          <span className="val">
+            <input ref={importFileRef} type="file" accept="application/json" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onImportFile(f); }} />
+            <button type="button" className="btn xs ghost" disabled={importingData} onClick={() => importFileRef.current?.click()}>
+              {importingData ? L("Import…", "Importing…") : L("Depuis un fichier exporté", "From an exported file")}
+            </button>
+          </span>
         </div>
         <div className="modal-row">
           <span className="lbl">{L("Supprimer le compte", "Delete account")}</span>
