@@ -1768,10 +1768,15 @@ app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
   if (!DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
   const monday = mondayOf(start);
   const dates = weekdayDates(monday);
-  // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
+  // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why. bypassCache:true
+  // (all four studylog GET/reconcile routes) — reported live as "flashcards saved but not showing": POST
+  // /api/studylog/day awaits its cloud write before responding, but this GET can land on a DIFFERENT warm
+  // lambda instance whose loadState cache is still up to 3min stale, so the just-saved deck read as missing
+  // for the rest of that window. These routes are page-navigation-triggered, not a poll/per-keystroke call,
+  // so the extra Supabase read here is bounded — worth paying for a page that must show what was just saved.
   if (req.session.user && cloudEnabled()) {
     try {
-      const cloud = await loadState(req.session.user);
+      const cloud = await loadState(req.session.user, { bypassCache: true });
       req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     } catch { /* best-effort — fall back to whatever the session already has */ }
   }
@@ -1795,7 +1800,7 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
   // before this, since nothing here ever went back to the cloud to check.
   if (req.session.user && cloudEnabled()) {
     try {
-      const cloud = await loadState(req.session.user);
+      const cloud = await loadState(req.session.user, { bypassCache: true });
       req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     } catch { /* best-effort — fall back to whatever the session already has */ }
   }
@@ -1878,7 +1883,7 @@ app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
   // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
   if (req.session.user && cloudEnabled()) {
     try {
-      const cloud = await loadState(req.session.user);
+      const cloud = await loadState(req.session.user, { bypassCache: true });
       req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     } catch { /* best-effort — fall back to whatever the session already has */ }
   }
@@ -1898,7 +1903,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
   // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
   if (req.session.user && cloudEnabled()) {
     try {
-      const cloud = await loadState(req.session.user);
+      const cloud = await loadState(req.session.user, { bypassCache: true });
       req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     } catch { /* best-effort — fall back to whatever the session already has */ }
   }

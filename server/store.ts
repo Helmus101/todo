@@ -325,10 +325,17 @@ function cacheSetState(email: string, state: AccountState) {
 }
 
 /** Load an account's saved profile + tasks + Google connection. Empty if cloud off or row missing.
- *  Transient network failures are retried (see withRetry) so a blip never collapses state to empty. */
-export async function loadState(email?: string): Promise<AccountState> {
+ *  Transient network failures are retried (see withRetry) so a blip never collapses state to empty.
+ *  `bypassCache: true` skips the 3min per-instance cache above and always hits Supabase directly — for the
+ *  small number of read paths where staleness has a directly-reported user-visible cost (see /api/studylog/
+ *  week's own comment: a flashcard deck saved via a POST that awaited its cloud write, then immediately
+ *  reloaded by a GET landing on a DIFFERENT warm lambda instance, could show as missing for up to 3min on a
+ *  serverless deploy — the "flashcards saved but not showing" bug). Used sparingly and only on routes that
+ *  are inherently low-frequency (a page-level nav, not a per-keystroke or poll call) so the extra egress is
+ *  bounded; every other call site keeps the cached read this function defaults to. */
+export async function loadState(email?: string, opts?: { bypassCache?: boolean }): Promise<AccountState> {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
-  const cached = stateCache.get(email);
+  const cached = opts?.bypassCache ? undefined : stateCache.get(email);
   if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
   const { data, error } = await withRetry("load", async () =>
     client!.from(TABLE).select("profile,tasks,google,pronote,plaid").eq("email", email).maybeSingle());
