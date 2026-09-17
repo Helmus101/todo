@@ -3365,17 +3365,14 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
   );
 }
 
-/** A real, clickable 3-step demo on the landing page — not a video (nothing to record/host), a static
- *  mock built from the SAME card/chip/step classes the real app uses, so the shape you see here is the
- *  shape you'll actually get, just with canned data instead of your real inbox. Purely local state —
- *  no network calls, safe for a signed-out visitor. */
+/** A real, interactive 3-step demonstration of the Apple-style progressive disclosure workflow */
 function Walkthrough({ lang }: { lang: "fr" | "en" }) {
   const en = lang === "en";
   const L = (fr: string, e: string) => (en ? e : fr);
   const STAGES = [
-    { n: "01", label: L("Lit ton Pronote", "Reads your Pronote") },
-    { n: "02", label: L("Prépare le travail", "Preps the work") },
-    { n: "03", label: L("Tu fais le reste", "You do the rest") },
+    { n: "01", label: L("Lecture & Synthèse", "Smart Scan") },
+    { n: "02", label: L("Préparation du plan", "Focal Plan") },
+    { n: "03", label: L("Action de l'élève", "Your Action") },
   ] as const;
   const [stage, setStage] = useState(0);
   const [done, setDone] = useState(false);
@@ -3383,293 +3380,412 @@ function Walkthrough({ lang }: { lang: "fr" | "en" }) {
 
   return (
     <div className="walkthrough">
-      <div className="walk-tabs" role="tablist">
+      <div className="walk-tabs segmented-control" role="tablist" aria-label={L("Étapes de fonctionnement", "How it works stages")}>
         {STAGES.map((s, i) => (
           <button key={i} type="button" role="tab" aria-selected={stage === i}
-            className={`walk-tab ${stage === i ? "active" : ""}`} onClick={() => go(i)}>
-            <span className="walk-tab-n">{s.n}</span> {s.label}
+            className={`walk-tab segmented-item ${stage === i ? "active" : ""}`} onClick={() => go(i)}>
+            <span className="walk-tab-n">{s.n}</span> <span className="walk-tab-label">{s.label}</span>
           </button>
         ))}
       </div>
 
-      <div className="walk-panel">
+      <div className="walk-panel glass-panel">
         {stage === 0 && (
           <div className="walk-scan">
-            <div className="walk-row"><span className="chip chip-muted">{L("Maths", "Math")}</span><span className="walk-row-text">{L("Contrôle vendredi — chapitre sur les suites", "Test Friday — chapter on sequences")}</span><span className="walk-check">✓ {L("lu", "read")}</span></div>
-            <div className="walk-row"><span className="chip chip-muted">{L("Physique", "Physics")}</span><span className="walk-row-text">{L("DM à rendre lundi — mécanique", "Homework due Monday — mechanics")}</span><span className="walk-check">✓ {L("lu", "read")}</span></div>
-            <div className="walk-row"><span className="chip chip-muted">{L("Philo", "Philosophy")}</span><span className="walk-row-text">{L("Dissertation sur la conscience — rendu dans 10 jours", "Essay on consciousness — due in 10 days")}</span><span className="walk-check">✓ {L("lu", "read")}</span></div>
-            <p className="walk-caption">{L("Otto lit ton Pronote et ne garde que ce qui compte vraiment pour aujourd'hui — le reste attend son tour.", "Otto reads your Pronote and keeps only what actually matters for today — the rest waits its turn.")}</p>
+            <div className="walk-row"><span className="chip chip-accent">{L("Maths", "Math")}</span><span className="walk-row-text">{L("Contrôle vendredi — Suites numériques & récurrence", "Test Friday — Sequences & Induction")}</span><span className="walk-check">✓ {L("analysé", "analyzed")}</span></div>
+            <div className="walk-row"><span className="chip chip-muted">{L("Physique", "Physics")}</span><span className="walk-row-text">{L("DM à rendre lundi — Lois de Newton & mécanique", "Homework due Monday — Newton's Laws")}</span><span className="walk-check">✓ {L("analysé", "analyzed")}</span></div>
+            <div className="walk-row"><span className="chip chip-muted">{L("Philo", "Philosophy")}</span><span className="walk-row-text">{L("Dissertation — La liberté est-elle une illusion ?", "Essay — Is free will an illusion?")}</span><span className="walk-check">✓ {L("analysé", "analyzed")}</span></div>
+            <p className="walk-caption">{L("Otto analyse tes cours et isole ce qui demande ton attention aujourd'hui. Zéro bruit, priorité absolue.", "Otto filters the signal from the noise, surfacing only what demands your focus today.")}</p>
           </div>
         )}
         {stage === 1 && (
           <div className="walk-card">
-            <div className="card-title">{L("Réviser le contrôle de Maths de vendredi", "Revise for Friday's Math test")}</div>
-            <div className="card-badges"><span className="chip chip-muted">Pronote</span><span className="chip chip-bad">{L("Urgent", "Urgent")}</span></div>
-            <h4 className="walk-h">{L("Contexte", "Context")} <span className="chip chip-muted context-source">Pronote</span></h4>
-            <p className="context-text">{L("Contrôle vendredi sur les suites numériques (chapitre 4). Ton dernier contrôle sur ce chapitre datait d'il y a 3 semaines.", "Test Friday on number sequences (chapter 4). Your last test on this chapter was 3 weeks ago.")}</p>
-            <h4 className="walk-h">{L("Ce qu'Otto a préparé", "What Otto prepped")}</h4>
-            <ul className="bullets"><li>{L("Fiche de révision : définitions, formules, 3 méthodes types", "Revision sheet: definitions, formulas, 3 standard methods")}</li></ul>
-            <p className="walk-caption">{L("La fiche est prête à consulter — à toi de réviser avec.", "The sheet is ready to read — it's on you to revise with it.")}</p>
+            <div className="card-header-line">
+              <div className="card-title">{L("Réviser le contrôle de Maths", "Prepare for Friday's Math Exam")}</div>
+              <span className="chip chip-bad">{L("Priorité haute", "High Priority")}</span>
+            </div>
+            <h4 className="walk-h">{L("Contexte & Sources", "Context & Sources")} <span className="chip chip-muted">Pronote · Drive</span></h4>
+            <p className="context-text">{L("Évaluation coefficient 4 sur les suites numériques. Fiche de révision synthétisée et 3 exercices clés sélectionnés.", "High-weight assessment on sequence limits. Synthesized revision sheet and 3 key exercises selected.")}</p>
+            <h4 className="walk-h">{L("Prêt pour toi", "Ready for you")}</h4>
+            <ul className="bullets"><li>{L("Fiche synthétique : définitions clés, formules indispensables, méthode type", "Key formulas, definitions, and step-by-step problem-solving methods")}</li></ul>
+            <p className="walk-caption">{L("Toutes les ressources sont condensées et prêtes. Tu attaques directement l'essentiel.", "Everything is organized and ready so you can focus 100% of your energy on learning.")}</p>
           </div>
         )}
         {stage === 2 && (
           <div className="walk-card">
-            <p className="walk-draft-body">{L("1. Relire le cours p.42 (10 min)", "1. Reread the notes p.42 (10 min)")}<br/>{L("2. Faire l'exercice 3 (15 min)", "2. Do exercise 3 (15 min)")}<br/>{L("3. Vérifier la correction (5 min)", "3. Check the correction (5 min)")}</p>
+            <p className="walk-draft-body">
+              <span className="step-num">1</span> {L("Relire la synthèse du cours (10 min)", "Review core concepts & formulas (10 min)")}<br/>
+              <span className="step-num">2</span> {L("Résoudre l'exercice type #3 (15 min)", "Solve representative problem #3 (15 min)")}<br/>
+              <span className="step-num">3</span> {L("Auto-évaluation avec le corrigé détaillé (5 min)", "Self-check against the solution guide (5 min)")}
+            </p>
             {!done ? (
-              <button className="btn primary send-btn" onClick={() => setDone(true)}>{L("Marquer comme fait", "Mark as done")}</button>
+              <button className="btn primary send-btn" onClick={() => setDone(true)}>{L("Valider l'étape", "Complete step")}</button>
             ) : (
-              <button className="btn primary send-btn sent" disabled>{L("Fait ✓", "Done ✓")}</button>
+              <button className="btn primary send-btn sent" disabled>{L("Validé ✓", "Completed ✓")}</button>
             )}
-            <p className="walk-caption">{done ? L("C'est toi qui coches, jamais Otto.", "You're the one checking it off — never Otto.") : L("Otto te guide étape par étape — c'est toi qui fais le travail.", "Otto guides you step by step — you're the one doing the work.")}</p>
+            <p className="walk-caption">{done ? L("C'est toi qui comprends et valides. Otto reste le guide.", "Your active effort, your mastery. Otto provides the path.") : L("Un guidage pas à pas : tu restes l'acteur de ta réussite.", "Step-by-step guidance keeping you in the driver's seat.")}</p>
           </div>
         )}
       </div>
 
       <div className="walk-nav">
-        <button className="btn ghost" disabled={stage === 0} onClick={() => go(stage - 1)}>{L("← Retour", "← Back")}</button>
-        <button className="btn ghost" disabled={stage === STAGES.length - 1} onClick={() => go(stage + 1)}>{L("Suivant →", "Next →")}</button>
+        <button className="btn ghost" disabled={stage === 0} onClick={() => go(stage - 1)}>{L("← Précédent", "← Previous")}</button>
+        <button className="btn ghost" disabled={stage === STAGES.length - 1} onClick={() => go(stage + 1)}>{L("Étape suivante →", "Next step →")}</button>
       </div>
     </div>
   );
 }
 
-/** Marketing landing (signed out, route /). CTAs route to the dedicated login / sign-up page. */
+/** Marketing landing (signed out, route /). Apple Design aesthetic with elevated typography and copywriting. */
 function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
   const en = lang === "en";
   const L = (fr: string, e: string) => (en ? e : fr);
   const DRAFT = L(
-    "1. Relire le cours p.42 (10 min) 2. Faire l'exercice 3 (15 min) 3. Vérifier la correction (5 min)",
-    "1. Reread the notes p.42 (10 min) 2. Do exercise 3 (15 min) 3. Check the correction (5 min)",
+    "1. Relire la synthèse (10 min)  2. Faire l'exercice #3 (15 min)  3. Vérifier la correction (5 min)",
+    "1. Review key formulas (10 min)  2. Complete problem #3 (15 min)  3. Check solution guide (5 min)",
   );
   const [typed, setTyped] = useState("");
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   useReveal();
 
-  // Live typewriter in the hero demo — types the draft out, then holds. (Full text immediately if reduced-motion.)
   useEffect(() => {
     setTyped("");
     if (reduced) { setTyped(DRAFT); return; }
     let i = 0; const start = setTimeout(function tick() {
       i++; setTyped(DRAFT.slice(0, i));
-      if (i < DRAFT.length) setTimeout(tick, 26 + (DRAFT[i] === " " ? 40 : 0));
-    }, 900);
+      if (i < DRAFT.length) setTimeout(tick, 24 + (DRAFT[i] === " " ? 35 : 0));
+    }, 800);
     return () => clearTimeout(start);
   }, [reduced, DRAFT]);
 
   return (
     <div className="landing">
-      <header className="landing-nav">
-        <span className="brand"><Logo size={22} /> Otto</span>
+      {/* Floating Apple-grade Navigation Chrome */}
+      <header className="landing-nav glass-nav">
+        <span className="brand"><Logo size={22} /> <span className="brand-name">Otto</span></span>
         <nav className="landing-navlinks">
-          <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
+          <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
           <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
-          <a className="btn primary" href="/signup">{L("Commencer", "Get started")}</a>
+          <a className="btn primary nav-cta" href="/signup">{L("Commencer", "Get started")}</a>
         </nav>
       </header>
 
+      {/* Hero Section */}
       <main className="hero">
-        {/* French copy stays Pronote-first — genuinely correct for the French Bac audience it targets, who
-            overwhelmingly DO have one. English copy leads with the universal pain point instead and names
-            Pronote as ONE path among several (Gmail/Calendar, or logging exams by hand) — most IB/
-            international schools don't use Pronote at all, and English is this app's reach into that
-            audience; the old English copy was a literal translation of the French, just as Pronote-only. */}
-        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.05s" }}>{L("Le prolongement de Pronote qui te guide — jamais qui fait à ta place.", "The study companion that guides you — never does it for you.")}</h1>
-        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.15s" }}>{L(
-          "Dimanche 19h, 11 devoirs et 2 contrôles sur Pronote — panique. Otto se branche sur ton Pronote et transforme le mur de devoirs en 3 tâches claires pour aujourd'hui, avec un temps estimé et un point de départ pour chacune. Il t'accompagne pas à pas ; l'exercice, la dissertation, la réponse au contrôle restent toujours les tiens.",
-          "Sunday, 7pm — a wall of homework and two tests coming up, and you're panicking. Otto reads your Pronote if your school uses it (or your Gmail/Calendar, or exams you log yourself) and turns it into 3 clear tasks for today, each with an estimated time and a starting point. It walks you through it step by step; the exercise, the essay, the test answer are always yours to do.",
-        )}</p>
-        <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.25s" }}>
-          <a className="btn primary big" href="/signup">{L("Connecter mon Pronote", "Get started free")}</a>
-          <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
+        <div className="hero-kicker-pill hero-in" style={{ ["--d" as any]: "0.02s" }}>
+          <span className="kicker-dot" />
+          <span>{L("Nouveau · Conçu pour le Bac et l'IB", "New · Crafted for the Bac & IB")}</span>
         </div>
-        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.32s" }}>{L("Un guide, pas un exécutant — Otto ne fait jamais tes devoirs à ta place.", "A guide, not a doer — Otto never does your homework for you.")}</div>
-        {/* Concrete, verifiable facts — not marketing adjectives — so the trust claim carries actual weight
-            at a glance: each of these is an enforced product behavior, not copy (see server/claude.ts's
-            DOES_STUDENT_WORK guardrail, server/crypto.ts's AES-256-GCM at rest, the onboarding track question,
-            and the visible monthly AI cap in Settings). */}
-        <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.38s" }}>
-          <li><span aria-hidden="true">—</span> {L("Identifiants chiffrés, jamais revendus", "Credentials encrypted, never resold")}</li>
-          <li><span aria-hidden="true">—</span> {L("Pensé pour le Bac et l'IB", "Built for both the Bac and the IB")}</li>
-          <li><span aria-hidden="true">—</span> {L("Coût de l'IA plafonné et visible", "AI cost capped and visible")}</li>
-          <li><span aria-hidden="true">—</span> {L("Ne fait jamais le travail noté", "Never does the graded work")}</li>
+
+        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.08s" }}>
+          {L("Le prolongement naturel de tes cours.", "Your coursework,")} <br />
+          <span className="hero-gradient">{L("Moins de panique. Plus de clarté.", "in perfect flow.")}</span>
+        </h1>
+
+        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.16s" }}>
+          {L(
+            "Dimanche 19h, 11 devoirs et 2 contrôles — la surcharge s'arrête ici. Otto se synchronise à ton Pronote ou ton agenda pour transformer le mur de travail en 3 actions nettes pour aujourd'hui. Fiches de révision, méthodes et étapes prêtes : tu gardes le contrôle, la compréhension reste la tienne.",
+            "Sunday evening with dozens of assignments and upcoming exams — stress disappears. Otto connects with your school platforms and turns the workload into 3 focused actions for today with structured flashcards and checklists. You stay in the flow; understanding is always yours.",
+          )}
+        </p>
+
+        <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.24s" }}>
+          <a className="btn primary big hero-btn-primary" href="/signup">{L("Connecter mon Pronote", "Get started free")}</a>
+          <a className="btn ghost big hero-btn-secondary" href="/login">{L("Se connecter", "Log in")}</a>
+        </div>
+
+        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.30s" }}>
+          {L("Un guide, jamais un exécutant · Otto ne fait jamais le travail noté à ta place.", "A guide, never a shortcut · Otto never does your graded work for you.")}
+        </div>
+
+        {/* Apple-grade Trust Badges */}
+        <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.36s" }}>
+          <li><span className="trust-icon">🔒</span> {L("Chiffrement de bout en bout (AES-256)", "End-to-end encrypted credentials")}</li>
+          <li><span className="trust-icon">🎓</span> {L("Spécialisé Baccalauréat & Bac International", "Built for French Bac & IB")}</li>
+          <li><span className="trust-icon">⚡</span> {L("Plafond d'usage transparent", "Capped & visible AI cost")}</li>
+          <li><span className="trust-icon">🛡️</span> {L("Intégrité académique garantie", "Guaranteed academic integrity")}</li>
         </ul>
-        {/* One product visual: a Pronote-wall-of-devoirs → 3-card plan, not a Gmail draft. */}
+
+        {/* Live Animated Simulation Window */}
         <div className="hero-demo hero-in" style={{ ["--d" as any]: "0.42s" }} aria-hidden="true">
-          <div className="hero-demo-label"><span className="live-dot" /> {L("Exemple — ton plan du jour", "Example — your plan for today")}</div>
-          <div className="demo-window">
-            <div className="demo-titlebar"><span /><span /><span /></div>
+          <div className="hero-demo-label">
+            <span className="live-dot" />
+            <span>{L("Aperçu direct · Ton plan du jour optimisé", "Live preview · Today's optimized focus plan")}</span>
+          </div>
+          <div className="demo-window glass-card">
+            <div className="demo-titlebar">
+              <span className="win-ctrl close" />
+              <span className="win-ctrl min" />
+              <span className="win-ctrl max" />
+              <span className="demo-title-text">{L("Aujourd'hui · 3 sessions prévues", "Today · 3 sessions scheduled")}</span>
+            </div>
             <div className="demo-body">
-              <p className="demo-line"><b>{L("Maths", "Math")}</b> — {L("Contrôle vendredi", "Test on Friday")} <span className="demo-badge">35 {L("min", "min")}</span></p>
-              <p className="demo-line gap">{typed}<span className="demo-caret" /></p>
-              <p className="demo-line"><b>{L("Physique", "Physics")}</b> — {L("DM à rendre lundi", "Homework due Monday")}</p>
-              <p className="demo-line"><b>{L("Philo", "Philosophy")}</b> — {L("Fiche de révision prête", "Revision sheet ready")}</p>
+              <div className="demo-item active-item">
+                <div className="demo-item-head">
+                  <span className="demo-sub-tag maths">{L("Maths", "Math")}</span>
+                  <span className="demo-task-name">{L("Contrôle vendredi — Suites numériques", "Test on Friday — Sequences")}</span>
+                  <span className="demo-badge">30 min</span>
+                </div>
+                <div className="demo-typed-line">{typed}<span className="demo-caret" /></div>
+              </div>
+              <div className="demo-item">
+                <div className="demo-item-head">
+                  <span className="demo-sub-tag physics">{L("Physique", "Physics")}</span>
+                  <span className="demo-task-name">{L("DM Mécanique — 3 exercices préparés", "Mechanics Homework — 3 exercises prepped")}</span>
+                  <span className="demo-badge muted">20 min</span>
+                </div>
+              </div>
+              <div className="demo-item">
+                <div className="demo-item-head">
+                  <span className="demo-sub-tag philo">{L("Philo", "Philosophy")}</span>
+                  <span className="demo-task-name">{L("Fiche méthode dissertation prête", "Essay methodology sheet ready")}</span>
+                  <span className="demo-badge muted">15 min</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </main>
 
-      {/* Full-bleed showcase grid, mirroring a common "product proof" pattern — three concrete mini-previews
-          instead of a screenshot dump. Each card is a REAL small render of the actual feature (same
-          .demo-window language as the hero), never a stock photo or a fabricated screenshot. */}
+      {/* Bento Showcase Grid */}
       <section className="showcase-sec">
-        <h2 className="reveal">{L("Otto en action", "Otto in action")}</h2>
+        <div className="sec-header">
+          <span className="sec-kicker">{L("Fonctionnalités", "Capabilities")}</span>
+          <h2 className="reveal">{L("La puissance d'un copilote d'études.", "The power of a true study copilot.")}</h2>
+          <p className="lead reveal">{L("Des outils physiques conçus pour stimuler la concentration et pérenniser la mémoire.", "Physical tools designed to elevate focus and lock in long-term memory.")}</p>
+        </div>
+
         <div className="showcase-grid">
-          <a className="showcase-card reveal" style={{ ["--d" as any]: "0.0s" }} href="/signup" aria-label={L("Créer un compte — Cette semaine", "Create an account — This week")}>
+          <a className="showcase-card glass-card reveal" style={{ ["--d" as any]: "0.0s" }} href="/signup" aria-label={L("Vue de la semaine", "This week view")}>
             <div className="showcase-preview">
               <div className="showcase-week">
-                {[3, 6, 2, 8, 4, 1, 0].map((v, i) => <span key={i} className="showcase-bar" style={{ height: `${8 + v * 9}px` }} />)}
+                {[3, 6, 2, 8, 4, 1, 0].map((v, i) => (
+                  <div key={i} className="showcase-bar-col">
+                    <span className="showcase-bar" style={{ height: `${12 + v * 8}px` }} />
+                    <span className="showcase-bar-day">{[L("L", "M"), L("M", "T"), L("M", "W"), L("J", "T"), L("V", "F"), L("S", "S"), L("D", "S")][i]}</span>
+                  </div>
+                ))}
               </div>
-              <div className="showcase-week-labels"><span>{L("L", "M")}</span><span>{L("M", "T")}</span><span>{L("M", "W")}</span><span className="peak">{L("J", "T")}</span><span>{L("V", "F")}</span><span>{L("S", "S")}</span><span>{L("D", "S")}</span></div>
             </div>
-            <h3>{L("Vue de la semaine", "This week, at a glance")}</h3>
-            <p>{L("Repère le jour surchargé avant qu'il n'arrive.", "Spot the heavy day before it hits.")}</p>
+            <h3>{L("Charge prédictive de la semaine", "Predictive weekly workload")}</h3>
+            <p>{L("Anticipe les pics d'évaluation avant d'être sous l'eau.", "Spot overloaded days before deadlines catch you by surprise.")}</p>
             <span className="showcase-arrow" aria-hidden="true">→</span>
           </a>
-          <a className="showcase-card reveal" style={{ ["--d" as any]: "0.1s" }} href="/signup" aria-label={L("Créer un compte — Cartes de révision", "Create an account — Flashcards")}>
+
+          <a className="showcase-card glass-card reveal" style={{ ["--d" as any]: "0.1s" }} href="/signup" aria-label={L("Répétition espacée", "Spaced repetition")}>
             <div className="showcase-preview showcase-card-flip">
-              <div className="showcase-flashcard"><span>{L("Dérivée de sin(x) ?", "Derivative of sin(x)?")}</span></div>
-              <div className="showcase-boxes">{[1, 2, 3, 4, 5].map((b) => <span key={b} className={`showcase-box ${b <= 2 ? "on" : ""}`}>{b}</span>)}</div>
+              <div className="showcase-flashcard">
+                <span className="flashcard-badge">{L("Flashcard", "Flashcard")}</span>
+                <span className="flashcard-q">{L("Formule : Somme des termes d'une suite géométrique", "Formula: Sum of a geometric series")}</span>
+              </div>
+              <div className="showcase-boxes">
+                {[1, 2, 3, 4, 5].map((b) => <span key={b} className={`showcase-box ${b <= 3 ? "on" : ""}`}>{b}</span>)}
+              </div>
             </div>
-            <h3>{L("Répétition espacée", "Spaced repetition")}</h3>
-            <p>{L("Les cartes reviennent pile quand tu commences à oublier.", "Cards resurface right as you start to forget.")}</p>
+            <h3>{L("Répétition espacée (Leitner)", "Spaced repetition (Leitner)")}</h3>
+            <p>{L("Tes cartes réapparaissent exactement au moment optimal pour ancrer le souvenir.", "Cards resurface right when you are about to forget for permanent retention.")}</p>
             <span className="showcase-arrow" aria-hidden="true">→</span>
           </a>
-          <a className="showcase-card reveal" style={{ ["--d" as any]: "0.2s" }} href="/signup" aria-label={L("Créer un compte — Brouillons", "Create an account — Drafts")}>
+
+          <a className="showcase-card glass-card reveal" style={{ ["--d" as any]: "0.2s" }} href="/signup" aria-label={L("Brouillons", "Smart drafts")}>
             <div className="showcase-preview">
               <div className="showcase-draft">
+                <div className="showcase-draft-header">
+                  <span className="draft-dot" />
+                  <span className="draft-title">{L("Email prof de Maths", "Math Teacher Email")}</span>
+                </div>
                 <div className="showcase-draft-line long" />
                 <div className="showcase-draft-line" />
                 <div className="showcase-draft-line short" />
                 <span className="showcase-draft-btn">{L("Envoyer ↗", "Send ↗")}</span>
               </div>
             </div>
-            <h3>{L("Brouillons prêts à relire", "Drafts ready to review")}</h3>
-            <p>{L("Otto prépare le message — un clic pour l'envoyer, jamais automatique.", "Otto prepares the message — one click to send, never automatic.")}</p>
+            <h3>{L("Brouillons & demandes d'aide", "Drafts & teacher requests")}</h3>
+            <p>{L("Otto rédige tes emails de questions au professeur. Un clic pour envoyer, jamais automatique.", "Otto structures questions for your teachers. One click to confirm, never unattended.")}</p>
             <span className="showcase-arrow" aria-hidden="true">→</span>
           </a>
         </div>
       </section>
 
+      {/* What Otto prepares */}
       <section className="landing-sec">
-        <h2 className="reveal">{L("Ce qu'Otto prépare pour toi", "What Otto preps for you")}</h2>
+        <div className="sec-header">
+          <span className="sec-kicker">{L("Méthode", "Methodology")}</span>
+          <h2 className="reveal">{L("Ce qu'Otto prépare pour toi.", "What Otto crafts for you.")}</h2>
+          <p className="lead reveal">{L("Chaque tâche est découpée en éléments digestes avec un temps clair et des objectifs précis.", "Every assignment is turned into digestible components with clear timeboxes and concrete goals.")}</p>
+        </div>
         <div className="outcomes">
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.0s" }}><span className="outcome-mark">✓</span><div><h3>{L("Fiche de révision", "Revision sheet")}</h3><p>{L("Plan, définitions, formules — à partir de l'énoncé et de tes documents Drive.", "Outline, definitions, formulas — built from the assignment and your Drive documents.")}</p></div></div>
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.1s" }}><span className="outcome-mark">✓</span><div><h3>{L("Checklist étape par étape", "Step-by-step checklist")}</h3><p>{L("\"1. Relire le cours p.42 (10 min) 2. Faire l'exercice 3 (15 min) 3. Vérifier la correction (5 min).\"", "\"1. Reread the notes p.42 (10 min) 2. Do exercise 3 (15 min) 3. Check the correction (5 min).\"")}</p></div></div>
-          <div className="outcome reveal" style={{ ["--d" as any]: "0.2s" }}><span className="outcome-mark">✓</span><div><h3>{L("Jamais l'exercice fait à ta place", "Never the exercise done for you")}</h3><p>{L("Pas de dissertation rédigée, pas d'exercice corrigé, pas de réponse de contrôle. Otto te guide, jamais ne fait le travail noté.", "No essay written for you, no exercise solved for you, no test answer. Otto guides you — it never does the graded work.")}</p></div></div>
+          <div className="outcome glass-row reveal" style={{ ["--d" as any]: "0.0s" }}>
+            <span className="outcome-mark">✓</span>
+            <div>
+              <h3>{L("Fiches de révision structurées", "Structured revision summaries")}</h3>
+              <p>{L("Formules, définitions fondamentales et théorèmes synthétisés à partir de tes cours et devoirs.", "Key formulas, definitions, and core theorems distilled directly from your curriculum.")}</p>
+            </div>
+          </div>
+          <div className="outcome glass-row reveal" style={{ ["--d" as any]: "0.1s" }}>
+            <span className="outcome-mark">✓</span>
+            <div>
+              <h3>{L("Checklist chirurgicale pas à pas", "Surgical step-by-step checklists")}</h3>
+              <p>{L("\"1. Relire les notions clés (10 min) · 2. Faire l'exercice d'application (15 min) · 3. Vérifier les erreurs types (5 min)\"", "\"1. Review key concepts (10 min) · 2. Apply on test problem (15 min) · 3. Self-correct typical mistakes (5 min)\"")}</p>
+            </div>
+          </div>
+          <div className="outcome glass-row reveal" style={{ ["--d" as any]: "0.2s" }}>
+            <span className="outcome-mark">✓</span>
+            <div>
+              <h3>{L("Zéro complaisance : ton apprentissage préservé", "Zero cheating: your learning protected")}</h3>
+              <p>{L("Pas de devoirs faits par l'IA, pas de réponses générées sans effort. Tu développes tes propres compétences.", "No AI-generated homework shortcuts. You build genuine intellectual independence.")}</p>
+            </div>
+          </div>
         </div>
       </section>
 
+      {/* Interactive Walkthrough */}
       <section className="landing-sec">
-        <h2 className="reveal">{L("Comment ça marche", "How it works")}</h2>
-        <p className="lead reveal">{L("Connecte ton Pronote une fois — Otto vit à côté, pas à la place. Il surveille tes devoirs et contrôles et prépare le terrain avant que tu paniques ; le travail noté reste le tien. Clique pour voir les étapes.", "Connect your Pronote once — Otto lives alongside you, not instead of you. It watches your homework and tests and preps the ground before you panic; the graded work stays yours. Click to see the steps.")}</p>
+        <div className="sec-header">
+          <span className="sec-kicker">{L("Démonstration", "Walkthrough")}</span>
+          <h2 className="reveal">{L("Comment ça fonctionne.", "How it works in practice.")}</h2>
+          <p className="lead reveal">{L("Connecte ton compte en 30 secondes. Otto fonctionne en silence et prépare ton terrain de travail quotidien.", "Connect your school account in 30 seconds. Otto works silently to prepare your daily focus sessions.")}</p>
+        </div>
         <Walkthrough lang={lang} />
       </section>
 
+      {/* Academic Integrity / Values */}
       <section className="landing-sec">
-        <h2 className="reveal">{L("Un guide, pas un exécutant", "A guide, not a doer")}</h2>
+        <div className="sec-header">
+          <span className="sec-kicker">{L("Éthique", "Ethics")}</span>
+          <h2 className="reveal">{L("Un copilote, pas un tricheur.", "A copilot, not a cheat.")}</h2>
+        </div>
         <div className="features">
-          <div className="feature reveal" style={{ ["--d" as any]: "0.0s" }}><div><h3>{L("Jamais ton travail à ta place", "Never your work done for you")}</h3><p>{L("Otto prépare fiches, checklists et brouillons — jamais l'essai, l'exercice ou la réponse au contrôle. La compréhension reste la tienne, pas celle d'une IA.", "Otto preps sheets, checklists and drafts — never the essay, the exercise, or the test answer. Understanding stays yours, not an AI's.")}</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.1s" }}><div><h3>{L("Identifiants chiffrés, jamais revendus", "Credentials encrypted, never resold")}</h3><p>{L("Ton mot de passe Pronote sert une seule fois puis n'est jamais conservé. Données jamais revendues — ", "Your Pronote password is used once and never stored. Data is never resold — ")}<a href="/privacy">{L("détail du traitement dans notre politique de confidentialité", "details in our privacy policy")}</a>.</p></div></div>
-          <div className="feature reveal" style={{ ["--d" as any]: "0.2s" }}><div><h3>{L("Plafond de coût visible", "Visible cost cap")}</h3><p>{L("Coût de l'IA plafonné et affiché dans les Réglages — pas de surprise.", "AI cost is capped and shown in Settings — no surprises.")}</p></div></div>
+          <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.0s" }}>
+            <span className="feature-icon">🧭</span>
+            <div>
+              <h3>{L("Intégrité académique absolue", "Strict academic integrity")}</h3>
+              <p>{L("Otto refuse de générer des dissertations complètes ou de résoudre des exercices à ta place. Il t'apprend la méthode.", "Otto refuses to write full essays or solve graded problems. It teaches you the methodology.")}</p>
+            </div>
+          </div>
+          <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.1s" }}>
+            <span className="feature-icon">🔐</span>
+            <div>
+              <h3>{L("Données protégées et jamais vendues", "Data private, secure & never sold")}</h3>
+              <p>{L("Identifiants chiffrés avec AES-256-GCM. Tes devoirs et notes ne servent jamais à entraîner des modèles d'IA publics.", "Encrypted with AES-256-GCM. Your school data is never used to train public AI models.")}</p>
+            </div>
+          </div>
+          <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.2s" }}>
+            <span className="feature-icon">📊</span>
+            <div>
+              <h3>{L("Transparence totale et maîtrise des coûts", "Transparent usage & clear control")}</h3>
+              <p>{L("Suis en temps réel ton quota d'IA dans les Réglages. Aucun abonnement caché, aucun piège.", "Track your AI quota in real-time in Settings. No hidden recurring fees, no dark patterns.")}</p>
+            </div>
+          </div>
         </div>
       </section>
 
+      {/* Comparison Matrix */}
       <section className="landing-sec">
-        <h2 className="reveal">{L("Pourquoi pas juste ChatGPT ?", "Why not just ChatGPT?")}</h2>
-        <p className="lead reveal">{L("Un chatbot généraliste répond à une question ponctuelle. Otto suit tes devoirs et contrôles dans la durée — et refuse structurellement de faire le travail noté, pas juste par une consigne qu'on peut contourner.", "A general-purpose chatbot answers one question at a time. Otto follows your actual homework and tests over the term — and structurally refuses to do the graded work, not just by a prompt instruction you could talk it out of.")}</p>
-        <div className="compare-wrap reveal">
+        <div className="sec-header">
+          <span className="sec-kicker">{L("Comparatif", "Comparison")}</span>
+          <h2 className="reveal">{L("Pourquoi Otto change la donne.", "Why Otto changes the game.")}</h2>
+          <p className="lead reveal">{L("Un chatbot générique répond à une question isolée. Otto gère ton trimestre dans la durée.", "A generic chatbot answers one-off questions. Otto orchestrates your whole academic semester.")}</p>
+        </div>
+        <div className="compare-wrap glass-card reveal">
           <table className="compare-table">
             <thead>
               <tr>
-                <th scope="col">{L("", "")}</th>
+                <th scope="col">{L("Critères", "Criteria")}</th>
                 <th scope="col">{L("Seul·e", "On your own")}</th>
-                <th scope="col">{L("Chatbot IA générique", "A generic AI chatbot")}</th>
-                <th scope="col" className="compare-otto">Otto</th>
+                <th scope="col">{L("Chatbot IA", "Generic Chatbot")}</th>
+                <th scope="col" className="compare-otto"><Logo size={16} /> Otto</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <th scope="row">{L("Lit tes devoirs/contrôles automatiquement", "Reads your homework/tests automatically")}</th>
+                <th scope="row">{L("Lecture automatique de Pronote / Agenda", "Auto-sync with Pronote / Calendar")}</th>
                 <td>—</td><td>—</td><td className="compare-yes">✓</td>
               </tr>
               <tr>
-                <th scope="row">{L("Transforme le mur de devoirs en plan du jour", "Turns the wall of homework into today's plan")}</th>
+                <th scope="row">{L("Plan d'action quotidien structuré en 3 tâches", "Daily structured plan with 3 focal tasks")}</th>
                 <td>—</td><td>—</td><td className="compare-yes">✓</td>
               </tr>
               <tr>
-                <th scope="row">{L("Se souvient de tes cours et profs au fil du trimestre", "Remembers your courses and teachers over the term")}</th>
+                <th scope="row">{L("Mémoire de tes matières, profs et points faibles", "Memory of your teachers, subjects & gaps")}</th>
                 <td>—</td><td>—</td><td className="compare-yes">✓</td>
               </tr>
               <tr>
-                <th scope="row">{L("Cartes de révision à répétition espacée programmée", "Flashcards on a real scheduled spaced-repetition")}</th>
+                <th scope="row">{L("Répétition espacée programmée des fiches", "Scheduled spaced repetition flashcards")}</th>
                 <td>—</td><td>—</td><td className="compare-yes">✓</td>
               </tr>
               <tr>
-                <th scope="row">{L("Refuse structurellement de faire le travail noté", "Structurally refuses to do the graded work")}</th>
-                <td className="compare-yes">✓</td><td>{L("dépend de toi", "up to you")}</td><td className="compare-yes">✓</td>
+                <th scope="row">{L("Refus structurel de faire le travail noté", "Structural refusal to do graded work")}</th>
+                <td className="compare-yes">✓</td><td>{L("Aléatoire", "Unreliable")}</td><td className="compare-yes">✓</td>
               </tr>
               <tr>
-                <th scope="row">{L("Coût visible et plafonné", "Cost visible and capped")}</th>
-                <td>—</td><td>{L("selon l'abonnement", "depends on the plan")}</td><td className="compare-yes">✓</td>
+                <th scope="row">{L("Interface fluide inspirée des standards Apple", "Fluid Apple-grade interaction design")}</th>
+                <td>—</td><td>—</td><td className="compare-yes">✓</td>
               </tr>
             </tbody>
           </table>
         </div>
       </section>
 
+      {/* FAQ Accordion */}
       <section className="landing-sec">
-        <h2 className="reveal">{L("Questions fréquentes", "Frequently asked questions")}</h2>
+        <div className="sec-header">
+          <span className="sec-kicker">FAQ</span>
+          <h2 className="reveal">{L("Questions fréquentes.", "Frequently asked questions.")}</h2>
+        </div>
         <div className="faq-list reveal">
-          <details className="faq-item">
+          <details className="faq-item glass-card">
             <summary>{L("Est-ce qu'Otto fait mes devoirs à ma place ?", "Does Otto do my homework for me?")}</summary>
-            <p>{L("Non — c'est refusé structurellement, pas juste \"déconseillé\". Otto détecte une demande de travail noté (rédaction d'une dissertation, exercice résolu, réponse de contrôle) et la redirige vers une fiche, une checklist ou une méthode à la place.", "No — this is structurally refused, not just discouraged. Otto detects a request for graded work (a written essay, a solved exercise, a test answer) and redirects it into a revision sheet, checklist, or method instead.")}</p>
+            <p>{L("Non — c'est structurellement impossible dans notre architecture. Otto détecte toute consigne de travail noté et produit à la place une fiche méthodologique, une checklist ou des questions guides pour t'accompagner.", "No — our architecture structurally prevents this. When Otto detects graded work prompts, it provides step-by-step methodologies, flashcards, or self-test problems instead.")}</p>
           </details>
-          <details className="faq-item">
-            <summary>{L("Je suis en filière IB, pas Bac — Otto marche pour moi ?", "I'm in the IB, not the French Bac — does Otto work for me?")}</summary>
-            <p>{L("Oui. À l'inscription, tu choisis ta filière (Bac ou IB) et Otto adapte son vocabulaire (HL/SL, CAS, TOK, Extended Essay) et n'exige pas de compte Pronote — Gmail/Calendar ou des contrôles ajoutés à la main suffisent.", "Yes. At sign-up you choose your track (Bac or IB) and Otto adapts its vocabulary (HL/SL, CAS, TOK, Extended Essay) and doesn't require a Pronote account — Gmail/Calendar, or exams you log by hand, work just as well.")}</p>
+          <details className="faq-item glass-card">
+            <summary>{L("Je suis en filière IB (Baccalauréat International), est-ce adapté ?", "I am an IB student, does Otto adapt to my curriculum?")}</summary>
+            <p>{L("Absolument. Otto prend en charge les filières HL/SL, TOK, CAS et Extended Essay, et fonctionne avec Google Calendar ou des entrées manuelles sans nécessiter Pronote.", "Yes. Otto fully supports HL/SL subjects, TOK, CAS, and Extended Essay milestones with Google Calendar sync or manual entries.")}</p>
           </details>
-          <details className="faq-item">
-            <summary>{L("Combien ça coûte ?", "What does it cost?")}</summary>
-            <p>{L("Gratuit pour commencer, sans carte bancaire. L'usage de l'IA a un plafond mensuel visible dans les Réglages — pas de facture surprise.", "Free to start, no credit card required. AI usage has a monthly cap that's visible in Settings — no surprise bill.")}</p>
+          <details className="faq-item glass-card">
+            <summary>{L("Mes identifiants scolaires sont-ils sécurisés ?", "Are my school credentials safe and secure?")}</summary>
+            <p>{L("Tes identifiants ne sont jamais stockés en clair. Ils sont chiffrés au niveau de la base de données avec AES-256-GCM et ne sont jamais partagés ni revendus à des tiers.", "Your credentials are never stored in plain text. They are encrypted using AES-256-GCM and never shared or sold to third parties.")}</p>
           </details>
-          <details className="faq-item">
-            <summary>{L("Mes identifiants Pronote sont-ils en sécurité ?", "Is my Pronote login safe?")}</summary>
-            <p>{L("Ton mot de passe sert une seule fois pour la connexion initiale et n'est jamais conservé en clair — le jeton qui le remplace est chiffré (AES-256-GCM) et jamais revendu. ", "Your password is used once for the initial connection and never stored in plain text — the token that replaces it is encrypted (AES-256-GCM) and never resold. ")}<a href="/privacy">{L("Détails dans la politique de confidentialité →", "Details in the privacy policy →")}</a></p>
-          </details>
-          <details className="faq-item">
-            <summary>{L("Je n'utilise pas Pronote — je peux quand même l'utiliser ?", "I don't use Pronote — can I still use it?")}</summary>
-            <p>{L("Oui. Connecte Gmail/Calendar, ou ajoute tes contrôles et devoirs à la main dans les Réglages — Otto construit ton plan à partir de ce qui est disponible.", "Yes. Connect Gmail/Calendar, or add your exams and homework by hand in Settings — Otto builds your plan from whatever's available.")}</p>
+          <details className="faq-item glass-card">
+            <summary>{L("Combien coûte Otto ?", "How much does Otto cost?")}</summary>
+            <p>{L("L'accès de base est gratuit sans carte bancaire requise. Les quotas d'IA sont généreux et clairement indiqués dans vos Réglages.", "Getting started is completely free with no credit card required. Monthly AI allowances are generous and fully transparent in Settings.")}</p>
           </details>
         </div>
       </section>
 
-      <section className="cta-band reveal">
-        <h2>{L("Arrête de paniquer devant Pronote.", "Stop panicking over your homework.")}</h2>
-        <p>{L("Connecte ton Pronote et laisse Otto préparer le travail — à toi de faire le reste. Gratuit pour commencer, prêt en moins d'une minute.", "Connect Pronote, Gmail/Calendar, or log your exams by hand, and let Otto prep the work — the rest is yours to do. Free to start, ready in under a minute.")}</p>
-        <a className="btn big cta-band-btn" href="/signup">{L("Connecter mon Pronote", "Get started free")}</a>
-        <div className="cta-fine">{L("Sans carte bancaire · Otto ne fait jamais tes devoirs à ta place", "No credit card · Otto never does your homework for you")}</div>
+      {/* Apple Keynote CTA Banner */}
+      <section className="cta-band glass-card reveal">
+        <span className="cta-kicker">{L("Passe à la vitesse supérieure", "Elevate your study flow")}</span>
+        <h2>{L("Reprends le contrôle de tes études.", "Take command of your coursework.")}</h2>
+        <p>{L("Connecte ton Pronote ou ton agenda en 30 secondes et aborde chaque semaine avec sérénité.", "Connect your school agenda in 30 seconds and enter every week with complete focus.")}</p>
+        <div className="cta-actions">
+          <a className="btn primary big cta-band-btn" href="/signup">{L("Connecter mon compte gratuitement", "Get started for free")}</a>
+          <a className="btn ghost big cta-band-sub" href="/login">{L("Se connecter", "Log in")}</a>
+        </div>
+        <div className="cta-fine">{L("Sans engagement · Sans carte bancaire · Respect strict de l'éthique", "No credit card needed · Zero risk · Academic integrity first")}</div>
       </section>
 
+      {/* Refined Apple-grade Footer */}
       <footer className="landing-foot-rich">
         <div className="foot-top">
           <div className="foot-brand">
-            <span className="brand"><Logo size={20} /> Otto</span>
-            <p>{L("Chaque dimanche soir, Otto a déjà lu Pronote pour toi.", "Every Sunday night, Otto has already read your homework for you.")}</p>
+            <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
+            <p>{L("Le compagnon d'études nouvelle génération conçu pour le calme et l'excellence.", "The next-generation study copilot crafted for focus, calm, and academic excellence.")}</p>
           </div>
-          <nav className="foot-group" aria-label={L("Produit", "Product")}>
+          <nav className="foot-group" aria-label={L("Navigation produit", "Product navigation")}>
             <h4>{L("Produit", "Product")}</h4>
             <a href="/signup">{L("Créer un compte", "Create account")}</a>
             <a href="/login">{L("Se connecter", "Log in")}</a>
           </nav>
-          <nav className="foot-group" aria-label={L("Légal", "Legal")}>
+          <nav className="foot-group" aria-label={L("Mentions légales", "Legal")}>
             <h4>{L("Légal", "Legal")}</h4>
             <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
-            <a href="/terms">{L("CGU", "Terms")}</a>
+            <a href="/terms">{L("Conditions d'utilisation", "Terms")}</a>
           </nav>
         </div>
         <div className="foot-bottom">
-          <span className="foot-mit">{L("MIT — open source", "MIT — open source")}</span>
+          <span className="foot-mit">{L("Otto · Conçu avec les principes Apple Design", "Otto · Crafted with Apple Design Principles")}</span>
           <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
         </div>
       </footer>
