@@ -1328,3 +1328,43 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   task.updatedAt = new Date().toISOString();
   return task;
 }
+
+/**
+ * Stage 16: Apply adaptive step regeneration when checkpoint failures detected.
+ * If 2+ checkpoints have failed and the model can be invoked, regenerate remaining steps
+ * with extra scaffolding (more examples, simpler progression) for the struggled concepts.
+ */
+export async function applyAdaptiveRegeneration(task: WebTask, profile: Profile): Promise<WebTask> {
+  if (!task.steps?.length) return task;
+
+  const { detectFailurePatterns, regenerateStepsWithScaffolding, needsAdaptiveReplan } = await import("./claude.ts");
+
+  // Check if adaptation is needed
+  if (!needsAdaptiveReplan(task.steps)) return task;
+
+  const patterns = detectFailurePatterns(task.steps);
+  if (!Object.keys(patterns).length) return task; // no patterns to act on
+
+  try {
+    // Find the first failed step to start regeneration from
+    const firstFailedIdx = task.steps.findIndex(s => s.checkpointPassed === false);
+    if (firstFailedIdx < 0) return task;
+
+    const remainingSteps = task.steps.slice(firstFailedIdx + 1);
+    const regenerated = await regenerateStepsWithScaffolding(
+      { title: task.title, why: task.why, goal: task.goal, taskType: task.taskType },
+      task.context || "",
+      patterns,
+      remainingSteps,
+      profile,
+    );
+
+    // Replace the remaining steps with adaptively regenerated ones
+    task.steps = [...task.steps.slice(0, firstFailedIdx + 1), ...regenerated];
+    task.updatedAt = new Date().toISOString();
+  } catch {
+    // best-effort — if regeneration fails, keep original steps
+  }
+
+  return task;
+}

@@ -712,14 +712,36 @@ function isFolderHousekeepingDrift(title: string, steps: { text: string }[]): bo
   return steps.every((s) => FOLDER_HOUSEKEEPING_STEP.test(s.text));
 }
 // A step that narrates OTTO'S OWN RUN/TOOL STATE instead of something the STUDENT should do — observed live
-// (right after CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ were moved out of the research phase into their own
-// later phase): "Recreate the missing write: no document, note, deck or email was produced this run because
-// no write/create tool was available — re-run once a creation tool is enabled" and "Re-run this task with a
-// write tool enabled" ended up AS steps — the model's own confusion about which phase it's in, leaked
-// straight through writeStepsFromContext into the student-facing plan. This is never a legitimate step no
-// matter how it's phrased: the student has no "creation tool" to enable and no way to "re-run" anything
-// themselves — that's Otto's own internal machinery, not their to-do list.
-const PROCESS_COMPLAINT_STEP = /\b(no (?:write|create|creation)\b[^.]{0,30}\btool\b|tool (?:was|is|wasn'?t) (?:not )?available|re-?run (?:this|the) task|once (?:a |the )?(?:creation|write) tool is enabled|recreate the missing\b|no (?:document|note|deck|email) was produced this run)\b/i;
+// patterns include: "Enable or reconnect a create/write tool — this run was in plan-only mode",
+// "Rerun the Sheets content reads, which were blocked this run", "Rerun the web search, which was
+// unavailable this run", "Open Settings in your account" (follow-on from reconnect), "Find the connected
+// apps or tools section", "Confirm it is connected, then rerun task", "Re-run this task with a write tool
+// enabled". None of these are legitimate student to-do items — they describe Otto's own internal state.
+const PROCESS_COMPLAINT_STEP = new RegExp(
+  "\\b(?:" +
+  // Original patterns
+  "no (?:write|create|creation)\\b[^.]{0,30}\\btool\\b" +
+  "|tool (?:was|is|wasn'?t) (?:not )?available" +
+  "|re-?run (?:this|the) task" +
+  "|once (?:a |the )?(?:creation|write) tool is enabled" +
+  "|recreate the missing\\b" +
+  "|no (?:document|note|deck|email) was produced this run" +
+  // New patterns observed live in the bug above
+  "|(?:enable|reconnect|re-?connect)\\b[^.]{0,50}\\b(?:create|write|creation)\\b[^.]{0,30}\\btool" +
+  "|plan.only mode" +
+  "|this run was in plan.only" +
+  "|(?:blocked|unavailable|not available) this run" +
+  // "Rerun the Sheets content reads ... this run" / "Rerun the web search ... this run"
+  "|re-?run the \\w[\\w\\s]{0,30}(?:reads?|searches?|lookups?|content|data)\\b" +
+  // Settings reconnect substeps
+  "|add (?:one|it|a tool) in settings before re-?run" +
+  "|settings before re-?run" +
+  "|find the connected (?:apps?|tools?)\\b" +
+  "|(?:enable|reconnect|re-?connect) (?:a |the )?(?:create|write|creation|connected) tool" +
+  "|confirm it is connected,? then re-?run" +
+  ")\\b",
+  "i",
+);
 export function dropProcessComplaintSteps<T extends { text: string }>(steps: T[]): T[] {
   return steps.filter((s) => !PROCESS_COMPLAINT_STEP.test(s.text));
 }
@@ -1031,6 +1053,13 @@ export interface GeneratedTask {
   sourceDetail?: string;
   sourceSubject?: string;
   sourceDue?: string;
+  // Stage 1-5 of the 26-stage pipeline: parse intent, classify, define objective, info requirements, research decision
+  taskType?: TaskType;
+  goal?: string;           // concrete definition of done
+  infoRequirement?: InfoRequirement;
+  subject?: string;        // extracted subject (e.g., "Français", "Physique-Chimie")
+  topic?: string;          // extracted topic within subject
+  unknowns?: string[];     // missing information needed for this task
 }
 
 const GEN_SYSTEM =
@@ -1563,9 +1592,13 @@ export async function classifyCandidates(
     `Paris Model Congress", "Confirm attendance to Guillaume's Aug call". BAD (too vague — never do this): ` +
     `"Follow up on sent email", "Reply to email", "Respond to message", "Handle request". If you can't name ` +
     `the person or subject from the candidate, you don't understand it well enough to include it — omit it.\n` +
+    `ALSO CLASSIFY EACH TASK FOR THE 26-STAGE PIPELINE:\n` +
+    `- taskType: "learn_understand"|"review"|"practice"|"homework_problem_set"|"write"|"research"|"create"|"prepare_assessment"|"project"|"administrative"\n` +
+    `- goal: concrete definition of done (1-2 sentences, measurable completion condition)\n` +
+    `- infoRequirement: "none"|"useful"|"required" — can this task proceed without external research?\n` +
     `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words",` +
     `"why":"one clause naming the concrete trigger, ≤12 words","when":"the REAL deadline stated in or directly implied by the item — NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,` +
-    `"risk":"low"|"high"}],"profileUpdates":[{"category":"preference"|"person"|"project"|"course"|"name"|"about",` +
+    `"risk":"low"|"high","taskType":"...","goal":"...","infoRequirement":"..."}],"profileUpdates":[{"category":"preference"|"person"|"project"|"course"|"name"|"about",` +
     `"fact":"one short sentence"}]} — profileUpdates: 0-3 DURABLE facts about who this person is that these ` +
     `items reveal (a key relationship, an ongoing project) — only lasting identity facts, not task content. ` +
     `Use "course" for a class-specific pattern worth compounding over the term (a professor's grading style, ` +
@@ -1598,6 +1631,12 @@ export async function classifyCandidates(
       .filter((r) => Number.isInteger(r.i) && r.i >= 0 && r.i < items.length && String(r?.title || "").trim().length >= 4 && String(r?.why || "").trim())
       .map((r): GeneratedTask => {
         const it = items[r.i];
+        const validTaskTypes: TaskType[] = [
+          "learn_understand", "review", "practice", "homework_problem_set",
+          "write", "research", "create", "prepare_assessment", "project", "administrative"
+        ];
+        const taskType = validTaskTypes.includes(r.taskType) ? r.taskType : undefined;
+        const infoRequirement = ["none", "useful", "required"].includes(r.infoRequirement) ? r.infoRequirement : undefined;
         return {
           title: String(r.title).slice(0, 90),
           why: String(r.why).slice(0, 400),
@@ -1618,6 +1657,10 @@ export async function classifyCandidates(
           sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 3000) : undefined,
           sourceSubject: it.subject,
           sourceDue: it.timestamp,
+          // Stage 1-4 intent/objective enrichment
+          taskType,
+          goal: r.goal ? String(r.goal).slice(0, 250) : undefined,
+          infoRequirement,
         };
       })
       .slice(0, 12);
@@ -1685,9 +1728,11 @@ export async function pickOneTask(
     `profile to choose well.\n` +
     `The title MUST be specific — name the actual person/company AND subject ("Wish Sonya a happy birthday", ` +
     `"Reply to Chloe at BOND about the demo"), NEVER vague ("Follow up on email", "Handle message").\n` +
+    `ALSO CLASSIFY: taskType (learn_understand|review|practice|homework_problem_set|write|research|create|prepare_assessment|project|administrative), ` +
+    `goal (measurable definition of done), infoRequirement (none|useful|required).\n` +
     `Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words","why":"one clause ` +
     `naming the concrete trigger, ≤12 words","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,` +
-    `"risk":"low"|"high"}`;
+    `"risk":"low"|"high","taskType":"...","goal":"...","infoRequirement":"..."}`;
   const client = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   try {
@@ -1703,6 +1748,12 @@ export async function pickOneTask(
     const idx = Number(r?.i);
     if (!Number.isInteger(idx) || idx < 0 || idx >= items.length || String(r?.title || "").trim().length < 4) return null;
     const it = items[idx];
+    const validTaskTypes: TaskType[] = [
+      "learn_understand", "review", "practice", "homework_problem_set",
+      "write", "research", "create", "prepare_assessment", "project", "administrative"
+    ];
+    const taskType = validTaskTypes.includes(r.taskType) ? r.taskType : undefined;
+    const infoRequirement = ["none", "useful", "required"].includes(r.infoRequirement) ? r.infoRequirement : undefined;
     const task: GeneratedTask = {
       title: String(r.title).slice(0, 90),
       why: String(r.why || "Worth doing today.").slice(0, 400),
@@ -1719,6 +1770,10 @@ export async function pickOneTask(
       sourceDetail: hasAssignmentText(it.snippet) ? it.snippet.slice(0, 3000) : undefined,
       sourceSubject: it.subject,
       sourceDue: it.timestamp,
+      // Stage 1-4 intent/objective enrichment
+      taskType,
+      goal: r.goal ? String(r.goal).slice(0, 250) : undefined,
+      infoRequirement,
     };
     console.log(`${new Date().toISOString()} [ai] pickOneTask: "${task.title}" (${tokens.in} in / ${tokens.out} out)`);
     return { task, tokens };
@@ -1739,6 +1794,345 @@ export interface RefinedTask {
   goal?: string; // Concrete definition of done
   infoRequirement?: InfoRequirement;
   tokens: { in: number; out: number; cachedIn: number };
+}
+
+/**
+ * Pipeline Stage 5: decide whether research is actually needed based on infoRequirement.
+ * Returns true if research should be skipped (task is self-contained or requires no external info).
+ */
+export function shouldSkipResearch(infoRequirement?: InfoRequirement): boolean {
+  return infoRequirement === "none";
+}
+
+/**
+ * Stage 13: Checkpoint Evaluation — determine if a step's "doneWhen" condition was met.
+ * Returns true if checkpoint appears to have been achieved, false if not, undefined if unclear.
+ * This is heuristic: actual checkpoint verification happens via the student's result or via AI.
+ */
+export function evaluateCheckpoint(step: TaskStep, result?: string): boolean | undefined {
+  if (!step.doneWhen || !step.done) return undefined;
+  if (!result) return undefined; // no evidence, assume pass for now
+
+  // Heuristic checkpoint patterns
+  const text = String(result).toLowerCase();
+
+  // Percentage thresholds: "80%" or "8/10" patterns
+  const percentMatch = result.match(/(\d+)\s*%/);
+  const fractionMatch = result.match(/(\d+)\s*\/\s*(\d+)/);
+
+  if (percentMatch) {
+    const percent = Number(percentMatch[1]);
+    const threshold = step.checkpoint?.match(/(\d+)\s*%/) ? Number(step.checkpoint.match(/(\d+)\s*%/)![1]) : 80;
+    return percent >= threshold;
+  }
+  if (fractionMatch) {
+    const correct = Number(fractionMatch[1]);
+    const total = Number(fractionMatch[2]);
+    const percent = (correct / total) * 100;
+    const threshold = step.checkpoint?.match(/(\d+)\s*%/) ? Number(step.checkpoint.match(/(\d+)\s*%/)![1]) : 80;
+    return percent >= threshold;
+  }
+
+  // Negative indicators: common failure patterns
+  if (/didn't|couldn't|failed|wrong|mistake|error|lost|forgot/.test(text)) return false;
+  if (/stuck|confused|unclear|don't.*understand/.test(text)) return false;
+
+  // Positive indicators: success patterns
+  if (/completed|finished|done|correct|right|understood|got.*it/.test(text)) return true;
+
+  return undefined; // unclear
+}
+
+/**
+ * Stage 14: Adaptive Replanning — detect when checkpoints are failing and regenerate steps.
+ * If 2+ consecutive steps have `checkpointPassed: false`, returns true (trigger replan needed).
+ */
+export function needsAdaptiveReplan(steps: TaskStep[]): boolean {
+  let failureCount = 0;
+  for (const step of steps) {
+    if (step.checkpointPassed === false) {
+      failureCount++;
+      if (failureCount >= 2) return true;
+    } else if (step.checkpointPassed === true && failureCount > 0) {
+      // Reset counter on a passing step
+      failureCount = 0;
+    }
+  }
+  return false;
+}
+
+/**
+ * Stage 15: Pattern Detection — extract concepts/skills from failed steps and identify patterns.
+ * Returns an object mapping concept names to their failure counts across the task.
+ * Used to identify "struggled with X twice in one task" patterns.
+ */
+export function detectFailurePatterns(steps: TaskStep[]): Record<string, number> {
+  const patterns: Record<string, number> = {};
+
+  for (const step of steps) {
+    if (step.checkpointPassed === false) {
+      // Extract key concepts from the step text and doneWhen condition
+      const concepts = extractConcepts(step.text);
+      const doneWhenConcepts = step.doneWhen ? extractConcepts(step.doneWhen) : [];
+
+      for (const concept of [...concepts, ...doneWhenConcepts]) {
+        patterns[concept] = (patterns[concept] || 0) + 1;
+      }
+    }
+  }
+
+  return patterns;
+}
+
+/**
+ * Stage 15 helper: Extract likely concepts/skills from text (simple heuristic).
+ * Looks for nouns, multi-word phrases, and domain terms.
+ */
+function extractConcepts(text: string): string[] {
+  // Simple heuristic: common domain terms and multi-word phrases
+  const concepts: string[] = [];
+
+  // Match 2-4 word phrases that look like concepts
+  const phraseMatch = text.match(/\b([A-Z][a-z]+(?:\s+[a-z]+)?(?:\s+[a-z]+)?)\b/g);
+  if (phraseMatch) concepts.push(...phraseMatch.map(p => p.toLowerCase()));
+
+  // Match single capitalized words (likely proper nouns/concepts)
+  const wordMatch = text.match(/\b[A-Z][a-z]{2,}\b/g);
+  if (wordMatch) concepts.push(...wordMatch.map(w => w.toLowerCase()));
+
+  // Match mathematical/scientific terms
+  const termMatch = text.match(/(formula|theorem|concept|rule|method|principle|law|equation|algorithm|pattern|structure)/gi);
+  if (termMatch) concepts.push(...termMatch.map(t => t.toLowerCase()));
+
+  // Return unique, non-trivial concepts (length > 2)
+  return [...new Set(concepts)].filter(c => c.length > 2).slice(0, 5);
+}
+
+/**
+ * Stage 16: Adaptive Step Regeneration — given failure patterns, regenerate the remaining steps
+ * with extra scaffolding (more examples, simpler progression, more checkpoints).
+ * This is a placeholder for the full regeneration; actual implementation would call writeStepsFromContext again.
+ */
+export async function regenerateStepsWithScaffolding(
+  task: { title: string; why: string; goal?: string; taskType?: TaskType },
+  context: string,
+  failurePatterns: Record<string, number>,
+  currentSteps: TaskStep[],
+  profile?: Profile,
+): Promise<TaskStep[]> {
+  try {
+    // Build a hint about what failed so the model can add scaffolding
+    const failedConcepts = Object.entries(failurePatterns)
+      .filter(([_, count]) => count >= 2)
+      .map(([concept]) => concept);
+
+    if (!failedConcepts.length) return currentSteps; // no patterns, no need to replan
+
+    const client = deepseekClient();
+    const failureHint = failedConcepts.length
+      ? `\nThe student struggled with these concepts: ${failedConcepts.join(", ")}. Regenerate the remaining steps with EXTRA scaffolding (more worked examples, simpler progression, more intermediate checkpoints) for these specific areas.`
+      : "";
+
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
+      max_tokens: OUT.steps,
+      temperature: 0.3, // slightly higher than normal to encourage different phrasing
+      response_format: { type: "json_object" },
+      messages: [{
+        role: "user",
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n${task.goal ? `GOAL: ${task.goal}\n` : ""}` +
+          `CONTEXT: ${context.slice(0, 500)}\n` +
+          `CURRENT STEPS (already completed or in progress):\n${currentSteps.slice(0, 3).map(s => `- ${s.text}`).join("\n")}\n` +
+          failureHint +
+          `\n\nNow regenerate the REMAINING steps (after the ones above) with extra scaffolding for ${failedConcepts.length} specific weak areas. Keep the pedagogical sequence but add more intermediate checkpoints and worked examples. Return ONLY this JSON: {"steps":[{"text":"...","minutes":15,"doneWhen":"...","checkpoint":"...","difficulty":"easy"|"medium"|"hard","automatable":false,"dependsOn":null},...]}`,
+      }],
+    }));
+
+    const out = firstJson<{ steps?: any[] }>(String(res.choices?.[0]?.message?.content || ""));
+    if (!out?.steps?.length) return currentSteps;
+
+    // Parse and sanitize the regenerated steps
+    return (out.steps || [])
+      .map((s: any) => ({
+        text: truncateStepText(String(s?.text || "")),
+        automatable: false,
+        minutes: s?.minutes || 15,
+        doneWhen: s?.doneWhen ? String(s.doneWhen).slice(0, 150) : undefined,
+        checkpoint: s?.checkpoint ? String(s.checkpoint).slice(0, 150) : undefined,
+        difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
+      }))
+      .slice(0, 6);
+  } catch {
+    return currentSteps; // on error, keep original steps
+  }
+}
+
+/**
+ * Stage 17: Outcome Persistence — save what worked/didn't work about this task for future learning.
+ * Returns learning signals to feed back into patterns.ts for personalization.
+ */
+export interface TaskOutcome {
+  taskId: string;
+  taskType?: TaskType;
+  completionTime?: number; // minutes spent
+  stepsCompleted: number;
+  checkpointsTotal: number;
+  checkpointsPassed: number;
+  checkpointsFailed: number;
+  failurePatterns: Record<string, number>;
+  studentWasSuccessful: boolean; // overall — did the objective get achieved?
+}
+
+export function computeTaskOutcome(task: { id: string; taskType?: TaskType; steps?: TaskStep[]; synthesis?: string }): TaskOutcome {
+  const steps = task.steps || [];
+  const completed = steps.filter(s => s.done).length;
+  const checkpoints = steps.filter(s => s.checkpointPassed !== undefined);
+  const passed = checkpoints.filter(s => s.checkpointPassed === true).length;
+  const failed = checkpoints.filter(s => s.checkpointPassed === false).length;
+
+  // Heuristic: task was successful if most checkpoints passed and synthesis sounds positive
+  const synthesisIsPositive = !task.synthesis || !/didn't|couldn't|failed|stuck|unclear|confused/i.test(task.synthesis);
+  const studentWasSuccessful = passed >= failed && synthesisIsPositive;
+
+  return {
+    taskId: task.id,
+    taskType: task.taskType,
+    stepsCompleted: completed,
+    checkpointsTotal: checkpoints.length,
+    checkpointsPassed: passed,
+    checkpointsFailed: failed,
+    failurePatterns: detectFailurePatterns(steps),
+    studentWasSuccessful,
+  };
+}
+
+/**
+ * Stage 18-26: Complete Learning Loop — given a task outcome, feed signals back into the profile
+ * for future personalization. This closes the loop: data from stages 12-17 now influences stages 1-11.
+ *
+ * Returns profile updates to apply to the student's record.
+ */
+export function computePersonalizationSignals(outcome: TaskOutcome, currentProfile?: Profile): ProfileUpdate[] {
+  const updates: ProfileUpdate[] = [];
+
+  // Stage 22: Update learned preferences based on success/failure
+  if (outcome.taskType && outcome.studentWasSuccessful && outcome.checkpointsPassed > 0) {
+    // This task type worked well for this student
+    updates.push({
+      category: "preference",
+      fact: `Task type "${outcome.taskType}" succeeded with ${outcome.checkpointsPassed} passed checkpoints — continue using this type when relevant.`,
+    });
+  }
+
+  // Stage 23: Flag struggle areas for future scaffolding
+  if (Object.keys(outcome.failurePatterns).length > 0) {
+    const struggledWith = Object.entries(outcome.failurePatterns)
+      .filter(([_, count]) => count >= 2)
+      .map(([concept]) => concept)
+      .slice(0, 3)
+      .join(", ");
+
+    if (struggledWith) {
+      updates.push({
+        category: "preference",
+        fact: `Student struggled with: ${struggledWith}. Future similar tasks should include extra scaffolding for these concepts.`,
+      });
+    }
+  }
+
+  // Stage 24: Track completion rate for task type
+  if (outcome.taskType && outcome.stepsCompleted > 0) {
+    const completionRate = outcome.stepsCompleted / Math.max(1, outcome.stepsCompleted + outcome.checkpointsFailed);
+    if (completionRate > 0.8 && outcome.stepsCompleted >= 3) {
+      updates.push({
+        category: "preference",
+        fact: `High completion rate for "${outcome.taskType}" (${Math.round(completionRate * 100)}%) — student prefers finishing these.`,
+      });
+    }
+  }
+
+  // Stage 25: Predict effective scaffolding level
+  if (outcome.checkpointsFailed > outcome.checkpointsPassed && outcome.checkpointsPassed > 0) {
+    updates.push({
+      category: "preference",
+      fact: "Student benefits from checkpoint-based feedback. Continue using explicit 'done when' conditions and diagnostic quizzes.",
+    });
+  }
+
+  return updates;
+}
+
+/**
+ * Enrich an existing GeneratedTask with taskType, goal, infoRequirement, subject, topic.
+ * Used to add Stage 1-4 context to tasks that came from email/calendar/Pronote classification.
+ */
+export async function enrichTaskIntentAndGoal(
+  task: GeneratedTask,
+  profile?: Profile,
+): Promise<GeneratedTask> {
+  try {
+    // Already enriched, or has enough context from source
+    if (task.taskType && task.goal && task.infoRequirement) return task;
+
+    // For Pronote homework/tests, we can infer some defaults
+    if (task.source === "pronote" && task.sourceSubject) {
+      const taskType: TaskType = task.sourceDetail?.toLowerCase().includes("devoir")
+        ? "homework_problem_set"
+        : task.sourceDetail?.toLowerCase().includes("test") || task.sourceDetail?.toLowerCase().includes("exam")
+        ? "prepare_assessment"
+        : "learn_understand";
+      const infoRequirement: InfoRequirement = task.sourceDetail ? "required" : "useful";
+      return {
+        ...task,
+        taskType: task.taskType || taskType,
+        infoRequirement: task.infoRequirement || infoRequirement,
+        goal: task.goal || `Successfully complete the ${taskType} for ${task.sourceSubject}`,
+        subject: task.subject || task.sourceSubject,
+      };
+    }
+
+    // For non-school tasks, classify more carefully
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model,
+      max_tokens: OUT.refine,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content:
+          languageLine(profile) + trackLine(profile) +
+          "Classify this task: 1) task type (learn_understand, review, practice, homework_problem_set, write, research, create, prepare_assessment, project, administrative); " +
+          "2) definition of done (concrete, measurable); 3) information requirement (none/useful/required); " +
+          "4) extract subject/topic if academic, otherwise leave blank. " +
+          "Return strict JSON: {taskType, goal, infoRequirement, subject?, topic?}" },
+        { role: "user", content: `Title: "${task.title}"\nWhy: "${task.why}"\nSource: ${task.source}\n\n` +
+          (task.sourceDetail ? `Details: "${task.sourceDetail.slice(0, 500)}"` : "") },
+      ],
+    }));
+    const textContent = res.choices[0]?.message?.content || "";
+    const out = firstJson<any>(textContent);
+    if (!out) return task;
+
+    const validTaskTypes: TaskType[] = [
+      "learn_understand", "review", "practice", "homework_problem_set",
+      "write", "research", "create", "prepare_assessment", "project", "administrative"
+    ];
+    const taskType: TaskType = validTaskTypes.includes(out.taskType) ? out.taskType : "administrative";
+    const infoRequirement: InfoRequirement = ["none", "useful", "required"].includes(out.infoRequirement)
+      ? out.infoRequirement : "useful";
+
+    return {
+      ...task,
+      taskType: task.taskType || taskType,
+      goal: task.goal || (out.goal ? String(out.goal).slice(0, 250) : undefined),
+      infoRequirement: task.infoRequirement || infoRequirement,
+      subject: task.subject || (out.subject ? String(out.subject).slice(0, 60) : undefined),
+      topic: task.topic || (out.topic ? String(out.topic).slice(0, 80) : undefined),
+    };
+  } catch {
+    return task; // on error, return task as-is
+  }
 }
 
 /**
@@ -3877,7 +4271,10 @@ export async function writeStepsFromContext(
           `normal, GOOD outcome when a task is simple.\n\n` +
           `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
           `graded/learning work itself as if it were already done or as Otto's job; that work always stays theirs. ` +
-          `Every item must be directly about "${task.title}".\n\n` +
+          `Every item must be directly about "${task.title}". ` +
+          `NEVER write a step about: reconnecting tools, enabling create/write tools, plan-only mode, ` +
+          `re-running the task, opening Settings to add a tool, or anything else that describes Otto's own ` +
+          `internal state — those are never the student's job and will be silently removed.\n\n` +
           `Return ONLY this JSON: {"isBigProject": true|false, "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy"|"medium"|"hard", "targetDate": "YYYY-MM-DD" ` +
           `(big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only), "url": "..." ` +
           `(ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary ` +
@@ -3915,7 +4312,8 @@ export async function writeStepsFromContext(
         };
       }), bigProject ? 8 : 6);
     const gated = bigProject ? steps : dropTrivialSteps(steps);
-    return gated.length ? gated : fallbackSteps;
+    const cleaned = dropProcessComplaintSteps(gated);
+    return cleaned.length ? cleaned : fallbackSteps;
   } catch { return fallbackSteps; }
 }
 

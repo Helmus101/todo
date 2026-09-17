@@ -743,6 +743,9 @@ export interface TaskStep {
   checkpoint?: string;
   /** Estimated step difficulty: easy, medium, hard. */
   difficulty?: "easy" | "medium" | "hard";
+  /** Stage 13: checkpoint evaluation result — whether this step's "doneWhen" condition was actually met.
+   *  Drives stage 14 (adaptive replanning): if false and multiple steps fail, trigger step regeneration. */
+  checkpointPassed?: boolean;
 }
 
 /** A reviewed message/invite the agent prepared (a Gmail draft / a composed Slack message / a calendar event

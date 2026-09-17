@@ -15,7 +15,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -1465,8 +1465,23 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
     step.done = done;
     step.doneAt = done ? new Date().toISOString() : undefined;
     if (result !== undefined) step.result = result;
+    // Stage 13: Checkpoint evaluation — did this step actually achieve its "doneWhen" goal?
+    if (done && step.doneWhen) {
+      const checkpointPassed = evaluateCheckpoint(step, result);
+      if (checkpointPassed !== undefined) step.checkpointPassed = checkpointPassed;
+    }
     task.updatedAt = new Date().toISOString();
     if (done && req.session.user) void recordMetric(req.session.user, "task_step_completed", 1, task.source || "n/a");
+    // Stage 14: Adaptive replanning — if 2+ checkpoints fail, flag for re-planning
+    if (done && task.steps && needsAdaptiveReplan(task.steps) && req.session.user) {
+      void recordEvent(req.session.user, "checkpoint_failures_detected", { taskId: id, message: "Multiple step checkpoints failed — consider re-planning this task" });
+    }
+    // Stage 17: Outcome persistence — compute and store what worked/didn't for this task
+    const outcome = computeTaskOutcome(task);
+    if (outcome.checkpointsFailed > 0 && req.session.user) {
+      const failureList = Object.keys(outcome.failurePatterns).join(", ");
+      void recordEvent(req.session.user, "task_outcome_computed", { taskId: id, message: `${outcome.checkpointsPassed}/${outcome.checkpointsTotal} checkpoints passed; struggled with: ${failureList}` });
+    }
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e: any) { reportError("tasks-step-done", e); res.status(500).json({ error: e?.message || "Couldn't update the step — try again." }); }

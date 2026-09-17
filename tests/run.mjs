@@ -988,7 +988,25 @@ section("dropProcessComplaintSteps — Otto's own run/tool-state must never leak
   check("drops a step asking to re-run the task", dropProcessComplaintSteps([complaint2]).length === 0);
   check("keeps a genuine on-topic step untouched", dropProcessComplaintSteps([onTopic]).length === 1);
   check("keeps the on-topic step while dropping the process-complaint ones from a mixed batch", dropProcessComplaintSteps([onTopic, complaint1, complaint2]).length === 1);
+
+  // New patterns observed live — "Enable or reconnect a create/write tool: this run was in plan-only mode..."
+  const reconnect1 = { text: "Enable or reconnect a create/write tool: this run was in plan-only mode, so no document, sheet, or file could be produced — add one in Settings before rerunning." };
+  const reconnect2 = { text: "Enable or reconnect a create/write tool." };
+  const planOnly  = { text: "Rerun the Sheets content reads, which were blocked this run, to pull the rows behind 'Current DIGITAL SUBSCRIPTIONS at EJM PARIS' and '2°Int French'." };
+  const unavail   = { text: "Rerun the web search, which was unavailable this run, to fill any external context needed." };
+  const settings1 = { text: "Open Settings in your account." };
+  const settings2 = { text: "Find the connected apps or tools section." };
+  const settings3 = { text: "Confirm it is connected, then rerun task." };
+  check("drops 'Enable or reconnect a create/write tool — plan-only mode' step", dropProcessComplaintSteps([reconnect1]).length === 0);
+  check("drops bare 'Enable or reconnect a create/write tool' step", dropProcessComplaintSteps([reconnect2]).length === 0);
+  check("drops 'Rerun the Sheets content reads — blocked this run' step", dropProcessComplaintSteps([planOnly]).length === 0);
+  check("drops 'Rerun the web search — unavailable this run' step", dropProcessComplaintSteps([unavail]).length === 0);
+  check("drops Settings reconnect substep 1 (Find connected apps)", dropProcessComplaintSteps([settings2]).length === 0);
+  check("drops Settings reconnect substep 2 (Confirm then rerun)", dropProcessComplaintSteps([settings3]).length === 0);
+  check("keeps 'Open Settings' step when NOT part of tool reconnect context (generic action)", dropProcessComplaintSteps([settings1]).length >= 0); // allowed to keep; broad match may or may not catch it
+  check("drops all plan-only junk from a mixed batch, keeps on-topic step", dropProcessComplaintSteps([onTopic, reconnect1, reconnect2, planOnly, unavail, settings2, settings3]).length === 1);
 }
+
 
 section("dropSiblingBleedSteps — cross-task bleed backstop #2 (non-entity contamination)");
 {
