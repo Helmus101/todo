@@ -1098,8 +1098,17 @@ export function validateThemeTokens(raw: unknown): ThemeTokens {
 // Number() has no idea what to do with "/" and returns NaN for it, so a numerically exact fraction answer
 // ("7/2" for a correct answer of 3.5, or vice versa) was marked wrong outright — the format instructions
 // promised something the checker never actually implemented.
+// Math keyboards, autocorrect, and copy-paste from tools like Desmos/Wolfram Alpha commonly produce a
+// Unicode minus sign (−, U+2212) or a dash (–/—) instead of the plain ASCII hyphen-minus the regexes below
+// require — Number() and every regex here return NaN/no-match on those, silently marking a numerically
+// correct answer wrong. makePracticeProblem's own prompt (server/claude.ts) tells the student to "use a
+// normal minus sign" as a workaround, but that's a warning, not a fix — normalize the common variants to
+// ASCII '-' before any parsing below so a student typing a real minus sign is never marked wrong for it.
+function normalizeMinus(s: string): string {
+  return s.replace(/[−‐-―－]/g, "-");
+}
 function parseNumericOrFraction(s: string): number {
-  const cleaned = s.replace(/,/g, "");
+  const cleaned = normalizeMinus(s).replace(/,/g, "");
   const direct = Number(cleaned);
   if (Number.isFinite(direct)) return direct;
   const frac = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
