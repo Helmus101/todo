@@ -4557,6 +4557,21 @@ async function decideArtifact(
     if (out.note) { const r = makeNote(out.note); if ("note" in r) note = r.note; }
     if (out.flashcards) { const r = makeDeck(out.flashcards); if ("deck" in r) flashcards = r.deck; }
     if (out.quiz) { const r = makeQuiz(out.quiz); if ("quiz" in r) quiz = r.quiz; }
+
+    // Fallback: study tasks MUST have artifacts, even if model declined to create them
+    // This ensures "Revise figures de style" always gets a study guide, not just steps
+    const isStudyTask = ["learn_understand", "review", "practice", "prepare_assessment"].includes(tt || "");
+    if (isStudyTask && !note && !flashcards && !quiz) {
+      // Create a minimal study guide from the steps and context
+      const guideBody = `# Study Guide: ${task.title}\n\n` +
+        (task.goal ? `**Goal:** ${task.goal}\n\n` : "") +
+        `## Key Points\n` +
+        (context.slice(0, 500) || "No context gathered yet — complete the research steps to build this guide.") +
+        `\n\n## Practice Steps\n${steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n")}`;
+      const noteR = makeNote({ title: `Study Guide: ${task.title.slice(0, 50)}`, body: guideBody });
+      if ("note" in noteR) note = noteR.note;
+    }
+
     return { note, flashcards, quiz, tokens };
   } catch { return {}; }
 }
