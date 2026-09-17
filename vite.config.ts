@@ -30,6 +30,7 @@ export default defineConfig(({ mode }) => {
     build: { outDir: "dist" },
     server: {
       host: true, // bind 0.0.0.0 so the preview proxy can reach the dev server
+      allowedHosts: true, // accept the preview proxy's external hostname
       port: 5273,
       strictPort: true, // fail loudly instead of silently moving to another port
       proxy: {

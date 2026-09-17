@@ -326,7 +326,11 @@ async function requireAuthAsync(req: express.Request, res: express.Response, nex
   // something a forged cross-site request can induce).
   const hadToken = !!req.session.csrfToken;
   if (!hadToken) req.session.csrfToken = randomBytes(24).toString("hex");
-  if (hadToken && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+  // In dev mode the CSRF self-heal (peekSessionCsrfToken) can't bypass the in-memory session store's
+  // staleness — tsx watch restarts wipe all sessions, and without Supabase there's nothing to peek. The
+  // sameSite=lax cookie still provides basic CSRF defense in dev, so skip the token check entirely
+  // outside production rather than 403-ing every routine background call (pronote/touch, /api/metrics).
+  if (PROD && hadToken && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     const header = req.headers[CSRF_HEADER];
     if (header !== req.session.csrfToken) {
       // Cross-instance staleness self-heal: makeSessionStore's own GET_CACHE_TTL_MS (server/store.ts, 3min

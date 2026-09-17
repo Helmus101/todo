@@ -6,10 +6,12 @@ import { WritingWorkspace, ResearchWorkspace, ProblemSolvingWorkspace } from "./
 interface StudyModeProps {
   task: WebTask;
   onExit: () => void;
+  onTaskUpdate?: (u: WebTask) => void;
   userId?: string;
+  language?: "fr" | "en";
 }
 
-export function StudyMode({ task, onExit, userId }: StudyModeProps) {
+export function StudyMode({ task, onExit, onTaskUpdate, userId, language }: StudyModeProps) {
   const [sessionState, setSessionState] = useState<StudyModeState>("idle");
   const [session, setSession] = useState<StudySession | null>(null);
   const [profile, setProfile] = useState<StudyProfile | null>(null);
@@ -668,12 +670,16 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
     try {
       const response = await api.chat(task.id, message);
       setAiChat([...newChat, { role: "assistant" as const, text: response.chat?.[response.chat.length - 1]?.text || "I couldn't process that request." }]);
-    } catch (e) {
-      setAiChat([...newChat, { role: "assistant" as const, text: "Sorry, something went wrong. Please try again." }]);
+    } catch (e: any) {
+      // Keep the user's message (newChat already includes it) — never delete chat history on error.
+      const errMsg = e?.status === 404
+        ? (language === "en" ? "This task's data isn't loaded on the server yet — try refreshing the page, then ask again." : "Les données de cette tâche ne sont pas encore chargées sur le serveur — rafraîchis la page, puis redemande.")
+        : (language === "en" ? "Otto couldn't reply just now — try again in a moment." : "Otto n'a pas pu répondre tout de suite — réessaie dans un instant.");
+      setAiChat([...newChat, { role: "assistant" as const, text: errMsg }]);
     } finally {
       setAiLoading(false);
     }
-  }, [task.id, aiChat]);
+  }, [task.id, aiChat, language]);
 
   const handleAiOption = useCallback((option: string) => {
     const optionMessages: Record<string, string> = {

@@ -1,0 +1,15 @@
+services:
+  app:
+    image: node:24-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    ports:
+      - "3000:5273"
+    environment:
+      # Vite >= 6.1 appends this to its allowedHosts so the preview proxy can reach the dev server.
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+      - NODE_ENV=development
+    command: sh -c "npm install && npm run dev"
+    stdin_open: true
+    tty: true
