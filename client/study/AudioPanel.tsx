@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { AUDIO_OPTIONS } from "./StudyMode.tsx";
 import { toSpotifyEmbedUrl } from "./spotify.ts";
+import { useSmClose, SmSurface } from "../ui.tsx";
 
 interface AudioPanelProps {
   audioType: string;
@@ -26,11 +27,12 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
     setSpotifyInput("");
     onSetSpotify(embed);
   };
+  const { closing, doClose } = useSmClose(onClose, 240);
   return (
-    <div className="sm-drawer sm-drawer-audio">
+    <SmSurface variant="drawer" closing={closing} className="sm-drawer sm-drawer-audio">
       <div className="sm-drawer-header">
         <span>AUDIO</span>
-        <button className="sm-drawer-close" onClick={onClose}>×</button>
+        <button className="sm-drawer-close" onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         <div className="sm-audio-tracks">
@@ -130,6 +132,6 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
           </button>
         )}
       </div>
-    </div>
+    </SmSurface>
   );
 }

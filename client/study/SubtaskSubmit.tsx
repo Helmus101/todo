@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { SmSurface, SmBackdrop } from "../ui.tsx";
 
 interface SubtaskSubmitProps {
   stepText: string;
@@ -11,10 +12,21 @@ interface SubtaskSubmitProps {
 export function SubtaskSubmit({ stepText, stepIndex, totalSteps, onSubmit, onCancel }: SubtaskSubmitProps) {
   const [status, setStatus] = useState<"completed" | "partial" | "stuck" | null>(null);
   const [note, setNote] = useState("");
+  // Both exits (Cancel and a real Submit) dismiss back into the same Study Mode screen — unlike
+  // EndSessionModal's "End session" (which navigates away), there's no reason for either of these to skip
+  // the exit animation, so both route through the same closing-then-unmount timing.
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const doClose = useCallback((after: () => void) => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    setTimeout(after, 200);
+  }, []);
 
   return (
-    <div className="sm-modal-backdrop">
-      <div className="sm-modal">
+    <SmBackdrop closing={closing} className="sm-modal-backdrop">
+      <SmSurface variant="modal" closing={closing} className="sm-modal">
         <p className="sm-modal-step-label">Step {stepIndex + 1} of {totalSteps}</p>
         <h2>{stepText}</h2>
         <p className="sm-modal-sub">How did it go?</p>
@@ -51,16 +63,16 @@ export function SubtaskSubmit({ stepText, stepIndex, totalSteps, onSubmit, onCan
         )}
 
         <div className="sm-modal-actions">
-          <button className="sm-btn sm-btn-ghost" onClick={onCancel}>Cancel</button>
+          <button className="sm-btn sm-btn-ghost" onClick={() => doClose(onCancel)}>Cancel</button>
           <button
             className="sm-btn sm-btn-primary"
             disabled={!status}
-            onClick={() => status && onSubmit(status, note)}
+            onClick={() => status && doClose(() => onSubmit(status, note))}
           >
             Submit
           </button>
         </div>
-      </div>
-    </div>
+      </SmSurface>
+    </SmBackdrop>
   );
 }

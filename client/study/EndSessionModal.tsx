@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSmClose, SmSurface, SmBackdrop } from "../ui.tsx";
 
 interface EndSessionModalProps {
   completedSteps: number;
@@ -17,10 +18,14 @@ export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTim
   const [finished, setFinished] = useState("");
   const [confusing, setConfusing] = useState("");
   const [nextStep, setNextStep] = useState("");
+  // "Continue studying" dismisses back into the session (this modal's real "close") — animate it.
+  // "End session" navigates away to a different screen entirely, where this exit motion would never be
+  // seen, so it stays immediate rather than adding a pointless delay before the real transition starts.
+  const { closing, doClose: doContinue } = useSmClose(onContinue, 200);
 
   return (
-    <div className="sm-modal-backdrop">
-      <div className="sm-modal">
+    <SmBackdrop closing={closing} className="sm-modal-backdrop">
+      <SmSurface variant="modal" closing={closing} className="sm-modal">
         <h2>End study session?</h2>
         <p className="sm-modal-sub">Your environment will be saved exactly as it is.</p>
 
@@ -53,7 +58,7 @@ export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTim
         </div>
 
         <div className="sm-modal-actions">
-          <button className="sm-btn sm-btn-ghost" onClick={onContinue}>Continue studying</button>
+          <button className="sm-btn sm-btn-ghost" onClick={doContinue}>Continue studying</button>
           <button
             className="sm-btn sm-btn-danger"
             onClick={() => onEnd({
@@ -65,7 +70,7 @@ export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTim
             End session
           </button>
         </div>
-      </div>
-    </div>
+      </SmSurface>
+    </SmBackdrop>
   );
 }

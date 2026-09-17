@@ -108,6 +108,15 @@
   --hover-wash: rgba(0, 0, 0, 0.04);
   --bg-rgb: 245, 245, 247;
   --glass-border: rgba(0, 0, 0, 0.06);
+  /* Named blur tiers, per §12 "bigger surfaces read as thicker" — these already matched the app's actual
+     usage (a small pill toggle sat at ~10-12px, the main toolbar/task modal at 20px, the biggest full-height
+     sheets/drawers at 24px) before being tokenized here; this just gives that existing hierarchy names so
+     new surfaces pick a tier instead of typing a fresh px value. A dimming SCRIM (the plain dark overlay
+     behind onboarding, `.onboard-overlay`) is deliberately NOT one of these tiers — it's not a material
+     surface carrying content, just a soft dim, so it keeps its own lighter one-off value. */
+  --blur-sm: 12px;   /* chips, small pill toggles */
+  --blur: 20px;      /* standard toolbar/modal/sheet */
+  --blur-lg: 24px;   /* full-height drawers/sheets — the heaviest, most structural surfaces */
   
   /* System Fonts - per §15 default to platform fonts */
   --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Text', 'SF Pro Display', "Segoe UI", Roboto, sans-serif;
@@ -268,10 +277,26 @@ input:focus, textarea:focus {
 /* Apple design §14 — prefers-reduced-transparency: make glass surfaces solid so text is always
    legible, even for users with visual processing differences that struggle with blur effects. */
 @media (prefers-reduced-transparency: reduce) {
-  .topbar, .sidebar, .sm-header, .sm-bottombar, .task-modal-overlay, .bar {
+  .topbar, .sidebar, .sm-header, .sm-bottombar, .task-modal-overlay, .bar,
+  .sm-modal-backdrop, .sm-modal, .sm-drawer, .task-modal {
     background: var(--surface) !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* Apple design §14 — prefers-contrast: more. Every translucent/glass surface above gets a near-solid
+   background plus a real, visible border here instead of relying on blur+opacity to separate it from
+   what's behind it — the same surfaces prefers-reduced-transparency already solidifies, since both
+   preferences are asking for the same thing (less reliance on a soft visual effect to read the UI), just
+   for a different reason (contrast sensitivity vs. motion/visual-processing). */
+@media (prefers-contrast: more) {
+  .topbar, .sidebar, .sm-header, .sm-bottombar, .task-modal-overlay, .bar,
+  .sm-modal-backdrop, .sm-modal, .sm-drawer, .task-modal {
+    background: var(--surface) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    border-color: var(--ink-3) !important;
   }
 }
 
@@ -391,8 +416,8 @@ input:focus, textarea:focus {
      surface, not just a slightly-translucent bar. rgba(var(--bg-rgb), 0.82) tracks the theme token so
      this is never wrong in dark mode. Bright top edge = light catching the material (§12). */
   background: rgba(var(--bg-rgb), 0.82);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(var(--blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
   border-bottom: 1px solid rgba(var(--bg-rgb), 0.4);
   /* Apple Design §12 — animate blur radius and scale together for materialization effect */
   transition: backdrop-filter var(--duration-base) var(--ease-spring), background var(--duration-base) var(--ease-spring);
@@ -407,8 +432,8 @@ input:focus, textarea:focus {
      so it sits slightly more opaque (0.88) than the topbar chrome (0.82). A heavier material separates
      the nav layer from the content plane without a harsh border-only treatment. */
   background: rgba(var(--bg-rgb), 0.88);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(var(--blur-sm)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--blur-sm)) saturate(160%);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -807,8 +832,8 @@ input:focus, textarea:focus {
   border: 1px solid var(--line-glass);
   box-shadow: var(--shadow-card);
   /* Apple Design §12 — glass material with stronger blur for larger surfaces */
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(var(--blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
   /* Apple Design §4 — spring animation with staggered delay */
   animation: appleRise var(--duration-spring) var(--ease-spring) 0.05s backwards;
   /* Apple Design §4 — spring transitions for interactive elements */
@@ -862,7 +887,7 @@ input:focus, textarea:focus {
 .toast {
   display: flex; align-items: center; gap: var(--space-3);
   background: var(--surface-glass); border: 1px solid var(--line);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(var(--blur-sm));
   border-radius: var(--radius); padding: 12px 16px; margin-bottom: var(--space-4);
   font-size: var(--text-base); line-height: 1.5; color: var(--ink);
   box-shadow: var(--shadow-sm);
@@ -906,7 +931,7 @@ input:focus, textarea:focus {
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
   /* Apple Design §12 — glass material */
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(var(--blur-sm));
   /* Apple Design §4 — spring transitions for interactive elements */
   transition: border-color var(--duration-fast) var(--ease-spring), box-shadow var(--duration-fast) var(--ease-spring), transform var(--duration-base) var(--ease-spring);
 }
@@ -936,7 +961,7 @@ input:focus, textarea:focus {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   /* Apple Design §12 — glass material */
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(var(--blur-sm));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1020,8 +1045,11 @@ input:focus, textarea:focus {
 .task-modal-overlay {
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center;
   padding: 0; background: rgba(16, 19, 23, 0.42);
-  /* Apple Design §4 — spring animation for modal entrance */
-  animation: fadeIn var(--duration-base) var(--ease-spring); overflow-x: hidden; overflow-y: auto; height: 100dvh;
+  /* Apple Design §3/§4 — enter/exit now driven by TaskModal's own `motion.div` (client/ui.tsx), not a CSS
+     `animation`: a real, interruptible spring instead of a fixed-duration keyframe timeline, so grabbing/
+     re-triggering the close mid-open (or vice versa) continues smoothly from the LIVE value instead of
+     restarting or snapping. See TaskModal's own comment for the spring config. */
+  overflow-x: hidden; overflow-y: auto; height: 100dvh;
   /* Mobile scroll feel: momentum scrolling (iOS Safari still needs the -webkit prefix for it) and
      overscroll-behavior so scrolling past the top/bottom of the modal doesn't chain into the page behind
      it — a full-bleed modal rubber-banding the body underneath is the single most common "janky" mobile
@@ -1039,8 +1067,9 @@ input:focus, textarea:focus {
   padding-bottom: calc(20px + env(safe-area-inset-bottom));
   padding-left: calc(20px + env(safe-area-inset-left));
   padding-right: calc(20px + env(safe-area-inset-right));
-  /* Apple Design §4 — spring animation for modal entrance */
-  animation: modalPop var(--duration-base) var(--ease-spring);
+  /* Apple Design §3/§4 — see .task-modal-overlay's own comment just above: motion.div in TaskModal owns
+     this surface's enter/exit now (translateY + scale + blur, same materialize feel as before, just a real
+     spring instead of @keyframes modalPop/modalOut, which are retired). */
 }
 /* A note/deck's own capped-height inner scrollbox made sense in a small floating desktop card — full-bleed
    at every width it just produces a second, confusingly independent scroll region. Let the single outer
@@ -1062,19 +1091,11 @@ input:focus, textarea:focus {
 /* Apple Design §12 "materialize, don't just fade" — glass/blur surfaces animate blur radius + scale +
    translateY together on enter so the surface reads as a real material arriving, not a flat fade-in.
    The blur collapses as the panel settles (it was blurry in transit, sharp when landed), which mirrors
-   how a physical surface coming into focus feels. Closing is the symmetric reverse. */
-@keyframes modalPop {
-  from { opacity: 0; transform: translateY(12px) scale(0.97); filter: blur(4px); }
-  to   { opacity: 1; transform: none; filter: blur(0); }
-}
-/* Apple Design §4 — spring animation for modal exit */
-.task-modal-overlay.closing { animation: fadeOut var(--duration-base) var(--ease-spring) forwards; pointer-events: none; }
-.task-modal.closing { animation: modalOut var(--duration-base) var(--ease-spring) forwards; }
-@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
-@keyframes modalOut {
-  from { opacity: 1; transform: none; filter: blur(0); }
-  to   { opacity: 0; transform: translateY(8px) scale(0.98); filter: blur(2px); }
-}
+   how a physical surface coming into focus feels. Closing is the symmetric reverse. Formerly the
+   `modalPop`/`modalOut` @keyframes pair below this comment — retired in favor of TaskModal's own
+   `motion.div` (client/ui.tsx), a real interruptible spring rather than a fixed-duration CSS timeline;
+   this comment (and the effect it describes) still applies, just driven from JS now. */
+.task-modal-overlay.closing { pointer-events: none; }
 /* A note/deck opened FROM an already-open task modal — a popup ON TOP OF a popup, so it always stays a
    small centered card (never the mobile full-bleed treatment below) and sits visually above the primary
    modal: a higher z-index, and a second backdrop layer so the primary modal reads as "beneath" it. Every
@@ -1142,7 +1163,7 @@ input:focus, textarea:focus {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 12px; padding: 24px; border: 1px solid var(--line-glass); border-radius: var(--radius-lg, 20px); background: var(--surface);
   backface-visibility: hidden; box-shadow: var(--shadow-card);
-  backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(var(--blur)) saturate(180%); -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
   transition: box-shadow var(--duration-base) var(--ease);
 }
 .deck-card-3d:hover .deck-card-face { box-shadow: var(--shadow-card-hover); }
@@ -1815,8 +1836,8 @@ input:focus, textarea:focus {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
   /* Apple Design §12 — glass material */
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(var(--blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
   /* Apple Design §4 — spring transitions for interactive elements */
   transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
@@ -2119,8 +2140,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-pop);
   /* Apple Design §12 — glass material */
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(var(--blur-lg)) saturate(190%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(190%);
   padding: 32px 28px;
   display: flex;
   flex-direction: column;
@@ -2162,8 +2183,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   padding: 0 clamp(20px, 5vw, 48px);
   background: var(--bar);
   /* Apple Design §12 — glass material */
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(var(--blur-lg)) saturate(190%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(190%);
   border-bottom: 1px solid var(--line-soft);
   /* Apple Design §4 — spring transitions for scroll effects */
   transition: background var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease-spring);
@@ -2210,7 +2231,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   cursor: pointer;
   /* Apple Design §1 — instant feedback on interaction */
   transition: all var(--duration-instant) var(--ease-spring);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(var(--blur-sm));
 }
 @media (hover: hover) {
   .lang-toggle:hover {
@@ -2261,7 +2282,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-pill);
   background: var(--surface-glass);
   border: 1px solid var(--line-glass);
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(var(--blur-sm));
   box-shadow: var(--shadow-sm);
   font-size: 12.5px;
   font-weight: var(--weight-semibold);
@@ -2340,7 +2361,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   height: 48px;
   border: 1px solid var(--line);
   background: var(--surface-glass);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(var(--blur-sm));
 }
 
 .fineprint {
@@ -2407,8 +2428,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
   /* Apple Design §12 — glass material */
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(var(--blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
   overflow: hidden;
   /* Apple Design §4 — spring transitions for interactive elements */
   transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
@@ -4330,8 +4351,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   z-index: 1010;
   background: var(--surface-glass);
   border-bottom: 1px solid var(--line-glass);
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(var(--blur-lg)) saturate(190%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(190%);
   transition: opacity 0.4s var(--ease);
 }
 /* Chrome fades to near-invisible after a few seconds of no input while actively studying */
@@ -4630,8 +4651,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   padding: var(--space-2) var(--space-5);
   background: var(--surface-glass);
   border-top: 1px solid var(--line-glass);
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(var(--blur-lg)) saturate(190%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(190%);
   transition: opacity 0.4s var(--ease);
 }
 .sm-bottombar-left,
@@ -4696,9 +4717,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   background: var(--surface);
   border-left: 1px solid var(--line-glass);
   box-shadow: var(--shadow-pop);
-  animation: smDrawerSlideIn 0.32s var(--ease-spring);
+  /* Apple Design §3/§4/§7 — enter/exit now owned by SmSurface's `motion.div` (client/ui.tsx): a real
+     interruptible spring that slides in AND out along the same right-hand path (§7), retiring the
+     `smDrawerSlideIn` @keyframes below, which only ever played forward. */
 }
-@keyframes smDrawerSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
 .sm-drawer-header {
   display: flex;
   align-items: center;
@@ -5322,8 +5344,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   place-items: center;
   padding: var(--space-5);
   background: rgba(16, 19, 23, 0.45);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: blur(var(--blur)) saturate(180%);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
 }
 .sm-modal {
   width: min(520px, 100%);
@@ -5332,12 +5354,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-xl, 24px);
   background: var(--surface);
   box-shadow: var(--shadow-pop);
-  animation: smModalIn 0.28s var(--ease-spring) both;
-}
-/* Same materialize pattern as modalPop — blur collapses as panel settles (§12). */
-@keyframes smModalIn {
-  from { opacity: 0; transform: scale(0.95) translateY(8px); filter: blur(4px); }
-  to   { opacity: 1; transform: none; filter: blur(0); }
+  /* Apple Design §3/§4/§12 — enter/exit now owned by SmSurface's `motion.div` (client/ui.tsx), same
+     materialize (blur+scale+translateY) treatment as before, retiring the one-shot `smModalIn` @keyframes
+     below in favor of a real interruptible spring. */
 }
 .sm-modal h2 {
   margin-top: var(--space-2);
@@ -5421,8 +5440,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-xl, 30px);
   background: var(--surface-glass);
   border: 1px solid var(--line-glass);
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(var(--blur-lg)) saturate(190%);
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(190%);
   box-shadow: var(--shadow-pop);
 }
 .sm-break-label {

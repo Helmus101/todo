@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { ArtifactType, WorkspaceTemplate } from "./StudyTypes.ts";
+import { useSmClose, SmSurface } from "../ui.tsx";
 
 interface ToolsDrawerProps {
   template: WorkspaceTemplate;
@@ -48,11 +49,12 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
     setLinkUrl("");
   };
 
+  const { closing, doClose } = useSmClose(onClose, 240);
   return (
-    <div className="sm-drawer">
+    <SmSurface variant="drawer" closing={closing} className="sm-drawer">
       <div className="sm-drawer-header">
         <span>TOOLS</span>
-        <button className="sm-drawer-close" onClick={onClose}>×</button>
+        <button className="sm-drawer-close" onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         <div className="sm-tools-divider">Open a Google Doc, Sheet, or Slides</div>
@@ -75,7 +77,7 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
             <button
               key={tool.type}
               className="sm-tool-btn"
-              onClick={() => { onAddTool(tool.type); onClose(); }}
+              onClick={() => { onAddTool(tool.type); doClose(); }}
             >
               <span className="sm-tool-icon">{tool.icon}</span>
               <span className="sm-tool-label">{tool.label}</span>
@@ -88,7 +90,7 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
                 <button
                   key={tool.type}
                   className="sm-tool-btn sm-tool-btn-other"
-                  onClick={() => { onAddTool(tool.type); onClose(); }}
+                  onClick={() => { onAddTool(tool.type); doClose(); }}
                 >
                   <span className="sm-tool-icon">{tool.icon}</span>
                   <span className="sm-tool-label">{tool.label}</span>
@@ -116,6 +118,6 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onSetBackground(f); e.target.value = ""; }}
         />
       </div>
-    </div>
+    </SmSurface>
   );
 }

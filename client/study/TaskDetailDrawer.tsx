@@ -1,5 +1,5 @@
 import type { WebTask } from "../../shared/types.ts";
-import { withInlineLinks, stripStrayMarkdown, stripHtml } from "../ui.tsx";
+import { withInlineLinks, stripStrayMarkdown, stripHtml, useSmClose, SmSurface } from "../ui.tsx";
 
 interface TaskDetailDrawerProps {
   task: WebTask;
@@ -20,11 +20,12 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
   const doneCount = steps.filter(s => s.done).length;
   const isHandled = task.status === "done" || task.status === "dismissed";
 
+  const { closing, doClose } = useSmClose(onClose, 240);
   return (
-    <div className="sm-drawer sm-drawer-task">
+    <SmSurface variant="drawer" closing={closing} className="sm-drawer sm-drawer-task">
       <div className="sm-drawer-header">
         <span>TASK</span>
-        <button className="sm-drawer-close" onClick={onClose}>×</button>
+        <button className="sm-drawer-close" onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         <h3 className="sm-task-detail-title">{stripStrayMarkdown(task.title)}</h3>
@@ -84,6 +85,6 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
           </button>
         ) : null}
       </div>
-    </div>
+    </SmSurface>
   );
 }

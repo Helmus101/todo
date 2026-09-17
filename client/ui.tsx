@@ -8,6 +8,7 @@
  */
 import { useEffect, useState, useCallback, useRef, useContext, createContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { motion, useReducedMotion } from "motion/react";
 import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
 import { canonStatus, practiceAnswerMatches, LEITNER_BOX_LABEL } from "../shared/types.ts";
 import { api } from "./api.ts";
@@ -925,8 +926,11 @@ const modalStack: (() => void)[] = [];
 export function TaskModal({ onClose, children, nested, title }: { onClose: () => void; children: ReactNode; nested?: boolean; title?: string }) {
   // Closing used to unmount instantly (a hard cut, no exit motion) while opening got a full pop-in —
   // asymmetric and the one modal-close moment in the app that read as unpolished. Mirror the entrance:
-  // play a quick close animation, THEN unmount (matches the CSS durations below exactly).
+  // play a quick close animation, THEN unmount. The animation itself is now a real `motion.div` spring
+  // (Apple Design §3/§4 — see the JSX below) rather than a fixed-duration CSS `animation`, so this is
+  // strictly a "when do we finally unmount" timer, not what the exit LOOKS like.
   const [closing, setClosing] = useState(false);
+  const reduceMotion = useReducedMotion();
   const closingRef = useRef(false);
   const doClose = useCallback(() => {
     if (closingRef.current) return;
@@ -1007,17 +1011,80 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
   }, [nested]);
 
   const L = useLang();
+  // Apple Design §3/§4 — a real spring (critically damped: bounce 0, per the skill's "no overshoot on
+  // something that didn't just carry momentum") reading its CURRENT value on every re-render, instead of a
+  // CSS @keyframes timeline that can only ever play forward from 0%. Concretely: if `closing` flips back to
+  // false mid-exit (nothing does today, but nothing has to stop a future caller from re-showing a modal
+  // instead of unmounting it), `animate` below picks up from wherever the panel actually is on screen and
+  // eases to the new target — no snap, no restart. `initial` only applies on the very first mount, matching
+  // the old animation's one-shot entrance. `useReducedMotion` swaps to a plain opacity cross-fade per §14.
+  const panelMotion = reduceMotion
+    ? { initial: { opacity: 0 }, animate: { opacity: closing ? 0 : 1 }, transition: { duration: 0.15 } }
+    : {
+        initial: { opacity: 0, y: 12, scale: 0.97, filter: "blur(4px)" },
+        animate: closing
+          ? { opacity: 0, y: 8, scale: 0.98, filter: "blur(2px)" }
+          : { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" },
+        transition: { type: "spring" as const, bounce: 0, duration: closing ? 0.22 : 0.32 },
+      };
+  const overlayMotion = reduceMotion
+    ? { initial: { opacity: 0 }, animate: { opacity: closing ? 0 : 1 }, transition: { duration: 0.15 } }
+    : { initial: { opacity: 0 }, animate: { opacity: closing ? 0 : 1 }, transition: { type: "spring" as const, bounce: 0, duration: closing ? 0.22 : 0.32 } };
   return createPortal(
-    <div className={`task-modal-overlay ${nested ? "nested" : ""} ${closing ? "closing" : ""}`} onClick={doClose} role="presentation">
+    <motion.div className={`task-modal-overlay ${nested ? "nested" : ""} ${closing ? "closing" : ""}`} onClick={doClose} role="presentation" {...overlayMotion}>
       {/* aria-label rather than aria-labelledby: the dialog's title lives inside `children` (a note/deck/
           quiz's own <h3>, or TaskFocus's <h2>) in whatever markup that component chooses, so there's no
           reliable element to point an id at from here — the caller passes the same text as a plain string
           instead. Falls back to a generic name so the dialog is never announced completely unlabelled. */}
-      <div ref={panelRef} className={`task-modal ${nested ? "nested" : ""} ${closing ? "closing" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || L("Détails", "Details")} tabIndex={-1}>
+      <motion.div ref={panelRef} className={`task-modal ${nested ? "nested" : ""}`} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title || L("Détails", "Details")} tabIndex={-1} {...panelMotion}>
         <button className={`task-modal-x ${nested ? "nested" : ""}`} onClick={doClose} aria-label={L("Fermer", "Close")}>✕</button>
         {children}
-      </div>
-    </div>,
+      </motion.div>
+    </motion.div>,
     document.body,
+  );
+}
+
+/** Shared closing-then-unmount timer for Study Mode's drawers/modals (AudioPanel, MaterialsDrawer,
+ *  TaskDetailDrawer, ToolsDrawer, EndSessionModal, SubtaskSubmit) — same "play the exit, THEN tell the
+ *  parent to unmount" shape as TaskModal's own `doClose` above, extracted so six leaf components don't each
+ *  reimplement it. These previously had NO exit animation at all (the parent just stopped rendering them
+ *  instantly on close) — asymmetric with their slide/scale entrance, the exact thing TaskModal's own history
+ *  (see its comment above) already called out as reading unpolished. `exitMs` should match the `duration`
+ *  passed to SmSurface below for the same `variant`. */
+export function useSmClose(onClose: () => void, exitMs: number): { closing: boolean; doClose: () => void } {
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const doClose = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    setTimeout(onClose, exitMs);
+  }, [onClose, exitMs]);
+  return { closing, doClose };
+}
+/** The motion.div itself for a Study Mode drawer/modal — pass `useSmClose`'s `closing` flag straight
+ *  through. `variant: "drawer"` slides in from the right (matches the retired `smDrawerSlideIn` keyframe's
+ *  path — Apple Design §7: exit must retrace the SAME path, right, never a different one); `variant:
+ *  "modal"` scales+blurs in place (matches the retired `smModalIn` keyframe). Both critically damped
+ *  (`bounce: 0`) — nothing here is momentum/flick-driven, so no overshoot (§4). `useReducedMotion` swaps to
+ *  a plain opacity cross-fade per §14. */
+export function SmSurface({ variant, closing, className, children, onClick }: { variant: "drawer" | "modal"; closing: boolean; className?: string; children: ReactNode; onClick?: (e: any) => void }) {
+  const reduceMotion = useReducedMotion();
+  const motionProps = reduceMotion
+    ? { initial: { opacity: 0 }, animate: { opacity: closing ? 0 : 1 }, transition: { duration: 0.15 } }
+    : variant === "drawer"
+    ? { initial: { x: "100%" }, animate: { x: closing ? "100%" : "0%" }, transition: { type: "spring" as const, bounce: 0, duration: closing ? 0.24 : 0.32 } }
+    : { initial: { opacity: 0, scale: 0.96, y: 8 }, animate: closing ? { opacity: 0, scale: 0.97, y: 6 } : { opacity: 1, scale: 1, y: 0 }, transition: { type: "spring" as const, bounce: 0, duration: closing ? 0.2 : 0.28 } };
+  return <motion.div className={className} onClick={onClick} {...motionProps}>{children}</motion.div>;
+}
+/** The dimming backdrop behind a Study Mode `variant: "modal"` (EndSessionModal) — a plain opacity
+ *  cross-fade regardless of reduced-motion (a backdrop has no direction/path to preserve, unlike the panel
+ *  it sits behind), synced to the same `closing`/timing as the panel it wraps. */
+export function SmBackdrop({ closing, className, children, onClick }: { closing: boolean; className?: string; children: ReactNode; onClick?: (e: any) => void }) {
+  return (
+    <motion.div className={className} onClick={onClick} initial={{ opacity: 0 }} animate={{ opacity: closing ? 0 : 1 }} transition={{ duration: closing ? 0.2 : 0.28 }}>
+      {children}
+    </motion.div>
   );
 }

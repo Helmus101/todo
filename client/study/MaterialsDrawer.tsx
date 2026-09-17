@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { StudyMaterial } from "./StudyTypes.ts";
+import { useSmClose, SmSurface } from "../ui.tsx";
 
 interface MaterialsDrawerProps {
   materials: StudyMaterial[];
@@ -31,11 +32,12 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
     onAddLink(linkInput.trim(), linkInput.trim());
     setLinkInput("");
   };
+  const { closing, doClose } = useSmClose(onClose, 240);
   return (
-    <div className="sm-drawer">
+    <SmSurface variant="drawer" closing={closing} className="sm-drawer">
       <div className="sm-drawer-header">
         <span>MATERIALS</span>
-        <button className="sm-drawer-close" onClick={onClose}>×</button>
+        <button className="sm-drawer-close" onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         {materials.length === 0 ? (
@@ -82,6 +84,6 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
           </div>
         </div>
       </div>
-    </div>
+    </SmSurface>
   );
 }

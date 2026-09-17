@@ -707,6 +707,13 @@ function isFolderHousekeepingDrift(title: string, steps: { text: string }[]): bo
   if (/\b(organi[sz]e|folder|clean ?up|file management|sort (my|the) files)\b/i.test(title)) return false; // legitimately about this
   return steps.every((s) => FOLDER_HOUSEKEEPING_STEP.test(s.text));
 }
+// A step that describes BUILDING an artifact ("Create a revision note defining X", "Créer une fiche sur Y",
+// "Make a flashcard set covering...") instead of the artifact actually existing — the model has
+// CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ available the whole run, so this content belongs in an artifact
+// THIS run, not left as a to-do for the student (see the ENFORCEMENT nudge above and the check that uses
+// this regex in the submit-review chain). Bilingual (English + French) since step text can be either,
+// depending on the student's language setting.
+const ARTIFACT_DEFERRED_STEP = /\b(create|write|make|build|prepare|draft|cr[ée]er?|[ée]cri(re|s)|faire|pr[ée]parer|r[ée]diger)\b[^.]{0,50}\b(a |an |une? |le |la |les |des? )?(note|brief|fiche|flash[- ]?cards?|deck|cartes?|quiz|questionnaire)\b/i;
 
 // Capitalized single words that are common in step/artifact text but aren't proper-noun ENTITIES worth
 // checking (sentence starters, weekday/month names, Otto's own name, generic time words) — excluded so the
@@ -3156,7 +3163,14 @@ export async function runTask(task: { title: string; why: string; source?: strin
     // …but NOT if we've already bounced a submit this run (finishBacks): that means the model reached a
     // conclusion and is being pushed to actually DO the work (e.g. create the doc it tried to defer) — give
     // it the remaining rounds to comply instead of bailing it into the rescue with the work still undone.
-    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !finishBacks) break;
+    // Same exemption `searchedWeb` already gets (see its own comment) now also applies to genuine connected-
+    // app research (readCalls — Gmail/Calendar/Drive/etc., NOT web_search): observed live, a task that had
+    // done real Gmail research ("Confirmed school context from sent-mail history") but no web_search got cut
+    // off at round 5 mid-way through the write-ENFORCEMENT nudges below, leaving only a steps list that
+    // DESCRIBED the note/flashcard deck it should have created rather than actually creating it. readCalls
+    // was tracked for the empty-plan rejection (hasConnectedApps && readCalls===0 further down) but never
+    // used to widen this exemption — the same "real progress, don't bail early" reasoning applies either way.
+    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !readCalls && !finishBacks) break;
     // Circuit breaker: a run that has already burned the token ceiling stops here — another round only
     // deepens the overspend. The rescue pass below salvages whatever was gathered into an honest result.
     if (overTokenCeiling()) { console.warn(`${new Date().toISOString()} [ai] runTask hit token ceiling (${tokIn + tokOut}) — stopping at round ${i}`); break; }
@@ -3175,7 +3189,20 @@ export async function runTask(task: { title: string; why: string; source?: strin
           `the EXISTING artifact listed above under "ALREADY CREATED FOR THIS TASK" (its id is listed — use ` +
           `an UPDATE/PATCH/APPEND tool with that id) with the requested change. Do NOT create a new one. Do ` +
           `NOT make another read call.`
-        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. If this is academic prep or genuinely needs a document/draft, your NEXT tool call MUST be a create/write tool (CREATE_NOTE for a short brief, CREATE_FLASHCARDS for a drillable deck, GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the task's artifact with the content you already have. Do NOT make another read call. But if this is a logistics/admin task (booking, confirming, buying, scheduling) with nothing worth preserving beyond the steps list, do NOT force a note just to have one — call submit now with steps only.`;
+        : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. Before you do anything ` +
+          `else, THOROUGHLY check whether an artifact is actually needed here — don't default to "just steps": ` +
+          `for academic prep specifically, a step that reads "create/write/make a note/deck/quiz defining X" is ` +
+          `ALMOST NEVER correct as a step — that content should be the artifact you produce THIS run, not a ` +
+          `future action left for the student. Only genuinely wait on a step first (e.g. "check the syllabus for ` +
+          `the exact scope") when you truly cannot produce anything USEFUL without that answer — and even then, ` +
+          `default to still creating a solid general-scope artifact NOW (the well-known figures/terms/facts you ` +
+          `already have real content for) rather than nothing, since a starting deck the student can prune once ` +
+          `the scope narrows beats an empty task. If real academic content is called for, your NEXT tool call ` +
+          `MUST be a create/write tool (CREATE_NOTE for a short brief, CREATE_FLASHCARDS for a drillable deck, ` +
+          `GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the ` +
+          `task's artifact with the content you already have. Do NOT make another read call. But if this is a ` +
+          `logistics/admin task (booking, confirming, buying, scheduling) with nothing worth preserving beyond ` +
+          `the steps list, do NOT force a note just to have one — call submit now with steps only.`;
       messages.push({ role: "user", content: nudge });
     }
     const client = deepseekClient();
@@ -3332,6 +3359,25 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 `do with "${task.title}" — you likely read an unrelated email/doc/thread during research and ` +
                 `turned it into a step. Every step must be about THIS task only; drop anything about a person, ` +
                 `place, or obligation not actually mentioned in this task's own title/details.`;
+            } else if (draft.steps.some((s) => ARTIFACT_DEFERRED_STEP.test(s.text)) && !notesCreated.length && !flashcardsCreated.length && !quizzesCreated.length && canBounce) {
+              // Direct instruction: when planning the breakdown, thoroughly check whether an artifact is
+              // actually needed — don't default to leaving "create the note/deck" as a step. Observed live:
+              // a task researched real content via Gmail ("Confirmed school context... from sent-mail
+              // history") but ended with a step literally reading "Create a revision note or flashcard set
+              // defining each figure de style..." — the model described the artifact instead of building it,
+              // even though CREATE_NOTE/CREATE_FLASHCARDS were available the whole run. This is the same
+              // "wroteAny stayed false" failure the round-based ENFORCEMENT nudge tries to prevent earlier in
+              // the loop, but it's a text-shape check that catches it here too, unconditionally, in case that
+              // nudge didn't land — a step describing artifact creation with no artifact actually made is
+              // never an acceptable final answer.
+              finishBacks++;
+              content = "REJECTED: one of your \"steps\" describes CREATING a note/flashcard deck/quiz as a " +
+                "future action (e.g. \"Create a revision note defining X\") — but no CREATE_NOTE/" +
+                "CREATE_FLASHCARDS/CREATE_QUIZ call actually succeeded this run. If you have real content for " +
+                "it (even a general-scope starting version covering what you already know, before an exact " +
+                "exam scope is confirmed), build it NOW with the right tool — don't leave building it as a " +
+                "step for the student when you have both the tool and the information to just do it. Only " +
+                "keep it as a step if you genuinely have nothing to put in it yet.";
             } else if (/\bfound\b[^.]{0,60}\b(documents?|emails?|files?|spreadsheets?)\b/i.test(`${draft.context} ${(draft.did || []).join(" ")}`) && !draft.links.length && canBounce) {
               // "I found the relevant documents and emails" with nothing in links is a report of work the
               // user can't act on — they have no way to open what was supposedly found.
