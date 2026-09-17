@@ -113,10 +113,17 @@
      override, so in dark mode the topbar stayed near-WHITE against a near-black page. */
   --bar: rgba(250, 250, 250, 0.85);
   --hover-wash: rgba(0, 0, 0, 0.04);
+  /* Raw triplet for bg — same pattern as --accent-rgb — lets glass layers express as rgba(var(--bg-rgb), α)
+     so the material color tracks the theme token rather than being hard-coded light or dark. */
+  --bg-rgb: 247, 247, 245;
   --sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica Neue, Arial, sans-serif;
   --display: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; /* headings use Inter */
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; /* machine output: counts, spend, state */
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* Apple design §15 — optical sizing: Inter ships a variable-font optical size axis; auto tells the
+     browser to activate the right micro-optical corrections at each text size (tighter strokes at large
+     sizes, slightly open counters at small sizes) with zero per-component effort. */
+  font-optical-sizing: auto;
 }
 
 /* Dark mode ships day one — a tool people leave open at 7am and 11pm. Token-level so the whole app adapts.
@@ -135,6 +142,7 @@
     --shadow-card-hover: 0 2px 6px rgba(0, 0, 0, 0.3), 0 24px 48px -28px rgba(0, 0, 0, 0.5);
     --bar: rgba(13, 13, 13, 0.82);
     --hover-wash: rgba(255, 255, 255, 0.06);
+    --bg-rgb: 13, 13, 13;
   }
 }
 
@@ -205,8 +213,38 @@ input, textarea {
 input::placeholder, textarea::placeholder { color: var(--ink-3); }
 input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 
+/* Apple design §14 — reduced-motion ≠ no feedback. Replace vestibular slides/springs with short
+   opacity crossfades so the UI still communicates state changes without triggering motion sensitivity.
+   Durations are kept to 0.01ms (effectively instant) for elements that have no meaningful crossfade
+   equivalent, so they snap cleanly rather than looking broken. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* Surfaces that slide/scale get a graceful opacity crossfade instead */
+  .sidebar,
+  .task-modal, .task-modal-overlay,
+  .sm-header, .sm-bottombar,
+  .sm-modal, .sm-drawer,
+  .week-fab-wrap {
+    transition: opacity 200ms ease !important;
+    transform: none !important;
+    animation: none !important;
+  }
+  /* Spinner stays — it communicates loading state, not motion for motion's sake */
+  .spinner { animation: spin 0.7s linear infinite !important; }
+}
+
+/* Apple design §14 — prefers-reduced-transparency: make glass surfaces solid so text is always
+   legible, even for users with visual processing differences that struggle with blur effects. */
+@media (prefers-reduced-transparency: reduce) {
+  .topbar, .sidebar, .sm-header, .sm-bottombar, .task-modal-overlay, .bar {
+    background: var(--surface) !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 }
 
 /* ─── Brand ────────────────────────────────────────────────────────────────── */
@@ -231,7 +269,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   -webkit-touch-callout: none;
 }
 .btn:hover { background: var(--bg-2); }
-.btn:active { background: var(--line); transform: scale(0.97); }
+/* Apple design §1 — respond on pointer-down, not release. Transform resolves in 100ms (faster than the
+   general --duration-fast) so the press feedback is genuinely instant to the touch. Background and other
+   properties can linger at the normal duration — only the scale needs to be immediate. */
+.btn:active { background: var(--line); transform: scale(0.97); transition: transform 100ms var(--ease), background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn:disabled:active { transform: none; }
 .btn.primary {
@@ -307,10 +348,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   height: calc(52px + env(safe-area-inset-top));
   padding-left: calc(16px + env(safe-area-inset-left));
   padding-right: calc(16px + env(safe-area-inset-right));
-  background: var(--bar);
-  backdrop-filter: blur(14px) saturate(160%);
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  border-bottom: 1px solid var(--line-soft);
+  /* Apple design §12 — glass material: stronger blur + saturate so the chrome reads as a real floating
+     surface, not just a slightly-translucent bar. rgba(var(--bg-rgb), 0.82) tracks the theme token so
+     this is never wrong in dark mode. Bright top edge = light catching the material (§12). */
+  background: rgba(var(--bg-rgb), 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(var(--bg-rgb), 0.4);
 }
 .spacer { flex: 1; }
 
@@ -318,7 +362,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .sidebar {
   width: 240px;
   flex-shrink: 0;
-  background: var(--surface);
+  /* Apple design §12 — heavier material weight for structural regions: sidebar is the frame of the app,
+     so it sits slightly more opaque (0.88) than the topbar chrome (0.82). A heavier material separates
+     the nav layer from the content plane without a harsh border-only treatment. */
+  background: rgba(var(--bg-rgb), 0.88);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -407,13 +456,18 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @media (max-width: 768px) {
   .sidebar {
     position: fixed;
-    left: -240px;
+    /* Apple design §11 — compositor-only properties only. Animating `left` re-triggers layout on every
+       frame; `transform: translateX` runs on the GPU compositor with zero layout cost, giving a smooth
+       60fps slide even on mid-range phones. will-change hints the browser to promote the layer early. */
+    left: 0; /* reset left; position is now handled by transform */
     top: 0;
     z-index: 50;
-    transition: left var(--duration-base) var(--ease);
+    transform: translateX(-100%);
+    transition: transform 0.3s var(--ease-house);
+    will-change: transform;
   }
   .sidebar.open {
-    left: 0;
+    transform: translateX(0);
   }
   .sidebar-toggle {
     display: flex;
@@ -462,7 +516,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    hunting through the task list for it. Opens the SAME TaskModal popup used everywhere else in the
    app (see WeekRailFab) rather than a bespoke popover — a hand-rolled outside-click/Escape popover
    here was unreliable ("loads but doesn't open"). */
-.week-fab-wrap { position: fixed; right: var(--space-4, 16px); bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 30; }
+.week-fab-wrap {
+  position: fixed; right: var(--space-4, 16px); bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 30;
+  animation: fabIn 0.4s var(--ease-bounce) both;
+}
+@keyframes fabIn {
+  from { opacity: 0; transform: scale(0.7) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
 .week-fab {
   display: flex; align-items: center; gap: 6px; padding: 12px 18px;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill, 999px);
@@ -816,11 +877,21 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* The modal renders TaskFocus, which has its own header — the old `.task-modal .card*` overrides that
    stripped collapsed-row chrome (caret, hover, the ✕) are gone with the markup they targeted. The ✕ still
    sits absolutely over the top-right corner, so .tf-title reserves that space via its own right margin. */
-@keyframes modalPop { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
+/* Apple design §12 "materialize, don't just fade" — glass/blur surfaces animate blur radius + scale +
+   translateY together on enter so the surface reads as a real material arriving, not a flat fade-in.
+   The blur collapses as the panel settles (it was blurry in transit, sharp when landed), which mirrors
+   how a physical surface coming into focus feels. Closing is the symmetric reverse. */
+@keyframes modalPop {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); filter: blur(4px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
 .task-modal-overlay.closing { animation: fadeOut 0.16s var(--ease) forwards; pointer-events: none; }
 .task-modal.closing { animation: modalOut 0.16s var(--ease) forwards; }
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
-@keyframes modalOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(0.99); } }
+@keyframes modalOut {
+  from { opacity: 1; transform: none; filter: blur(0); }
+  to   { opacity: 0; transform: translateY(8px) scale(0.98); filter: blur(2px); }
+}
 /* A note/deck opened FROM an already-open task modal — a popup ON TOP OF a popup, so it always stays a
    small centered card (never the mobile full-bleed treatment below) and sits visually above the primary
    modal: a higher z-index, and a second backdrop layer so the primary modal reads as "beneath" it. Every
@@ -1473,9 +1544,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .spinner.sm { width: 16px; height: 16px; border-width: 2px; }
 .spinner.xs { width: 11px; height: 11px; border-width: 1.5px; display: inline-block; vertical-align: -1.5px; margin-right: 5px; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-/* A top-level page's own entrance (dashboard/Settings) — a touch richer than the plain fadeIn used for
-   overlays/toasts/loading (a full-bleed backdrop or an ephemeral toast shouldn't visibly "rise"). */
-@keyframes pageIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+/* Apple design §7 & §11 — top-level page entrance: a subtle 8px lift with opacity using ease-house curve. */
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
 .card.skel { pointer-events: none; }
 /* NOTE: the brand book prefers mono status text ("Reading 340 messages…") over a shimmer — swap this for
    that when the two-column layout lands. For now, keep the shimmer ON-PALETTE so it doesn't clash in dark mode. */
@@ -3078,9 +3151,10 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
 }
 .sm-header {
   z-index: 1010;
-  background: rgba(247, 247, 244, 0.94);
-  border-bottom: 1px solid var(--line);
-  backdrop-filter: blur(14px);
+  background: rgba(var(--bg-rgb), 0.85);
+  border-bottom: 1px solid var(--line-soft);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
   transition: opacity 0.4s var(--ease);
 }
 /* Chrome fades to near-invisible after a few seconds of no input while actively studying — reported live
@@ -3376,9 +3450,10 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   gap: var(--space-4);
   min-height: 56px;
   padding: var(--space-2) var(--space-5);
-  background: rgba(247, 247, 244, 0.94);
-  border-top: 1px solid var(--line);
-  backdrop-filter: blur(14px);
+  background: rgba(var(--bg-rgb), 0.85);
+  border-top: 1px solid var(--line-soft);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
   transition: opacity 0.4s var(--ease);
 }
 .sm-bottombar-left,
@@ -3437,10 +3512,9 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   background: var(--surface);
   border-left: 1px solid var(--line);
   box-shadow: var(--shadow-pop);
-  animation: smDrawerSlideIn 0.22s var(--ease);
+  animation: smDrawerSlideIn 0.3s var(--ease-house);
 }
 @keyframes smDrawerSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
-@media (prefers-reduced-motion: reduce) { .sm-drawer { animation: none; } }
 .sm-drawer-header {
   display: flex;
   align-items: center;
@@ -4073,10 +4147,14 @@ label.set-row.disabled { cursor: default; opacity: 0.55; }
   border-radius: var(--radius-sm);
   background: var(--surface);
   box-shadow: var(--shadow-pop);
-  animation: smModalIn 0.18s var(--ease);
+  animation: smModalIn 0.28s var(--ease-house) both;
 }
-@keyframes smModalIn { from { opacity: 0; transform: scale(0.97) translateY(4px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .sm-modal { animation: none; } }
+/* Same materialize pattern as modalPop — blur collapses as panel settles (§12). */
+@keyframes smModalIn {
+  from { opacity: 0; transform: scale(0.95) translateY(6px); filter: blur(4px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+/* Reduced-motion handled by the global prefers-reduced-motion rule above — no animation: none needed here */
 .sm-modal h2 {
   margin-top: var(--space-2);
   font-size: var(--text-xl);
