@@ -338,7 +338,7 @@ async function requireAuthAsync(req: express.Request, res: express.Response, nex
       // client's header actually matches that, this instance's copy was simply behind, not the client.
       const fresh = await peekSessionCsrfToken(req.sessionID);
       if (fresh && fresh === header) { req.session.csrfToken = fresh; }
-      else { res.setHeader(CSRF_HEADER, req.session.csrfToken); res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." }); return; }
+      else { res.setHeader(CSRF_HEADER, req.session.csrfToken || ""); res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." }); return; }
     }
   }
   // Echo the CURRENT (possibly just-reconciled) token back on every authenticated response — lets the
@@ -611,7 +611,7 @@ app.post("/api/account/import", requireAuth, rateLimit(5, 60_000), express.json(
       req.session.profile = mergedProfile;
       req.session.tasks = mergedTasks;
     }
-    void recordEvent(email, "account_imported", { importedTasks: incomingTasks.length });
+    void recordEvent(email, "account_imported", { message: `Imported ${incomingTasks.length} tasks` });
     res.json({ ok: true, tasksAfter: mergedTasks.length, errorLogAfter: mergedProfile.errorLog?.length || 0 });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "Couldn't import that file — try again." });

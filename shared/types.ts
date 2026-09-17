@@ -673,6 +673,26 @@ export function sortWithinQuadrant<T extends { score: number; when?: string; sou
 }
 
 /**
+ * Structured task classification — drives the pipeline and pedagogical step structure.
+ */
+export type TaskType =
+  | "learn_understand"      // Learn / understand new concepts
+  | "review"                // Review / refresh known concepts
+  | "practice"              // Practice & exercise drill
+  | "homework_problem_set"  // Homework / problem set solving
+  | "write"                 // Writing / essay / dissertation
+  | "research"              // Investigation / research assignment
+  | "create"                // Project artifact creation
+  | "prepare_assessment"    // Exam / test / oral exam preparation
+  | "project"               // Multi-stage / multi-week project
+  | "administrative";       // Admin / logistics / scheduling
+
+/**
+ * Information requirement before researching.
+ */
+export type InfoRequirement = "none" | "useful" | "required";
+
+/**
  * One step in "what's left" for a task. The agent classifies each: `automatable` means Weave can do it
  * itself (draft/doc/research/open a page); otherwise it's an act only you can take. `dependsOn` is the
  * index of a step that must be done first (so a dependent step waits, then can auto-run). `url` marks an
@@ -715,6 +735,14 @@ export interface TaskStep {
    *  timer or a deadline, just lets the UI answer "what can I fit in 15 minutes right now". Clamped in
    *  server/claude.ts's sanitizeStepExtras. */
   minutes?: number;
+  /** Concrete completion condition (definition of done for this specific step).
+   *  e.g. "≥8/10 correct on retrieval", "Can explain each figure's effect without looking". */
+  doneWhen?: string;
+  /** Adaptive checkpoint evaluation rule after this step.
+   *  e.g. "≥80% → continue to mixed practice; <80% → review definitions before continuing". */
+  checkpoint?: string;
+  /** Estimated step difficulty: easy, medium, hard. */
+  difficulty?: "easy" | "medium" | "hard";
 }
 
 /** A reviewed message/invite the agent prepared (a Gmail draft / a composed Slack message / a calendar event
@@ -757,6 +785,16 @@ export interface WebTask {
   quadrant: Quadrant;
   score: number;       // ranking
   status: TaskStatus;
+
+  /** Structured task type derived from parsing (e.g. "learn_understand", "review", "practice", "write") */
+  taskType?: TaskType;
+  /** Measurable definition of done / learning goal for this task.
+   *  e.g. "Be able to recognize the major figures de style, explain their effect, and identify them in an unfamiliar French text." */
+  goal?: string;
+  /** Information requirement before research */
+  infoRequirement?: InfoRequirement;
+  /** Known gaps or unknowns needing clarification */
+  unknowns?: string[];
 
   // Filled once it runs:
   context?: string;        // one-paragraph grounded background

@@ -251,9 +251,11 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
     <div className="dash-hero">
       <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
       <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
+      {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {task.why ? <p className="dash-hero-why">{stripStrayMarkdown(task.why)}</p> : null}
-      {(task.sourceSubject || w || showChip) ? (
+      {(task.sourceSubject || w || showChip || task.taskType) ? (
         <div className="dash-hero-meta">
+          {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {w ? <span className="when">{w}</span> : null}
           <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span>
@@ -461,12 +463,14 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           hero (in-flight state) or was dropped (priority chip). */}
       <div className="tf-head">
         <h2 className="tf-title">{stripStrayMarkdown(task.title)}</h2>
-        {/* A title alone can be opaque when it references something not named IN the title itself
-            ("the 5 places", "the program") — the antecedent lives in `why`, which used to be shown only
-            inside the collapsed Contexte panel. Surface it here unconditionally so the student never has
-            to go hunting for what a vague-sounding task is actually about. */}
+        {task.goal ? (
+          <div className="task-goal-banner">
+            <span className="task-goal-tag">{L("Objectif de fin", "Definition of Done")}:</span> {stripStrayMarkdown(task.goal)}
+          </div>
+        ) : null}
         {task.why ? <p className="tf-why">{stripStrayMarkdown(task.why)}</p> : null}
         <div className="tf-meta">
+          {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
           {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
@@ -742,8 +746,25 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
   const gatesAnother = steps.some((o, j) => j !== currentIdx && o.dependsOn === currentIdx);
   return (
     <div className="step-hero">
-      <span className="hero-kicker">{L("À faire maintenant", "Do this now")}</span>
+      <div className="step-hero-top">
+        <span className="hero-kicker">{L("À faire maintenant", "Do this now")}</span>
+        {s.difficulty ? (
+          <span className={`step-diff step-diff-${s.difficulty}`}>
+            {s.difficulty === "easy" ? L("Facile", "Easy") : s.difficulty === "hard" ? L("Difficile", "Hard") : L("Moyen", "Medium")}
+          </span>
+        ) : null}
+      </div>
       <p className="hero-step">{withInlineLinks(s.text)}</p>
+      {s.doneWhen ? (
+        <div className="step-done-when">
+          <span className="step-done-when-tag">{L("Critère de fin", "Done when")}:</span> {s.doneWhen}
+        </div>
+      ) : null}
+      {s.checkpoint ? (
+        <div className="step-checkpoint">
+          <span className="step-checkpoint-tag">🎯 {L("Point de contrôle", "Checkpoint")}:</span> {s.checkpoint}
+        </div>
+      ) : null}
       {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
       {s.minutes ? <SessionTimer key={currentIdx} minutes={s.minutes} /> : null}
       {s.result ? <span className="step-result note">{s.result}</span> : null}
@@ -926,7 +947,24 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 <span aria-hidden="true">{s.done ? "✓" : ""}</span>
               </button>
               <div className="step-body">
-                <span className="step-text">{withInlineLinks(s.text)}</span>
+                <div className="step-text-row">
+                  <span className="step-text">{withInlineLinks(s.text)}</span>
+                  {s.difficulty ? (
+                    <span className={`step-diff step-diff-${s.difficulty}`}>
+                      {s.difficulty === "easy" ? L("Facile", "Easy") : s.difficulty === "hard" ? L("Difficile", "Hard") : L("Moyen", "Medium")}
+                    </span>
+                  ) : null}
+                </div>
+                {s.doneWhen && !s.done ? (
+                  <div className="step-done-when-inline">
+                    <span className="step-done-when-tag">{L("Critère", "Done when")}:</span> {s.doneWhen}
+                  </div>
+                ) : null}
+                {s.checkpoint && !s.done ? (
+                  <div className="step-checkpoint-inline">
+                    🎯 {s.checkpoint}
+                  </div>
+                ) : null}
                 {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
                 {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
                 {/* 2-minute rule: a step this short shouldn't just sit in the checklist waiting its turn —

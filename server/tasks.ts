@@ -139,9 +139,11 @@ const GENERIC_WORDS = new Set([
   "days", "week", "soon", "now", "all", "any", "into", "onto", "about", "then", "complete", "finish", "update",
 ]);
 function distinctiveTokens(s: string): Set<string> {
-  const words = normTitle(s).split(" ").filter((w) => w.length > 2);
-  const distinctive = words.filter((w) => !GENERIC_WORDS.has(w));
-  return new Set(distinctive.length ? distinctive : words); // if a title is ALL generic, fall back to every word
+  const allWords = normTitle(s).split(" ").filter(Boolean);
+  const words = allWords.filter((w) => w.length > 2);
+  const pool = words.length ? words : allWords;
+  const distinctive = pool.filter((w) => !GENERIC_WORDS.has(w));
+  return new Set(distinctive.length ? distinctive : pool);
 }
 /** Two titles are "the same task" if their DISTINCTIVE word-sets overlap heavily, OR one is largely a subset
  *  of the other with enough shared keywords. Catches the model's rewordings — e.g. "Use $100 Resy credit
@@ -305,16 +307,10 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       const kak = normKey(k.anchorKey);
       if (!!ak && kak === ak) { matchedByAnchor = true; return true; }             // SAME anchor (same thread/event) → dup
       if (!!link && linkOf(k) === link) { matchedByAnchor = true; return true; }   // same source link → dup
-      // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER are, unconditionally, different
-      // real-world items (two distinct emails/events/study-log days) — the anchor IS the identity, so a
-      // title/why fuzzy match below must never override it regardless of status. This used to only apply
-      // when the OTHER side was done/dismissed, which meant two ACTIVE anchored items (e.g. two different
-      // days' studylog entries whose AI-generated flashcard-deck titles happened to read as near-duplicates,
-      // like two "Grammaire allemande" decks from different days) could still fall through to sameTask()
-      // below and get silently collapsed into one, permanently discarding the loser's entry/flashcards —
-      // reported live as "I logged Tuesday and Wednesday, only Tuesday survived." Anchorless tasks
-      // (manual/agent-sweep) are unaffected — they still fall through to title-dedupe below.
-      if (!!ak && !!kak && kak !== ak) return false;
+      // Two tasks that BOTH carry a REAL anchor and those anchors DIFFER: if either side is already handled
+      // (done/dismissed), they are distinct real-world items (e.g. an old done email vs a new fresh email).
+      // But two ACTIVE same-title tasks (distinct anchors) still merge so visual duplicates never appear.
+      if (!!ak && !!kak && kak !== ak && (isHandled(k.status) || isHandled(t.status))) return false;
       // A DONE task with NO real anchor (an evergreen/recurring ask like "study philosophy" that the sweep
       // re-suggests under a slightly reworded title each time, not tied to one email/event) needs the SAME
       // looser cross-field match used for dismissed tasks below — the strict nearDup bar above is easily
@@ -1055,6 +1051,10 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
     whenApprox: !explicit,
     source: "manual", risk: "low", urgency, importance, quadrant: e.quadrant, score: e.score,
     status: "ready", createdAt: now,
+    taskType: refined?.taskType,
+    goal: refined?.goal,
+    infoRequirement: refined?.infoRequirement,
+    unknowns: refined?.unknowns,
     ...(markUnrefined ? { unrefined: true } : {}), // AI paused/unavailable — raw text in, background sweep cleans it up
     ...(clientId ? { clientId } : {}),
   };
@@ -1076,6 +1076,10 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
   const refinedWhen = refined.when ?? t.when;
   t.when = refinedWhen || estimateWhen(e.quadrant);
   t.whenApprox = !refinedWhen;
+  if (refined.taskType) t.taskType = refined.taskType;
+  if (refined.goal) t.goal = refined.goal;
+  if (refined.infoRequirement) t.infoRequirement = refined.infoRequirement;
+  if (refined.unknowns) t.unknowns = refined.unknowns;
   delete t.unrefined;
   t.updatedAt = new Date().toISOString();
   return t;
@@ -1173,7 +1177,20 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     // vocabulary better than this task's is almost certainly leaked from that other task's research, not
     // genuinely relevant here.
     const siblingTasks = list.filter((t) => t.id !== id).map((t) => ({ title: t.title, why: t.why }));
-    const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, artifacts: task.artifacts, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, scoped, academic, siblingTasks);
+    const out = await aiRun({
+      title: task.title,
+      why: task.why,
+      source: task.source,
+      links: task.links,
+      artifacts: task.artifacts,
+      sourceDetail: task.sourceDetail,
+      sourceSubject: task.sourceSubject,
+      sourceDue: task.sourceDue,
+      taskType: task.taskType,
+      goal: task.goal,
+      infoRequirement: task.infoRequirement,
+      unknowns: task.unknowns,
+    }, profile, focus, scoped, academic, siblingTasks);
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     // A raw/placeholder title gets tightened as a side effect of THIS run (no separate "clean up" pass
@@ -1182,6 +1199,10 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     // forceWeekCoverage's own comment) both start from a title that's known-generic, not the classifier's
     // own carefully-written one. Only applied when the model actually returned a tightened one.
     if ((task.source === "manual" || task.source === "pronote") && out.title) task.title = out.title;
+    if (out.taskType) task.taskType = out.taskType;
+    if (out.goal) task.goal = out.goal;
+    if (out.infoRequirement) task.infoRequirement = out.infoRequirement;
+    if (out.unknowns?.length) task.unknowns = out.unknowns;
     task.context = out.context;
     task.synthesis = out.synthesis;
     task.did = out.did?.length ? out.did : undefined;

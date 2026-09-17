@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens, WebTask } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
@@ -33,18 +33,22 @@ function truncateStepText(text: string, max = 220): string {
   return (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim();
 }
 
-/** Validate a raw step's url/question/options exactly the same way regardless of which pass produced
- *  it — `finalize`'s normal submit path and `writeStepsFromContext`'s refinement pass both call this, so
- *  the two can't drift (they used to: the refinement pass didn't validate — or even ASK for — these
- *  fields at all, silently discarding every link/question the research loop had attached). */
-export function sanitizeStepExtras(s: any): Pick<TaskStep, "url" | "question" | "options" | "needsPermission" | "minutes"> {
+/** Validate a raw step's url/question/options/doneWhen/checkpoint/minutes/difficulty exactly the same way
+ *  regardless of which pass produced it — `finalize`'s normal submit path and `writeStepsFromContext`'s
+ *  refinement pass both call this, so the two can't drift. */
+export function sanitizeStepExtras(s: any): Pick<TaskStep, "url" | "question" | "options" | "needsPermission" | "minutes" | "doneWhen" | "checkpoint" | "difficulty"> {
   const minutes = Number(s?.minutes);
+  const diff = s?.difficulty;
+  const validDiff = diff === "easy" || diff === "medium" || diff === "hard" ? diff : undefined;
   return {
     url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : undefined,
     question: s?.question ? String(s.question).trim().slice(0, 200) : undefined,
     options: Array.isArray(s?.options) ? s.options.map((o: any) => String(o).trim()).filter(Boolean).slice(0, 4) : undefined,
     needsPermission: !!s?.needsPermission,
     minutes: Number.isInteger(minutes) && minutes >= 1 && minutes <= 240 ? minutes : undefined,
+    doneWhen: s?.doneWhen ? String(s.doneWhen).trim().slice(0, 250) : undefined,
+    checkpoint: s?.checkpoint ? String(s.checkpoint).trim().slice(0, 250) : undefined,
+    difficulty: validDiff,
   };
 }
 
@@ -1721,11 +1725,29 @@ export async function pickOneTask(
   } catch { return null; }
 }
 
-export interface RefinedTask { title: string; why: string; when?: string; urgency: number; importance: number; tokens: { in: number; out: number; cachedIn: number }; }
+export interface RefinedTask {
+  title: string;
+  why: string;
+  when?: string;
+  urgency: number;
+  importance: number;
+  subject?: string;
+  topic?: string;
+  taskType?: TaskType;
+  likelyObjective?: string;
+  unknowns?: string[];
+  goal?: string; // Concrete definition of done
+  infoRequirement?: InfoRequirement;
+  tokens: { in: number; out: number; cachedIn: number };
+}
 
 /**
- * Turn a user's rough to-do note into a crisp, actionable task (keeps their intent — never invents
- * specifics). One quick Claude call; returns null on any failure so the caller can fall back to the raw text.
+ * Deterministic Task Pipeline: Step 1 → 4
+ * Takes a raw task title and parses it progressively:
+ * 1. Parse entities: subject, topic, task type, likely objective, unknowns
+ * 2. Classify task type: learn_understand, review, practice, homework_problem_set, write, research, create, prepare_assessment, project, administrative
+ * 3. Infer desired outcome / definition of done (measurable completion condition)
+ * 4. Determine information requirement (none, useful, required)
  */
 export async function refineManualTask(text: string, profile?: Profile): Promise<RefinedTask | null> {
   const raw = String(text || "").trim();
@@ -1741,26 +1763,62 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
       messages: [
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
-          "You turn a person's rough to-do note into ONE crisp, actionable task title. Make it a specific " +
-          "imperative that names the concrete object/person from THEIR note — 'email sarah' → 'Reply to Sarah " +
-          "about the proposal', 'trip' → 'Prepare Boston trip itinerary', 'call dentist' → 'Call the dentist " +
-          "to book a cleaning'. NEVER invent names, dates, companies, or facts they didn't state — only sharpen " +
-          "what's there (if the note is just 'trip' with no destination, use 'Plan the trip', not a made-up city). " +
-          "Infer priority from the wording (urgent words, deadlines) and the person's profile only. Output STRICT JSON only." },
+          "You are Otto's deterministic task parser. Do NOT immediately generate a to-do list. Progressive task pipeline:\n" +
+          "1. PARSE: Extract subject (e.g. French, Physics, Math, History, or general), topic (e.g. figures de style), likely objective, and unknowns (missing details like class material, depth, deadline).\n" +
+          "2. CLASSIFY TASK TYPE into exactly one of:\n" +
+          "   - 'learn_understand': learning/understanding new concepts\n" +
+          "   - 'review': reviewing/refreshing known notions\n" +
+          "   - 'practice': exercise drilling, solving drills\n" +
+          "   - 'homework_problem_set': assigned worksheet / problem set\n" +
+          "   - 'write': essay, dissertation, commentary, draft\n" +
+          "   - 'research': investigating a topic or questions\n" +
+          "   - 'create': building a specific project artifact\n" +
+          "   - 'prepare_assessment': preparing for an exam, test, or oral evaluation\n" +
+          "   - 'project': multi-stage/multi-week project (EE, TOK, IA, group project)\n" +
+          "   - 'administrative': logistics, booking, form signing, emailing\n" +
+          "3. INFER DEFINITION OF DONE (goal): Turn the title into a concrete, measurable completion condition. E.g. 'Study figures de style' → 'Be able to recognize major figures de style, explain their effect, and identify them in unfamiliar French texts.' E.g. 'Study photosynthesis' → 'Explain the process without notes and answer 8/10 application questions correctly.'\n" +
+          "4. INFORMATION REQUIREMENT:\n" +
+          "   - 'none': basic algebra practice, generic studying, drafting, quiz from already-known concepts\n" +
+          "   - 'useful': specific historical topic, economics research, topic overview\n" +
+          "   - 'required': class-source specific ('study what we did in class', 'review chapter 4', 'prep for tomorrow's test')\n" +
+          "5. TITLE & WHY: Crisp imperative title (≤9 words) naming the concrete object/person, and concise intent (why ≤12 words). Output STRICT JSON only." },
         { role: "user", content: profileBlock(profile) +
-          `\nRough note: "${raw.slice(0, 300)}"\n\nReturn JSON: {"title": short imperative <= 9 words that names the specific object/person, ` +
-          `"why": one concise clause capturing the intent, ≤12 words, ` +
-          `"when": a deadline for COMPLETING THIS TASK (e.g. "today", "by Fri") — ONLY if the note explicitly says when the TASK itself must be done (e.g. "by tomorrow", "before June 30"). If the note only mentions dates as background context (e.g. a trip date, event date, year mentioned in passing) leave this "", ` +
-          `"urgency": 0..1 time pressure, "importance": 0..1 stakes}. JSON only.` }
+          `\nRaw note: "${raw.slice(0, 300)}"\n\n` +
+          `Return JSON:\n` +
+          `{\n` +
+          `  "title": "short crisp imperative ≤9 words",\n` +
+          `  "why": "concise intent clause ≤12 words",\n` +
+          `  "subject": "e.g. Français, Physique-Chimie, Mathématiques, History, or general",\n` +
+          `  "topic": "the specific concept or notion",\n` +
+          `  "taskType": "learn_understand"|"review"|"practice"|"homework_problem_set"|"write"|"research"|"create"|"prepare_assessment"|"project"|"administrative",\n` +
+          `  "goal": "concrete measurable definition of done (1-2 sentences)",\n` +
+          `  "infoRequirement": "none"|"useful"|"required",\n` +
+          `  "unknowns": ["missing detail 1", ...],\n` +
+          `  "when": "deadline ONLY if explicitly stated in the note, else empty",\n` +
+          `  "urgency": 0..1,\n` +
+          `  "importance": 0..1\n` +
+          `}. JSON only.` }
       ],
     }));
     const textContent = res.choices[0]?.message?.content || "";
     const out = firstJson<any>(textContent);
     if (!out || typeof out.title !== "string" || !out.title.trim()) return null;
+    const validTaskTypes: TaskType[] = [
+      "learn_understand", "review", "practice", "homework_problem_set",
+      "write", "research", "create", "prepare_assessment", "project", "administrative"
+    ];
+    const taskType: TaskType = validTaskTypes.includes(out.taskType) ? out.taskType : "learn_understand";
+    const infoRequirement: InfoRequirement = ["none", "useful", "required"].includes(out.infoRequirement) ? out.infoRequirement : "useful";
     return {
       title: String(out.title).slice(0, 90),
       why: String(out.why || "").slice(0, 300) || "Added by you.",
       when: out.when ? String(out.when).slice(0, 40) : undefined,
+      subject: out.subject ? String(out.subject).slice(0, 60) : undefined,
+      topic: out.topic ? String(out.topic).slice(0, 80) : undefined,
+      taskType,
+      goal: out.goal ? String(out.goal).slice(0, 250) : undefined,
+      infoRequirement,
+      unknowns: Array.isArray(out.unknowns) ? out.unknowns.map((u: any) => String(u).trim()).filter(Boolean).slice(0, 5) : undefined,
       urgency: clamp01(out.urgency ?? 0.6),
       importance: clamp01(out.importance ?? 0.7),
       tokens: usageOf(res),
@@ -2531,6 +2589,10 @@ export interface RunOutput {
   /** The smallest possible first move on this task (the anti-procrastination hook) — see FIRST ACTION in
    *  RUN_SYSTEM. Validated in finalize() the same way a step's text/minutes are. */
   firstAction?: { text: string; minutes?: number };
+  taskType?: TaskType;
+  goal?: string;
+  infoRequirement?: InfoRequirement;
+  unknowns?: string[];
 }
 
 const RUN_SYSTEM =
@@ -2945,10 +3007,27 @@ const RUN_TOOLS = [
  * single call trying to plan-and-research-and-write all at once. Falls back to an empty plan (the loop's own
  * algorithmic instructions still apply) on any failure — this is an enhancement, never a blocker.
  */
-async function planResearch(task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string }, connectedApps: string[]): Promise<string[]> {
+async function planResearch(
+  task: {
+    title: string;
+    why: string;
+    sourceSubject?: string;
+    sourceDetail?: string;
+    taskType?: TaskType;
+    goal?: string;
+    infoRequirement?: InfoRequirement;
+    unknowns?: string[];
+  },
+  connectedApps: string[],
+): Promise<string[]> {
+  // If no information is required (e.g., pure self-study / internal practice without external research needs), bypass research planning
+  if (task.infoRequirement === "none") return [];
   try {
     const client = deepseekClient();
     const appsLine = connectedApps.length ? connectedApps.join(", ") : "none connected";
+    const unknownsLine = task.unknowns?.length ? `\nUNKNOWNS TO RESOLVE: ${task.unknowns.join("; ")}` : "";
+    const goalLine = task.goal ? `\nGOAL / DEFINITION OF DONE: ${task.goal}` : "";
+    const taskTypeLine = task.taskType ? `\nTASK TYPE: ${task.taskType}` : "";
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.plan,
@@ -2959,9 +3038,14 @@ async function planResearch(task: { title: string; why: string; sourceSubject?: 
         content: `TASK: "${task.title}"\nWHY: "${task.why}"\n` +
           (task.sourceSubject ? `SUBJECT: "${task.sourceSubject}"\n` : "") +
           (task.sourceDetail ? `THE ASSIGNMENT, VERBATIM FROM PRONOTE: "${task.sourceDetail}"\n` : "") +
-          `CONNECTED APPS: ${appsLine}\n\n` +
+          taskTypeLine + goalLine + unknownsLine +
+          `\nCONNECTED APPS: ${appsLine}\n\n` +
           `(This is for a student — the research should support them doing the work themselves, never gather ` +
-          `answers meant to replace their own effort.)\n` +
+          `answers meant to replace their own effort.)\n\n` +
+          `RESEARCH SOURCE PRIORITIZATION:\n` +
+          `1. Student's own materials first (Drive, Docs, uploaded notes, files) — look for their existing course notes/summaries.\n` +
+          `2. School / class sources second (assignment details, teacher instructions, Pronote).\n` +
+          `3. External web sources third (official syllabi, textbook definitions, standard methods). Personal/class context always overrides generic web.\n\n` +
           (task.sourceDetail
             ? `This is SCHOOLWORK with a real énoncé above. At least 2 of your queries must be about the ` +
               `ACADEMIC TOPIC ITSELF — the notion, the method, how it's taught and tested at this level — ` +
@@ -2974,17 +3058,14 @@ async function planResearch(task: { title: string; why: string; sourceSubject?: 
           `For any connected-app query about the student's OWN class material (not a web search): the exact ` +
           `academic term ("figures de style", "théorème de Pythagore"…) often does NOT appear verbatim in a ` +
           `file/folder name — a class file is more often named after the CLASS/SUBJECT itself (e.g. "2nde ` +
-          `Français", "Vocabulaire français") than the specific notion inside it. Never plan only ONE exact-` +
-          `phrase query and stop there: pair a specific-term query with at least one BROADER fallback query ` +
-          `for the same information (the subject/class name alone, or "list files in <likely folder>") so a ` +
-          `miss on the exact phrase doesn't dead-end the whole search.\n` +
+          `Français", "Vocabulaire français") than the specific notion inside it. Pair a specific-term query ` +
+          `with at least one BROADER fallback query for the same information (the subject/class name alone, ` +
+          `or "list files in <likely folder>") so a miss on the exact phrase doesn't dead-end the whole search.\n` +
           `Before researching, PLAN it. First extract the key entities (names, people, organizations, places, ` +
           `dates, subjects) from the task. Then list 3-6 concrete search actions to actually run — each one ` +
           `naming a SPECIFIC query, not a vague instruction. For a connected app, phrase it as "Search <app> for ` +
-          `'<specific query>'" (e.g. "Search Gmail for 'Wharton Investment Competition'", not "check email"). ` +
-          `For external facts, phrase it as "web_search: '<specific query>'" using an entity + qualifier (e.g. ` +
-          `"web_search: 'Wharton Global Investment Competition 2026 rules deadline'"). Only include apps from ` +
-          `CONNECTED APPS above.\n\nReturn ONLY this JSON: {"queries": ["...", "...", ...]}`,
+          `'<specific query>'". For external facts, phrase it as "web_search: '<specific query>'". ` +
+          `Only include apps from CONNECTED APPS above.\n\nReturn ONLY this JSON: {"queries": ["...", "...", ...]}`,
       }],
     }));
     const out = firstJson<{ queries?: string[] }>(String(res.choices?.[0]?.message?.content || ""));
@@ -2997,7 +3078,27 @@ async function planResearch(task: { title: string; why: string; sourceSubject?: 
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
  * steps that are LEFT. Irreversible sends/deletes are never available to it. Also returns durable profile facts.
  */
-export async function runTask(task: { title: string; why: string; source?: string; links?: TaskLink[]; artifacts?: { kind: string; id: string; url?: string; label?: string }[]; sourceDetail?: string; sourceSubject?: string; sourceDue?: string }, profile?: Profile, focus?: string, extras?: AgentTools, academic?: AcademicContext, siblingTasks?: { title: string; why?: string }[]): Promise<RunOutput> {
+export async function runTask(
+  task: {
+    title: string;
+    why: string;
+    source?: string;
+    links?: TaskLink[];
+    artifacts?: { kind: string; id: string; url?: string; label?: string }[];
+    sourceDetail?: string;
+    sourceSubject?: string;
+    sourceDue?: string;
+    taskType?: TaskType;
+    goal?: string;
+    infoRequirement?: InfoRequirement;
+    unknowns?: string[];
+  },
+  profile?: Profile,
+  focus?: string,
+  extras?: AgentTools,
+  academic?: AcademicContext,
+  siblingTasks?: { title: string; why?: string }[],
+): Promise<RunOutput> {
   // The audit trail (logAudit below) is shown to the student/parent verbatim (client/TaskCard.tsx's
   // Activity log) — it must follow the account's own language like everything else, not default to
   // French regardless (see the identical `fr` flag in chatAboutTask).
@@ -3047,7 +3148,16 @@ export async function runTask(task: { title: string; why: string; source?: strin
     : "";
   // FIRST PASS: plan the research before doing it (see planResearch) — skipped for a focused single-step
   // re-run, which already knows exactly what it's doing and doesn't need a fresh research plan.
-  const researchPlan = (!EXECUTION_ENABLED && !focus) ? await planResearch({ title: task.title, why: task.why, sourceSubject: task.sourceSubject, sourceDetail: task.sourceDetail }, extras?.connected || []) : [];
+  const researchPlan = (!EXECUTION_ENABLED && !focus) ? await planResearch({
+    title: task.title,
+    why: task.why,
+    sourceSubject: task.sourceSubject,
+    sourceDetail: task.sourceDetail,
+    taskType: task.taskType,
+    goal: task.goal,
+    infoRequirement: task.infoRequirement,
+    unknowns: task.unknowns,
+  }, extras?.connected || []) : [];
   const researchPlanBlock = researchPlan.length
     ? `\nRESEARCH PLAN — run these searches, in order, before writing "context":\n${researchPlan.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n(This plan is a starting point, not a ceiling — follow up on anything it turns up, per the GATHER CONTEXT algorithm below.)\n`
     : "";
@@ -3677,43 +3787,35 @@ export async function runTask(task: { title: string; why: string; source?: strin
  * Falls back to the research loop's own steps on any failure (never worse than before, only sometimes better).
  */
 export async function writeStepsFromContext(
-  // sourceSubject/sourceDetail/sourceDue widen this from the original {title, why}-only shape: the main
-  // research call already gets the teacher's own verbatim assignment text (assignmentBlock) and the
-  // student's own facts (profileBlock) — this dedicated step-writing pass produces the actual concrete,
-  // student-facing action items and was writing them WITHOUT either, so steps came out tailored to a
-  // generic "Physics homework" instead of the specific énoncé and the specific student's situation. Every
-  // caller already has these fields on hand (runTask's own `task` param carries them straight through).
-  task: { title: string; why: string; source?: string; sourceSubject?: string; sourceDetail?: string; sourceDue?: string },
+  task: {
+    title: string;
+    why: string;
+    source?: string;
+    sourceSubject?: string;
+    sourceDetail?: string;
+    sourceDue?: string;
+    taskType?: TaskType;
+    goal?: string;
+    infoRequirement?: InfoRequirement;
+    unknowns?: string[];
+  },
   context: string,
   links: TaskLink[],
   fallbackSteps: TaskStep[],
   did: string[] = [],
   profile?: Profile,
-  // The model's OWN "is this big?" judgment from the main research call (see RunOutput.isBigProject) —
-  // it saw the actual content, not just the title, so this is the real detector. The keyword regex below
-  // is only a cheap pre-filter for when this wasn't asked/answered; a `true` here always counts as a hit
-  // even if the regex found nothing, which is exactly the case a paraphrased/acronym-free title needs.
   modelJudgedBigProject?: boolean,
 ): Promise<TaskStep[]> {
   const keywordHit = modelJudgedBigProject === true || isBigIbProject(profile, task.title, task.why);
-  // Normally: no distilled research context means nothing to refine, so bail to the loop's own steps.
-  // But a big project (EE/TOK/CAS/IA/a full essay) doesn't need research context to know it needs a
-  // milestone breakdown instead of a flat list — that structure comes from the project TYPE, not from
-  // what was found online. Bailing here was the actual bug: "Start the Extended Essay" (a task with
-  // nothing to research — the student just needs the plan) produced empty context, short-circuited
-  // before this was even checked, and silently kept ordinary dependsOn-chained steps instead of ever
-  // getting milestone dates. Only skip the call when there's neither context NOR an obvious keyword hit.
   if (!context.trim() && !keywordHit) return fallbackSteps;
   try {
     const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY FOUND/CREATED:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
     const didBlock = did.length ? `\n\nWHAT WAS ALREADY DONE THIS RUN (do not re-list these as steps):\n${did.map((d) => `- ${d}`).join("\n")}` : "";
-    // The keyword regex is only a FAST PRE-FILTER (catches "IA"/"EE"/"essay" etc. verbatim); it misses a
-    // paraphrased title (refineManualTask can reword a raw "ia" into something that drops the literal
-    // acronym) or a big project that's real but never named as one ("write my English coursework" is
-    // just as multi-week as an EE). So don't hard-branch on the regex alone — hand the model BOTH shapes
-    // and let it decide which this task actually is, with the regex hit only as a strong hint, not the
-    // final word. This is a single unified call either way (never two round-trips).
+    const taskTypeLine = task.taskType ? `\nTASK TYPE: ${task.taskType}` : "";
+    const goalLine = task.goal ? `\nGOAL / DEFINITION OF DONE: ${task.goal}` : "";
+    const unknownsLine = task.unknowns?.length ? `\nUNKNOWNS: ${task.unknowns.join("; ")}` : "";
+
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
@@ -3721,7 +3823,7 @@ export async function writeStepsFromContext(
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n\n${context.trim() ? `CONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}` +
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n${taskTypeLine}${goalLine}${unknownsLine}\n\n${context.trim() ? `CONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}` +
           assignmentBlock(task) + profileBlock(profile) + `\n\n` +
           languageLine(profile) + trackLine(profile) + nowBlock() +
           `FIRST, decide: is this a BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/` +
@@ -3730,6 +3832,14 @@ export async function writeStepsFromContext(
           `in one sitting or a few short steps?` +
           (keywordHit ? ` (This one LOOKS like a big project from its title/why — confirm that reading unless the ` +
             `actual content clearly contradicts it.)` : "") + `\n\n` +
+          `PEDAGOGICAL SEQUENCE ARCHITECTURE (for study / learning / review / exam prep tasks):\n` +
+          `If this is a learning, review, practice, or assessment prep task (taskType: "learn_understand", "review", "practice", "prepare_assessment"), ` +
+          `derive the step sequence from the core cognitive learning cycle:\n` +
+          `1. Learn / Understand (Review definitions, core rules, worked examples)\n` +
+          `2. Retrieve / Flashcards (Active recall of key terms/rules without looking)\n` +
+          `3. Apply (Targeted practice on 2-3 concrete problems/questions)\n` +
+          `4. Diagnose (Self-check or mini-quiz to identify weak spots)\n` +
+          `5. Repair & Re-test (Review mistakes from error log and re-verify mastery)\n\n` +
           `IF BIG: break it into an ORDERED list of MILESTONES from where it stands now through final submission ` +
           `(e.g. research question, source-gathering, outline, supervisor check-in, first draft, revision, final ` +
           `submission — adapt to what this specific project actually needs, don't force every category to apply). ` +
@@ -3739,68 +3849,38 @@ export async function writeStepsFromContext(
           `IF ORDINARY: break the remaining work into a clear, ORDERED list of concrete, actionable steps — each ` +
           `a SHORT one-liner, ONE clause (≤8 words: imperative verb + the specific thing, no hedging, no filler, ` +
           `never multiple asks stacked with a colon/semicolon/"and") naming a specific action (not a vague ` +
-          `category like "look into options"), small enough that the list feels doable, not overwhelming. If a ` +
-          `resource above was already CREATED (not just found), do NOT list ` +
+          `category like "look into options"), small enough that the list feels doable, not overwhelming. ` +
+          `For each step, include:\n` +
+          `- "text": concise action description (≤8 words)\n` +
+          `- "minutes": realistic duration estimate in minutes (e.g. 5, 10, 15, 25, 45)\n` +
+          `- "doneWhen": concrete completion condition (e.g. "Can state 5 key concepts with 1 example each without notes")\n` +
+          `- "checkpoint": mastery threshold or checkpoint rule (e.g. "Score ≥ 80% on quiz before moving to next step")\n` +
+          `- "difficulty": "easy" | "medium" | "hard"\n` +
+          `- "dependsOn": integer index (0-based, in THIS list) when a step must happen first\n` +
+          `- "automatable": boolean\n` +
+          `- "url", "question", "options": optional when needed\n\n` +
+          `If a resource above was already CREATED (not just found), do NOT list ` +
           `"create X" as a step — that's done; instead say what to DO with it now (review it, send it, use it, ` +
           `decide something). Only list creating a document/draft as a step if none of the resources above cover ` +
-          `it yet. NEVER split ONE action into a chain of steps that just narrate its own sub-parts — "draft the ` +
-          `reply" then "create the Gmail draft" then "send it" is ONE step ("Draft the reply to <person>"), not ` +
-          `three; composing a message and creating the draft that holds it are the SAME action, not sequential ` +
-          `ones. Likewise, don't surface "look up/locate/find <thing already needed to write this>" as its own ` +
-          `step — that's research Otto does itself while drafting, not something to hand back to the student; ` +
-          `only make lookup its own step when the step's OUTCOME (a date, a decision, a piece of missing info) ` +
-          `genuinely has to reach the student before the rest can proceed. When in doubt, prefer FEWER, bigger ` +
-          `steps over splitting one real action into its narrated sub-parts. Order them; set "dependsOn" to an ` +
-          `earlier step's index (0-based, in THIS list) when one must ` +
-          `happen first — e.g. an automatable step that's blocked until the user makes a call on an earlier one. ` +
+          `it yet. NEVER split ONE action into a chain of steps that just narrate its own sub-parts. ` +
           `1 to 6 steps, omit "dependsOn" when a step doesn't wait on another. A SINGLE step is a completely ` +
-          `normal, GOOD outcome, not a fallback to avoid — most tasks that are really just "remember to do X" ` +
-          `(sign a form, bring an item, reply to one message, return something) are honestly just a reminder, ` +
-          `and forcing that into 3+ steps to look thorough is exactly the clutter this whole section exists to ` +
-          `prevent. Only reach for more steps when the task genuinely has multiple distinct actions.\n\n` +
+          `normal, GOOD outcome when a task is simple.\n\n` +
           `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
-          `graded/learning work itself (writing the essay, doing the research, forming the argument, solving the ` +
-          `problem) as if it were already done or as Otto's job; that work always stays theirs. Every item must ` +
-          `be directly about "${task.title}" — no unrelated tangents; the context above may mention OTHER people/` +
-          `threads/obligations that came up during research but aren't actually part of this task — don't turn ` +
-          `those into steps just because they're in the context. Concretely: if step N names a completely ` +
-          `different person, organization, or obligation than the task's own title/why (a club project's steps ` +
-          `suddenly including "contact so-and-so for an unrelated application", "fix a bug in a different app", ` +
-          `"reply to a professor about something else entirely") — that step belongs to a DIFFERENT task, not ` +
-          `this one, even if it showed up in the same research pass. A step list is one project's real sub-` +
-          `actions, never a general to-do dump of everything the student happens to have going on. If in doubt ` +
-          `whether a candidate step actually belongs here, leave it out — a shorter, coherent list beats a ` +
-          `longer one that reads as random. If the assignment references a specific ` +
-          `textbook/manuel page or exercise number with no attachment link actually containing that page's ` +
-          `text, don't write a step that pretends to know what's on it — the step should be the honest one ` +
-          `("Open the manuel to p.X, ex.Y" or "Paste the exercise text so Otto can help"), never a guess at ` +
-          `content you've never seen.\n\n` +
-          `IF ORDINARY, a step can ALSO carry: "url" — ONLY if one of RESOURCES ALREADY FOUND above is the exact ` +
-          `page this step needs; copy it VERBATIM, never invent or guess one. "question" + "options" — ONLY if ` +
-          `this step genuinely can't proceed without ONE piece of info you don't have (see the same rule ` +
-          `elsewhere: last resort, your best-guess answer FIRST in options, each option a real answer never ` +
-          `"I'll type my own"). Omit all three when they don't apply — most steps won't have them.\n\n` +
-          `Return ONLY this JSON: {"isBigProject": true|false, "steps": [{"text": "...", "targetDate": "YYYY-MM-DD" ` +
+          `graded/learning work itself as if it were already done or as Otto's job; that work always stays theirs. ` +
+          `Every item must be directly about "${task.title}".\n\n` +
+          `Return ONLY this JSON: {"isBigProject": true|false, "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy"|"medium"|"hard", "targetDate": "YYYY-MM-DD" ` +
           `(big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only), "url": "..." ` +
           `(ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary ` +
           `only, optional)}, ...]}.`,
       }],
     }));
-    const out = firstJson<{ isBigProject?: boolean; steps?: { text?: string; automatable?: boolean; targetDate?: string; dependsOn?: number; url?: string; question?: string; options?: string[] }[] }>(String(res.choices?.[0]?.message?.content || ""));
-    // The model's own judgment wins when it answers at all — it saw the actual content, the regex only
-    // saw the title. Fall back to the keyword hit only if the response is malformed/missing the field.
+    const out = firstJson<{ isBigProject?: boolean; steps?: { text?: string; minutes?: number; doneWhen?: string; checkpoint?: string; difficulty?: "easy" | "medium" | "hard"; automatable?: boolean; targetDate?: string; dependsOn?: number; url?: string; question?: string; options?: string[] }[] }>(String(res.choices?.[0]?.message?.content || ""));
     const bigProject = typeof out?.isBigProject === "boolean" ? out.isBigProject : keywordHit;
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     const rawSteps = out?.steps || [];
-    // Only a url that ALSO appears among the resources Otto genuinely found this run is trusted — bounds
-    // both a fabricated model url AND a bad text-match below to something real, never an invented link.
     const linkUrls = new Set(links.map((l) => l.url));
     const steps = sanitizeSteps(rawSteps
       .map((s, idx) => {
-        // The refinement pass reorders/merges/rewords steps, so a step at this index has no reliable
-        // relationship to the draft's step at the same index — match by text similarity instead, and
-        // ONLY for the ordinary (non-milestone) shape: a milestone list is a different decomposition of
-        // the work entirely, so any positional or textual "match" against the flat draft would be spurious.
         const matched = !bigProject ? bestMatchingStep(String(s?.text || ""), fallbackSteps) : undefined;
         const own = sanitizeStepExtras(s);
         const url = (own.url && linkUrls.has(own.url)) ? own.url
@@ -3808,9 +3888,11 @@ export async function writeStepsFromContext(
         return {
           text: truncateStepText(String(s?.text || "")),
           automatable: bigProject ? false : !!s?.automatable,
+          minutes: own.minutes ?? matched?.minutes,
+          doneWhen: own.doneWhen ?? matched?.doneWhen,
+          checkpoint: own.checkpoint ?? matched?.checkpoint,
+          difficulty: own.difficulty ?? matched?.difficulty,
           ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
-          // Same validation as finalize()'s dependsOn handling — must point at a REAL other step in
-          // THIS (possibly reordered/re-worded) list, never dropped silently as it was before this fix.
           ...(!bigProject && Number.isInteger(s?.dependsOn) && s!.dependsOn! >= 0 && s!.dependsOn! < rawSteps.length && s!.dependsOn !== idx
             ? { dependsOn: s!.dependsOn }
             : {}),
@@ -3822,27 +3904,19 @@ export async function writeStepsFromContext(
           } : {}),
         };
       }), bigProject ? 8 : 6);
-    // Skip for bigProject: every milestone is automatable=false by construction (a dated project phase,
-    // not a deferred-lookup step handed to the student), so the gate would have nothing valid to keep.
     const gated = bigProject ? steps : dropTrivialSteps(steps);
     return gated.length ? gated : fallbackSteps;
-  } catch { return fallbackSteps; } // a failed refinement pass falls back to the loop's own steps, never blocks submission
+  } catch { return fallbackSteps; }
 }
 
 /**
  * Phase 3 (final) of the research → steps → artifact pipeline — see runTask's own comment for the full
  * three-phase design. Given everything gathered in phase 1 (context) and the concrete steps produced in
  * phase 2 (writeStepsFromContext), decide whether a note/flashcard-deck/quiz would actually help, and if
- * so, author it directly in THIS call. By this point every fact the artifact would need is already in
- * hand — this is content AUTHORING, not research, so it needs no tool-calling loop of its own, just one
- * structured JSON response. Reuses the SAME content-quality bar as CREATE_NOTE_TOOL/CREATE_FLASHCARDS_TOOL/
- * CREATE_QUIZ_TOOL's own descriptions (folded into the prompt below) and the SAME makeNote/makeDeck/
- * makeQuiz validators used everywhere else an artifact gets built, so an artifact from this phase is held
- * to the identical bar as one made mid-chat or mid-run. Best-effort: any failure here just means no
- * artifact, never blocks the task (context/steps already stand on their own).
+ * so, author it directly in THIS call.
  */
 async function decideArtifact(
-  task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string },
+  task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string; taskType?: TaskType; goal?: string },
   context: string,
   steps: { text: string }[],
   profile?: Profile,
@@ -3850,6 +3924,9 @@ async function decideArtifact(
   try {
     const client = deepseekClient();
     const stepsText = steps.length ? steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n") : "(none)";
+    const taskTypeHint = task.taskType ? `TASK TYPE: ${task.taskType}\n` : "";
+    const goalHint = task.goal ? `GOAL / DEFINITION OF DONE: ${task.goal}\n` : "";
+
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.artifact,
@@ -3858,6 +3935,7 @@ async function decideArtifact(
       messages: [{
         role: "user",
         content: `TASK: "${task.title}"\nWHY: "${task.why}"\n` +
+          taskTypeHint + goalHint +
           assignmentBlock(task) +
           `RESEARCH GATHERED THIS RUN:\n${context?.trim() || "(nothing substantive found)"}\n\n` +
           `FINAL STEPS LEFT FOR THE STUDENT:\n${stepsText}\n\n` +
@@ -3865,14 +3943,13 @@ async function decideArtifact(
           `- NOTE — ${CREATE_NOTE_TOOL.description}\n` +
           `- FLASHCARDS — ${CREATE_FLASHCARDS_TOOL.description}\n` +
           `- QUIZ — ${CREATE_QUIZ_TOOL.description}\n` +
-          `A logistics/admin task (booking, confirming, scheduling) with nothing worth preserving beyond the ` +
-          `steps list above needs NONE of these — say so plainly rather than forcing one. For a standard ` +
-          `curriculum topic, missing the class's own EXACT source material is NEVER a reason to build ` +
-          `nothing: use your reliable general knowledge to build a genuinely useful version now (the steps ` +
-          `above already cover verifying it against the real source, or add such a step if they don't). ` +
-          `Never fabricate content AS IF it came from a specific source you don't actually have (exact ` +
-          `textbook pages, a teacher's rubric you never saw) — build the best valid general/preliminary ` +
-          `version instead.\n` +
+          `SYNTHESIS GUIDELINES BY TASK TYPE:\n` +
+          `• "learn_understand" or "review": Generate FLASHCARDS for key definitions/formulas/terms, or a structured NOTE (core rules + examples).\n` +
+          `• "practice" or "prepare_assessment": Generate a diagnostic QUIZ with clear explanations per question to test exam readiness.\n` +
+          `• "write", "research", "project": Generate a NOTE with an outline, checklist, or guide.\n` +
+          `• A logistics/admin task needs NONE of these — say "none" rather than forcing one.\n\n` +
+          `For a standard curriculum topic, missing the class's own EXACT source material is NEVER a reason to build ` +
+          `nothing: use your reliable general knowledge to build a genuinely useful version now.\n` +
           `Return ONLY this JSON, no other text: {"kind": "note"|"flashcards"|"quiz"|"none", ` +
           `"note": {"title":"...","body":"..."} | null, ` +
           `"flashcards": {"title":"...","cards":[{"front":"...","back":"..."}]} | null, ` +
@@ -4292,6 +4369,10 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     ...(title ? { title } : {}),
     ...(typeof out?.isBigProject === "boolean" ? { isBigProject: out.isBigProject } : {}),
     ...(firstAction ? { firstAction } : {}),
+    ...(out?.taskType ? { taskType: out.taskType } : {}),
+    ...(out?.goal ? { goal: out.goal } : {}),
+    ...(out?.infoRequirement ? { infoRequirement: out.infoRequirement } : {}),
+    ...(out?.unknowns ? { unknowns: out.unknowns } : {}),
   };
 }
 
