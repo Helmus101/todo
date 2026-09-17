@@ -91,16 +91,25 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language }: Stud
 
     try {
       const savedChat = localStorage.getItem(chatStorageKey);
-      const parsedChat = savedChat ? JSON.parse(savedChat) : [];
-      if (!cancelled && Array.isArray(parsedChat)) {
-        setAiChat(parsedChat.filter((entry) =>
+      const parsedChat = savedChat ? JSON.parse(savedChat) : null;
+      let initialChat: Array<{ role: "user" | "assistant"; text: string }> = [];
+      if (Array.isArray(parsedChat) && parsedChat.length > 0) {
+        initialChat = parsedChat.filter((entry) =>
           entry && (entry.role === "user" || entry.role === "assistant") && typeof entry.text === "string"
-        ).slice(-100));
+        );
+      } else if (Array.isArray(task.chat) && task.chat.length > 0) {
+        initialChat = task.chat.map((c) => ({ role: c.role, text: c.text }));
+      }
+      if (!cancelled) {
+        setAiChat(initialChat.slice(-100));
         chatIdentityRef.current = chatStorageKey;
       }
     } catch (e) {
       console.error("Failed to restore study chat:", e);
-      chatIdentityRef.current = chatStorageKey;
+      if (!cancelled) {
+        setAiChat(Array.isArray(task.chat) ? task.chat.map((c) => ({ role: c.role, text: c.text })).slice(-100) : []);
+        chatIdentityRef.current = chatStorageKey;
+      }
     }
 
     api.studyProfile().then((loadedProfile) => {
@@ -663,23 +672,24 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language }: Stud
     if (!message.trim()) return;
     
     setAiLoading(true);
-    const newChat = [...aiChat, { role: "user" as const, text: message }];
-    setAiChat(newChat);
+    const userEntry = { role: "user" as const, text: message };
+    setAiChat((prev) => [...prev, userEntry]);
     setAiInput("");
     
     try {
       const response = await api.chat(task.id, message);
-      setAiChat([...newChat, { role: "assistant" as const, text: response.chat?.[response.chat.length - 1]?.text || "I couldn't process that request." }]);
+      const assistantText = response.chat?.[response.chat.length - 1]?.text || "I couldn't process that request.";
+      setAiChat((prev) => [...prev, { role: "assistant" as const, text: assistantText }]);
     } catch (e: any) {
-      // Keep the user's message (newChat already includes it) — never delete chat history on error.
+      // Keep the user's message — never delete chat history on error.
       const errMsg = e?.status === 404
         ? (language === "en" ? "This task's data isn't loaded on the server yet — try refreshing the page, then ask again." : "Les données de cette tâche ne sont pas encore chargées sur le serveur — rafraîchis la page, puis redemande.")
         : (language === "en" ? "Otto couldn't reply just now — try again in a moment." : "Otto n'a pas pu répondre tout de suite — réessaie dans un instant.");
-      setAiChat([...newChat, { role: "assistant" as const, text: errMsg }]);
+      setAiChat((prev) => [...prev, { role: "assistant" as const, text: errMsg }]);
     } finally {
       setAiLoading(false);
     }
-  }, [task.id, aiChat, language]);
+  }, [task.id, language]);
 
   const handleAiOption = useCallback((option: string) => {
     const optionMessages: Record<string, string> = {

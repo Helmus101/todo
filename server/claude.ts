@@ -3908,16 +3908,13 @@ export async function runTask(
           `NOT make another read call.`
         : `ENFORCEMENT (round ${i + 1}/${MAX}): you have CREATED NOTHING yet — only reads. Before you do anything ` +
           `else, THOROUGHLY check whether an artifact is actually needed here — don't default to "just steps": ` +
-          `for academic prep specifically, a step that reads "create/write/make a note/deck/quiz defining X" is ` +
-          `ALMOST NEVER correct as a step — that content should be the artifact you produce THIS run, not a ` +
-          `future action left for the student. Only genuinely wait on a step first (e.g. "check the syllabus for ` +
-          `the exact scope") when you truly cannot produce anything USEFUL without that answer — and even then, ` +
-          `default to still creating a solid general-scope artifact NOW (the well-known figures/terms/facts you ` +
-          `already have real content for) rather than nothing, since a starting deck the student can prune once ` +
-          `the scope narrows beats an empty task. If real academic content is called for, your NEXT tool call ` +
-          `MUST be a create/write tool (CREATE_NOTE for a short brief, CREATE_FLASHCARDS for a drillable deck, ` +
-          `GOOGLEDOCS_CREATE_DOCUMENT, GMAIL_CREATE_EMAIL_DRAFT, GOOGLESHEETS_UPDATE_VALUES, …) that produces the ` +
-          `task's artifact with the content you already have. Do NOT make another read call. But if this is a ` +
+          `for academic prep specifically, do NOT leave a step that reads "create/write/make a note/deck/quiz ` +
+          `defining X" — those are Otto artifact decisions handled automatically AFTER this research phase. ` +
+          `Your job in this phase is to gather the real subject content and state it clearly in context so the ` +
+          `artifact phase can build the right note, flashcards, or quiz. Only genuinely wait on a student step ` +
+          `(e.g. "check the syllabus for the exact scope") when you truly cannot identify the task's subject ` +
+          `without them; otherwise keep enough general-scope content in context for a useful starting artifact. ` +
+          `Do NOT make another read call unless a specific missing fact blocks the context. But if this is a ` +
           `logistics/admin task (booking, confirming, buying, scheduling) with nothing worth preserving beyond ` +
           `the steps list, do NOT force a note just to have one — call submit now with steps only.`;
       messages.push({ role: "user", content: nudge });
@@ -4083,56 +4080,43 @@ export async function runTask(
               draft.did = (draft.did || []).filter((d) =>
                 !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d) ||
                 wroteAny || draft.links.length > 0 || draft.sendables.length > 0);
-              // ── PHASE 2 — STEPS, from a dedicated call over the COMPLETE research outcome ──────────────
-              // Research (phase 1, above) is done: draft.context/did/links now reflect everything this run
-              // found. writeStepsFromContext reasons about the step breakdown from that complete picture in
-              // its OWN call, never from the loop's own live-improvised guess — this is the actual fix for
-              // "steps got written mid-search instead of after it". Empty fallbackSteps ([]) deliberately:
-              // the loop's inline steps (if the model set any despite the schema no longer asking for them
-              // to matter) are never trusted as a fallback, so there's exactly one source of truth for steps.
-              const steps2 = await writeStepsFromContext(task, draft.context, draft.links, [], siblingTasks || [], draft.did, profile, undefined);
+              // ── PHASE 2 — PREPARE HELPFUL ARTIFACTS ───────────────────────────────
+              // Research is done. Before writing the user's remaining steps, prepare any useful note/deck/
+              // quiz so the step writer knows what already exists and can say "use/take/review it" instead
+              // of leaving "create a deck/quiz/note" as a fake student action.
+              const artifactResult = await decideArtifact(task, draft.context, [], profile);
+              if (artifactResult.tokens) { tokIn += artifactResult.tokens.in; tokOut += artifactResult.tokens.out; tokCached += artifactResult.tokens.cachedIn; }
+              const allow = `${task.title} ${task.why} ${task.sourceDetail || ""}`;
+              const titleOk = (title: string) => extractEntities(title).every((e) => textMentionsEntity(allow, e)) && !bleedsToSibling(title, task, siblingTasks || []);
+              const preparedDid = [...(draft.did || [])];
+              if (artifactResult.note && titleOk(artifactResult.note.title)) {
+                notesCreated.push(artifactResult.note);
+                preparedDid.push(`Prepared note: ${artifactResult.note.title}`);
+                logAudit("artifact", fr ? `Fiche créée : « ${artifactResult.note.title} »` : `Note created: "${artifactResult.note.title}"`);
+              }
+              if (artifactResult.flashcards && titleOk(artifactResult.flashcards.title)) {
+                flashcardsCreated.push(artifactResult.flashcards);
+                preparedDid.push(`Prepared flashcards: ${artifactResult.flashcards.title}`);
+                logAudit("artifact", fr ? `Cartes créées : « ${artifactResult.flashcards.title} » (${artifactResult.flashcards.cards.length})` : `Flashcards created: "${artifactResult.flashcards.title}" (${artifactResult.flashcards.cards.length})`);
+              }
+              if (artifactResult.quiz && titleOk(artifactResult.quiz.title)) {
+                quizzesCreated.push(artifactResult.quiz);
+                preparedDid.push(`Prepared quiz: ${artifactResult.quiz.title}`);
+                logAudit("artifact", fr ? `Quiz créé : « ${artifactResult.quiz.title} » (${artifactResult.quiz.questions.length} questions)` : `Quiz created: "${artifactResult.quiz.title}" (${artifactResult.quiz.questions.length} questions)`);
+              }
+
+              // ── PHASE 3 — BROAD USER STEPS, from the end goal ──────────────────────
+              // Now decide what the user still has to do to reach the finished state. This runs after
+              // preparation specifically to avoid cross-contaminating steps with Otto's own artifact work.
+              const steps2 = await writeStepsFromContext(task, draft.context, draft.links, [], siblingTasks || [], preparedDid, profile, undefined);
               draft.steps = (stepsMatchTitle(task.title, steps2) && !isFolderHousekeepingDrift(task.title, steps2))
-                ? steps2
+                ? steps2.filter((s) => !IN_APP_ARTIFACT_STEP.test(s.text))
                 : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false } as any];
               // Cross-task bleed-in backstop, unconditional (see dropForeignEntitySteps/dropSiblingBleedSteps'
-              // own comments) — phase 2's own output still gets the same scrutiny as any other step source.
+              // own comments) — phase 3's own output still gets the same scrutiny as any other step source.
               const bleedReject = checkStepContamination(draft);
               if (bleedReject && canBounce) { finishBacks++; content = bleedReject; }
               else {
-                // ── PHASE 3 — ARTIFACT, from a dedicated call given the finished context AND steps ────────
-                // Only now, with the real step breakdown already decided, does Otto ask "would a note/
-                // flashcard deck/quiz actually help here" — a separate decision from both research and
-                // step-writing, not a tool available mid-research (CREATE_NOTE/FLASHCARDS/QUIZ are no longer
-                // in `tools` above — see the phase-1 tool list). decideArtifact validates its own output via
-                // the same makeNote/makeDeck/makeQuiz used everywhere else; a failure there just means no
-                // artifact, never blocks the task on top of the real steps phase 2 already produced.
-                const artifactResult = await decideArtifact(task, draft.context, draft.steps, profile);
-                if (artifactResult.tokens) { tokIn += artifactResult.tokens.in; tokOut += artifactResult.tokens.out; tokCached += artifactResult.tokens.cachedIn; }
-                // Same two-layer title check steps get (dropForeignEntitySteps + dropSiblingBleedSteps, via
-                // checkStepContamination above): entity-based AND the non-entity sibling-bleed check, since
-                // an artifact title can bleed into a sibling task's own wording without naming a proper-noun
-                // entity at all (see bleedsToSibling's own comment).
-                const allow = `${task.title} ${task.why} ${task.sourceDetail || ""}`;
-                const titleOk = (title: string) => extractEntities(title).every((e) => textMentionsEntity(allow, e)) && !bleedsToSibling(title, task, siblingTasks || []);
-                if (artifactResult.note && titleOk(artifactResult.note.title)) {
-                  notesCreated.push(artifactResult.note);
-                  logAudit("artifact", fr ? `Fiche créée : « ${artifactResult.note.title} »` : `Note created: "${artifactResult.note.title}"`);
-                }
-                if (artifactResult.flashcards && titleOk(artifactResult.flashcards.title)) {
-                  flashcardsCreated.push(artifactResult.flashcards);
-                  logAudit("artifact", fr ? `Cartes créées : « ${artifactResult.flashcards.title} » (${artifactResult.flashcards.cards.length})` : `Flashcards created: "${artifactResult.flashcards.title}" (${artifactResult.flashcards.cards.length})`);
-                }
-                if (artifactResult.quiz && titleOk(artifactResult.quiz.title)) {
-                  quizzesCreated.push(artifactResult.quiz);
-                  logAudit("artifact", fr ? `Quiz créé : « ${artifactResult.quiz.title} » (${artifactResult.quiz.questions.length} questions)` : `Quiz created: "${artifactResult.quiz.title}" (${artifactResult.quiz.questions.length} questions)`);
-                }
-                // Strip steps like "Build a flashcard deck" / "Create a quiz" from the final step list — Otto
-                // just built those in Phase 3, so leaving them as student to-dos is wrong and confusing.
-                // Only strip when at least one in-app artifact was actually produced this run.
-                const builtInApp = !!artifactResult.note || !!artifactResult.flashcards || !!artifactResult.quiz;
-                if (builtInApp) {
-                  draft.steps = draft.steps.filter((s) => !IN_APP_ARTIFACT_STEP.test(s.text));
-                }
                 submitted = draft; content = "submitted";
               }
             }
@@ -4449,11 +4433,16 @@ export async function writeStepsFromContext(
           `out over the weeks/months a project like this genuinely takes — don't cram them all into the next few ` +
           `days. 4 to 8 milestones, each text ≤10 words.\n\n` +
           `IF ORDINARY: break the remaining work into a clear, ORDERED list of concrete, actionable steps — each ` +
-          `a SHORT one-liner, ONE clause (≤8 words: imperative verb + the specific thing, no hedging, no filler, ` +
-          `never multiple asks stacked with a colon/semicolon/"and") naming a specific action (not a vague ` +
-          `category like "look into options"), small enough that the list feels doable, not overwhelming. ` +
+          `a SHORT one-liner, ONE clause (≤10 words: imperative verb + the specific thing, no hedging, no filler, ` +
+          `never multiple asks stacked with a colon/semicolon/"and") naming a BROAD next action. Keep the list ` +
+          `general enough to guide the student's work instead of micromanaging it: "Choose the birthday message ` +
+          `channel", "Review the prepared deck", "Write the introduction draft", "Book the chosen flights" are ` +
+          `good; tiny internal fragments like "Search syllabus for Paolo Scott", "Open Gmail", "Re-run web ` +
+          `search", or "Note required question type" are too narrow unless that exact single check is the whole ` +
+          `task. The steps are the USER'S path to the end state after Otto's prep is done, not Otto's own ` +
+          `research log. ` +
           `For each step, include:\n` +
-          `- "text": concise action description (≤8 words)\n` +
+          `- "text": concise action description (≤10 words)\n` +
           `- "minutes": realistic duration estimate in minutes (e.g. 5, 10, 15, 25, 45)\n` +
           `- "doneWhen": concrete completion condition (e.g. "Can state 5 key concepts with 1 example each without notes")\n` +
           `- "checkpoint": mastery threshold or checkpoint rule (e.g. "Score ≥ 80% on quiz before moving to next step")\n` +
@@ -4465,10 +4454,13 @@ export async function writeStepsFromContext(
           `"create X" as a step — that's done; instead say what to DO with it now (review it, send it, use it, ` +
           `decide something). Only list creating a document/draft as a step if none of the resources above cover ` +
           `it yet. NEVER split ONE action into a chain of steps that just narrate its own sub-parts. ` +
-          `1 to 6 steps, omit "dependsOn" when a step doesn't wait on another. A SINGLE step is a completely ` +
+          `1 to 5 steps, omit "dependsOn" when a step doesn't wait on another. A SINGLE step is a completely ` +
           `normal, GOOD outcome when a task is simple.\n\n` +
           `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
           `graded/learning work itself as if it were already done or as Otto's job; that work always stays theirs. ` +
+          `Do not auto-advance the student through choices or learning: Otto prepares aids, drafts, and context, ` +
+          `but the child/student still reviews, decides, writes, sends, books, practices, or asks a person when ` +
+          `the action requires their judgment, consent, physical presence, or learning. ` +
           `Every item must be directly about "${task.title}". ` +
           `CRITICAL: Do NOT write steps about creating OTTO'S ARTIFACTS:\n` +
           `  ✗ "Create flashcards for..." (Otto creates these, not the student)\n` +
@@ -4568,6 +4560,11 @@ async function decideArtifact(
   try {
     const client = deepseekClient();
     const tt = task.taskType;
+    const taskText = `${task.title} ${task.why} ${task.sourceSubject || ""} ${task.sourceDetail || ""} ${task.goal || ""}`.toLowerCase();
+    const isAcademic = !!task.sourceSubject || /\b(study|revise|revision|learn|understand|practice|quiz|test|exam|contr[oô]le|devoir|homework|exercise|essay|introduction|commentaire|dissertation|literature|lang|fran[cç]ais|math|physics|chem|history|geography|economics|business|vocab|vocabulary|grammar|figures? de style)\b/i.test(taskText);
+    const asksQuiz = /\b(quiz|self-?check|check understanding|diagnos|practice|exam|test|contr[oô]le|assessment|questions?|drill problems?)\b/i.test(taskText);
+    const asksFlashcards = /\b(flashcards?|cards?|deck|vocab|vocabulary|terms?|definitions?|formulas?|dates?|authors?|movements?|figures? de style|recall|memor(?:ize|ise))\b/i.test(taskText);
+    const asksNote = /\b(note|fiche|guide|brief|outline|plan|checklist|introduction|commentaire|dissertation|essay|write|draft|message|email|reply|structure|packing list|itinerary|budget)\b/i.test(taskText);
     const stepsText = steps.length ? steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n") : "(none)";
     const taskTypeHint = tt ? `TASK TYPE: ${tt}\n` : "";
     const goalHint = task.goal ? `GOAL / DEFINITION OF DONE: ${task.goal}\n` : "";
@@ -4607,9 +4604,35 @@ async function decideArtifact(
       // (e.g., "compile a revision doc" should produce the actual doc, not just steps)
       directive = `If this task involves CREATING a document/brief (compiling, collecting, drafting), build a NOTE with the compiled content. Otherwise output {"none": true}.`;
       wantNote = true; // try to create, but accept {"none": true} if not applicable
+    } else if (tt === "analyze" || tt === "problem_solve") {
+      directive = asksQuiz
+        ? `Build a QUIZ — 4-6 application questions that check whether the student can use the method or concepts. Detailed "why" per question.`
+        : `Build a NOTE — a concise method/reference guide with the key concepts, common traps, and a small parallel example if relevant.`;
+      wantQuiz = asksQuiz;
+      wantNote = !asksQuiz;
+    } else if (isAcademic) {
+      // Classifier backstop: generated/manual tasks are sometimes missing a precise taskType. Use the
+      // actual task wording so academic tasks still get a concrete artifact instead of silently returning
+      // {"none": true}. Multiple artifacts are fine when the wording calls for both drill and diagnosis.
+      wantFlashcards = asksFlashcards || /\b(revise|revision|learn|study)\b/i.test(taskText);
+      wantQuiz = asksQuiz || /\b(prepare|practice)\b/i.test(taskText);
+      wantNote = asksNote || (!wantFlashcards && !wantQuiz);
+      const parts = [
+        wantNote ? "1. NOTE — a concise method/outline/reference guide that helps the student do the work themselves." : "",
+        wantFlashcards ? "2. FLASHCARDS — 8-15 cards for the key terms, definitions, formulas, dates, authors, movements, or recall facts." : "",
+        wantQuiz ? "3. QUIZ — 4-6 diagnostic/application questions with plausible options and detailed feedback." : "",
+      ].filter(Boolean);
+      directive = `Build the useful in-app artifact(s) implied by the task wording:\n${parts.join("\n")}`;
     } else {
-      // Other unknown types — no artifact
-      directive = `Output {"none": true} — this task has no content worth drilling or summarising in-app.`;
+      // Other unknown non-academic types — no artifact unless the task explicitly asked for one.
+      if (asksNote || asksFlashcards || asksQuiz) {
+        wantNote = asksNote;
+        wantFlashcards = asksFlashcards;
+        wantQuiz = asksQuiz;
+        directive = `Build the explicitly requested artifact(s):${wantNote ? "\n- NOTE for the requested brief/outline/checklist." : ""}${wantFlashcards ? "\n- FLASHCARDS for the requested recall deck." : ""}${wantQuiz ? "\n- QUIZ for the requested self-check/practice questions." : ""}`;
+      } else {
+        directive = `Output {"none": true} — this task has no content worth drilling or summarising in-app.`;
+      }
     }
 
     // Build the JSON schema line dynamically based on what we actually want
@@ -4653,18 +4676,22 @@ async function decideArtifact(
     if (out.flashcards) { const r = makeDeck(out.flashcards); if ("deck" in r) flashcards = r.deck; }
     if (out.quiz) { const r = makeQuiz(out.quiz); if ("quiz" in r) quiz = r.quiz; }
 
-    // Fallback: study tasks MUST have artifacts, even if model declined to create them
-    // This ensures "Revise figures de style" always gets a study guide, not just steps
-    const isStudyTask = ["learn_understand", "review", "practice", "prepare_assessment"].includes(tt || "");
-    if (isStudyTask && !note && !flashcards && !quiz) {
-      // Create a minimal study guide from the steps and context
-      const guideBody = `# Study Guide: ${task.title}\n\n` +
-        (task.goal ? `**Goal:** ${task.goal}\n\n` : "") +
-        `## Key Points\n` +
-        (context.slice(0, 500) || "No context gathered yet — complete the research steps to build this guide.") +
-        `\n\n## Practice Steps\n${steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n")}`;
-      const noteR = makeNote({ title: `Study Guide: ${task.title.slice(0, 50)}`, body: guideBody });
-      if ("note" in noteR) note = noteR.note;
+    // Fallback: if a study task clearly called for an artifact and the model produced nothing, create a
+    // conservative note ONLY when there is substantive researched context to base it on. Do not fabricate a
+    // generic quiz/deck; a bad artifact is worse than none.
+    const isStudyTask = ["learn_understand", "review", "practice", "prepare_assessment", "analyze", "problem_solve"].includes(tt || "") || isAcademic;
+    if (isStudyTask && (wantNote || wantFlashcards || wantQuiz) && !note && !flashcards && !quiz) {
+      const contextLooksLikeSearchLog = /\b(searched|performed searches|ran queries|came back empty|returned no results|without success|re-?run)\b/i.test(context);
+      const substantiveContext = context.trim().length >= 180 && !contextLooksLikeSearchLog;
+      if (substantiveContext) {
+        const guideBody = `# Study Guide: ${task.title}\n\n` +
+          (task.goal ? `**Goal:** ${task.goal}\n\n` : "") +
+          `## Key Points From Research\n` +
+          context.slice(0, 900) +
+          (steps.length ? `\n\n## How To Use This\n${steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n")}` : "");
+        const noteR = makeNote({ title: `Study Guide: ${task.title.slice(0, 50)}`, body: guideBody });
+        if ("note" in noteR) note = noteR.note;
+      }
     }
 
     return { note, flashcards, quiz, tokens };
