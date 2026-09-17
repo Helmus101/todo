@@ -1168,6 +1168,8 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
     // carve-out view's call() closes over the full toolset; scoping narrows `.tools` while preserving
     // whatever `.call` it's given, so scoping-after-carve-out keeps both properties. The reverse order
     // silently discards the scoping (its closure reopens the full toolset) — do not reorder this.
+    // Allow updates to Google artifacts (docs/sheets/slides/drafts/events) for anti-duplication. Otto's own
+    // tools (CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ) always create fresh artifacts, never update old ones.
     const priorArtifactIds = (task.artifacts || []).map((a) => a.id);
     const withArtifacts = extras?.withAllowedArtifacts && priorArtifactIds.length ? extras.withAllowedArtifacts(priorArtifactIds) : extras;
     const scoped = withArtifacts ? scopeTools(withArtifacts, task) : undefined;

@@ -781,16 +781,14 @@ const ENTITY_STOPWORDS = new Set([
   "remove", "update", "fix", "look", "find", "gather", "collect", "organize", "continue", "keep", "take",
   "give", "share", "post", "publish", "go", "get",
 ]);
-/** Extract proper-noun-like spans (1-3 consecutive capitalized words, e.g. "Pierre Cotteau", "19th
- *  arrondissement" won't match since it doesn't start capitalized — deliberately simple/interpretable, no
- *  NER model, same posture as every other pattern-matching backstop in this file) from a piece of text. */
+/** Extract proper-noun-like spans (1-3 consecutive capitalized words, e.g. "Pierre Cotteau", plus
+ *  specific dates/times) from a piece of text. Deliberately simple/interpretable, no NER model,
+ *  same posture as every other pattern-matching backstop in this file. */
 function extractEntities(text: string): string[] {
-  const matches = text.match(/\b[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b/g) || [];
   const out: string[] = [];
+  // Capitalized phrases (proper nouns, names, places)
+  const matches = text.match(/\b[A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\b/g) || [];
   for (const m of matches) {
-    // Trim leading/trailing stopwords off the matched span first — a sentence-starting verb ("Send",
-    // "Contact") sitting right before a real name greedily joins the regex match ("Send Professor Kosova"),
-    // which would wrongly fail the allowlist check even when "Professor Kosova" alone is legitimate.
     const words = m.split(/\s+/);
     let start = 0, end = words.length;
     while (start < end && ENTITY_STOPWORDS.has(words[start].toLowerCase())) start++;
@@ -798,7 +796,11 @@ function extractEntities(text: string): string[] {
     const trimmed = words.slice(start, end);
     if (trimmed.length) out.push(trimmed.join(" "));
   }
-  return out;
+  // Also extract specific dates/times (e.g. "September 21", "2:00 PM", "Sept 24") — these are often
+  // cross-task contaminators when multiple tasks reference different dates
+  const dateMatches = text.match(/(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Oct|Nov|Dec)\s+\d{1,2}|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)/gi) || [];
+  out.push(...dateMatches);
+  return [...new Set(out)]; // dedupe
 }
 function textMentionsEntity(haystack: string, entity: string): boolean {
   return haystack.toLowerCase().includes(entity.toLowerCase());
@@ -3658,12 +3660,16 @@ export async function runTask(
       `chapter/exercise/topic), not just the subject — e.g. "Français" → "Read Chapter 3 of L'Étranger" or ` +
       `"Prepare for the Molière oral exam", never left as just the class name once you actually know what it is.`
     : "";
-  // Artifacts this task already produced on a previous run — the agent MUST reuse + UPDATE these, never make
-  // a fresh copy (this is what stops "5 road-trip packing lists"). A deterministic anti-duplication signal.
+  // Artifacts this task already produced on a previous run — UPDATE Google docs/sheets (anti-duplication),
+  // but the CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ tools always create fresh Otto artifacts each run
+  // (students want new questions, not the same ones).
   const hasArtifactIds = !!task.artifacts?.length; // real ids to check writes against (vs. legacy links-only)
   const priorArtifactIds = new Set((task.artifacts || []).map((a) => a.id));
+  // Only show Google artifacts (doc/sheet/slides/draft/event) as "reuse and update" — Otto's native tools
+  // (CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ) always create fresh content, never update prior ones
   const priorArtifacts: { label?: string; url?: string; extra?: string }[] = hasArtifactIds
-    ? task.artifacts!.map((a) => ({ label: a.label || a.kind, url: a.url, extra: `${a.kind} id ${a.id}` }))
+    ? task.artifacts! // task.artifacts only contains Google kinds anyway, no filtering needed
+        .map((a) => ({ label: a.label || a.kind, url: a.url, extra: `${a.kind} id ${a.id}` }))
     : (task.links || []).filter((l) => l?.url);
   const artifactsBlock = priorArtifacts.length
     ? `\nALREADY CREATED FOR THIS TASK (you made these on a prior run — OPEN and UPDATE the existing one; ` +
@@ -3671,7 +3677,8 @@ export async function runTask(
       `prefer the MARKDOWN update tool (whole-document markdown text) over the raw index-based batch-update ` +
       `API — it needs no structural inspection, so update it directly instead of reading the doc's internal ` +
       `structure first:\n` +
-      `${priorArtifacts.map((l) => `- ${l.label}${l.extra ? ` (${l.extra})` : ""}${l.url ? `: ${l.url}` : ""}`).join("\n")}\n`
+      `${priorArtifacts.map((l) => `- ${l.label}${l.extra ? ` (${l.extra})` : ""}${l.url ? `: ${l.url}` : ""}`).join("\n")}\n` +
+      `NOTE: CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ always make FRESH in-app artifacts — never update old ones (students want new content).\n`
     : "";
   // FIRST PASS: plan the research before doing it (see planResearch) — skipped for a focused single-step
   // re-run, which already knows exactly what it's doing and doesn't need a fresh research plan.
@@ -3919,6 +3926,7 @@ export async function runTask(
     const checkStepContamination = (d: RunOutput): string | null => {
       const before = d.steps.length;
       let filtered = dropForeignEntitySteps(task, d.links, d.steps);
+      const afterEntity = filtered.length;
       filtered = dropSiblingBleedSteps(task, siblingTasks || [], filtered);
       filtered = dropProcessComplaintSteps(filtered);
       // Semantic domain check: if steps describe a completely different task domain, flag it
@@ -3927,6 +3935,7 @@ export async function runTask(
           `they seem to be about school administration, communication, or logistics rather than the ` +
           `academic work this task is about. Stay focused on "${task.title}" specifically.`;
       }
+      // Severe contamination: more than half the steps were filtered out
       if (before > 0 && filtered.length < before / 2 && finishBacks < 2 && (MAX - 1 - i) >= 2) {
         return `REJECTED: most of your "steps" turned out to be about OTHER tasks/obligations, not ` +
           `"${task.title}" itself — you likely read something unrelated during research and turned it into a ` +
@@ -4032,7 +4041,7 @@ export async function runTask(
               // "steps got written mid-search instead of after it". Empty fallbackSteps ([]) deliberately:
               // the loop's inline steps (if the model set any despite the schema no longer asking for them
               // to matter) are never trusted as a fallback, so there's exactly one source of truth for steps.
-              const steps2 = await writeStepsFromContext(task, draft.context, draft.links, [], draft.did, profile, undefined);
+              const steps2 = await writeStepsFromContext(task, draft.context, draft.links, [], siblingTasks || [], draft.did, profile, undefined);
               draft.steps = (stepsMatchTitle(task.title, steps2) && !isFolderHousekeepingDrift(task.title, steps2))
                 ? steps2
                 : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false } as any];
@@ -4345,6 +4354,7 @@ export async function writeStepsFromContext(
   context: string,
   links: TaskLink[],
   fallbackSteps: TaskStep[],
+  siblingTasks: { title: string; why?: string }[] = [],
   did: string[] = [],
   profile?: Profile,
   modelJudgedBigProject?: boolean,
@@ -4459,7 +4469,22 @@ export async function writeStepsFromContext(
     const cleaned = dropProcessComplaintSteps(gated);
     // Also filter out any steps that describe Otto's internal retry/re-run logic
     const noInternalOttoSteps = cleaned.filter((s) => !OTTO_INTERNAL_STEP.test(s.text));
-    return noInternalOttoSteps.length ? noInternalOttoSteps : fallbackSteps;
+    // Apply full contamination checking: same multi-layer filtering as during phase 1
+    let filtered = dropForeignEntitySteps(task, links, noInternalOttoSteps);
+    const beforeSibling = filtered.length;
+    filtered = dropSiblingBleedSteps(task, siblingTasks, filtered);
+    // Domain contamination only applies strictly to study tasks
+    if (task.taskType && ["learn", "review", "practice", "prepare_assessment"].includes(task.taskType) && hasDomainContamination(task.title, filtered)) {
+      filtered = [];
+    }
+    // Additional check: if filtering removed MORE than half the steps, likely severe contamination —
+    // reject all of them and use fallback instead (better an honest "continue working" than half-wrong steps)
+    const severlyContaminated = beforeSibling > 0 && filtered.length < beforeSibling / 2;
+    if (severlyContaminated) {
+      console.warn(`[writeStepsFromContext] severe contamination detected for "${task.title.slice(0,40)}" — removed ${beforeSibling - filtered.length}/${beforeSibling} steps; using fallback`);
+      filtered = [];
+    }
+    return filtered.length ? filtered : (noInternalOttoSteps.length && !severlyContaminated ? noInternalOttoSteps : fallbackSteps);
   } catch { return fallbackSteps; }
 }
 
