@@ -221,6 +221,17 @@ async function processSweep(job: store.Job): Promise<string> {
   await commitUser(email, profile, next);
   for (const t of found) void store.recordEvent(email, "found", { taskId: t.id, jobId: job.id, message: `Found from ${t.source}` });
   for (const t of toRun) { await store.enqueueJob(email, "execute_task", t.id); void store.recordEvent(email, "queued", { taskId: t.id, message: "Queued for execution" }); }
+  // Drain those newly-queued execute_task jobs INLINE, right here, instead of leaving them for whichever
+  // mechanism happens to notice next. Before this, a task auto-queued by a sweep sat at "queued" until the
+  // client's own kick loop caught it (needs an open tab within seconds of the sweep) or the next cron tick
+  // (up to 24h on Vercel's Hobby plan, which only permits daily cron) — reported live as "queued but no
+  // material produced," indistinguishable from a stuck job to the student even though nothing was actually
+  // broken, just unworked. This mirrors enqueueAndDrain's own "enqueue + drain inline" posture (server/
+  // index.ts's interactive routes), now extended to the sweep's OWN auto-queued tasks. Bounded (small limit,
+  // short budget) so one sweep can't blow past this worker's own execution-time ceiling — a task that
+  // doesn't finish in this window still sits "queued" exactly as before, just no worse off, and still gets
+  // picked up by the kick loop/cron same as always.
+  if (toRun.length) { try { await drain(Math.min(toRun.length, 3), 90_000, email); } catch { /* best-effort — cron/kick loop still catches it */ } }
 
   // Deliberately NO email here anymore — per direct instruction, the student should hear from Otto once it's
   // actually DONE something with a task, not the moment a bare "ready" card is discovered (which could still

@@ -707,22 +707,6 @@ function isFolderHousekeepingDrift(title: string, steps: { text: string }[]): bo
   if (/\b(organi[sz]e|folder|clean ?up|file management|sort (my|the) files)\b/i.test(title)) return false; // legitimately about this
   return steps.every((s) => FOLDER_HOUSEKEEPING_STEP.test(s.text));
 }
-// A step that describes BUILDING an artifact ("Create a revision note defining X", "Créer une fiche sur Y",
-// "build the revision sheet ... as a document or flashcard set") instead of the artifact actually existing —
-// the model has CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ available the whole run, so this content belongs
-// in an artifact THIS run, not left as a to-do for the student (see the ENFORCEMENT nudge above and the
-// check that uses this below in the submit-review chain). Bilingual (English + French) since step text can
-// be either, depending on the student's language setting. Verb and noun are checked SEPARATELY (not one
-// combined regex requiring proximity) — observed live, "build the revision sheet (term, definition,
-// example) as a document or flashcard set" has ~60 characters between "build" and "flashcard", further
-// apart than a fixed nearby-window check would catch; a step describing artifact creation reads as one
-// whether the noun sits right after the verb or at the end of a longer clause.
-const ARTIFACT_VERB = /\b(create|write|make|build|prepare|draft|cr[ée]er?|[ée]cri(re|s)|faire|pr[ée]parer|r[ée]diger)\b/i;
-const ARTIFACT_NOUN = /\b(note|brief|fiche|flash[- ]?cards?|deck|cartes?|quiz|questionnaire|revision sheet|fiche de r[ée]vision)\b/i;
-function describesDeferredArtifact(text: string): boolean {
-  return ARTIFACT_VERB.test(text) && ARTIFACT_NOUN.test(text);
-}
-
 // Capitalized single words that are common in step/artifact text but aren't proper-noun ENTITIES worth
 // checking (sentence starters, weekday/month names, Otto's own name, generic time words) — excluded so the
 // entity heuristic below doesn't flag ordinary sentences.
@@ -875,7 +859,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // "no cap") and the route-level error surfacing this budget bump pairs with.
 // rescue was 5000 (< run's 8000) — backwards for a pass whose whole job is to recover from the main pass
 // truncating: it was structurally MORE likely to truncate too, not less. Raised to match run's ceiling.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000, artifact: 6000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -2524,15 +2508,6 @@ export interface RunOutput {
    *  acronym and has nothing to research — so the keyword pre-filter AND the empty-context bail would
    *  otherwise both miss it) still gets the milestone treatment. */
   isBigProject?: boolean;
-  /** The model's OWN explicit, upfront declaration (same submit call) of whether this task's content calls
-   *  for a note/flashcard-deck/quiz — checked directly against whether one was actually created THIS run
-   *  (notesCreated/flashcardsCreated/quizzesCreated in runTask), not inferred from step wording after the
-   *  fact. This is the state-based invariant: `needsArtifact === true` with nothing created is rejected
-   *  outright (see runTask's submit-review chain) — a declared need is either satisfied or the run bounces,
-   *  the same "assert, don't just nudge" posture the artifact-deferred text check backs up as a second line
-   *  of defense (for the case where the model mis-declares `false` while its own steps still describe
-   *  building one). Undefined only if the model's response predates this field. */
-  needsArtifact?: boolean;
   /** The smallest possible first move on this task (the anti-procrastination hook) — see FIRST ACTION in
    *  RUN_SYSTEM. Validated in finalize() the same way a step's text/minutes are. */
   firstAction?: { text: string; minutes?: number };
@@ -2880,7 +2855,6 @@ const RUN_TOOLS = [
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
     title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (≤9 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
     isBigProject: { type: "boolean", description: "true ONLY if this is a genuinely BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/mémoire, an IB Extended Essay/TOK/CAS/Internal Assessment, a group project, a major report — where progress happens over weeks/months with real intermediate milestones, not a task doable in one sitting or a few short steps. Judge this from what the task ACTUALLY is, not from whether its title happens to name an acronym. Omit or false for anything ordinary." },
-    needsArtifact: { type: "boolean", description: "Decide this EXPLICITLY before writing \"steps\" — does this task's content genuinely call for a note/flashcard deck/quiz (definitions, vocabulary, a compiled reference, a revision aid, a checklist worth keeping)? If true, you MUST have already called CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ THIS run — a step that only DESCRIBES making one later does NOT satisfy this and will be rejected. Missing the class's own exact source material (a specific textbook page, a teacher's file you couldn't locate) is NEVER by itself a reason to answer true-but-not-create: for a standard curriculum topic, build it now from what you reliably know, and make verifying/aligning it with the real source a separate later step instead. The one case where it's honest to answer true and still not build the FULL thing: the user's request is for something specific to a source you genuinely could not find (exact pages, a rubric, specific slides) — then create the best valid general/preliminary version you can (never fabricate content AS IF it came from that specific source) and leave the source-specific refinement as a step. Set false only for logistics/admin tasks (booking, confirming, scheduling) with nothing worth preserving beyond the steps list." },
     context: { type: "string", description: "the SURROUNDING FACTS about this task — real, specific, substantive: who's involved, what they actually said/asked, what the doc/event/thread contains, dates, numbers, links. NEVER a meta-description of the task or your own process — 'User requested information about X', 'Performed searches across multiple services', 'Looked into Y' are WORTHLESS filler, not context, and will be rejected. If you truly found nothing useful after a real attempt, say the SPECIFIC thing that's missing ('No upcoming meetings with Gabrielle on the calendar; her last email was 3 weeks ago about the budget') — never a vague description of the search itself. 2-4 bullets, each starting with '- '." },
     synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' Write it like you're telling a friend what you just did, not filing a system log — plain, specific, a little warm — but that NEVER means padding it: no caveats, no explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
     did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, each ≤15 words, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. Plain, specific wording — what a person would actually say happened, not a system log entry. NEVER plans, reads-only, or things you didn't do." },
@@ -3015,9 +2989,13 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // email — see readOnlyPlusPrep. Anything document-shaped goes through Otto's own in-house note/flashcard/
   // quiz tools instead (CREATE_NOTE_TOOL etc. below — always available, not gated by EXECUTION_ENABLED).
   const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusPrep(extras);
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
+  // CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ are deliberately NOT offered here — phase 1 (this loop) is
+  // research only. Artifact creation is its own phase 3 (decideArtifact, below), run once with the
+  // complete research context AND the real step breakdown already in hand, never as a tool the model could
+  // reach for mid-research before it actually knows what the finished task needs.
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
-    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus drafting a Gmail email — never sending. Use your in-house note/flashcard/quiz/brief tools, not Docs/Sheets/Slides, for anything document-shaped"}): ${extras.connected.join(", ")}.\n`
+    ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus drafting a Gmail email — never sending, never creating a real external Google Doc/Sheet/Slides"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
   const manualHint = task.source === "manual"
     ? `\nThe USER added this to-do themselves, typed as a rough note. Treat the title as their intent: use your ` +
@@ -3060,7 +3038,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const messages: any[] = [{
     role: "user",
     content: !EXECUTION_ENABLED
-      ? head + deadlineHint + manualHint + `\nGather what you need and record the key facts in submit's "context". You DO have a tool to draft a Gmail email right now, plus your own in-house note/flashcard/quiz/brief tools for anything document-shaped — never listing "draft the reply" / "make a note of X" as a step handed to the user when you could just do it now. Actually create that email draft/note/deck NOW with your tools; sending/posting/deleting, and creating a real external Google Doc/Sheet/Slides, are the only things withheld. This applies to LOOKUPS too, not just creating things: "search your school email for X", "check the calendar for Y", "look up Z in Drive" describe RESEARCH you have the exact same tools to do RIGHT NOW — run that search yourself and use what you find, never hand a lookup back as a step just because the answer wasn't already sitting in front of you. A step is only legitimate when it's something genuinely only the human can do (a decision, a credential/login you don't have, a physical action) or something you tried and a tool genuinely couldn't reach. Only once you've done everything you can, break what's genuinely LEFT (sending, a decision only the user can make, anything needing a tool you don't have) into a clear, ordered "steps" list (see PLAN-ONLY MODE above), then call submit.`
+      ? head + deadlineHint + manualHint + `\nTHIS IS THE RESEARCH PHASE ONLY — gather what you need and record the real, substantive facts in submit's "context". Step breakdown and any note/flashcard-deck/quiz happen in LATER, separate phases once your research is complete — do not try to decide or write those here, and note/flashcard/quiz tools are not available in this phase. You DO have a tool to draft a Gmail email right now (never sending) for anything that genuinely needs one — don't leave "draft the reply" as a step when you could just do it now. This applies to LOOKUPS too: "search your school email for X", "check the calendar for Y", "look up Z in Drive" describe RESEARCH you have the exact same tools to do RIGHT NOW — run that search yourself and use what you find, never defer a lookup you could do this run. Once you've genuinely researched everything you can (never stop after one search that came up empty — vary the query, try a broader term, try a different app), call submit with the facts you found.`
       : focus
       // Focused single-step run (the user hit "Auto-do" on one automatable step).
       ? head + deadlineHint + `\nDo ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) — don't describe it, DO it — then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.`
@@ -3355,71 +3333,6 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 "after a real attempt, state the SPECIFIC gap (e.g. \"no upcoming meetings with Gabrielle; " +
                 "her last email was 3 weeks ago about the budget\"), never a vague description of the search " +
                 "itself.";
-            } else if (!draft.steps.length && canBounce) {
-              // Otto never actually executes (plan-only), so "steps" is the ONE thing every task must leave
-              // the user. Zero steps reads as "did nothing useful" even when research happened, so never
-              // accept an empty plan.
-              finishBacks++;
-              content = "REJECTED: \"steps\" is empty. Every task must leave the user at least one concrete " +
-                "next action. An empty steps[] is never acceptable here.";
-            } else if ((!stepsMatchTitle(task.title, draft.steps) || isFolderHousekeepingDrift(task.title, draft.steps)) && canBounce) {
-              // Observed live: a task titled "Prepare for the Wharton Investment Competition" came back with
-              // steps entirely about reorganizing Google Drive folders — the agent found a file with a
-              // relevant-sounding name during research and fixated on organizing where it lives instead of
-              // actually preparing for the task.
-              finishBacks++;
-              content = `REJECTED: your "steps" don't actually move "${task.title}" forward — they read like you ` +
-                `found a file/folder during research and fixated on organizing it instead of using what's in it ` +
-                `to prepare for the real task. Discard those steps and write ones that substantively address ` +
-                `"${task.title}" itself.`;
-            } else if (dropForeignEntitySteps(task, draft.links, draft.steps).length < draft.steps.length / 2 && canBounce) {
-              // Cross-task bleed-in: MOST steps name a specific person/place/organization absent from this
-              // task's own title/why/sourceDetail/links — the same "read broadly during research, turned
-              // unrelated obligations into steps" failure mode as the folder-housekeeping check above, just
-              // caught by named entities instead of a fixed keyword list. See dropForeignEntitySteps's own
-              // comment for the observed-live example (a Math AA HL task's steps naming "Pierre Cotteau" and
-              // "the 19th arrondissement" — real obligations, just from OTHER tasks).
-              finishBacks++;
-              content = `REJECTED: most of your "steps" name people/places/organizations that have nothing to ` +
-                `do with "${task.title}" — you likely read an unrelated email/doc/thread during research and ` +
-                `turned it into a step. Every step must be about THIS task only; drop anything about a person, ` +
-                `place, or obligation not actually mentioned in this task's own title/details.`;
-            } else if (draft.needsArtifact === true && !notesCreated.length && !flashcardsCreated.length && !quizzesCreated.length && canBounce) {
-              // PRIMARY check: a STATE assertion, not a text-pattern guess — the model explicitly declared
-              // (submit's own "needsArtifact" field, decided BEFORE writing steps) that this task's content
-              // calls for a note/flashcard deck/quiz, but no CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ
-              // actually succeeded this run. A declared need is either satisfied or the run bounces — no
-              // finishBacks cap-free pass needed here since the model itself made the call, this just holds
-              // it to it.
-              finishBacks++;
-              content = "REJECTED: you declared needsArtifact=true (this task's content calls for a note/" +
-                "flashcard deck/quiz) but never actually called CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ " +
-                "this run. Build it NOW — missing the class's own exact source material is never a reason to " +
-                "skip this (see needsArtifact's own description: use your general knowledge for a standard " +
-                "curriculum topic, make source-verification a separate later step instead of a blocker).";
-            } else if (draft.steps.some((s) => describesDeferredArtifact(s.text)) && !notesCreated.length && !flashcardsCreated.length && !quizzesCreated.length && canBounce) {
-              // SAFETY NET: catches the same failure when the model mis-declared needsArtifact (omitted it,
-              // or wrongly said false) while its own steps still describe building one — a text-shape check,
-              // not the primary mechanism. Observed live: a task researched real content via Gmail
-              // ("Confirmed school context... from sent-mail history") but ended with a step literally
-              // reading "Create a revision note or flashcard set defining each figure de style..." — the
-              // model described the artifact instead of building it, even though CREATE_NOTE/
-              // CREATE_FLASHCARDS were available the whole run.
-              finishBacks++;
-              content = "REJECTED: one of your \"steps\" describes CREATING a note/flashcard deck/quiz as a " +
-                "future action (e.g. \"Create a revision note defining X\", \"build the revision sheet once " +
-                "the source material is found\") — but no CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ call " +
-                "actually succeeded this run. NEVER gate this on finding the exact source document first: for " +
-                "a standard curriculum topic (a named literary device, a math method, a historical period, " +
-                "vocabulary for a known subject) YOU ALREADY KNOW the real content from your own general " +
-                "knowledge — build the artifact NOW using that, and if you couldn't find the class's own " +
-                "material, make a step to VERIFY/NARROW it against the real source later, not one that BLOCKS " +
-                "creating anything until the source is found. This does NOT mean fabricating source-specific " +
-                "content you don't have (e.g. claiming to use 'pages 42-47 of the textbook' you never saw) — " +
-                "build the best valid general/preliminary version instead, and flag the source-specific gap " +
-                "as a separate step. Only skip building it entirely if the content is genuinely specific to " +
-                "something only the student's own materials would contain AND you truly could not find it " +
-                "after real attempts.";
             } else if (/\bfound\b[^.]{0,60}\b(documents?|emails?|files?|spreadsheets?)\b/i.test(`${draft.context} ${(draft.did || []).join(" ")}`) && !draft.links.length && canBounce) {
               // "I found the relevant documents and emails" with nothing in links is a report of work the
               // user can't act on — they have no way to open what was supposedly found.
@@ -3445,27 +3358,51 @@ export async function runTask(task: { title: string; why: string; source?: strin
               draft.did = (draft.did || []).filter((d) =>
                 !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d) ||
                 wroteAny || draft.links.length > 0 || draft.sendables.length > 0);
-              // Dedicated second pass for the steps themselves — see writeStepsFromContext for why this is
-              // a SEPARATE call instead of trusting the steps the research loop proposed inline. The original
-              // draft.steps already passed the on-topic/drift checks above; the refined steps have NOT, so
-              // re-validate them and fall back to the original (already-validated) steps if the refinement
-              // pass itself drifted off-topic — never let a second-pass failure produce a WORSE result.
-              const refined = await writeStepsFromContext(task, draft.context, draft.links, draft.steps, draft.did, profile, draft.isBigProject);
-              draft.steps = (stepsMatchTitle(task.title, refined) && !isFolderHousekeepingDrift(task.title, refined)) ? refined : draft.steps;
-              // Same check applied to artifact TITLES (not full bodies — academic content is legitimately
-              // dense with subject vocabulary that would false-positive on a body-level check; a title is a
-              // much safer surface, e.g. a note titled "IEO France Finals Prep" attached to a Math AA HL task
-              // is exactly the same bleed-in this whole check exists to catch).
-              if (draft.notes?.length) draft.notes = dropSiblingBleedTitles(task, siblingTasks || [], draft.notes.filter((n) => extractEntities(n.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e))));
-              if (draft.flashcards?.length) draft.flashcards = dropSiblingBleedTitles(task, siblingTasks || [], draft.flashcards.filter((d) => extractEntities(d.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e))));
-              if (draft.quizzes?.length) draft.quizzes = dropSiblingBleedTitles(task, siblingTasks || [], draft.quizzes.filter((q) => extractEntities(q.title).every((e) => textMentionsEntity(`${task.title} ${task.why} ${task.sourceDetail || ""}`, e))));
-              // Final per-step filter, run UNCONDITIONALLY (not gated by `canBounce` like the whole-array
-              // check above) — this is what actually closes the gap: the whole-array bounce checks earlier
-              // in this chain all short-circuit once `canBounce` goes false, so a majority-contaminated draft
-              // on a round that's already used its bounce budget used to sail straight through untouched.
+              // ── PHASE 2 — STEPS, from a dedicated call over the COMPLETE research outcome ──────────────
+              // Research (phase 1, above) is done: draft.context/did/links now reflect everything this run
+              // found. writeStepsFromContext reasons about the step breakdown from that complete picture in
+              // its OWN call, never from the loop's own live-improvised guess — this is the actual fix for
+              // "steps got written mid-search instead of after it". Empty fallbackSteps ([]) deliberately:
+              // the loop's inline steps (if the model set any despite the schema no longer asking for them
+              // to matter) are never trusted as a fallback, so there's exactly one source of truth for steps.
+              const steps2 = await writeStepsFromContext(task, draft.context, draft.links, [], draft.did, profile, undefined);
+              draft.steps = (stepsMatchTitle(task.title, steps2) && !isFolderHousekeepingDrift(task.title, steps2))
+                ? steps2
+                : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false } as any];
+              // Cross-task bleed-in backstop, unconditional (see dropForeignEntitySteps/dropSiblingBleedSteps'
+              // own comments) — phase 2's own output still gets the same scrutiny as any other step source.
               const bleedReject = checkStepContamination(draft);
-              if (bleedReject) { finishBacks++; content = bleedReject; }
-              else { submitted = draft; content = "submitted"; }
+              if (bleedReject && canBounce) { finishBacks++; content = bleedReject; }
+              else {
+                // ── PHASE 3 — ARTIFACT, from a dedicated call given the finished context AND steps ────────
+                // Only now, with the real step breakdown already decided, does Otto ask "would a note/
+                // flashcard deck/quiz actually help here" — a separate decision from both research and
+                // step-writing, not a tool available mid-research (CREATE_NOTE/FLASHCARDS/QUIZ are no longer
+                // in `tools` above — see the phase-1 tool list). decideArtifact validates its own output via
+                // the same makeNote/makeDeck/makeQuiz used everywhere else; a failure there just means no
+                // artifact, never blocks the task on top of the real steps phase 2 already produced.
+                const artifactResult = await decideArtifact(task, draft.context, draft.steps, profile);
+                if (artifactResult.tokens) { tokIn += artifactResult.tokens.in; tokOut += artifactResult.tokens.out; tokCached += artifactResult.tokens.cachedIn; }
+                // Same two-layer title check steps get (dropForeignEntitySteps + dropSiblingBleedSteps, via
+                // checkStepContamination above): entity-based AND the non-entity sibling-bleed check, since
+                // an artifact title can bleed into a sibling task's own wording without naming a proper-noun
+                // entity at all (see bleedsToSibling's own comment).
+                const allow = `${task.title} ${task.why} ${task.sourceDetail || ""}`;
+                const titleOk = (title: string) => extractEntities(title).every((e) => textMentionsEntity(allow, e)) && !bleedsToSibling(title, task, siblingTasks || []);
+                if (artifactResult.note && titleOk(artifactResult.note.title)) {
+                  notesCreated.push(artifactResult.note);
+                  logAudit("artifact", fr ? `Fiche créée : « ${artifactResult.note.title} »` : `Note created: "${artifactResult.note.title}"`);
+                }
+                if (artifactResult.flashcards && titleOk(artifactResult.flashcards.title)) {
+                  flashcardsCreated.push(artifactResult.flashcards);
+                  logAudit("artifact", fr ? `Cartes créées : « ${artifactResult.flashcards.title} » (${artifactResult.flashcards.cards.length})` : `Flashcards created: "${artifactResult.flashcards.title}" (${artifactResult.flashcards.cards.length})`);
+                }
+                if (artifactResult.quiz && titleOk(artifactResult.quiz.title)) {
+                  quizzesCreated.push(artifactResult.quiz);
+                  logAudit("artifact", fr ? `Quiz créé : « ${artifactResult.quiz.title} » (${artifactResult.quiz.questions.length} questions)` : `Quiz created: "${artifactResult.quiz.title}" (${artifactResult.quiz.questions.length} questions)`);
+                }
+                submitted = draft; content = "submitted";
+              }
             }
           }
           else {
@@ -3871,6 +3808,67 @@ export async function writeStepsFromContext(
   } catch { return fallbackSteps; } // a failed refinement pass falls back to the loop's own steps, never blocks submission
 }
 
+/**
+ * Phase 3 (final) of the research → steps → artifact pipeline — see runTask's own comment for the full
+ * three-phase design. Given everything gathered in phase 1 (context) and the concrete steps produced in
+ * phase 2 (writeStepsFromContext), decide whether a note/flashcard-deck/quiz would actually help, and if
+ * so, author it directly in THIS call. By this point every fact the artifact would need is already in
+ * hand — this is content AUTHORING, not research, so it needs no tool-calling loop of its own, just one
+ * structured JSON response. Reuses the SAME content-quality bar as CREATE_NOTE_TOOL/CREATE_FLASHCARDS_TOOL/
+ * CREATE_QUIZ_TOOL's own descriptions (folded into the prompt below) and the SAME makeNote/makeDeck/
+ * makeQuiz validators used everywhere else an artifact gets built, so an artifact from this phase is held
+ * to the identical bar as one made mid-chat or mid-run. Best-effort: any failure here just means no
+ * artifact, never blocks the task (context/steps already stand on their own).
+ */
+async function decideArtifact(
+  task: { title: string; why: string; sourceSubject?: string; sourceDetail?: string },
+  context: string,
+  steps: { text: string }[],
+  profile?: Profile,
+): Promise<{ note?: TaskNote; flashcards?: TaskFlashcards; quiz?: TaskQuiz; tokens?: { in: number; out: number; cachedIn: number } }> {
+  try {
+    const client = deepseekClient();
+    const stepsText = steps.length ? steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n") : "(none)";
+    const res: any = await retryRequest(() => client.chat.completions.create({
+      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
+      max_tokens: OUT.artifact,
+      temperature: 0.4,
+      response_format: { type: "json_object" },
+      messages: [{
+        role: "user",
+        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n` +
+          assignmentBlock(task) +
+          `RESEARCH GATHERED THIS RUN:\n${context?.trim() || "(nothing substantive found)"}\n\n` +
+          `FINAL STEPS LEFT FOR THE STUDENT:\n${stepsText}\n\n` +
+          `Decide whether this task's content genuinely calls for an in-app artifact, and if so, build it now:\n` +
+          `- NOTE — ${CREATE_NOTE_TOOL.description}\n` +
+          `- FLASHCARDS — ${CREATE_FLASHCARDS_TOOL.description}\n` +
+          `- QUIZ — ${CREATE_QUIZ_TOOL.description}\n` +
+          `A logistics/admin task (booking, confirming, scheduling) with nothing worth preserving beyond the ` +
+          `steps list above needs NONE of these — say so plainly rather than forcing one. For a standard ` +
+          `curriculum topic, missing the class's own EXACT source material is NEVER a reason to build ` +
+          `nothing: use your reliable general knowledge to build a genuinely useful version now (the steps ` +
+          `above already cover verifying it against the real source, or add such a step if they don't). ` +
+          `Never fabricate content AS IF it came from a specific source you don't actually have (exact ` +
+          `textbook pages, a teacher's rubric you never saw) — build the best valid general/preliminary ` +
+          `version instead.\n` +
+          `Return ONLY this JSON, no other text: {"kind": "note"|"flashcards"|"quiz"|"none", ` +
+          `"note": {"title":"...","body":"..."} | null, ` +
+          `"flashcards": {"title":"...","cards":[{"front":"...","back":"..."}]} | null, ` +
+          `"quiz": {"title":"...","questions":[{"q":"...","options":["...","..."],"correct":0,"why":"..."}]} | null}` +
+          languageLine(profile),
+      }],
+    }));
+    const tokens = usageOf(res);
+    const out = firstJson<{ kind?: string; note?: any; flashcards?: any; quiz?: any }>(String(res.choices?.[0]?.message?.content || ""));
+    if (!out?.kind || out.kind === "none") return { tokens };
+    if (out.kind === "note" && out.note) { const r = makeNote(out.note); if ("note" in r) return { note: r.note, tokens }; }
+    if (out.kind === "flashcards" && out.flashcards) { const r = makeDeck(out.flashcards); if ("deck" in r) return { flashcards: r.deck, tokens }; }
+    if (out.kind === "quiz" && out.quiz) { const r = makeQuiz(out.quiz); if ("quiz" in r) return { quiz: r.quiz, tokens }; }
+    return { tokens }; // model chose a kind but the content didn't validate — no artifact, never blocks the task
+  } catch { return {}; }
+}
+
 /** Break ONE step down into its own small checklist — "Write the introduction" (a milestone inside a big
  *  project, but the same is useful for an ordinary step too) becomes 3-6 concrete sub-actions. On-demand
  *  only (a "Détailler cette étape" button), never generated automatically — most steps are fine as-is,
@@ -3951,8 +3949,15 @@ export async function runSubstep(
   profile?: Profile,
 ): Promise<string> {
   const results = await webSearch(`${substep.text} ${task.title}`);
+  // A genuinely empty search has nothing to answer from — don't ask the model to write a sentence about
+  // that (the prompt's own "if they don't answer it, say so plainly" instruction is exactly how "The search
+  // returned no results, so I cannot identify a public store registry..." ended up written INTO a substep's
+  // answer field, reading as a real result instead of a failure). Fail the same honest way an empty model
+  // answer already does below, so the client's existing error handling (a toast, substep stays unanswered)
+  // takes over instead of a dead-end paragraph masquerading as content.
+  if (!results.length) throw new Error("Otto n'a rien trouvé pour cette recherche — essaie manuellement.");
   const client = deepseekClient();
-  const context = results.slice(0, 5).map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join("\n") || "(no search results found)";
+  const context = results.slice(0, 5).map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join("\n");
   const res: any = await retryRequest(() => client.chat.completions.create({
     model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
     max_tokens: 200,
@@ -4265,7 +4270,6 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     ...(followUps.length ? { followUps } : {}),
     ...(title ? { title } : {}),
     ...(typeof out?.isBigProject === "boolean" ? { isBigProject: out.isBigProject } : {}),
-    ...(typeof out?.needsArtifact === "boolean" ? { needsArtifact: out.needsArtifact } : {}),
     ...(firstAction ? { firstAction } : {}),
   };
 }
