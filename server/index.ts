@@ -708,7 +708,10 @@ app.get("/api/pronote/tests", requireAuth, async (req, res) => {
 // connected student actually has the app open); the function itself is gated to at most once per few hours
 // so this adds no real load. Fire-and-forget from the client's point of view — always 200s immediately,
 // since a touch failing here just means "no better off than before," never worse.
-app.post("/api/pronote/touch", requireAuth, rateLimit(10, 60_000), async (req, res) => {
+// GET (not POST) so it bypasses CSRF entirely — this is a read-only keepalive that changes no state, so
+// there's no CSRF risk to protect against, and a POST needlessly 403-ed in production when the session
+// token was momentarily stale (the exact "pronote/touch 403" report).
+app.get("/api/pronote/touch", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   void pronoteSvc.touchPronoteSession(req.session.user!).catch(() => {});
   res.json({ ok: true });
 });
@@ -1142,7 +1145,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
   const message = String(req.body?.message || "").trim().slice(0, 2000);
   if (!message) { res.status(400).json({ error: "Say something first." }); return; }
-  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
+  const t = await findTaskOrReload(req, String(req.params.id));
   if (!t) { res.status(404).json({ error: "not found" }); return; }
   // /finance (Plaid) tasks NEVER reach the AI, full stop — not at generation (see plaidBillsToTasks in
   // tasks.ts), and not here either: chat is PER-TASK, so opening it on a "Pay X" card would otherwise send

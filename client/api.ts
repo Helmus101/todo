@@ -145,7 +145,7 @@ export const api = {
   // Opportunistic keepalive — called on the app's normal heartbeat when Pronote is connected (see
   // server/pronote.ts's touchPronoteSession for why: the daily cron alone leaves the token idle too long).
   // Fire-and-forget from every caller's point of view; the server itself is what rate-gates the real work.
-  pronoteTouch: (): Promise<{ ok: boolean }> => post("/api/pronote/touch").catch(() => ({ ok: false })),
+  pronoteTouch: (): Promise<{ ok: boolean }> => req("/api/pronote/touch").then(j).catch(() => ({ ok: false })),
   // /finance (Plaid) — sandbox-only for now, see server/plaid.ts's own comment.
   plaidStatus: (): Promise<{ connected: boolean; institutionName?: string; configured: boolean }> => req("/api/integrations/plaid/status").then(j),
   plaidLinkToken: (): Promise<{ linkToken: string }> => post("/api/integrations/plaid/link-token"),

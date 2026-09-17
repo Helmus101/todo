@@ -306,8 +306,8 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   const cardEn = useContext(LangContext) === "en";
   const [running, setRunning] = useState(false);
   // One panel open at a time, so the page never grows past about a screen and a half.
-  const [openPanel, setOpenPanel] = useState<"steps" | "plan" | null>(null);
-  const togglePanel = (p: "steps" | "plan") => setOpenPanel((v) => (v === p ? null : p));
+  const [openPanel, setOpenPanel] = useState<"steps" | null>(null);
+  const togglePanel = (p: "steps") => setOpenPanel((v) => (v === p ? null : p));
   // Lifted: both the chat's artifact chips and the "Ce qu'Otto a préparé" panel open these popups.
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [openDeck, setOpenDeck] = useState<string | null>(null);
@@ -560,12 +560,6 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
 
       {/* (D) everything else — closed, counted, one open at a time. */}
       <div className="tf-panels">
-        {task.taskContext ? (
-          <Disclosure label={L("Plan de la tâche", "Task plan")} count={task.taskContext.outputs.length || undefined}
-            open={openPanel === "plan"} onToggle={() => togglePanel("plan")}>
-            <TaskPlanningPanel task={task} />
-          </Disclosure>
-        ) : null}
         {steps.length > 0 ? (
           <Disclosure label={L("Toutes les étapes", "All steps")} count={`${doneCount}/${steps.length}`}
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
