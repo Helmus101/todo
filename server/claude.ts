@@ -1820,6 +1820,91 @@ export function shouldSkipResearch(infoRequirement?: InfoRequirement): boolean {
 }
 
 /**
+ * Pipeline Stage 4b: Determine if research should be TARGETED or BROAD.
+ * Targeted: look for specific materials (class notes, textbook chapters, specific people)
+ * Broad: general knowledge is enough
+ *
+ * Returns research strategy to guide planResearch.
+ */
+export function determineResearchStrategy(
+  taskType?: TaskType,
+  title?: string,
+  infoRequirement?: InfoRequirement,
+): "targeted" | "broad" | "none" {
+  if (infoRequirement === "none") return "none";
+
+  // Academic learning tasks need TARGETED research (specific materials, class notes)
+  const academicTypes = new Set(["learn_understand", "review", "practice", "homework_problem_set", "prepare_assessment"]);
+  if (academicTypes.has(taskType || "")) return "targeted";
+
+  // Writing/research tasks need research but can be broader
+  if (["write", "research"].includes(taskType || "")) return "broad";
+
+  // Projects/admin typically don't need broad research
+  if (["project", "create", "administrative"].includes(taskType || "")) return "targeted";
+
+  return "broad";
+}
+
+/**
+ * Stage 4c: Detect when research is getting too distracted.
+ * If research has found lots of stuff but none of it matches the actual task topic,
+ * that's a sign of contamination/distraction. Return true if research seems off-track.
+ */
+export function isResearchOffTrack(
+  taskTitle: string,
+  foundLinks: { label: string; url?: string }[],
+): boolean {
+  if (foundLinks.length < 3) return false; // too little data to judge
+
+  // Extract task keywords
+  const taskKeywords = taskTitle.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+
+  // Check if found links mention task topics
+  const matchingLinks = foundLinks.filter(link => {
+    const linkText = `${link.label}`.toLowerCase();
+    return taskKeywords.some(kw => linkText.includes(kw));
+  });
+
+  // If we found lots but almost none match the task, research went off-track
+  const matchRatio = matchingLinks.length / foundLinks.length;
+  return matchRatio < 0.2; // less than 20% of links match the task topic
+}
+
+/**
+ * Stage 6b: Validate research quality — ensure context is actually relevant to the task.
+ * If context is off-topic or too generic, that's a sign research needs to be re-targeted.
+ * Returns error message if research is inadequate, null if research is good.
+ */
+export function validateResearchQuality(
+  taskTitle: string,
+  context: string,
+  steps: TaskStep[],
+): string | null {
+  if (!context?.trim()) {
+    return "Research found nothing substantive about this task — search again with different queries targeting the specific topic.";
+  }
+
+  // Extract task keywords
+  const taskKeywords = taskTitle.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const contextLower = context.toLowerCase();
+
+  // Check if context mentions task keywords
+  const matchingKeywords = taskKeywords.filter(kw => contextLower.includes(kw));
+
+  if (matchingKeywords.length === 0 && taskKeywords.length > 0) {
+    return `Research context doesn't mention the core topic ("${taskKeywords[0]}") — you may have researched something unrelated. Re-target your search to the specific task.`;
+  }
+
+  // Check if steps are on-topic (shouldn't reference unrelated topics)
+  if (hasDomainContamination(taskTitle, steps)) {
+    return `The steps you generated seem to describe work in a different domain — your research may have picked up unrelated material. Focus on the actual task: "${taskTitle}".`;
+  }
+
+  return null;
+}
+
+/**
  * Stage 13: Checkpoint Evaluation — determine if a step's "doneWhen" condition was met.
  * Returns true if checkpoint appears to have been achieved, false if not, undefined if unclear.
  * This is heuristic: actual checkpoint verification happens via the student's result or via AI.
