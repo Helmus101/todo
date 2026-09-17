@@ -20,6 +20,22 @@ const BROAD_SCOPE_STEP_RE = /^(review|research|investigate|assess|evaluate|analy
  *  what's-next); (2) the step text itself is long/multi-clause (joined by "and"/commas/semicolons), which is
  *  itself a sign the model already tried to cram more than one action into one line. Pure so it's testable
  *  without a live AI call. */
+/** Union two devices'/instances' copies of a task's chat thread by (role, at, text) — append-only, so no
+ *  side's conversation is ever silently discarded even if the two copies diverged. Used both by the cross-
+ *  device merge in mergeTaskLists AND by the /chat route itself (server/index.ts) to guard against the
+ *  cross-instance session-cache staleness race documented in server/store.ts's peekSessionCsrfToken comment:
+ *  two Vercel lambda instances can each hold their OWN stale in-memory copy of the SAME session for up to
+ *  GET_CACHE_TTL_MS: a chat POST landing on the stale instance would otherwise build its new message onto an
+ *  outdated `chat` array and then overwrite the DB with that truncated version, silently erasing whatever a
+ *  fresher instance had already written. Sorted by `at` and capped to CHAT_CAP (mirrored here as `cap`). */
+export function unionChat<T extends { role: string; text: string; at: string }>(a: T[], b: T[], cap: number): T[] {
+  if (!b.length) return a.slice(-cap);
+  const key = (c: T) => `${c.role}|${c.at}|${c.text}`;
+  const seen = new Set(a.map(key));
+  return [...a, ...b.filter((c) => !seen.has(key(c)))]
+    .sort((x, y) => (Date.parse(x.at) || 0) - (Date.parse(y.at) || 0))
+    .slice(-cap);
+}
 export function needsAutoBreakdown(stepText: string): boolean {
   const t = stepText.trim();
   if (!t) return false;
@@ -385,16 +401,8 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
     // later updatedAt and wins outright — A's question+answer used to vanish on the next merge, on EITHER
     // device, since only `steps` was unioned). Union both sides by (role, at, text) instead, so no device's
     // conversation is ever silently discarded; capped to mirror CHAT_CAP in index.ts.
-    const chatA = winner.chat || [], chatB = loser.chat || [];
-    const chat = chatB.length
-      ? (() => {
-          const key = (c: { role: string; text: string; at: string }) => `${c.role}|${c.at}|${c.text}`;
-          const seen = new Set(chatA.map(key));
-          return [...chatA, ...chatB.filter((c) => !seen.has(key(c)))]
-            .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0))
-            .slice(-60);
-        })()
-      : undefined;
+    const chatB = loser.chat || [];
+    const chat = chatB.length ? unionChat(winner.chat || [], chatB, 60) : undefined;
     // In-app study artifacts (fiches, decks, quizzes) are append-only per device, exactly like chat — and
     // now that the TUTOR CHAT can create them, two devices genuinely diverge (device A asks Otto for a
     // deck; device B ticks a step a second later and wins the whole-object race). Without a union, A's
