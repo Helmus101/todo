@@ -48,12 +48,46 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
   const timerRef = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inactiveRef = useRef<number | null>(null);
+  const studyIdentity = `${userId || "anonymous"}:${task.id}`;
 
-  // Load study profile on mount
+  const clearStudyRuntime = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (inactiveRef.current !== null) {
+      window.clearInterval(inactiveRef.current);
+      inactiveRef.current = null;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+  }, []);
+
+  // Load profile and restore only this account's state for this task. The identity guard prevents a
+  // late response from a previous account/task from repopulating the current study session.
   useEffect(() => {
-    api.studyProfile().then(setProfile).catch(() => {
-      // If no profile exists, create a default one
-      const defaultProfile: StudyProfile = {
+    let cancelled = false;
+    clearStudyRuntime();
+    setSessionState("idle");
+    setSession(null);
+    setTimeRemaining(0);
+    setProfile(null);
+    setEnvState(null);
+    setNotes("");
+    setMaterials([]);
+    setAudioType("silence");
+    setAudioVolume(50);
+    setFocusLevel("balanced");
+    setActiveTab(null);
+
+    api.studyProfile().then((loadedProfile) => {
+      if (!cancelled) setProfile(loadedProfile);
+    }).catch(() => {
+      if (cancelled) return;
+      setProfile({
         userId: userId || "",
         preferredSessionLength: 45,
         preferredBreakLength: 5,
@@ -70,56 +104,58 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
         aiVisibility: "on_request",
         focusLevel: "balanced",
         updatedAt: new Date().toISOString(),
-      };
-      setProfile(defaultProfile);
+      });
     });
 
-    // Check for persisted environment state for this task
     try {
-      const savedEnvState = localStorage.getItem(`study-env-${task.id}`);
+      const storageKey = `study-env-${encodeURIComponent(userId || "anonymous")}-${encodeURIComponent(task.id)}`;
+      const savedEnvState = localStorage.getItem(storageKey);
       if (savedEnvState) {
         const parsed = JSON.parse(savedEnvState);
-        // Only restore if within last 7 days
-        if (Date.now() - Date.parse(parsed.lastSaved) < 7 * 24 * 60 * 60 * 1000) {
+        const savedAt = Date.parse(parsed.lastSaved || "");
+        if (!cancelled && Number.isFinite(savedAt) && Date.now() - savedAt < 7 * 24 * 60 * 60 * 1000) {
           setEnvState(parsed);
           setNotes(parsed.notes || "");
           setMaterials(parsed.openResources || []);
-          setAudioType(parsed.audio.type || "silence");
-          setAudioVolume(parsed.audio.volume || 50);
+          setAudioType(parsed.audio?.type || "silence");
+          setAudioVolume(parsed.audio?.volume ?? 50);
           setFocusLevel(parsed.focusLevel || "balanced");
           setActiveTab(parsed.activeTab || null);
-          
-          // Restore session state if active
-          if (parsed.timer.state === "active") {
-            setSessionState(parsed.timer.state);
-            setTimeRemaining(parsed.timer.remaining);
+          if (parsed.timer?.state === "active") {
+            setSessionState("active");
+            setTimeRemaining(Math.max(0, Number(parsed.timer.remaining) || 0));
             setSession({
-              id: crypto.randomUUID(),
-              taskId: task.id,
-              userId: userId || "",
-              startTime: new Date().toISOString(),
-              plannedDuration: parsed.timer.plannedDuration,
-              state: parsed.timer.state,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
+              id: crypto.randomUUID(), taskId: task.id, userId: userId || "",
+              startTime: new Date().toISOString(), plannedDuration: parsed.timer.plannedDuration,
+              state: "active", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
             });
-            
-            timerRef.current = window.setInterval(() => {
-              setTimeRemaining((prev) => {
-                if (prev <= 1) {
-                  completeSession();
-                  return 0;
-                }
-                return prev - 1;
-              });
-            }, 1000);
           }
         }
       }
     } catch (e) {
       console.error("Failed to restore environment state:", e);
     }
-  }, [userId, task.id]);
+    return () => { cancelled = true; clearStudyRuntime(); };
+  }, [clearStudyRuntime, studyIdentity, task.id, userId]);
+
+  useEffect(() => {
+    if (sessionState !== "active" || timerRef.current !== null) return;
+    timerRef.current = window.setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          completeSession();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [sessionState]);
 
   // Audio URLs (using free ambient sounds)
   const audioUrls: Record<string, string> = {
@@ -396,15 +432,6 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
       console.error("Failed to save study session:", e);
     }
     
-    timerRef.current = window.setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev <= 1) {
-          completeSession();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
   }, [task.id, userId, task.links, task.evidence, task.artifacts, task.source, task.title, task.why, profile]);
 
   const pauseSession = useCallback(() => {
@@ -417,15 +444,6 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
 
   const resumeSession = useCallback(() => {
     setSessionState("active");
-    timerRef.current = window.setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev <= 1) {
-          completeSession();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
   }, []);
 
   const startBreak = useCallback(() => {
@@ -434,16 +452,7 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    setTimeRemaining(profile?.preferredBreakLength || 5 * 60);
-    timerRef.current = window.setInterval(() => {
-      setTimeRemaining((prev) => {
-        if (prev <= 1) {
-          completeSession();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    setTimeRemaining((profile?.preferredBreakLength || 5) * 60);
   }, [profile?.preferredBreakLength]);
 
   const completeSession = useCallback(() => {
@@ -532,7 +541,8 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
           activeTab,
           lastSaved: new Date().toISOString(),
         };
-        localStorage.setItem(`study-env-${task.id}`, JSON.stringify(updatedEnvState));
+        const storageKey = `study-env-${encodeURIComponent(userId || "anonymous")}-${encodeURIComponent(task.id)}`;
+        localStorage.setItem(storageKey, JSON.stringify(updatedEnvState));
       } catch (e) {
         console.error("Failed to save environment state:", e);
       }
