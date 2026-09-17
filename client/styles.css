@@ -977,17 +977,15 @@ input:focus, textarea:focus {
   transition: background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
 }
 .card + .card { border-top: 1px solid var(--line-soft); }
+/* Scoped to `hover: hover` (not a bare :hover) to avoid the "needs two taps to open on iPhone" bug. iOS
+   Safari applies :hover styles on touchDOWN (a long-documented WebKit quirk), so an unscoped rule here
+   would shift visual state between finger-down and finger-up on iOS Safari. `hover: hover` is the
+   codebase's own established pattern for this class of problem (see `hover: none` nearby). */
 @media (hover: hover) {
   .card:hover { background: var(--hover-wash); }
 }
 .card:active {
   transform: scale(0.992);
-}
-   open on iPhone" bug. iOS Safari applies :hover styles on touchDOWN (a long-documented WebKit quirk), so
-   an unscoped rule here would shift visual state between finger-down and finger-up on iOS Safari. `hover:
-   hover` is the codebase's own established pattern for this class of problem (see `hover: none` nearby). */
-@media (hover: hover) {
-  .card:hover { background: var(--hover-wash); }
 }
 /* Once the list has shown once, later re-renders replay faster and without the stagger — it's an update,
    not a fresh reveal. */
