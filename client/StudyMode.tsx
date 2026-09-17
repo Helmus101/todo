@@ -44,11 +44,13 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
   const [browserUrl, setBrowserUrl] = useState("");
   const [browserHistory, setBrowserHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  
+
   const timerRef = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const inactiveRef = useRef<number | null>(null);
+  const chatIdentityRef = useRef<string | null>(null);
   const studyIdentity = `${userId || "anonymous"}:${task.id}`;
+  const chatStorageKey = `study-chat-${encodeURIComponent(userId || "anonymous")}-${encodeURIComponent(task.id)}`;
 
   const clearStudyRuntime = useCallback(() => {
     if (timerRef.current !== null) {
@@ -82,6 +84,22 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
     setAudioVolume(50);
     setFocusLevel("balanced");
     setActiveTab(null);
+    setAiChat([]);
+    chatIdentityRef.current = null;
+
+    try {
+      const savedChat = localStorage.getItem(chatStorageKey);
+      const parsedChat = savedChat ? JSON.parse(savedChat) : [];
+      if (!cancelled && Array.isArray(parsedChat)) {
+        setAiChat(parsedChat.filter((entry) =>
+          entry && (entry.role === "user" || entry.role === "assistant") && typeof entry.text === "string"
+        ).slice(-100));
+        chatIdentityRef.current = chatStorageKey;
+      }
+    } catch (e) {
+      console.error("Failed to restore study chat:", e);
+      chatIdentityRef.current = chatStorageKey;
+    }
 
     api.studyProfile().then((loadedProfile) => {
       if (!cancelled) setProfile(loadedProfile);
@@ -136,7 +154,16 @@ export function StudyMode({ task, onExit, userId }: StudyModeProps) {
       console.error("Failed to restore environment state:", e);
     }
     return () => { cancelled = true; clearStudyRuntime(); };
-  }, [clearStudyRuntime, studyIdentity, task.id, userId]);
+  }, [chatStorageKey, clearStudyRuntime, studyIdentity, task.id, userId]);
+
+  useEffect(() => {
+    if (chatIdentityRef.current !== chatStorageKey) return;
+    try {
+      localStorage.setItem(chatStorageKey, JSON.stringify(aiChat.slice(-100)));
+    } catch (e) {
+      console.error("Failed to save study chat:", e);
+    }
+  }, [aiChat, chatStorageKey]);
 
   useEffect(() => {
     if (sessionState !== "active" || timerRef.current !== null) return;
