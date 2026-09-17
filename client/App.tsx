@@ -659,7 +659,20 @@ export function App() {
     if (!route.startsWith("study/")) return;
     const taskId = route.split("/")[1];
     const task = tasks.find(t => t.id === taskId);
-    if (task) setStudyModeTask(task);
+    if (!task) return;
+    // Never let this overwrite regress the chat thread mid-session. `onTaskUpdate` (below, passed to
+    // StudyMode) updates studyModeTask directly on every chat turn — but a background `syncTasks` fetch
+    // (tab focus/visibilitychange, or the 5min tick) can resolve with a STALER `tasks` array than what's
+    // already here, either from plain request-ordering (the GET started before the chat POST landed) or
+    // the cross-instance session-cache race documented in server/store.ts's peekTaskChat comment. Without
+    // this guard, THIS effect re-fires on every `tasks` change and blindly overwrites studyModeTask with
+    // that stale copy — visibly "blanking" the chat back to an earlier point. Keep whichever chat is
+    // longer; everything else (steps, status, etc.) still tracks the latest `tasks` entry as before.
+    setStudyModeTask((prev) =>
+      prev?.id === task.id && (prev.chat?.length || 0) > (task.chat?.length || 0)
+        ? { ...task, chat: prev.chat }
+        : task
+    );
   }, [route, tasks]);
 
   // Legal pages are PUBLIC — reachable logged-out or in, and even before status loads. Rendered before
@@ -716,7 +729,13 @@ export function App() {
             <StudyMode
               task={task}
               onExit={() => { setStudyModeTask(null); navigate("tasks"); }}
-              onTaskUpdate={(u) => { setTasks((prev) => prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]); setStudyModeTask(u); }}
+              onTaskUpdate={(u) => {
+                // Register like patchTask does (see keepLocalHandled) — a chat turn is a local mutation too,
+                // so a background syncTasks racing this update doesn't get treated as unconditionally newer.
+                localMutations.current.set(u.id, Date.now());
+                setTasks((prev) => prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]);
+                setStudyModeTask(u);
+              }}
               userId={status?.user}
               language={status?.language === "en" ? "en" : "fr"}
             />
