@@ -1135,6 +1135,55 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't refine that task — try again." }); }
 });
 
+// Regenerate steps for an existing task using the new architecture
+app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (req, res) => {
+  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to regenerate." }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
+  if (!t) { res.status(404).json({ error: "not found" }); return; }
+  try {
+    const { writeStepsFromContext } = await import("./claude.ts");
+    const profile = req.session.profile || emptyProfile();
+    
+    // Regenerate steps using the new architecture
+    const newSteps = await writeStepsFromContext(
+      {
+        title: t.title,
+        why: t.why,
+        source: t.source,
+        sourceSubject: t.sourceSubject,
+        sourceDetail: t.sourceDetail,
+        sourceDue: t.sourceDue,
+        taskType: t.taskType,
+        goal: t.goal,
+        infoRequirement: t.infoRequirement,
+        unknowns: t.unknowns,
+      },
+      t.context || "",
+      t.links || [],
+      t.steps || [], // fallback to current steps
+      [], // no sibling tasks for regeneration
+      [], // no did array for regeneration
+      profile,
+      false, // not a big project for regeneration
+    );
+    
+    // Update the task with new steps
+    const taskIndex = (req.session.tasks || []).findIndex((x) => x.id === t.id);
+    if (taskIndex >= 0) {
+      req.session.tasks![taskIndex].steps = newSteps;
+      req.session.tasks![taskIndex].updatedAt = new Date().toISOString();
+      await commit(req);
+    }
+    
+    res.json(req.session.tasks || []);
+  } catch (e: any) {
+    console.error("[tasks] regenerate error:", e);
+    res.status(500).json({ error: e?.message || "Couldn't regenerate steps — try again." });
+  }
+});
+
 // Per-task coaching chat — grounded in that one task's own context/steps, so a student stuck on it can
 // talk it through with Otto without re-explaining the situation. Rate-limited + budget-gated like every
 // other interactive AI call; capped history (CHAT_CAP) keeps a long-running task's thread bounded.

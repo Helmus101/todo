@@ -2244,7 +2244,7 @@ function extractConcepts(text: string): string[] {
 /**
  * Stage 16: Adaptive Step Regeneration — given failure patterns, regenerate the remaining steps
  * with extra scaffolding (more examples, simpler progression, more checkpoints).
- * This is a placeholder for the full regeneration; actual implementation would call writeStepsFromContext again.
+ * Uses the new architecture with Definition of Done and task-boundary validation.
  */
 export async function regenerateStepsWithScaffolding(
   task: { title: string; why: string; goal?: string; taskType?: TaskType },
@@ -2266,6 +2266,8 @@ export async function regenerateStepsWithScaffolding(
       ? `\nThe student struggled with these concepts: ${failedConcepts.join(", ")}. Regenerate the remaining steps with EXTRA scaffolding (more worked examples, simpler progression, more intermediate checkpoints) for these specific areas.`
       : "";
 
+    const definitionOfDone = task.goal || task.why;
+
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
@@ -2273,19 +2275,62 @@ export async function regenerateStepsWithScaffolding(
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n${task.goal ? `GOAL: ${task.goal}\n` : ""}` +
-          `CONTEXT: ${context.slice(0, 500)}\n` +
+        content: `TASK TITLE: "${task.title}"\nTASK WHY: "${task.why}"\n${task.goal ? `DEFINITION OF DONE: ${task.goal}\n` : ""}` +
+          `CORE INVARIANT: The task title is the OBJECTIVE. The Definition of Done is the SUCCESS CONDITION. ` +
+          `The context below is SUPPORTING INFORMATION only. Never let the context become the objective.\n\n` +
+          `CONTEXT GATHERED (supporting information only — not the objective):\n${context.slice(0, 500)}\n` +
           `CURRENT STEPS (already completed or in progress):\n${currentSteps.slice(0, 3).map(s => `- ${s.text}`).join("\n")}\n` +
           failureHint +
-          `\n\nNow regenerate the REMAINING steps (after the ones above) with extra scaffolding for ${failedConcepts.length} specific weak areas. Keep the pedagogical sequence but add more intermediate checkpoints and worked examples. Return ONLY this JSON: {"steps":[{"text":"...","minutes":15,"doneWhen":"...","checkpoint":"...","difficulty":"easy"|"medium"|"hard","automatable":false,"dependsOn":null},...]}`,
+          `\n\nNEW ARCHITECTURE: Re-anchor to Original Task → Filter Context → Create Artifacts → Generate Minimum Required Subtasks\n\n` +
+          `STEP 1: Re-anchor to the ORIGINAL TASK\n` +
+          `The task title is the objective: "${task.title}"\n` +
+          `The Definition of Done is the success condition: ${definitionOfDone}\n` +
+          `Answer: What is the user actually trying to accomplish? What does "done" mean for THIS exact task?\n\n` +
+          `STEP 2: Filter context for TASK RELEVANCE\n` +
+          `Review the gathered context above. Which parts actually help achieve the Definition of Done?\n` +
+          `Discard: unrelated curriculum materials, other subjects, unrelated deadlines, disconnected accounts.\n` +
+          `Keep: only information that directly supports completing "${task.title}".\n\n` +
+          `STEP 3: Determine what OTTO can create\n` +
+          `Based on the RELEVANT context, what artifacts can Otto create RIGHT NOW to help complete this task?\n` +
+          `For STUDY/REVIEW: summary, reference sheet, flashcards, practice questions, quiz\n` +
+          `For ESSAY: evidence bank, thesis options, outline, draft sections\n` +
+          `For PRESENTATION: research notes, slide outline, speaker notes\n` +
+          `For CODING: implementation, tests, technical notes\n` +
+          `For PLANNING: schedule, budget, checklist\n` +
+          `These are NOT user steps — Otto creates them BEFORE the student starts.\n\n` +
+          `STEP 4: Determine what the USER must do\n` +
+          `NOW that Otto has prepared what it can, what does the student ACTUALLY need to do?\n` +
+          `Each step must:\n` +
+          `- Directly contribute to the Definition of Done for "${task.title}"\n` +
+          `- Be something the student must do (not Otto)\n` +
+          `- Be concrete and actionable (not "research X" or "find Y")\n` +
+          `- Not be about creating Otto's artifacts (Otto creates those)\n` +
+          `- Not be internal Otto work (re-search, re-fetch, retry)\n` +
+          `- Not be an unrelated task discovered during research\n` +
+          `- Not be microscopic instructions (no 6-step sub-plans)\n\n` +
+          `CRITICAL RULES:\n` +
+          `1. The TASK TITLE is the objective — never lose sight of it\n` +
+          `2. CONTEXT is supporting information only — never let it become the objective\n` +
+          `3. Research operations are NEVER user steps — Otto does them internally\n` +
+          `4. Artifact creation is NEVER a user step — Otto creates them first\n` +
+          `5. Unrelated tasks become separate tasks, not steps\n` +
+          `6. Each step must directly move toward the Definition of Done\n` +
+          `7. Generate the MINIMUM required subtasks — not everything that could be done\n\n` +
+          `Return ONLY this JSON:\n` +
+          `{\n` +
+          `  "definitionOfDone": "concrete success criteria for this exact task",\n` +
+          `  "contextRelevance": "brief explanation of which gathered context is relevant and why",\n` +
+          `  "artifacts": [{"title": "...", "type": "note|flashcards|quiz|outline|checklist|reference|draft|summary|evidence_bank|other", "status": "created|needed|not_needed", "description": "..."}],\n` +
+          `  "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy|medium|hard", "automatable": false, "dependsOn": 0, "url": "...", "question": "...", "options": ["..."]}]\n` +
+          `}`,
       }],
     }));
 
-    const out = firstJson<{ steps?: any[] }>(String(res.choices?.[0]?.message?.content || ""));
+    const out = firstJson<TaskPlanningOutput>(String(res.choices?.[0]?.message?.content || ""));
     if (!out?.steps?.length) return currentSteps;
 
-    // Parse and sanitize the regenerated steps
-    return (out.steps || [])
+    // Apply the new architecture filters
+    let steps = sanitizeSteps(out.steps
       .map((s: any) => ({
         text: truncateStepText(String(s?.text || "")),
         automatable: false,
@@ -2293,9 +2338,27 @@ export async function regenerateStepsWithScaffolding(
         doneWhen: s?.doneWhen ? String(s.doneWhen).slice(0, 150) : undefined,
         checkpoint: s?.checkpoint ? String(s.checkpoint).slice(0, 150) : undefined,
         difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
-      }))
-      .slice(0, 6);
-  } catch {
+      })), 6);
+    
+    // Apply task-boundary validation
+    steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
+    
+    // Apply artifact separation
+    const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(steps);
+    steps = stepsWithoutArtifacts;
+    
+    // Apply separate task extraction
+    const { filteredSteps: finalSteps } = separateUnrelatedTasks(steps, task.title);
+    steps = finalSteps;
+    
+    // Apply triviality gate
+    steps = dropTrivialSteps(steps);
+    
+    console.log(`${new Date().toISOString()} [ai] regenerateStepsWithScaffolding: applied new architecture, ${out.steps.length} raw steps → ${steps.length} final steps`);
+    
+    return steps;
+  } catch (e: any) {
+    console.log(`${new Date().toISOString()} [ai] regenerateStepsWithScaffolding error: ${e?.message || e}`);
     return currentSteps; // on error, keep original steps
   }
 }
@@ -2514,7 +2577,14 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
           "   - 'none': basic algebra practice, generic studying, drafting, quiz from already-known concepts\n" +
           "   - 'useful': specific historical topic, economics research, topic overview\n" +
           "   - 'required': class-source specific ('study what we did in class', 'review chapter 4', 'prep for tomorrow's test')\n" +
-          "5. TITLE & WHY: Crisp imperative title (≤9 words) naming the concrete object/person, and concise intent (why ≤12 words). Output STRICT JSON only." },
+          "6. NEW ARCHITECTURE GUIDANCE:\n" +
+          "   - CORE INVARIANT: The task title is the OBJECTIVE. The Definition of Done is the SUCCESS CONDITION. Context is SUPPORTING INFORMATION only. Never let context become the objective.\n" +
+          "   - Research operations are NEVER user steps — Otto does them internally\n" +
+          "   - Artifact creation is NEVER a user step — Otto creates them first\n" +
+          "   - Unrelated tasks become separate tasks, not steps\n" +
+          "   - Each step must directly move toward the Definition of Done\n" +
+          "   - Generate the MINIMUM required subtasks — not everything that could be done\n" +
+          "7. TITLE & WHY: Crisp imperative title (≤9 words) naming the concrete object/person, and concise intent (why ≤12 words). Output STRICT JSON only." },
         { role: "user", content: profileBlock(profile) +
           `\nRaw note: "${raw.slice(0, 300)}"\n\n` +
           `Return JSON:\n` +
@@ -3374,7 +3444,43 @@ const RUN_SYSTEM =
   `in submit's "context" — this is proof you gathered before acting. DO NOT skip this phase.\n` +
   `(2) PLAN — from that context, fix the OBJECTIVE (what "done" actually looks like for THIS task) ` +
   `and map out the exact plan to achieve it: define what needs to be done, the sequence of research/writing steps, which tools to use, and which artifact(s) to produce. ` +
-  `Define EXACTLY what you will create or update before you start.\n` +
+  `Define EXACTLY what you will create or update before you start.\n\n` +
+  `NEW ARCHITECTURE — TASK BOUNDARY VALIDATION:\n` +
+  `CORE INVARIANT: The TASK TITLE is the OBJECTIVE. The DEFINITION OF DONE is the SUCCESS CONDITION. ` +
+  `The CONTEXT you gather is SUPPORTING INFORMATION only. Never let the context become the objective.\n\n` +
+  `STEP 1: Define the Definition of Done\n` +
+  `What does "success" look like for this specific task? Be concrete: not "study physics" but "can solve 5 projectile motion problems without notes".\n\n` +
+  `STEP 2: Filter context for TASK RELEVANCE\n` +
+  `Review the gathered context. Which parts actually help achieve the Definition of Done? Discard unrelated curriculum materials, other subjects, unrelated deadlines. Keep only information that directly supports completing THIS task.\n\n` +
+  `STEP 3: Determine what OTTO can create\n` +
+  `Based on the RELEVANT context, what artifacts can Otto create RIGHT NOW to help complete this task?\n` +
+  `For STUDY/REVIEW: summary, reference sheet, flashcards, practice questions, quiz\n` +
+  `For ESSAY: evidence bank, thesis options, outline, draft sections\n` +
+  `For PRESENTATION: research notes, slide outline, speaker notes\n` +
+  `For CODING: implementation, tests, technical notes\n` +
+  `For PLANNING: schedule, budget, checklist\n` +
+  `These are NOT user steps — Otto creates them BEFORE the student starts.\n\n` +
+  `STEP 4: Determine what the USER must do\n` +
+  `NOW that Otto has prepared what it can, what does the student ACTUALLY need to do?\n` +
+  `Each step must:\n` +
+  `- Directly contribute to the Definition of Done for THIS task\n` +
+  `- Be something the student must do (not Otto)\n` +
+  `- Be concrete and actionable (not "research X" or "find Y")\n` +
+  `- Not be about creating Otto's artifacts (Otto creates those)\n` +
+  `- Not be internal Otto work (re-search, re-fetch, retry)\n` +
+  `- Not be an unrelated task discovered during research\n` +
+  `- Not be microscopic instructions (no 6-step sub-plans)\n\n` +
+  `STEP 5: Identify unrelated tasks discovered during research\n` +
+  `Did the research uncover other actionable items that are NOT part of THIS task?\n` +
+  `Examples: "Send Weave reply", "Confirm IEO finals date". These become separate tasks, not steps.\n\n` +
+  `CRITICAL RULES:\n` +
+  `1. The TASK TITLE is the objective — never lose sight of it\n` +
+  `2. CONTEXT is supporting information only — never let it become the objective\n` +
+  `3. Research operations are NEVER user steps — Otto does them internally\n` +
+  `4. Artifact creation is NEVER a user step — Otto creates them first\n` +
+  `5. Unrelated tasks become separate tasks, not steps\n` +
+  `6. Each step must directly move toward the Definition of Done\n` +
+  `7. Generate the MINIMUM required subtasks — not everything that could be done\n\n` +
   `(3) SPLIT THE WORK — for each step decide who owns it: YOU (automatable — anything you can do with your ` +
   `tools or by finding information) vs the USER (only a judgment/approval, a login/credential, a payment, or ` +
   `a physical act). Default to YOURS when unsure.\n` +
@@ -4116,7 +4222,7 @@ export async function runTask(
     if (!toolUses.length) {
       const textContent = res.choices[0]?.message?.content || "";
       const out = firstJson<RunOutput>(textContent);
-      if (out) return withTokens(finalize(out, textContent, profileUpdates));
+      if (out) return withTokens(finalize(out, textContent, profileUpdates, task.title, task.goal));
       if (i < MAX - 1) {
         if (textContent) messages.push({ role: "assistant", content: textContent });
         // A truncated completion (finish_reason "length") is a DIFFERENT failure than "the model just
@@ -4182,7 +4288,7 @@ export async function runTask(
           content = "saved";
         }
         else if (toolName === "submit") {
-          const draft = finalize(input as RunOutput, "", profileUpdates);
+          const draft = finalize(input as RunOutput, "", profileUpdates, task.title, task.goal);
           // Plan-only mode has its own lighter-weight enforcement (below) instead of the execute-now mode's
           // enforcement further down, which assumes full read/write access and would reject constantly here.
           if (!EXECUTION_ENABLED) {
@@ -4507,7 +4613,7 @@ export async function runTask(
     if (rescue.choices[0]?.finish_reason === "length") rescue = await runRescue(OUT.rescue, true);
     rescueText = rescue.choices[0]?.message?.content || "";
     const out = firstJson<RunOutput>(rescueText);
-    if (out) return withTokens(finalize(out, rescueText, profileUpdates));
+    if (out) return withTokens(finalize(out, rescueText, profileUpdates, task.title, task.goal));
   } catch {
     // fall through to the fallback below
   }
@@ -5132,7 +5238,7 @@ export function reconcileArtifactClaims<T extends { synthesis?: string; did?: st
   return o;
 }
 
-export function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[]): RunOutput {
+export function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[], taskTitle?: string, definitionOfDone?: string): RunOutput {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
   const steps: TaskStep[] = sanitizeSteps(rawSteps
     .map((s: any, idx: number) => ({
@@ -5143,6 +5249,26 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
       dependsOn: Number.isInteger(s?.dependsOn) && s.dependsOn >= 0 && s.dependsOn < rawSteps.length && s.dependsOn !== idx ? s.dependsOn : undefined,
       ...sanitizeStepExtras(s),
     })), 6); // fewer, tighter steps — a short list reads better than an exhaustive one
+  
+  // Apply new architecture filters if task info is available
+  let filteredSteps = steps;
+  if (taskTitle && definitionOfDone) {
+    // Apply task-boundary validation
+    filteredSteps = filterStepsByDefinitionOfDone(filteredSteps, definitionOfDone, taskTitle);
+    
+    // Apply artifact separation
+    const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(filteredSteps);
+    filteredSteps = stepsWithoutArtifacts;
+    
+    // Apply separate task extraction
+    const { filteredSteps: finalSteps } = separateUnrelatedTasks(filteredSteps, taskTitle);
+    filteredSteps = finalSteps;
+    
+    // Apply triviality gate
+    filteredSteps = dropTrivialSteps(filteredSteps);
+    
+    console.log(`${new Date().toISOString()} [ai] finalize: applied new architecture filters to ${steps.length} steps, resulted in ${filteredSteps.length} steps`);
+  }
   // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.
   const kindLabel = (url: string): string =>
     /docs\.google\.com\/document/i.test(url) ? "the Google Doc Otto created"
@@ -5265,16 +5391,16 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // the FINISH-DON'T-HAND-BACK enforcement below by phrasing real work as a step instead of doing it.
   const DOABLE = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make|research|find|look up|look into|gather|collect|identify|explore|investigate|list)\b/i;
   const JUDGMENT = /\b(choose|decide|pick|confirm|approve|review|prefer|want|which|verify|check with|sign|pay)\b/i;
-  for (const s of steps) {
+  for (const s of filteredSteps) {
     if (!s.automatable && DOABLE.test(s.text) && !JUDGMENT.test(s.text) && !s.question) s.automatable = true;
   }
   // Triviality gate runs HERE, after automatable is settled — a step already flipped to Otto's own job by
   // the DOABLE check above is fine even if it started with "Research"/"Find"; only a step still left to
   // the STUDENT that's nothing but a deferred lookup or bare "open the site" gets dropped (see the "Chercher
   // les horaires de train" live report this closes: a step the model should have searched for itself, not
-  // handed back as a to-do). `const steps` can't be reassigned, so mutate in place like the stale-filter below.
-  const detrivialized = dropTrivialSteps(steps);
-  steps.length = 0; steps.push(...detrivialized);
+  // handed back as a to-do). `const filteredSteps` can't be reassigned, so mutate in place like the stale-filter below.
+  const detrivialized = dropTrivialSteps(filteredSteps);
+  filteredSteps.length = 0; filteredSteps.push(...detrivialized);
   // Never list DONE work as remaining: a step that near-duplicates a did-bullet is stale planning residue.
   const stale = (txt: string) => did.some((d) => {
     const a = new Set(txt.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
@@ -5282,13 +5408,13 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     const inter = [...a].filter((w) => b.has(w)).length;
     return a.size > 2 && inter / a.size >= 0.7;
   });
-  const cleanedSteps = steps.filter((s) => !stale(s.text));
-  steps.length = 0; steps.push(...cleanedSteps);
+  const cleanedSteps = filteredSteps.filter((s) => !stale(s.text));
+  filteredSteps.length = 0; filteredSteps.push(...cleanedSteps);
   // Checklist backstop: artifacts with NO steps and NO sendable leave the user without a "what's left"
   // list — the report the card promises. Deterministically add "Review <artifact>" so the checklist can
   // never be absent when something was produced. (Sendables don't need it: the send button IS the next action.)
-  if (!steps.length && !sendables.length && links.length) {
-    for (const l of links.slice(0, 2)) steps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
+  if (!filteredSteps.length && !sendables.length && links.length) {
+    for (const l of links.slice(0, 2)) filteredSteps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
   }
   // Follow-up tasks the run discovered — distinct new obligations that each deserve their own task. Capped
   // and validated; the run loop turns these into real tasks the sweep/kick then executes.
@@ -5304,7 +5430,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // own backstop, not a leftover from before truncateStepText's default was widened.
   const firstActionText = out?.firstAction?.text ? truncateStepText(String(out.firstAction.text), 90) : "";
   const firstActionMinutes = Number(out?.firstAction?.minutes);
-  const firstAction = (firstActionText && !out?.isBigProject && steps.some((s) => !s.automatable)) ? {
+  const firstAction = (firstActionText && !out?.isBigProject && filteredSteps.some((s) => !s.automatable)) ? {
     text: firstActionText,
     ...(Number.isInteger(firstActionMinutes) && firstActionMinutes >= 1 && firstActionMinutes <= 10 ? { minutes: firstActionMinutes } : {}),
   } : undefined;
@@ -5317,9 +5443,9 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     context: brief(String(out?.context || ""), 4, 900),
     // Fallback only when there's genuinely nothing to say: "Done." if the run left no open steps, else a
     // neutral placeholder (never "Done." on a task that still needs the user — that would misread as finished).
-    synthesis: synthesis || (!EXECUTION_ENABLED && steps.length ? "Gathered context and broke this into steps." : steps.some((s) => !s.done) ? "" : "Done."),
+    synthesis: synthesis || (!EXECUTION_ENABLED && filteredSteps.length ? "Gathered context and broke this into steps." : filteredSteps.some((s) => !s.done) ? "" : "Done."),
     did,
-    steps,
+    steps: filteredSteps,
     links,
     sendables,
     profileUpdates,
