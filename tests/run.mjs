@@ -396,6 +396,10 @@ check("real steps are never overwritten", fin3.steps.length === 1 && fin3.steps[
 // student's screen as a step's result.
 const finMeta = finalize({ context: "c", synthesis: "Ran several additional Drive/Gmail queries that came back empty.", steps: [{ text: "Pick a date", automatable: false }], links: [], sendables: [] }, "", []);
 check("meta-narration synthesis never reaches the user — replaced by the generic steps-exist fallback", !/ran|quer|came back empty/i.test(finMeta.synthesis));
+// Regression: "Retried web grounding searches, which returned empty results" reached the UI verbatim as a
+// step's result — neither "retried" (INVESTIGATIVE) nor "returned empty results" (DEAD_END) matched before.
+const finMeta2 = finalize({ context: "c", synthesis: "Retried web grounding searches, which returned empty results.", steps: [{ text: "Pick a date", automatable: false }], links: [], sendables: [] }, "", []);
+check("'retried ... returned empty results' meta-narration is also stripped", !/retried|grounding|empty results/i.test(finMeta2.synthesis));
 const finMetaThenReal = finalize({ context: "c", synthesis: "Searched Gmail with no luck. Drafted a reply to Sarah.", steps: [], links: [], sendables: [{ app: "gmail", label: "Send reply", subject: "Re", body: "hi", draftId: "r-1" }] }, "", []);
 check("only the leading meta-narration sentence is stripped, real content after it survives", finMetaThenReal.synthesis === "Drafted a reply to Sarah.");
 let finThrew = false;
