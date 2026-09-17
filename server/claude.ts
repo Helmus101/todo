@@ -708,12 +708,20 @@ function isFolderHousekeepingDrift(title: string, steps: { text: string }[]): bo
   return steps.every((s) => FOLDER_HOUSEKEEPING_STEP.test(s.text));
 }
 // A step that describes BUILDING an artifact ("Create a revision note defining X", "Créer une fiche sur Y",
-// "Make a flashcard set covering...") instead of the artifact actually existing — the model has
-// CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ available the whole run, so this content belongs in an artifact
-// THIS run, not left as a to-do for the student (see the ENFORCEMENT nudge above and the check that uses
-// this regex in the submit-review chain). Bilingual (English + French) since step text can be either,
-// depending on the student's language setting.
-const ARTIFACT_DEFERRED_STEP = /\b(create|write|make|build|prepare|draft|cr[ée]er?|[ée]cri(re|s)|faire|pr[ée]parer|r[ée]diger)\b[^.]{0,50}\b(a |an |une? |le |la |les |des? )?(note|brief|fiche|flash[- ]?cards?|deck|cartes?|quiz|questionnaire)\b/i;
+// "build the revision sheet ... as a document or flashcard set") instead of the artifact actually existing —
+// the model has CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ available the whole run, so this content belongs
+// in an artifact THIS run, not left as a to-do for the student (see the ENFORCEMENT nudge above and the
+// check that uses this below in the submit-review chain). Bilingual (English + French) since step text can
+// be either, depending on the student's language setting. Verb and noun are checked SEPARATELY (not one
+// combined regex requiring proximity) — observed live, "build the revision sheet (term, definition,
+// example) as a document or flashcard set" has ~60 characters between "build" and "flashcard", further
+// apart than a fixed nearby-window check would catch; a step describing artifact creation reads as one
+// whether the noun sits right after the verb or at the end of a longer clause.
+const ARTIFACT_VERB = /\b(create|write|make|build|prepare|draft|cr[ée]er?|[ée]cri(re|s)|faire|pr[ée]parer|r[ée]diger)\b/i;
+const ARTIFACT_NOUN = /\b(note|brief|fiche|flash[- ]?cards?|deck|cartes?|quiz|questionnaire|revision sheet|fiche de r[ée]vision)\b/i;
+function describesDeferredArtifact(text: string): boolean {
+  return ARTIFACT_VERB.test(text) && ARTIFACT_NOUN.test(text);
+}
 
 // Capitalized single words that are common in step/artifact text but aren't proper-noun ENTITIES worth
 // checking (sentence starters, weekday/month names, Otto's own name, generic time words) — excluded so the
@@ -2516,6 +2524,15 @@ export interface RunOutput {
    *  acronym and has nothing to research — so the keyword pre-filter AND the empty-context bail would
    *  otherwise both miss it) still gets the milestone treatment. */
   isBigProject?: boolean;
+  /** The model's OWN explicit, upfront declaration (same submit call) of whether this task's content calls
+   *  for a note/flashcard-deck/quiz — checked directly against whether one was actually created THIS run
+   *  (notesCreated/flashcardsCreated/quizzesCreated in runTask), not inferred from step wording after the
+   *  fact. This is the state-based invariant: `needsArtifact === true` with nothing created is rejected
+   *  outright (see runTask's submit-review chain) — a declared need is either satisfied or the run bounces,
+   *  the same "assert, don't just nudge" posture the artifact-deferred text check backs up as a second line
+   *  of defense (for the case where the model mis-declares `false` while its own steps still describe
+   *  building one). Undefined only if the model's response predates this field. */
+  needsArtifact?: boolean;
   /** The smallest possible first move on this task (the anti-procrastination hook) — see FIRST ACTION in
    *  RUN_SYSTEM. Validated in finalize() the same way a step's text/minutes are. */
   firstAction?: { text: string; minutes?: number };
@@ -2863,6 +2880,7 @@ const RUN_TOOLS = [
   { name: "submit", description: "Finish the task and report results.", input_schema: { type: "object", properties: {
     title: { type: "string", description: "ONLY for a manually-added task with a rough/vague raw title: a tightened, specific imperative title (≤9 words) reflecting the real subject you found. Omit for every other task, and omit if the original title is already fine." },
     isBigProject: { type: "boolean", description: "true ONLY if this is a genuinely BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/mémoire, an IB Extended Essay/TOK/CAS/Internal Assessment, a group project, a major report — where progress happens over weeks/months with real intermediate milestones, not a task doable in one sitting or a few short steps. Judge this from what the task ACTUALLY is, not from whether its title happens to name an acronym. Omit or false for anything ordinary." },
+    needsArtifact: { type: "boolean", description: "Decide this EXPLICITLY before writing \"steps\" — does this task's content genuinely call for a note/flashcard deck/quiz (definitions, vocabulary, a compiled reference, a revision aid, a checklist worth keeping)? If true, you MUST have already called CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ THIS run — a step that only DESCRIBES making one later does NOT satisfy this and will be rejected. Missing the class's own exact source material (a specific textbook page, a teacher's file you couldn't locate) is NEVER by itself a reason to answer true-but-not-create: for a standard curriculum topic, build it now from what you reliably know, and make verifying/aligning it with the real source a separate later step instead. The one case where it's honest to answer true and still not build the FULL thing: the user's request is for something specific to a source you genuinely could not find (exact pages, a rubric, specific slides) — then create the best valid general/preliminary version you can (never fabricate content AS IF it came from that specific source) and leave the source-specific refinement as a step. Set false only for logistics/admin tasks (booking, confirming, scheduling) with nothing worth preserving beyond the steps list." },
     context: { type: "string", description: "the SURROUNDING FACTS about this task — real, specific, substantive: who's involved, what they actually said/asked, what the doc/event/thread contains, dates, numbers, links. NEVER a meta-description of the task or your own process — 'User requested information about X', 'Performed searches across multiple services', 'Looked into Y' are WORTHLESS filler, not context, and will be rejected. If you truly found nothing useful after a real attempt, say the SPECIFIC thing that's missing ('No upcoming meetings with Gabrielle on the calendar; her last email was 3 weeks ago about the budget') — never a vague description of the search itself. 2-4 bullets, each starting with '- '." },
     synthesis: { type: "string", description: "what you accomplished — ONE short plain sentence (≤ ~25 words), past tense, e.g. 'Drafted a reply to Sarah and opened the budget doc.' Write it like you're telling a friend what you just did, not filing a system log — plain, specific, a little warm — but that NEVER means padding it: no caveats, no explaining what you couldn't do or why — anything the user must handle goes in 'steps', not here." },
     did: { type: "array", items: { type: "string" }, description: "2-6 bullets, ONE per concrete action you ACTUALLY performed with tools this run (drafting, creating, updating), past tense with specific names/artifacts, each ≤15 words, e.g. 'Drafted a reply to Sarah confirming Thursday', 'Created \"Q3 budget\" doc with the summary table', 'Filled 12 cells in the trip sheet'. Plain, specific wording — what a person would actually say happened, not a system log entry. NEVER plans, reads-only, or things you didn't do." },
@@ -2959,6 +2977,13 @@ async function planResearch(task: { title: string; why: string; sourceSubject?: 
               `exercise (no "corrigé exercice 12 p.87", no solved version of their dissertation subject) — ` +
               `you are finding the method they will apply, never the result they hand in.\n`
             : "") +
+          `For any connected-app query about the student's OWN class material (not a web search): the exact ` +
+          `academic term ("figures de style", "théorème de Pythagore"…) often does NOT appear verbatim in a ` +
+          `file/folder name — a class file is more often named after the CLASS/SUBJECT itself (e.g. "2nde ` +
+          `Français", "Vocabulaire français") than the specific notion inside it. Never plan only ONE exact-` +
+          `phrase query and stop there: pair a specific-term query with at least one BROADER fallback query ` +
+          `for the same information (the subject/class name alone, or "list files in <likely folder>") so a ` +
+          `miss on the exact phrase doesn't dead-end the whole search.\n` +
           `Before researching, PLAN it. First extract the key entities (names, people, organizations, places, ` +
           `dates, subjects) from the task. Then list 3-6 concrete search actions to actually run — each one ` +
           `naming a SPECIFIC query, not a vague instruction. For a connected app, phrase it as "Search <app> for ` +
@@ -3359,25 +3384,42 @@ export async function runTask(task: { title: string; why: string; source?: strin
                 `do with "${task.title}" — you likely read an unrelated email/doc/thread during research and ` +
                 `turned it into a step. Every step must be about THIS task only; drop anything about a person, ` +
                 `place, or obligation not actually mentioned in this task's own title/details.`;
-            } else if (draft.steps.some((s) => ARTIFACT_DEFERRED_STEP.test(s.text)) && !notesCreated.length && !flashcardsCreated.length && !quizzesCreated.length && canBounce) {
-              // Direct instruction: when planning the breakdown, thoroughly check whether an artifact is
-              // actually needed — don't default to leaving "create the note/deck" as a step. Observed live:
-              // a task researched real content via Gmail ("Confirmed school context... from sent-mail
-              // history") but ended with a step literally reading "Create a revision note or flashcard set
-              // defining each figure de style..." — the model described the artifact instead of building it,
-              // even though CREATE_NOTE/CREATE_FLASHCARDS were available the whole run. This is the same
-              // "wroteAny stayed false" failure the round-based ENFORCEMENT nudge tries to prevent earlier in
-              // the loop, but it's a text-shape check that catches it here too, unconditionally, in case that
-              // nudge didn't land — a step describing artifact creation with no artifact actually made is
-              // never an acceptable final answer.
+            } else if (draft.needsArtifact === true && !notesCreated.length && !flashcardsCreated.length && !quizzesCreated.length && canBounce) {
+              // PRIMARY check: a STATE assertion, not a text-pattern guess — the model explicitly declared
+              // (submit's own "needsArtifact" field, decided BEFORE writing steps) that this task's content
+              // calls for a note/flashcard deck/quiz, but no CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ
+              // actually succeeded this run. A declared need is either satisfied or the run bounces — no
+              // finishBacks cap-free pass needed here since the model itself made the call, this just holds
+              // it to it.
+              finishBacks++;
+              content = "REJECTED: you declared needsArtifact=true (this task's content calls for a note/" +
+                "flashcard deck/quiz) but never actually called CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ " +
+                "this run. Build it NOW — missing the class's own exact source material is never a reason to " +
+                "skip this (see needsArtifact's own description: use your general knowledge for a standard " +
+                "curriculum topic, make source-verification a separate later step instead of a blocker).";
+            } else if (draft.steps.some((s) => describesDeferredArtifact(s.text)) && !notesCreated.length && !flashcardsCreated.length && !quizzesCreated.length && canBounce) {
+              // SAFETY NET: catches the same failure when the model mis-declared needsArtifact (omitted it,
+              // or wrongly said false) while its own steps still describe building one — a text-shape check,
+              // not the primary mechanism. Observed live: a task researched real content via Gmail
+              // ("Confirmed school context... from sent-mail history") but ended with a step literally
+              // reading "Create a revision note or flashcard set defining each figure de style..." — the
+              // model described the artifact instead of building it, even though CREATE_NOTE/
+              // CREATE_FLASHCARDS were available the whole run.
               finishBacks++;
               content = "REJECTED: one of your \"steps\" describes CREATING a note/flashcard deck/quiz as a " +
-                "future action (e.g. \"Create a revision note defining X\") — but no CREATE_NOTE/" +
-                "CREATE_FLASHCARDS/CREATE_QUIZ call actually succeeded this run. If you have real content for " +
-                "it (even a general-scope starting version covering what you already know, before an exact " +
-                "exam scope is confirmed), build it NOW with the right tool — don't leave building it as a " +
-                "step for the student when you have both the tool and the information to just do it. Only " +
-                "keep it as a step if you genuinely have nothing to put in it yet.";
+                "future action (e.g. \"Create a revision note defining X\", \"build the revision sheet once " +
+                "the source material is found\") — but no CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ call " +
+                "actually succeeded this run. NEVER gate this on finding the exact source document first: for " +
+                "a standard curriculum topic (a named literary device, a math method, a historical period, " +
+                "vocabulary for a known subject) YOU ALREADY KNOW the real content from your own general " +
+                "knowledge — build the artifact NOW using that, and if you couldn't find the class's own " +
+                "material, make a step to VERIFY/NARROW it against the real source later, not one that BLOCKS " +
+                "creating anything until the source is found. This does NOT mean fabricating source-specific " +
+                "content you don't have (e.g. claiming to use 'pages 42-47 of the textbook' you never saw) — " +
+                "build the best valid general/preliminary version instead, and flag the source-specific gap " +
+                "as a separate step. Only skip building it entirely if the content is genuinely specific to " +
+                "something only the student's own materials would contain AND you truly could not find it " +
+                "after real attempts.";
             } else if (/\bfound\b[^.]{0,60}\b(documents?|emails?|files?|spreadsheets?)\b/i.test(`${draft.context} ${(draft.did || []).join(" ")}`) && !draft.links.length && canBounce) {
               // "I found the relevant documents and emails" with nothing in links is a report of work the
               // user can't act on — they have no way to open what was supposedly found.
@@ -4223,6 +4265,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     ...(followUps.length ? { followUps } : {}),
     ...(title ? { title } : {}),
     ...(typeof out?.isBigProject === "boolean" ? { isBigProject: out.isBigProject } : {}),
+    ...(typeof out?.needsArtifact === "boolean" ? { needsArtifact: out.needsArtifact } : {}),
     ...(firstAction ? { firstAction } : {}),
   };
 }
