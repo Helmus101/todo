@@ -29,6 +29,7 @@ export default defineConfig(({ mode }) => {
     root: ".",
     build: { outDir: "dist" },
     server: {
+      host: true, // bind 0.0.0.0 so the preview proxy can reach the dev server
       port: 5273,
       strictPort: true, // fail loudly instead of silently moving to another port
       proxy: {

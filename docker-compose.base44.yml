@@ -1,0 +1,24 @@
+services:
+  app:
+    image: node:24-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "3000:5273"
+    environment:
+      - NODE_ENV=development
+      - PORT=8788
+      - PUBLIC_URL=https://3000-${BASE44_PUBLIC_HOST_SUFFIX}
+      # Vite >= 6.1 appends this to allowedHosts (platform sets the value).
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    command: sh -c "npm ci && npm run dev"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5273/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
