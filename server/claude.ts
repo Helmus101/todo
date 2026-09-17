@@ -2604,7 +2604,7 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
   // today's deck. Capped small and phrased as a secondary ask so it can never crowd out today's own content
   // (a day with 6 genuine topics shouldn't turn into "6 topics + 8 old mistakes").
   const weakBlock = weakCards?.length
-    ? `\n\nA FEW THINGS THEY GOT WRONG ON A PREVIOUS DAY (weak spots, for light reinforcement only ��� do NOT ` +
+    ? `\n\nA FEW THINGS THEY GOT WRONG ON A PREVIOUS DAY (weak spots, for light reinforcement only — do NOT ` +
       `let this outweigh today's own content): ${weakCards.slice(0, 6).join("; ")}. If 1-2 of these genuinely ` +
       `connect to today's material, fold a card for them in naturally; otherwise add at most 1-2 short standalone ` +
       `review cards for the ones most worth re-testing. Never more than 2 cards total from this list.`
@@ -3735,7 +3735,7 @@ export async function runTask(
   // Hard scope fence: ambient workload, memory, and connected-app search results are context only. They are
   // never additional tasks. Keeping this as a separate, repeated block makes the boundary survive transcript
   // trimming and prevents a sibling task discovered during research from becoming one of THIS task's steps.
-  const taskScopeFence = `\n\n=== ACTIVE TASK SCOPE (唯一 source of steps) ===\n` +
+  const taskScopeFence = `\n\n=== ACTIVE TASK SCOPE (the only source of steps) ===\n` +
     `Generate steps, artifacts, context, and synthesis ONLY for this task:\n` +
     `TITLE: ${task.title}\nWHY: ${task.why}\n` +
     (task.goal ? `DEFINITION OF DONE: ${task.goal}\n` : "") +
@@ -4231,7 +4231,7 @@ export async function runTask(
         // Plan-only mode: even a hallucinated call to a write tool name (not offered in the schema, so
         // unlikely, but not impossible) is blocked here too — enforcement can't rely on the model just not
         // trying. Reads/searches still pass through below. ONE exception: drafting (never sending) a Gmail
-        // email — plan-only's one allowed external write (see readOnlyPlusPrep) �� falls through to the real
+        // email — plan-only's one allowed external write (see readOnlyPlusPrep) — falls through to the real
         // call below instead of being blocked. A real Google Doc/Sheet/Slides create is NOT exempted; the
         // in-house note/flashcard/quiz tools cover that need without touching a real external account.
         else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName)) && !isPlanOnlyAllowedWrite(String(toolName))) {
