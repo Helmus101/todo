@@ -752,6 +752,9 @@ export function dropProcessComplaintSteps<T extends { text: string }>(steps: T[]
 // researching. Applied only when taskType is a known study type so it can't accidentally fire on a task
 // that genuinely IS about communication (e.g. "Write parent letter for EJM transition").
 const ADMIN_COMM_STEP = /\b(parent\s+letters?|announcement\s+(message|email|draft|text|letter)|school\s+office|contact\s+(email|address|the\s+school|the\s+teacher|teacher\s+contact)|send\s+(a\s+)?(short\s+)?(message|email|letter)\s+(asking|to\s+ask|to\s+confirm|confirming)|ask\s+for\s+a\s+reply\s+deadline|staff\s+(announcement|update|email|meeting|memo)|website\s+update|transition\s+timeline\s+wording|internal\s+staff|confirm\s+with\s+(the\s+)?school\s+whether|official\s+\w+\s+(calendar|handbook)\s+or|handover\s+wording|parallel\s+internal)\b/i;
+
+// Otto's internal retry/re-run steps that should never appear in the student's task list
+const OTTO_INTERNAL_STEP = /^(re-?run|re-?fetch|re-?read|retry|re-attempt|re-execute|re-query)\s+/i;
 const STUDY_TASK_TYPES = new Set<string>(["learn_understand", "review", "practice", "prepare_assessment", "homework_problem_set"]);
 /** On a known study-type task, strip steps that are clearly admin/communication/announcement work — almost
  *  always bleed-in from an unrelated email or calendar item read during research. Not applied to non-study
@@ -4408,9 +4411,14 @@ export async function writeStepsFromContext(
           `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
           `graded/learning work itself as if it were already done or as Otto's job; that work always stays theirs. ` +
           `Every item must be directly about "${task.title}". ` +
-          `NEVER write a step about: reconnecting tools, enabling create/write tools, plan-only mode, ` +
-          `re-running the task, opening Settings to add a tool, or anything else that describes Otto's own ` +
-          `internal state — those are never the student's job and will be silently removed.\n\n` +
+          `CRITICAL: Do NOT write steps that sound like Otto's internal work:\n` +
+          `  ✗ "Re-run the read..." (Otto re-running a fetch)\n` +
+          `  ✗ "Re-fetch the document..." (Otto retrying a lookup)\n` +
+          `  ✗ "Retry the search..." (Otto trying a search again)\n` +
+          `  ✗ "Re-run this task..." (Otto re-executing)\n` +
+          `  ✗ Any step starting with "Re-" that describes Otto's retry logic\n` +
+          `INSTEAD: If a resource needs reviewing/using, make that the step: "Review the Physics outline" not "Re-run the read".\n` +
+          `NEVER write a step about: reconnecting tools, enabling create/write tools, plan-only mode, opening Settings, or any Otto internal state — those are never the student's job and will be silently removed.\n\n` +
           `Return ONLY this JSON: {"isBigProject": true|false, "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy"|"medium"|"hard", "targetDate": "YYYY-MM-DD" ` +
           `(big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only), "url": "..." ` +
           `(ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary ` +
@@ -4449,7 +4457,9 @@ export async function writeStepsFromContext(
       }), bigProject ? 8 : 6);
     const gated = bigProject ? steps : dropTrivialSteps(steps);
     const cleaned = dropProcessComplaintSteps(gated);
-    return cleaned.length ? cleaned : fallbackSteps;
+    // Also filter out any steps that describe Otto's internal retry/re-run logic
+    const noInternalOttoSteps = cleaned.filter((s) => !OTTO_INTERNAL_STEP.test(s.text));
+    return noInternalOttoSteps.length ? noInternalOttoSteps : fallbackSteps;
   } catch { return fallbackSteps; }
 }
 
@@ -4502,8 +4512,13 @@ async function decideArtifact(
       // Project: milestone checklist / creative brief.
       directive = `Build a NOTE — a milestone checklist or creative brief. Break the project into concrete deliverables with clear "done when" criteria. Use markdown headers and checkboxes (- [ ]).`;
       wantNote = true;
+    } else if (tt === "administrative") {
+      // Administrative: create a brief or checklist if there's substantive work involved
+      // (e.g., "compile a revision doc" should produce the actual doc, not just steps)
+      directive = `If this task involves CREATING a document/brief (compiling, collecting, drafting), build a NOTE with the compiled content. Otherwise output {"none": true}.`;
+      wantNote = true; // try to create, but accept {"none": true} if not applicable
     } else {
-      // Administrative, unknown, other — no artifact.
+      // Other unknown types — no artifact
       directive = `Output {"none": true} — this task has no content worth drilling or summarising in-app.`;
     }
 
