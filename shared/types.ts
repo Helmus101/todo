@@ -676,21 +676,38 @@ export function sortWithinQuadrant<T extends { score: number; when?: string; sou
  * Structured task classification — drives the pipeline and pedagogical step structure.
  */
 export type TaskType =
-  | "learn_understand"      // Learn / understand new concepts
-  | "review"                // Review / refresh known concepts
-  | "practice"              // Practice & exercise drill
-  | "homework_problem_set"  // Homework / problem set solving
-  | "write"                 // Writing / essay / dissertation
-  | "research"              // Investigation / research assignment
-  | "create"                // Project artifact creation
-  | "prepare_assessment"    // Exam / test / oral exam preparation
-  | "project"               // Multi-stage / multi-week project
-  | "administrative";       // Admin / logistics / scheduling
+  | "learn_understand" | "review" | "practice" | "homework_problem_set"
+  | "write" | "research" | "create" | "prepare_assessment" | "project"
+  | "administrative"
+  | "analyze" | "decide" | "logistics" | "maintain" | "problem_solve";
 
-/**
- * Information requirement before researching.
- */
+/** Information requirement before researching. */
 export type InfoRequirement = "none" | "useful" | "required";
+
+/** A concrete output Otto should create or the user should finish. */
+export interface TaskOutput {
+  id: string;
+  kind: "brief" | "note" | "evidence_table" | "email" | "presentation" | "outline" | "essay" | "budget" | "schedule" | "itinerary" | "comparison" | "code" | "design" | "checklist" | "file" | "other";
+  title: string;
+  required: boolean;
+  owner: "otto" | "user" | "shared";
+  status: "planned" | "created" | "needs_review" | "approved" | "blocked";
+  artifactId?: string;
+}
+
+/** Durable reasoning state shared by planning, execution, chat, and checkpoints. */
+export interface TaskContext {
+  objective: string;
+  definitionOfDone: string;
+  requirements: { text: string; importance: "required" | "useful" | "optional" }[];
+  constraints: string[];
+  unknowns: string[];
+  ottoCanDo: string[];
+  userMustDo: string[];
+  research: "none" | "internal" | "external" | "mixed";
+  outputs: TaskOutput[];
+  currentState: "parsed" | "researched" | "planned" | "executing" | "blocked" | "complete";
+}
 
 /**
  * One step in "what's left" for a task. The agent classifies each: `automatable` means Weave can do it
@@ -789,8 +806,12 @@ export interface WebTask {
   score: number;       // ranking
   status: TaskStatus;
 
-  /** Structured task type derived from parsing (e.g. "learn_understand", "review", "practice", "write") */
+  /** Structured task type derived from parsing (e.g. "research", "write", "logistics") */
   taskType?: TaskType;
+  /** Universal goal → requirements → work → outputs planning state. */
+  taskContext?: TaskContext;
+  /** Tangible outputs required for completion, including Otto-created artifacts. */
+  outputs?: TaskOutput[];
   /** Measurable definition of done / learning goal for this task.
    *  e.g. "Be able to recognize the major figures de style, explain their effect, and identify them in an unfamiliar French text." */
   goal?: string;
@@ -1009,7 +1030,7 @@ export interface DailyPracticeProblem {
   attempt?: { answer: string; correct: boolean; at: string };
 }
 
-// ── AI-personalized theme token validation ─────────────────────────────────────────────────────────────
+// ── AI-personalized theme token validation ──────────────────────────────────────────────────���──────────
 // Pure, no I/O — shared between server/claude.ts (validates the model's raw output before ever saving it)
 // and this file's own normalizeProfile (re-validates on every load, so a value can never reach a stylesheet
 // without surviving the SAME check twice). See generateThemeTokens's own doc comment in server/claude.ts for

@@ -1062,8 +1062,17 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
     taskType: refined?.taskType,
     goal: refined?.goal,
     infoRequirement: refined?.infoRequirement,
-    unknowns: refined?.unknowns,
-    ...(markUnrefined ? { unrefined: true } : {}), // AI paused/unavailable — raw text in, background sweep cleans it up
+  unknowns: refined?.unknowns,
+  outputs: refined?.outputs?.map((o, i) => ({ id: `output-${i + 1}`, kind: (o.kind || "other") as any, title: o.title, required: o.required !== false, owner: o.owner || "shared", status: "planned" as const })),
+  taskContext: refined ? {
+    objective: refined.likelyObjective || refined.goal || refined.title,
+    definitionOfDone: refined.goal || refined.title,
+    requirements: refined.requirements || [], constraints: refined.constraints || [], unknowns: refined.unknowns || [],
+    ottoCanDo: refined.ottoCanDo || [], userMustDo: refined.userMustDo || [], research: refined.research || "none",
+    outputs: refined.outputs?.map((o, i) => ({ id: `output-${i + 1}`, kind: (o.kind || "other") as any, title: o.title, required: o.required !== false, owner: o.owner || "shared", status: "planned" as const })) || [],
+    currentState: "parsed" as const,
+  } : undefined,
+  ...(markUnrefined ? { unrefined: true } : {}), // AI paused/unavailable — raw text in, background sweep cleans it up
     ...(clientId ? { clientId } : {}),
   };
   list.unshift(task);
@@ -1088,6 +1097,15 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
   if (refined.goal) t.goal = refined.goal;
   if (refined.infoRequirement) t.infoRequirement = refined.infoRequirement;
   if (refined.unknowns) t.unknowns = refined.unknowns;
+  if (refined.outputs) t.outputs = refined.outputs.map((o, i) => ({ id: `output-${i + 1}`, kind: (o.kind || "other") as any, title: o.title, required: o.required !== false, owner: o.owner || "shared", status: "planned" as const }));
+  if (refined.requirements || refined.constraints || refined.ottoCanDo || refined.userMustDo || refined.research || refined.outputs) {
+    t.taskContext = {
+      objective: refined.likelyObjective || refined.goal || t.title, definitionOfDone: refined.goal || t.title,
+      requirements: refined.requirements || [], constraints: refined.constraints || [], unknowns: refined.unknowns || t.unknowns || [],
+      ottoCanDo: refined.ottoCanDo || [], userMustDo: refined.userMustDo || [], research: refined.research || "none",
+      outputs: t.outputs || [], currentState: "parsed",
+    };
+  }
   delete t.unrefined;
   t.updatedAt = new Date().toISOString();
   return t;

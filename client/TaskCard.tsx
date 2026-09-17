@@ -134,6 +134,32 @@ function Disclosure({ label, count, open, onToggle, children }: { label: string;
   );
 }
 
+function TaskPlanningPanel({ task }: { task: WebTask }) {
+  const L = useLang();
+  const plan = task.taskContext;
+  if (!plan) return null;
+  const groups = [
+    { label: L("Requis", "Required"), items: plan.requirements.filter((r) => r.importance === "required").map((r) => r.text) },
+    { label: L("Utile", "Useful"), items: plan.requirements.filter((r) => r.importance !== "required").map((r) => r.text) },
+    { label: L("Ce qu'Otto peut faire", "Otto can do"), items: plan.ottoCanDo },
+    { label: L("Ce qui reste à faire", "You must do"), items: plan.userMustDo },
+  ].filter((g) => g.items.length);
+  return (
+    <div className="task-plan-panel">
+      <p className="task-plan-objective"><strong>{L("Résultat attendu", "Expected outcome")}:</strong> {plan.objective}</p>
+      <p className="task-plan-done"><strong>{L("Terminé quand", "Done when")}:</strong> {plan.definitionOfDone}</p>
+      {groups.map((group) => (
+        <div className="task-plan-group" key={group.label}>
+          <strong>{group.label}</strong>
+          <ul>{group.items.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      ))}
+      {plan.unknowns.length ? <div className="task-plan-group"><strong>{L("À préciser", "Still unknown")}</strong><ul>{plan.unknowns.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+      {plan.outputs.length ? <div className="task-plan-group"><strong>{L("Livrables", "Outputs")}</strong><ul>{plan.outputs.map((output) => <li key={output.id}>{output.title}{output.owner === "otto" ? ` — ${L("Otto", "Otto")}` : output.owner === "user" ? ` — ${L("toi", "you")}` : ""}</li>)}</ul></div> : null}
+    </div>
+  );
+}
+
 /* ─────────────────────────────── collapsed row ─────────────────────────────── */
 
 export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isNew, index, onOpen, onEnterStudyMode }: {
@@ -280,8 +306,8 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   const cardEn = useContext(LangContext) === "en";
   const [running, setRunning] = useState(false);
   // One panel open at a time, so the page never grows past about a screen and a half.
-  const [openPanel, setOpenPanel] = useState<"steps" | null>(null);
-  const togglePanel = (p: "steps") => setOpenPanel((v) => (v === p ? null : p));
+  const [openPanel, setOpenPanel] = useState<"steps" | "plan" | null>(null);
+  const togglePanel = (p: "steps" | "plan") => setOpenPanel((v) => (v === p ? null : p));
   // Lifted: both the chat's artifact chips and the "Ce qu'Otto a préparé" panel open these popups.
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [openDeck, setOpenDeck] = useState<string | null>(null);
@@ -534,6 +560,12 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
 
       {/* (D) everything else — closed, counted, one open at a time. */}
       <div className="tf-panels">
+        {task.taskContext ? (
+          <Disclosure label={L("Plan de la tâche", "Task plan")} count={task.taskContext.outputs.length || undefined}
+            open={openPanel === "plan"} onToggle={() => togglePanel("plan")}>
+            <TaskPlanningPanel task={task} />
+          </Disclosure>
+        ) : null}
         {steps.length > 0 ? (
           <Disclosure label={L("Toutes les étapes", "All steps")} count={`${doneCount}/${steps.length}`}
             open={openPanel === "steps"} onToggle={() => togglePanel("steps")}>
