@@ -248,6 +248,11 @@ export function App() {
   // the top of every tick before it does anything, and before acting on a response that lands late; reset
   // the moment a fresh sign-in actually succeeds.
   const signedOutRef = useRef(false);
+  // Keep the authenticated shell stable during a transient status response. A focus refresh can briefly
+  // receive a 401/expired-looking response while the session cookie is being refreshed; replacing the
+  // authenticated status immediately unmounts StudyMode and looks like a random exit. Explicit sign-out
+  // still wins because it sets signedOutRef before calling the server.
+  const lastAuthenticatedStatusRef = useRef<ConnectionStatus | null>(CACHED_STATUS?.loggedIn ? CACHED_STATUS : null);
   const [route] = usePathRoute();
   const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
   // Every flashcard deck Otto has ever generated gets mirrored to this browser's localStorage (see
@@ -325,7 +330,18 @@ export function App() {
   const [settled, setSettled] = useState(false);
   const generatedOnce = useRef(false);
 
-  const loadStatus = useCallback(async () => { try { setStatus(await api.status()); } catch { /* keep last */ } }, []);
+  const applyStatus = useCallback((next: ConnectionStatus) => {
+    if (next.loggedIn) {
+      lastAuthenticatedStatusRef.current = next;
+      setStatus(next);
+      return;
+    }
+    // Do not tear down an active authenticated shell for one transient unauthenticated response.
+    // signOut() sets signedOutRef first, so intentional logout is unaffected.
+    if (!signedOutRef.current && lastAuthenticatedStatusRef.current?.loggedIn) return;
+    setStatus(next);
+  }, []);
+  const loadStatus = useCallback(async () => { try { applyStatus(await api.status()); } catch { /* keep last */ } }, [applyStatus]);
 
   // Persist the signed-in state so a returning user skips the login flash (reconciled on next load).
   useEffect(() => {
@@ -343,7 +359,7 @@ export function App() {
     let stop = false, tries = 0;
     const tick = async () => {
       if (stop) return;
-      try { const s = await api.status(); if (!stop) { setStatus(s); setLoadError(false); } }
+      try { const s = await api.status(); if (!stop) { applyStatus(s); setLoadError(false); } }
       catch { if (!stop) { if (tries++ < 30) setTimeout(tick, 1000); else setLoadError(true); } }
     };
     void tick();
