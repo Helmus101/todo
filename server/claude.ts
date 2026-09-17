@@ -1945,42 +1945,32 @@ export function evaluateCheckpoint(step: TaskStep, result?: string): boolean | u
 
 /**
  * Stage 14b: Semantic Domain Contamination — detect when steps belong to a completely different task domain.
- * Catches cases like "French literary analysis" task with "school admin" steps.
- * Returns true if steps seem to describe a different task entirely.
+ * ONLY applies to study tasks (learn/review/practice/prepare_assessment).
+ * Write/research/project tasks legitimately mix domains (research + admin + creativity).
+ * Returns true if STUDY steps seem completely off-topic.
  */
 export function hasDomainContamination(taskTitle: string, steps: TaskStep[]): boolean {
   const task = `${taskTitle}`.toLowerCase();
 
-  // Domain markers for common task categories
+  // Only check contamination for study tasks — those should be pure academic domain
+  const isStudyTask = /study|learn|understand|practice|revision|exam|prepare.*for|review.*for/i.test(task);
+  if (!isStudyTask) return false; // Write/research/project tasks can mix domains legitimately
+
+  // For study tasks: they should be MOSTLY academic, not mostly admin/communication
   const academicMarkers = /study|learn|understand|analyze|essay|assignment|homework|exam|revision|practice|concept|theory|principle|technique/i;
-  const adminMarkers = /email|contact|confirm|verify|check|send|communication|letter|announcement|schedule|meeting|confirm/i;
-  const creativeMarkers = /write|draft|create|compose|design|build|project|develop|plan/i;
+  const adminMarkers = /email|contact|confirm|verify|send|communication|letter|announcement|schedule|meeting/i;
 
-  // What domain is the task trying to be?
-  const taskIsAcademic = academicMarkers.test(task);
-  const taskIsAdmin = adminMarkers.test(task);
-  const taskIsCreative = creativeMarkers.test(task);
-
-  if (!taskIsAcademic && !taskIsAdmin && !taskIsCreative) return false; // ambiguous task, don't filter
-
-  // Count step domain markers
-  let stepAdminCount = 0, stepAcademicCount = 0, stepCreativeCount = 0;
-
+  let stepAdminCount = 0, stepAcademicCount = 0;
   for (const step of steps) {
     const text = String(step.text).toLowerCase();
     if (adminMarkers.test(text)) stepAdminCount++;
     if (academicMarkers.test(text)) stepAcademicCount++;
-    if (creativeMarkers.test(text)) stepCreativeCount++;
   }
 
-  if (steps.length < 2) return false; // too few steps to judge
+  if (steps.length < 2) return false;
 
-  // Detect mismatch: if task claims to be academic but most steps are admin, that's contamination
-  if (taskIsAcademic && stepAdminCount > steps.length * 0.5 && stepAdminCount > stepAcademicCount) return true;
-  if (taskIsAdmin && stepAcademicCount > steps.length * 0.5 && stepAcademicCount > stepAdminCount) return true;
-  if (taskIsCreative && stepAdminCount > steps.length * 0.5) return true;
-
-  return false;
+  // For study tasks: if >50% are admin/communication and few are academic, that's contamination
+  return stepAdminCount > steps.length * 0.5 && stepAdminCount > stepAcademicCount;
 }
 
 /**
