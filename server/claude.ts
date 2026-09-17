@@ -883,7 +883,7 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 // "no cap") and the route-level error surfacing this budget bump pairs with.
 // rescue was 5000 (< run's 8000) — backwards for a pass whose whole job is to recover from the main pass
 // truncating: it was structurally MORE likely to truncate too, not less. Raised to match run's ceiling.
-const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000, artifact: 6000 } as const;
+const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000, artifact: 8000 } as const;
 
 export function aiReady(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;
@@ -3204,7 +3204,10 @@ export async function runTask(
   // left artifact creation as a step (incl. the "Approve creating a Google Doc" dodge) instead of doing it.
   // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
   // doc genuinely needs approval).
-  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?|flashcards?|quiz(?:zes)?)\b/i;
+  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?|flashcards?|quiz(?:zes)?|study\s+sets?|vocab(?:ulary)?\s+sets?|revision\s+sets?)\b/i;
+  // In-app artifact step: matches steps that describe creating flashcards/quiz/note/brief/study-set
+  // that Otto owns in Phase 3 — these should be stripped AFTER Phase 3 runs, not bounced back.
+  const IN_APP_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together|mak\w*|prepar\w*)\b[^.]*\b(flashcards?|quiz(?:zes)?|study\s+sets?|vocab(?:ulary)?\s+sets?|revision\s+(cards?|sets?|sheet)|fiches?|brief)\b/i;
   // "context" describing the REQUEST or the SEARCH PROCESS instead of what was actually found — e.g. "User
   // requested information about Gabrielle; performed searches across multiple Google services" or "Assistant
   // retrieved calendar event for essay writing, read emails about X, and searched for Y on Drive and Gmail
@@ -3531,6 +3534,13 @@ export async function runTask(
                 if (artifactResult.quiz && titleOk(artifactResult.quiz.title)) {
                   quizzesCreated.push(artifactResult.quiz);
                   logAudit("artifact", fr ? `Quiz créé : « ${artifactResult.quiz.title} » (${artifactResult.quiz.questions.length} questions)` : `Quiz created: "${artifactResult.quiz.title}" (${artifactResult.quiz.questions.length} questions)`);
+                }
+                // Strip steps like "Build a flashcard deck" / "Create a quiz" from the final step list — Otto
+                // just built those in Phase 3, so leaving them as student to-dos is wrong and confusing.
+                // Only strip when at least one in-app artifact was actually produced this run.
+                const builtInApp = !!artifactResult.note || !!artifactResult.flashcards || !!artifactResult.quiz;
+                if (builtInApp) {
+                  draft.steps = draft.steps.filter((s) => !IN_APP_ARTIFACT_STEP.test(s.text));
                 }
                 submitted = draft; content = "submitted";
               }
@@ -3923,9 +3933,52 @@ async function decideArtifact(
 ): Promise<{ note?: TaskNote; flashcards?: TaskFlashcards; quiz?: TaskQuiz; tokens?: { in: number; out: number; cachedIn: number } }> {
   try {
     const client = deepseekClient();
+    const tt = task.taskType;
     const stepsText = steps.length ? steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n") : "(none)";
-    const taskTypeHint = task.taskType ? `TASK TYPE: ${task.taskType}\n` : "";
+    const taskTypeHint = tt ? `TASK TYPE: ${tt}\n` : "";
     const goalHint = task.goal ? `GOAL / DEFINITION OF DONE: ${task.goal}\n` : "";
+
+    // --- Determine exactly what to build based on task type, upfront ---
+    // These are directives, not suggestions — the model must follow them.
+    let directive: string;
+    let wantFlashcards = false;
+    let wantQuiz = false;
+    let wantNote = false;
+    if (tt === "learn_understand") {
+      // Learn phase: flashcards to encode concepts + quiz to verify they actually stuck.
+      directive = `Build BOTH:\n1. FLASHCARDS — one card per key term/concept/formula (8-15 cards). Back must be a full explanation, not a one-word answer.\n2. QUIZ — 4-6 application questions that test WHETHER the student can use these concepts, not just recall their labels. Each "why" must explain why the correct answer is right AND why each wrong option is wrong.`;
+      wantFlashcards = true; wantQuiz = true;
+    } else if (tt === "review") {
+      // Review phase: quiz to surface gaps first, then flashcards as a drill tool.
+      directive = `Build BOTH:\n1. QUIZ — 4-6 diagnostic questions. Prioritise the most commonly confused or forgotten aspects of this topic. Detailed "why" per question.\n2. FLASHCARDS — drill set for the terms/facts the quiz covers, so the student can fill the gaps the quiz reveals.`;
+      wantFlashcards = true; wantQuiz = true;
+    } else if (tt === "practice" || tt === "prepare_assessment") {
+      // Pure practice/exam prep: diagnostic quiz only.
+      directive = `Build a QUIZ — 5-8 exam-style questions matching the rigour of a real contrôle/IB paper/bac for this subject and level. Detailed "why" per question explaining the reasoning, not just confirming the answer.`;
+      wantQuiz = true;
+    } else if (tt === "homework_problem_set") {
+      // Homework: the exercises ARE the practice — a reference note beats a quiz.
+      directive = `Build a NOTE — a concise method/formula reference the student can keep open while working through the exercises. Use markdown with bold key terms, numbered method steps, and a worked mini-example if relevant. Do NOT build a quiz.`;
+      wantNote = true;
+    } else if (tt === "write" || tt === "research") {
+      // Writing/research: an outline or checklist note is the artifact.
+      directive = `Build a NOTE — a structured outline or checklist that scaffolds the writing/research. Include: argument structure (claim → evidence → analysis), key sources to consult, and common pitfalls. Use markdown headers and bullets.`;
+      wantNote = true;
+    } else if (tt === "project" || tt === "create") {
+      // Project: milestone checklist / creative brief.
+      directive = `Build a NOTE — a milestone checklist or creative brief. Break the project into concrete deliverables with clear "done when" criteria. Use markdown headers and checkboxes (- [ ]).`;
+      wantNote = true;
+    } else {
+      // Administrative, unknown, other — no artifact.
+      directive = `Output {"none": true} — this task has no content worth drilling or summarising in-app.`;
+    }
+
+    // Build the JSON schema line dynamically based on what we actually want
+    const schemaFields: string[] = ['"none": false'];
+    if (wantNote) schemaFields.push('"note": {"title":"...","body":"..."} | null');
+    if (wantFlashcards) schemaFields.push('"flashcards": {"title":"...","cards":[{"front":"...","back":"..."}]} | null');
+    if (wantQuiz) schemaFields.push('"quiz": {"title":"...","questions":[{"q":"...","options":["...","...","...","..."],"correct":0,"why":"..."}]} | null');
+    const schemaLine = `Return ONLY valid JSON — no commentary, no markdown fences:\n{${schemaFields.join(", ")}}`;
 
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
@@ -3939,31 +3992,28 @@ async function decideArtifact(
           assignmentBlock(task) +
           `RESEARCH GATHERED THIS RUN:\n${context?.trim() || "(nothing substantive found)"}\n\n` +
           `FINAL STEPS LEFT FOR THE STUDENT:\n${stepsText}\n\n` +
-          `Decide whether this task's content genuinely calls for an in-app artifact, and if so, build it now:\n` +
-          `- NOTE — ${CREATE_NOTE_TOOL.description}\n` +
-          `- FLASHCARDS — ${CREATE_FLASHCARDS_TOOL.description}\n` +
-          `- QUIZ — ${CREATE_QUIZ_TOOL.description}\n` +
-          `SYNTHESIS GUIDELINES BY TASK TYPE:\n` +
-          `• "learn_understand" or "review": Generate FLASHCARDS for key definitions/formulas/terms, or a structured NOTE (core rules + examples).\n` +
-          `• "practice" or "prepare_assessment": Generate a diagnostic QUIZ with clear explanations per question to test exam readiness.\n` +
-          `• "write", "research", "project": Generate a NOTE with an outline, checklist, or guide.\n` +
-          `• A logistics/admin task needs NONE of these — say "none" rather than forcing one.\n\n` +
-          `For a standard curriculum topic, missing the class's own EXACT source material is NEVER a reason to build ` +
-          `nothing: use your reliable general knowledge to build a genuinely useful version now.\n` +
-          `Return ONLY this JSON, no other text: {"kind": "note"|"flashcards"|"quiz"|"none", ` +
-          `"note": {"title":"...","body":"..."} | null, ` +
-          `"flashcards": {"title":"...","cards":[{"front":"...","back":"..."}]} | null, ` +
-          `"quiz": {"title":"...","questions":[{"q":"...","options":["...","..."],"correct":0,"why":"..."}]} | null}` +
+          `YOUR JOB NOW — build the following artifact(s) for this task:\n${directive}\n\n` +
+          `QUALITY RULES:\n` +
+          `- Flashcard backs must be self-contained explanations (never a single word or phrase).\n` +
+          `- Quiz options must all be plausible (not obviously wrong). "why" must address ALL options.\n` +
+          `- Note body must use markdown (##, *, **bold**, - [ ]). No walls of plain text.\n` +
+          `- Missing the class's EXACT source material is NEVER a reason to skip: use your general knowledge of the topic.\n` +
+          `- If "none: true", output only that key.\n\n` +
+          schemaLine +
           languageLine(profile),
       }],
     }));
     const tokens = usageOf(res);
-    const out = firstJson<{ kind?: string; note?: any; flashcards?: any; quiz?: any }>(String(res.choices?.[0]?.message?.content || ""));
-    if (!out?.kind || out.kind === "none") return { tokens };
-    if (out.kind === "note" && out.note) { const r = makeNote(out.note); if ("note" in r) return { note: r.note, tokens }; }
-    if (out.kind === "flashcards" && out.flashcards) { const r = makeDeck(out.flashcards); if ("deck" in r) return { flashcards: r.deck, tokens }; }
-    if (out.kind === "quiz" && out.quiz) { const r = makeQuiz(out.quiz); if ("quiz" in r) return { quiz: r.quiz, tokens }; }
-    return { tokens }; // model chose a kind but the content didn't validate — no artifact, never blocks the task
+    const out = firstJson<{ none?: boolean; note?: any; flashcards?: any; quiz?: any }>(String(res.choices?.[0]?.message?.content || ""));
+    if (!out || out.none) return { tokens };
+    // Collect all valid artifacts — a single call can now return multiple kinds
+    let note: TaskNote | undefined;
+    let flashcards: TaskFlashcards | undefined;
+    let quiz: TaskQuiz | undefined;
+    if (out.note) { const r = makeNote(out.note); if ("note" in r) note = r.note; }
+    if (out.flashcards) { const r = makeDeck(out.flashcards); if ("deck" in r) flashcards = r.deck; }
+    if (out.quiz) { const r = makeQuiz(out.quiz); if ("quiz" in r) quiz = r.quiz; }
+    return { note, flashcards, quiz, tokens };
   } catch { return {}; }
 }
 
