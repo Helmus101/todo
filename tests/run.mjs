@@ -1013,14 +1013,24 @@ section("dropProcessComplaintSteps — Otto's own run/tool-state must never leak
   const settings1 = { text: "Open Settings in your account." };
   const settings2 = { text: "Find the connected apps or tools section." };
   const settings3 = { text: "Confirm it is connected, then rerun task." };
+  const pronoteExpired = { text: "Reconnect Pronote in Settings — the connected app reported the session expired on 12 Sep 2026, so homework and tests can't be read (broken connection, not an empty search)." };
+  const buildReference = { text: "Build the figures de style reference sheet (definitions + examples) from the French lit texts already read, since no write tool ran this time." };
+  const fetchPages = { text: "Fetch the remaining pages of the French literature doc to capture the full text list." };
+  const openSpreadsheet = { text: "Open the 'Vocabulaire français' spreadsheet and the DP1 folder to check for existing study material before drafting anything new." };
+  const rerunFigures = { text: "Re-run the web searches for figures de style / IB French revision material with different phrasing." };
   check("drops 'Enable or reconnect a create/write tool — plan-only mode' step", dropProcessComplaintSteps([reconnect1]).length === 0);
   check("drops bare 'Enable or reconnect a create/write tool' step", dropProcessComplaintSteps([reconnect2]).length === 0);
   check("drops 'Rerun the Sheets content reads — blocked this run' step", dropProcessComplaintSteps([planOnly]).length === 0);
   check("drops 'Rerun the web search — unavailable this run' step", dropProcessComplaintSteps([unavail]).length === 0);
+  check("drops Pronote reconnect masquerading as the study task", dropProcessComplaintSteps([pronoteExpired]).length === 0);
+  check("drops app-prep reference-sheet step", dropProcessComplaintSteps([buildReference]).length === 0);
+  check("drops fetch-remaining-pages process residue", dropProcessComplaintSteps([fetchPages]).length === 0);
+  check("drops open-spreadsheet-before-drafting prep residue", dropProcessComplaintSteps([openSpreadsheet]).length === 0);
+  check("drops rerun-web-search process residue", dropProcessComplaintSteps([rerunFigures]).length === 0);
   check("drops Settings reconnect substep 1 (Find connected apps)", dropProcessComplaintSteps([settings2]).length === 0);
   check("drops Settings reconnect substep 2 (Confirm then rerun)", dropProcessComplaintSteps([settings3]).length === 0);
   check("keeps 'Open Settings' step when NOT part of tool reconnect context (generic action)", dropProcessComplaintSteps([settings1]).length >= 0); // allowed to keep; broad match may or may not catch it
-  check("drops all plan-only junk from a mixed batch, keeps on-topic step", dropProcessComplaintSteps([onTopic, reconnect1, reconnect2, planOnly, unavail, settings2, settings3]).length === 1);
+  check("drops all plan-only junk from a mixed batch, keeps on-topic step", dropProcessComplaintSteps([onTopic, reconnect1, reconnect2, planOnly, unavail, pronoteExpired, buildReference, fetchPages, openSpreadsheet, rerunFigures, settings2, settings3]).length === 1);
 }
 
 

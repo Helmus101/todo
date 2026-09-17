@@ -742,8 +742,12 @@ const PROCESS_COMPLAINT_STEP = new RegExp(
   ")\\b",
   "i",
 );
+// Steps that describe Otto preparing/gathering inputs for the task, rather than the student's actual path
+// through the task. Keep this intentionally general: the product rule is "Otto prepares; the user acts."
+const APP_PREP_STEP = /\b(?:build|create|make|prepare|draft|compile|fetch|pull|open|search|look up|find|check|read|scan|review|re-?run|retry)\b[^.]{0,100}\b(?:reference sheet|study material|source material|existing material|spreadsheet|folder|drive|doc(?:ument)?|remaining pages?|web searches?|queries|search results?|write tool|create tool|no write tool|this run|before drafting|before creating|before preparing)\b/i;
+const CONNECTION_HEALTH_STEP = /\b(?:reconnect|re-?connect|sign in|open settings|settings)\b[^.]{0,120}\b(?:pronote|gmail|google|drive|calendar|connected app|session expired|broken connection|homework and tests|inbox|account)\b/i;
 export function dropProcessComplaintSteps<T extends { text: string }>(steps: T[]): T[] {
-  return steps.filter((s) => !PROCESS_COMPLAINT_STEP.test(s.text));
+  return steps.filter((s) => !PROCESS_COMPLAINT_STEP.test(s.text) && !APP_PREP_STEP.test(s.text) && !CONNECTION_HEALTH_STEP.test(s.text));
 }
 // Steps that are clearly admin/communication/announcement work on a task that is a STUDY type — observed
 // live: a "Revise French figures de style" task (review) came back with steps about "parent letters",
@@ -3364,9 +3368,10 @@ const RUN_SYSTEM =
   `automatable=true AND needsPermission=true so the user can explicitly approve it with one click.\n` +
   `RECONNECT_NEEDED: If a tool result contains "RECONNECT_NEEDED", that app's CONNECTION is broken (expired/` +
   `revoked token) — this is NOT the same as a search coming back empty, and you must never treat it as "nothing ` +
-  `found" or silently work around it with another app. Add a step naming exactly which app needs reconnecting ` +
-  `(e.g. "Reconnect Gmail in Settings — Otto can't check your inbox until then"), automatable=false, and keep ` +
-  `going with whatever OTHER sources you still have access to rather than abandoning the whole task.\n` +
+  `found". Mention it briefly in context/synthesis as a connection warning if it matters, then keep going with ` +
+  `whatever OTHER sources you still have access to. NEVER turn reconnecting an app into this task's main step ` +
+  `or substeps — connection health belongs in Settings/status UI, not inside "what the student does for this ` +
+  `task".\n` +
   `WRITE GOOD STEPS — each step is ONE concrete action: imperative verb + the specific thing, concise (≤ ~12 ` +
   `words), no hedging or explanation. Good: "Send the draft reply to Sarah", "Pick the offsite date", "Approve ` +
   `& publish the brief". Bad: vague ("follow up"), bundled ("check email and update the doc and tell the team"), ` +
@@ -3975,6 +3980,7 @@ export async function runTask(
       filtered = dropForeignEntitySteps(task, d.links, filtered);
       const afterEntity = filtered.length;
       filtered = dropSiblingBleedSteps(task, siblingTasks || [], filtered);
+      filtered = dropOffTopicStudySteps(task.taskType, filtered);
       // Semantic domain check: if steps describe a completely different task domain, flag it
       if (hasDomainContamination(task.title, filtered) && finishBacks < 2 && (MAX - 1 - i) >= 2) {
         return `REJECTED: your steps describe work in a different domain than "${task.title}" — ` +
@@ -4307,8 +4313,8 @@ export async function runTask(
       "describe the user or summarize their life. links = ONLY artifacts CREATED this run (URLs from " +
       "create-tool results in the transcript, each with a label saying what it IS); NEVER list pre-existing " +
       "files that were merely read. Fabricating a result is worse than admitting the run fell short. If a tool " +
-      "result in the transcript contains RECONNECT_NEEDED, add a step naming which app needs reconnecting in " +
-      "Settings — that's a broken connection, not an empty search result.";
+      "result in the transcript contains RECONNECT_NEEDED, mention the affected app briefly in context as a " +
+      "connection warning, but do NOT add reconnecting as a task step — keep steps about the original task.";
     const runRescue = (maxTokens: number, concise: boolean) => client.chat.completions.create({
       model: actualModel,
       max_tokens: maxTokens,
@@ -4418,6 +4424,14 @@ export async function writeStepsFromContext(
           `in one sitting or a few short steps?` +
           (keywordHit ? ` (This one LOOKS like a big project from its title/why — confirm that reading unless the ` +
             `actual content clearly contradicts it.)` : "") + `\n\n` +
+          `APP-PREP WORK IS NOT A USER STEP:\n` +
+          `Never write user steps that tell the student to build Otto's prep artifacts or retry Otto's source ` +
+          `gathering. These belong to the preparation phase, not the task checklist: "Build the figures de style ` +
+          `reference sheet", "Fetch the remaining pages", "Open the Vocabulaire français spreadsheet", "Search ` +
+          `Drive", "Re-run web searches", "Try different search phrasing". If that work is possible, Otto should ` +
+          `do it before this step-writing call. If one source failed or was truncated, use the sources already ` +
+          `available and create the best brief/flashcards/quiz possible; only ask the student for a source when ` +
+          `the actual assignment text is indispensable and unavailable.\n\n` +
           `PEDAGOGICAL SEQUENCE ARCHITECTURE (for study / learning / review / exam prep tasks):\n` +
           `If this is a learning, review, practice, or assessment prep task (taskType: "learn_understand", "review", "practice", "prepare_assessment"), ` +
           `derive the step sequence from the core cognitive learning cycle:\n` +
@@ -4520,6 +4534,7 @@ export async function writeStepsFromContext(
     let filtered = dropForeignEntitySteps(task, links, noInternalOttoSteps);
     const beforeSibling = filtered.length;
     filtered = dropSiblingBleedSteps(task, siblingTasks, filtered);
+    filtered = dropOffTopicStudySteps(task.taskType, filtered);
     // Domain contamination only applies strictly to study tasks
     if (task.taskType && ["learn", "review", "practice", "prepare_assessment"].includes(task.taskType) && hasDomainContamination(task.title, filtered)) {
       filtered = [];
