@@ -1666,8 +1666,9 @@ export async function classifyCandidates(
         const it = items[r.i];
         const validTaskTypes: TaskType[] = [
           "learn_understand", "review", "practice", "homework_problem_set",
-          "write", "research", "create", "prepare_assessment", "project", "administrative"
-        ];
+  "write", "research", "create", "prepare_assessment", "project", "administrative",
+  "analyze", "decide", "logistics", "maintain", "problem_solve"
+  ];
         const taskType = validTaskTypes.includes(r.taskType) ? r.taskType : undefined;
         const infoRequirement = ["none", "useful", "required"].includes(r.infoRequirement) ? r.infoRequirement : undefined;
         return {
@@ -1824,6 +1825,12 @@ export interface RefinedTask {
   taskType?: TaskType;
   likelyObjective?: string;
   unknowns?: string[];
+  requirements?: { text: string; importance: "required" | "useful" | "optional" }[];
+  constraints?: string[];
+  ottoCanDo?: string[];
+  userMustDo?: string[];
+  research?: "none" | "internal" | "external" | "mixed";
+  outputs?: { kind: string; title: string; required?: boolean; owner?: "otto" | "user" | "shared" }[];
   goal?: string; // Concrete definition of done
   infoRequirement?: InfoRequirement;
   tokens: { in: number; out: number; cachedIn: number };
@@ -2318,8 +2325,14 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
           "   - 'prepare_assessment': preparing for an exam, test, or oral evaluation\n" +
           "   - 'project': multi-stage/multi-week project (EE, TOK, IA, group project)\n" +
           "   - 'administrative': logistics, booking, form signing, emailing\n" +
-          "3. INFER DEFINITION OF DONE (goal): Turn the title into a concrete, measurable completion condition. E.g. 'Study figures de style' → 'Be able to recognize major figures de style, explain their effect, and identify them in unfamiliar French texts.' E.g. 'Study photosynthesis' → 'Explain the process without notes and answer 8/10 application questions correctly.'\n" +
-          "4. INFORMATION REQUIREMENT:\n" +
+          "   - 'analyze': compare, interpret, audit, or understand existing information\n" +
+          "   - 'decide': choose between options or make a recommendation\n" +
+          "   - 'logistics': coordinate travel, appointments, schedules, or plans\n" +
+          "   - 'maintain': recurring upkeep, tracking, or follow-up\n" +
+          "   - 'problem_solve': diagnose and resolve a practical or technical issue\n" +
+          "3. INFER DEFINITION OF DONE (goal): Turn the title into a concrete, measurable completion condition. This applies to every task, not only schoolwork.\n" +
+          "4. PLAN THE WORK: separate requirements, constraints, what Otto can do, what the user must do, and tangible outputs. Never claim Otto completed the user's judgment, signature, purchase, submission, graded work, or irreversible action.\n" +
+          "5. INFORMATION REQUIREMENT:\n" +
           "   - 'none': basic algebra practice, generic studying, drafting, quiz from already-known concepts\n" +
           "   - 'useful': specific historical topic, economics research, topic overview\n" +
           "   - 'required': class-source specific ('study what we did in class', 'review chapter 4', 'prep for tomorrow's test')\n" +
@@ -2332,8 +2345,11 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
           `  "why": "concise intent clause ≤12 words",\n` +
           `  "subject": "e.g. Français, Physique-Chimie, Mathématiques, History, or general",\n` +
           `  "topic": "the specific concept or notion",\n` +
-          `  "taskType": "learn_understand"|"review"|"practice"|"homework_problem_set"|"write"|"research"|"create"|"prepare_assessment"|"project"|"administrative",\n` +
-          `  "goal": "concrete measurable definition of done (1-2 sentences)",\n` +
+  `  "taskType": "learn_understand"|"review"|"practice"|"homework_problem_set"|"write"|"research"|"create"|"prepare_assessment"|"project"|"administrative"|"analyze"|"decide"|"logistics"|"maintain"|"problem_solve",\n` +
+  `  "goal": "concrete measurable definition of done (1-2 sentences)",\n` +
+  `  "requirements": [{"text":"...", "importance":"required"|"useful"|"optional"}], "constraints": ["..."],\n` +
+  `  "ottoCanDo": ["research, draft, organize..."], "userMustDo": ["approve, decide, submit..."],\n` +
+  `  "research": "none"|"internal"|"external"|"mixed", "outputs": [{"kind":"note|brief|email|schedule|other", "title":"...", "required":true, "owner":"otto"|"user"|"shared"}],\n` +
           `  "infoRequirement": "none"|"useful"|"required",\n` +
           `  "unknowns": ["missing detail 1", ...],\n` +
           `  "when": "deadline ONLY if explicitly stated in the note, else empty",\n` +
@@ -2358,8 +2374,14 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
       subject: out.subject ? String(out.subject).slice(0, 60) : undefined,
       topic: out.topic ? String(out.topic).slice(0, 80) : undefined,
       taskType,
-      goal: out.goal ? String(out.goal).slice(0, 250) : undefined,
-      infoRequirement,
+  goal: out.goal ? String(out.goal).slice(0, 250) : undefined,
+  requirements: Array.isArray(out.requirements) ? out.requirements.map((r: any) => ({ text: String(r?.text || "").trim().slice(0, 240), importance: ["required", "useful", "optional"].includes(r?.importance) ? r.importance : "useful" })).filter((r: any) => r.text).slice(0, 12) : undefined,
+  constraints: Array.isArray(out.constraints) ? out.constraints.map((c: any) => String(c).trim().slice(0, 240)).filter(Boolean).slice(0, 12) : undefined,
+  ottoCanDo: Array.isArray(out.ottoCanDo) ? out.ottoCanDo.map((x: any) => String(x).trim().slice(0, 180)).filter(Boolean).slice(0, 12) : undefined,
+  userMustDo: Array.isArray(out.userMustDo) ? out.userMustDo.map((x: any) => String(x).trim().slice(0, 180)).filter(Boolean).slice(0, 12) : undefined,
+  research: ["none", "internal", "external", "mixed"].includes(out.research) ? out.research : undefined,
+  outputs: Array.isArray(out.outputs) ? out.outputs.map((o: any) => ({ kind: String(o?.kind || "other").slice(0, 40), title: String(o?.title || "Output").trim().slice(0, 120), required: o?.required !== false, owner: ["otto", "user", "shared"].includes(o?.owner) ? o.owner : "shared" })).filter((o: any) => o.title).slice(0, 10) : undefined,
+  infoRequirement,
       unknowns: Array.isArray(out.unknowns) ? out.unknowns.map((u: any) => String(u).trim()).filter(Boolean).slice(0, 5) : undefined,
       urgency: clamp01(out.urgency ?? 0.6),
       importance: clamp01(out.importance ?? 0.7),
@@ -2582,7 +2604,7 @@ export async function generateDailyStudyCards(logText: string, profile?: Profile
   // today's deck. Capped small and phrased as a secondary ask so it can never crowd out today's own content
   // (a day with 6 genuine topics shouldn't turn into "6 topics + 8 old mistakes").
   const weakBlock = weakCards?.length
-    ? `\n\nA FEW THINGS THEY GOT WRONG ON A PREVIOUS DAY (weak spots, for light reinforcement only — do NOT ` +
+    ? `\n\nA FEW THINGS THEY GOT WRONG ON A PREVIOUS DAY (weak spots, for light reinforcement only ��� do NOT ` +
       `let this outweigh today's own content): ${weakCards.slice(0, 6).join("; ")}. If 1-2 of these genuinely ` +
       `connect to today's material, fold a card for them in naturally; otherwise add at most 1-2 short standalone ` +
       `review cards for the ones most worth re-testing. Never more than 2 cards total from this list.`
@@ -4197,7 +4219,7 @@ export async function runTask(
         // Plan-only mode: even a hallucinated call to a write tool name (not offered in the schema, so
         // unlikely, but not impossible) is blocked here too — enforcement can't rely on the model just not
         // trying. Reads/searches still pass through below. ONE exception: drafting (never sending) a Gmail
-        // email — plan-only's one allowed external write (see readOnlyPlusPrep) — falls through to the real
+        // email — plan-only's one allowed external write (see readOnlyPlusPrep) �� falls through to the real
         // call below instead of being blocked. A real Google Doc/Sheet/Slides create is NOT exempted; the
         // in-house note/flashcard/quiz tools cover that need without touching a real external account.
         else if (!EXECUTION_ENABLED && WRITE_NAME.test(String(toolName)) && !isPlanOnlyAllowedWrite(String(toolName))) {
