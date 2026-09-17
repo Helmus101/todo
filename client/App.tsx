@@ -716,7 +716,7 @@ export function App() {
             <StudyMode
               task={task}
               onExit={() => { setStudyModeTask(null); navigate("tasks"); }}
-              onTaskUpdate={(u) => { setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x))); setStudyModeTask(u); }}
+              onTaskUpdate={(u) => { setTasks((prev) => prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]); setStudyModeTask(u); }}
               userId={status?.user}
               language={status?.language === "en" ? "en" : "fr"}
             />
@@ -990,7 +990,7 @@ export function App() {
                             onChange={setTasks}
                             onTask={patchTask}
                             onConfirmed={flagJustDone}
-                            onEnterStudyMode={() => navigate(`study/${t.id}`)}
+                            onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
                           />
                         ))}
                       </div>
@@ -1036,7 +1036,7 @@ export function App() {
                                     onChange={setTasks}
                                     onTask={patchTask}
                                     onConfirmed={flagJustDone}
-                                    onEnterStudyMode={() => navigate(`study/${t.id}`)}
+                                    onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
                                   />
                                 ))}
                               </div>
@@ -1059,7 +1059,7 @@ export function App() {
                                     onChange={setTasks}
                                     onTask={patchTask}
                                     onConfirmed={flagJustDone}
-                                    onEnterStudyMode={() => navigate(`study/${t.id}`)}
+                                    onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
                                   />
                                 ))}
                               </div>
@@ -1109,7 +1109,7 @@ export function App() {
                   onTask={patchTask}
                   onConfirmed={flagJustDone}
                   onLeft={() => navigate("")}
-                  onEnterStudyMode={() => navigate(`study/${openTask.id}`)}
+                  onEnterStudyMode={() => { setStudyModeTask(openTask); navigate(`study/${openTask.id}`); }}
                 />
               </TaskModal>
             );
@@ -2002,7 +2002,7 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
     <StudyMode
       task={task}
       onExit={() => navigate("tasks")}
-      onTaskUpdate={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+      onTaskUpdate={(u) => setTasks((prev) => prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u])}
       userId={status?.user}
       language={en ? "en" : "fr"}
     />
