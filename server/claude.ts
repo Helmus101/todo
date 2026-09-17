@@ -745,6 +745,21 @@ const PROCESS_COMPLAINT_STEP = new RegExp(
 export function dropProcessComplaintSteps<T extends { text: string }>(steps: T[]): T[] {
   return steps.filter((s) => !PROCESS_COMPLAINT_STEP.test(s.text));
 }
+// Steps that are clearly admin/communication/announcement work on a task that is a STUDY type — observed
+// live: a "Revise French figures de style" task (review) came back with steps about "parent letters",
+// "Natalie La Balme", "EJM calendar", "staff announcement" because the research pass read unrelated school
+// admin emails. These steps never belong on a study-type task regardless of what the model found while
+// researching. Applied only when taskType is a known study type so it can't accidentally fire on a task
+// that genuinely IS about communication (e.g. "Write parent letter for EJM transition").
+const ADMIN_COMM_STEP = /\b(parent\s+letters?|announcement\s+(message|email|draft|text|letter)|school\s+office|contact\s+(email|address|the\s+school|the\s+teacher|teacher\s+contact)|send\s+(a\s+)?(short\s+)?(message|email|letter)\s+(asking|to\s+ask|to\s+confirm|confirming)|ask\s+for\s+a\s+reply\s+deadline|staff\s+(announcement|update|email|meeting|memo)|website\s+update|transition\s+timeline\s+wording|internal\s+staff|confirm\s+with\s+(the\s+)?school\s+whether|official\s+\w+\s+(calendar|handbook)\s+or|handover\s+wording|parallel\s+internal)\b/i;
+const STUDY_TASK_TYPES = new Set<string>(["learn_understand", "review", "practice", "prepare_assessment", "homework_problem_set"]);
+/** On a known study-type task, strip steps that are clearly admin/communication/announcement work — almost
+ *  always bleed-in from an unrelated email or calendar item read during research. Not applied to non-study
+ *  tasks (write/research/project/admin) where some of those actions may genuinely be on-topic. */
+export function dropOffTopicStudySteps<T extends { text: string }>(taskType: string | undefined, steps: T[]): T[] {
+  if (!taskType || !STUDY_TASK_TYPES.has(taskType)) return steps;
+  return steps.filter((s) => !ADMIN_COMM_STEP.test(s.text));
+}
 // Capitalized single words that are common in step/artifact text but aren't proper-noun ENTITIES worth
 // checking (sentence starters, weekday/month names, Otto's own name, generic time words) — excluded so the
 // entity heuristic below doesn't flag ordinary sentences.
@@ -844,7 +859,7 @@ function bleedsToSibling(text: string, task: { title: string; why: string; sourc
     const score = keywordOverlap(words, `${sib.title} ${sib.why || ""}`);
     if (score > bestSibling) bestSibling = score;
   }
-  return (ownScore === 0 && bestSibling >= 2) || (bestSibling >= ownScore + 2);
+  return (ownScore === 0 && bestSibling >= 1) || (bestSibling >= ownScore + 1);
 }
 export function dropSiblingBleedSteps<T extends { text: string }>(
   task: { title: string; why: string; sourceDetail?: string },
@@ -1841,6 +1856,46 @@ export function evaluateCheckpoint(step: TaskStep, result?: string): boolean | u
   if (/completed|finished|done|correct|right|understood|got.*it/.test(text)) return true;
 
   return undefined; // unclear
+}
+
+/**
+ * Stage 14b: Semantic Domain Contamination — detect when steps belong to a completely different task domain.
+ * Catches cases like "French literary analysis" task with "school admin" steps.
+ * Returns true if steps seem to describe a different task entirely.
+ */
+export function hasDomainContamination(taskTitle: string, steps: TaskStep[]): boolean {
+  const task = `${taskTitle}`.toLowerCase();
+
+  // Domain markers for common task categories
+  const academicMarkers = /study|learn|understand|analyze|essay|assignment|homework|exam|revision|practice|concept|theory|principle|technique/i;
+  const adminMarkers = /email|contact|confirm|verify|check|send|communication|letter|announcement|schedule|meeting|confirm/i;
+  const creativeMarkers = /write|draft|create|compose|design|build|project|develop|plan/i;
+
+  // What domain is the task trying to be?
+  const taskIsAcademic = academicMarkers.test(task);
+  const taskIsAdmin = adminMarkers.test(task);
+  const taskIsCreative = creativeMarkers.test(task);
+
+  if (!taskIsAcademic && !taskIsAdmin && !taskIsCreative) return false; // ambiguous task, don't filter
+
+  // Count step domain markers
+  let stepAdminCount = 0, stepAcademicCount = 0, stepCreativeCount = 0;
+
+  for (const step of steps) {
+    const text = String(step.text).toLowerCase();
+    if (adminMarkers.test(text)) stepAdminCount++;
+    if (academicMarkers.test(text)) stepAcademicCount++;
+    if (creativeMarkers.test(text)) stepCreativeCount++;
+  }
+
+  if (steps.length < 2) return false; // too few steps to judge
+
+  // Detect mismatch: if task claims to be academic but most steps are admin, that's contamination
+  if (taskIsAcademic && stepAdminCount > steps.length * 0.5 && stepAdminCount > stepAcademicCount) return true;
+  if (taskIsAdmin && stepAcademicCount > steps.length * 0.5 && stepAcademicCount > stepAdminCount) return true;
+  if (taskIsCreative && stepAdminCount > steps.length * 0.5) return true;
+
+  return false;
 }
 
 /**
@@ -3788,6 +3843,12 @@ export async function runTask(
       let filtered = dropForeignEntitySteps(task, d.links, d.steps);
       filtered = dropSiblingBleedSteps(task, siblingTasks || [], filtered);
       filtered = dropProcessComplaintSteps(filtered);
+      // Semantic domain check: if steps describe a completely different task domain, flag it
+      if (hasDomainContamination(task.title, filtered) && finishBacks < 2 && (MAX - 1 - i) >= 2) {
+        return `REJECTED: your steps describe work in a different domain than "${task.title}" — ` +
+          `they seem to be about school administration, communication, or logistics rather than the ` +
+          `academic work this task is about. Stay focused on "${task.title}" specifically.`;
+      }
       if (before > 0 && filtered.length < before / 2 && finishBacks < 2 && (MAX - 1 - i) >= 2) {
         return `REJECTED: most of your "steps" turned out to be about OTHER tasks/obligations, not ` +
           `"${task.title}" itself — you likely read something unrelated during research and turned it into a ` +
