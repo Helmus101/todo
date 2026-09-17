@@ -1,9 +1,10 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Otto — Notion-inspired design system.
-   Clean, block-based UI with Inter font, left sidebar navigation, and minimal aesthetics.
+   Otto — Apple-inspired design system.
+   Fluid interfaces, spring animations, translucency, and refined typography following
+   Apple's Human Interface Guidelines and WWDC design talks.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Import Inter font for Notion-like typography. 450/550/650 added alongside the original four (400/500/
+/* Import Inter font for Apple-like typography with optical sizing. 450/550/650 added alongside the original four (400/500/
    600/700) for the editorial type system's headings, which call for 650 specifically — without the exact
    weight loaded, the browser can't interpolate between static font-face files and silently rounds to the
    nearest one loaded (700), so the intended in-between weight would never actually render. */
@@ -11,7 +12,7 @@
 
 /* Otto brand system — the "consent line": Otto's own (reversible) work reads quiet/graphite; anything that
    needs a person reads cobalt. Colour is semantic, not decorative — see the 90/8/2 budget in the brand book.
-   Typography now uses Inter for a Notion-like feel. */
+   Typography now uses Inter for Apple-like feel with optical sizing and proper tracking. */
 
 :root {
   /* Apple Design Palette: Crisp near-white canvas with luminous floating surfaces */
@@ -61,7 +62,7 @@
   --space-7: 36px;
   --space-8: 48px;
   
-  /* Typography Scale */
+  /* Typography Scale with Apple optical sizing */
   --text-xs: 11px;
   --text-sm: 13px;
   --text-base: 14px;
@@ -76,35 +77,39 @@
   --weight-semibold: 600;
   --weight-bold: 700;
   
-  /* Apple Tracking (negative on headings, neutral on body) */
+  /* Apple Tracking (negative on headings, neutral on body) - per §15 */
   --tracking-tight: -0.018em;
   --tracking-tighter: -0.032em;
   --tracking-display: -0.038em;
   
-  /* Apple Physical Spring Curves */
-  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);       /* Critically damped default */
-  --ease-bounce: cubic-bezier(0.34, 1.35, 0.64, 1);   /* Slight momentum bounce */
+  /* Apple Physical Spring Curves - per §4, damping ratio + response mapping */
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);       /* Critically damped default (damping 1.0, response 0.4) */
+  --ease-bounce: cubic-bezier(0.34, 1.35, 0.64, 1);   /* Momentum bounce (damping ~0.8, response 0.4) */
   --ease-out: cubic-bezier(0, 0, 0.2, 1);
   --ease-house: cubic-bezier(0.16, 1, 0.3, 1);
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   
-  --duration-fast: 120ms;
-  --duration-base: 220ms;
-  --duration-slow: 380ms;
+  /* Apple Response Times - per §4 concrete values */
+  --duration-instant: 80ms;   /* Instant feedback (pointer-down) */
+  --duration-fast: 120ms;    /* Quick transitions */
+  --duration-base: 220ms;    /* Standard UI response */
+  --duration-slow: 380ms;    /* Deliberate, graceful motion */
+  --duration-spring: 400ms;  /* Spring animation base */
   
-  /* Diffuse Multi-Stop Apple Shadows (layered ambient + key light) */
+  /* Diffuse Multi-Stop Apple Shadows (layered ambient + key light) - per §12 */
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
   --shadow-card: 0 2px 8px -2px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
   --shadow-card-hover: 0 4px 20px -4px rgba(0, 0, 0, 0.08), 0 12px 28px -8px rgba(0, 0, 0, 0.06);
   --shadow-pop: 0 8px 32px -4px rgba(0, 0, 0, 0.12), 0 24px 64px -16px rgba(0, 0, 0, 0.18);
   --shadow-glow: 0 0 24px rgba(0, 113, 227, 0.28);
   
-  /* Glass Material Tokens */
+  /* Glass Material Tokens - per §12 materials & depth */
   --bar: rgba(245, 245, 247, 0.82);
   --hover-wash: rgba(0, 0, 0, 0.04);
   --bg-rgb: 245, 245, 247;
   --glass-border: rgba(0, 0, 0, 0.06);
   
+  /* System Fonts - per §15 default to platform fonts */
   --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Text', 'SF Pro Display', "Segoe UI", Roboto, sans-serif;
   --display: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Display', "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -112,7 +117,7 @@
   font-optical-sizing: auto;
 }
 
-/* Dark Mode (Apple Pro Workspace Aesthetic) */
+/* Dark Mode (Apple Pro Workspace Aesthetic) - per §12 materials & depth */
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #000000;            /* True Apple OLED black canvas */
@@ -139,6 +144,7 @@
     --amber: #FF9F0A;
     --warn: #FF9F0A;
     
+    /* Enhanced shadows for dark mode - per §12 context-aware shadows */
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
     --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.35);
     --shadow-card-hover: 0 8px 24px -4px rgba(0, 0, 0, 0.5), 0 18px 36px -8px rgba(0, 0, 0, 0.4);
@@ -206,6 +212,11 @@ button { font-family: inherit; cursor: pointer; }
    box-shadow is dropped entirely and a shadow-only ring would vanish with no fallback. */
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 
+/* Apple Design §1 — Response: kill latency with instant feedback on pointer-down */
+:active {
+  transition-duration: var(--duration-instant) !important;
+}
+
 /* MOBILE-FIRST: 16px is the base font size because anything smaller makes iOS Safari auto-zoom the whole
    page on focus — the single most jarring mobile bug in a form-heavy app. Desktop steps down to 14px. */
 input, textarea {
@@ -214,15 +225,21 @@ input, textarea {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   padding: 0 var(--space-3); height: 44px;
-  transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on focus */
+  transition: border-color var(--duration-instant) var(--ease), box-shadow var(--duration-instant) var(--ease);
 }
 input::placeholder, textarea::placeholder { color: var(--ink-3); }
-input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
+input:focus, textarea:focus { 
+  outline: none; 
+  border-color: var(--accent); 
+  box-shadow: 0 0 0 3px var(--focus-ring); 
+  /* Instant response on focus */
+  transition-duration: var(--duration-instant);
+}
 
-/* Apple design §14 — reduced-motion ≠ no feedback. Replace vestibular slides/springs with short
+/* Apple Design §14 — reduced-motion ≠ no feedback. Replace vestibular slides/springs with short
    opacity crossfades so the UI still communicates state changes without triggering motion sensitivity.
-   Durations are kept to 0.01ms (effectively instant) for elements that have no meaningful crossfade
-   equivalent, so they snap cleanly rather than looking broken. */
+   Keep opacity/color changes that aid comprehension. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -241,6 +258,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   }
   /* Spinner stays — it communicates loading state, not motion for motion's sake */
   .spinner { animation: spin 0.7s linear infinite !important; }
+  /* Keep instant feedback on interactions */
+  button:active, .btn:active, .card-main:active {
+    transform: scale(0.97) !important;
+    transition-duration: 100ms !important;
+  }
 }
 
 /* Apple design §14 — prefers-reduced-transparency: make glass surfaces solid so text is always
@@ -268,17 +290,23 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease), transform 100ms var(--ease);
+  /* Apple Design §1 — respond on pointer-down, not release. Transform resolves instantly so press feedback is genuine */
+  transition: background var(--duration-fast) var(--ease-spring), border-color var(--duration-fast) var(--ease-spring), color var(--duration-fast) var(--ease-spring), opacity var(--duration-fast) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
   white-space: nowrap; text-decoration: none; user-select: none;
   /* Without this, a long-press on any button on iOS can trigger the native text-selection/callout menu
      ("Copy", "Look Up") instead of whatever the app itself does on a long press — reads as a website. */
   -webkit-touch-callout: none;
+  /* Apple Design §1 — feedback must be continuous during interaction */
+  will-change: transform;
 }
 .btn:hover { background: var(--bg-2); }
-/* Apple design §1 — respond on pointer-down, not release. Transform resolves in 100ms (faster than the
-   general --duration-fast) so the press feedback is genuinely instant to the touch. Background and other
-   properties can linger at the normal duration — only the scale needs to be immediate. */
-.btn:active { background: var(--line); transform: scale(0.97); transition: transform 100ms var(--ease), background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease); }
+/* Apple Design §1 — respond on pointer-down, not release. Transform resolves in 80ms (instant) so the press
+   feedback is genuinely instant to the touch. Uses spring curve for natural feel. */
+.btn:active { 
+  background: var(--line); 
+  transform: scale(0.97); 
+  transition: transform var(--duration-instant) var(--ease-spring), background var(--duration-fast) var(--ease-spring), border-color var(--duration-fast) var(--ease-spring); 
+}
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn:disabled:active { transform: none; }
 .btn.primary {
@@ -306,8 +334,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    ::after hit-expander in this file even though it wasn't the cause of the live "tasks won't open on
    mobile" bug (that turned out to be the .card-open pattern itself — see .card-main's comment). */
 .btn.xs::after { content: ""; position: absolute; inset: -5px -3px; background: rgba(0, 0, 0, 0.01); }
-.btn.big { height: 48px; padding: 0 22px; font-size: var(--text-md); border-radius: var(--radius-sm); transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), transform var(--duration-base) var(--ease), box-shadow var(--duration-base) var(--ease); }
+.btn.big { 
+  height: 48px; padding: 0 22px; font-size: var(--text-md); border-radius: var(--radius-sm); 
+  /* Apple Design §4 — use springs for gesture-driven elements */
+  transition: background var(--duration-fast) var(--ease-spring), border-color var(--duration-fast) var(--ease-spring), transform var(--duration-spring) var(--ease-spring), box-shadow var(--duration-spring) var(--ease-spring); 
+}
 @media (hover: hover) {
+  /* Apple Design §4 — slight bounce only on momentum-driven interactions */
   .btn.primary.big:hover { transform: translateY(-2px); box-shadow: 0 2px 6px rgba(var(--accent-rgb), 0.1), 0 20px 40px -20px rgba(var(--accent-rgb), 0.4); }
 }
 .btn.primary.big:active { transform: translateY(0); }
@@ -354,21 +387,23 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   height: calc(52px + env(safe-area-inset-top));
   padding-left: calc(16px + env(safe-area-inset-left));
   padding-right: calc(16px + env(safe-area-inset-right));
-  /* Apple design §12 — glass material: stronger blur + saturate so the chrome reads as a real floating
+  /* Apple Design §12 — glass material: stronger blur + saturate so the chrome reads as a real floating
      surface, not just a slightly-translucent bar. rgba(var(--bg-rgb), 0.82) tracks the theme token so
      this is never wrong in dark mode. Bright top edge = light catching the material (§12). */
   background: rgba(var(--bg-rgb), 0.82);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 1px solid rgba(var(--bg-rgb), 0.4);
+  /* Apple Design §12 — animate blur radius and scale together for materialization effect */
+  transition: backdrop-filter var(--duration-base) var(--ease-spring), background var(--duration-base) var(--ease-spring);
 }
 .spacer { flex: 1; }
 
-/* ─── Sidebar (Notion-style) ───────────────────────────────────────────────── */
+/* ─── Sidebar (Apple-style navigation) ───────────────────────────────────────────────── */
 .sidebar {
   width: 240px;
   flex-shrink: 0;
-  /* Apple design §12 — heavier material weight for structural regions: sidebar is the frame of the app,
+  /* Apple Design §12 — heavier material weight for structural regions: sidebar is the frame of the app,
      so it sits slightly more opaque (0.88) than the topbar chrome (0.82). A heavier material separates
      the nav layer from the content plane without a harsh border-only treatment. */
   background: rgba(var(--bg-rgb), 0.88);
@@ -383,6 +418,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   position: sticky;
   top: 0;
   overflow-y: auto;
+  /* Apple Design §12 — materialize, don't just fade */
+  transition: backdrop-filter var(--duration-base) var(--ease-spring), background var(--duration-base) var(--ease-spring);
 }
 .sidebar-brand {
   display: flex;
@@ -393,6 +430,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   font-weight: var(--weight-semibold);
   font-size: var(--text-lg);
   color: var(--ink);
+  /* Apple Design §15 — negative tracking on large text */
+  letter-spacing: var(--tracking-tight);
 }
 .sidebar-nav {
   display: flex;
@@ -409,12 +448,18 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   text-decoration: none;
-  transition: background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: background var(--duration-instant) var(--ease-spring), color var(--duration-fast) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
   cursor: pointer;
+  /* Apple Design §1 — feedback on pointer-down */
+  will-change: transform, background;
 }
 .sidebar-item:hover {
   background: var(--hover-wash);
   color: var(--ink);
+}
+.sidebar-item:active {
+  transform: scale(0.97);
 }
 .sidebar-item.active {
   background: var(--bg-2);
@@ -457,19 +502,25 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   cursor: pointer;
   z-index: 100;
   box-shadow: var(--shadow-pop);
+  /* Apple Design §1 — instant feedback on press */
+  transition: transform var(--duration-instant) var(--ease-spring), background var(--duration-fast) var(--ease-spring);
+}
+.sidebar-toggle:active {
+  transform: scale(0.95);
 }
 
 @media (max-width: 768px) {
   .sidebar {
     position: fixed;
-    /* Apple design §11 — compositor-only properties only. Animating `left` re-triggers layout on every
+    /* Apple Design §11 — compositor-only properties only. Animating `left` re-triggers layout on every
        frame; `transform: translateX` runs on the GPU compositor with zero layout cost, giving a smooth
        60fps slide even on mid-range phones. will-change hints the browser to promote the layer early. */
     left: 0; /* reset left; position is now handled by transform */
     top: 0;
     z-index: 50;
     transform: translateX(-100%);
-    transition: transform 0.3s var(--ease-house);
+    /* Apple Design §4 — use spring curve for drawer/sheet animations */
+    transition: transform var(--duration-spring) var(--ease-spring);
     will-change: transform;
   }
   .sidebar.open {
@@ -494,11 +545,25 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    further in the min-width:641px block below. */
 /* Matches Settings' own max-width (680px) — one consistent "single centered column" width across the
    app at every screen size, instead of the dashboard uniquely stretching wide on a big screen. */
-.list-wrap { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(28px, 6vh, 88px) 16px 120px; animation: pageIn 0.32s var(--ease) backwards; }
+.list-wrap { 
+  width: 100%; 
+  max-width: 680px; 
+  margin: 0 auto; 
+  padding: clamp(28px, 6vh, 88px) 16px 120px; 
+  /* Apple Design §4 — use spring for page entrance */
+  animation: pageIn var(--duration-spring) var(--ease-spring) backwards; 
+}
 .dash-head { margin-bottom: var(--space-6); }
 /* A small eyebrow above the greeting — today's date, so the dashboard reads as "here's where things stand
    today" at a glance, not just a generic hello. Muted, not competing with the greeting for attention. */
-.dash-date { margin: 0 0 4px; font-size: var(--text-xs); letter-spacing: 0.02em; color: var(--ink-3); text-transform: capitalize; }
+.dash-date { 
+  margin: 0 0 4px; 
+  font-size: var(--text-xs); 
+  /* Apple Design §15 — positive tracking on small text for legibility */
+  letter-spacing: 0.02em; 
+  color: var(--ink-3); 
+  text-transform: capitalize; 
+}
 /* Continues the same sentence-line as .dash-line's count, naming what's actually next — plain text, not a
    pill (only real status signals like overdue/working get pill treatment). */
 .dash-next { color: var(--ink-2); }
@@ -524,7 +589,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    here was unreliable ("loads but doesn't open"). */
 .week-fab-wrap {
   position: fixed; right: var(--space-4, 16px); bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 30;
-  animation: fabIn 0.4s var(--ease-bounce) both;
+  /* Apple Design §4 — momentum bounce for entrance animation */
+  animation: fabIn var(--duration-spring) var(--ease-bounce) both;
 }
 @keyframes fabIn {
   from { opacity: 0; transform: scale(0.7) translateY(8px); }
@@ -534,7 +600,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   display: flex; align-items: center; gap: 6px; padding: 12px 18px;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill, 999px);
   box-shadow: var(--shadow-card); font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink);
-  transition: background 120ms var(--ease), transform 120ms var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
 }
 @media (hover: hover) {
   .week-fab:hover { background: var(--hover-wash); }
@@ -556,11 +623,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   flex: none; display: flex; flex-direction: row; align-items: center; justify-content: space-between;
   gap: 10px; width: 100%; padding: 10px 8px;
   border-left: 3px solid var(--line); border-radius: var(--radius-xs, 6px);
-  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: border-color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring);
 }
 .exam-chip + .exam-chip { margin-top: 1px; }
 @media (hover: hover) {
   .exam-chip:hover { background: var(--hover-wash); }
+}
+.exam-chip:active {
+  transform: scale(0.98);
 }
 .exam-chip.soon { border-left-color: var(--accent); background: var(--accent-soft); }
 .exam-days { font-family: var(--mono, ui-monospace, monospace); font-size: var(--text-md); font-weight: 700; flex: none; }
@@ -577,10 +648,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .milestone-chip {
   flex: none; display: flex; flex-direction: column; gap: 2px; padding: 10px 16px;
   border-left: 3px solid var(--accent); border-radius: var(--radius-xs, 6px); min-width: 160px; max-width: 220px;
-  transition: background 120ms var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: background var(--duration-instant) var(--ease-spring);
 }
 @media (hover: hover) {
   .milestone-chip:hover { background: var(--hover-wash); }
+}
+.milestone-chip:active {
+  transform: scale(0.98);
 }
 .milestone-date { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; font-weight: 700; color: var(--accent); }
 /* Overdue: emphasis via weight/ink, not a new color — the app stays black/white/grey + one accent (see
@@ -606,11 +681,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   flex: none; display: flex; flex-direction: row; align-items: center; justify-content: space-between;
   gap: 10px; width: 100%; padding: 10px 8px;
   border: none; border-radius: var(--radius-xs, 6px); background: transparent;
-  transition: background 120ms var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: background var(--duration-instant) var(--ease-spring);
 }
 .week-day + .week-day { margin-top: 1px; }
 @media (hover: hover) {
   .week-day:hover { background: var(--hover-wash); }
+}
+.week-day:active {
+  transform: scale(0.98);
 }
 /* Border-color state cues replaced with background tints — "today"/"open" get a quiet neutral wash,
    "heavy" (a real pile-up warning) keeps the accent tint since that tint IS the signal. */
@@ -621,7 +700,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .week-day.heavy .week-day-dow { color: var(--accent); }
 .week-day-bar-track { display: none; }
 .week-day-count { font-family: var(--mono, ui-monospace, monospace); font-size: 12px; color: var(--ink-3); min-height: 14px; }
-.week-day-detail { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); background: var(--bg); animation: fadeIn 0.18s var(--ease); }
+.week-day-detail { 
+  margin-top: 10px; 
+  padding: 12px 14px; 
+  border: 1px solid var(--line-soft); 
+  border-radius: var(--radius-sm); 
+  background: var(--bg); 
+  /* Apple Design §4 — use spring for expand/collapse */
+  animation: fadeIn var(--duration-spring) var(--ease-spring); 
+}
 .week-day-detail-head { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; font-weight: 600; margin-bottom: var(--space-2); text-transform: capitalize; }
 .week-day-items { list-style: none; display: flex; flex-direction: column; gap: var(--space-2); }
 .week-day-item { display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; gap: 10px; font-size: 13px; }
@@ -645,10 +732,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   font-family: var(--display);
   font-size: clamp(28px, 6vw, 42px);
   font-weight: 700;
+  /* Apple Design §15 — negative tracking on large headings */
   letter-spacing: var(--tracking-tighter);
-  line-height: 1.08;
+  /* Apple Design §15 — tight leading on large text */
+  line-height: 1.05;
   color: var(--ink);
-  animation: appleRise 0.5s var(--ease-spring) backwards;
+  /* Apple Design §4 — spring animation for entrance */
+  animation: appleRise var(--duration-spring) var(--ease-spring) backwards;
 }
 .list-head span { color: var(--ink); }
 .list-head .accent-num {
@@ -674,7 +764,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  animation: appleRise 0.5s var(--ease-spring) 0.05s backwards;
+  /* Apple Design §4 — spring animation with staggered delay */
+  animation: appleRise var(--duration-spring) var(--ease-spring) 0.05s backwards;
 }
 .dash-late, .dash-working {
   font-family: var(--mono);
@@ -696,13 +787,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border-radius: var(--radius-pill);
   background: var(--line);
   overflow: hidden;
-  animation: appleRise 0.5s var(--ease-spring) 0.1s backwards;
+  /* Apple Design §4 — spring animation with staggered delay */
+  animation: appleRise var(--duration-spring) var(--ease-spring) 0.1s backwards;
 }
 .dash-progress-fill {
   height: 100%;
   border-radius: var(--radius-pill);
   background: var(--accent);
-  transition: width 0.6s var(--ease-spring);
+  /* Apple Design §4 — spring transition for value changes */
+  transition: width var(--duration-slow) var(--ease-spring);
 }
 
 /* ─── TaskHero — Apple Spotlight Card ─────────────────────────────────────── */
@@ -713,9 +806,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   background: var(--surface-glass);
   border: 1px solid var(--line-glass);
   box-shadow: var(--shadow-card);
+  /* Apple Design §12 — glass material with stronger blur for larger surfaces */
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  animation: appleRise 0.6s var(--ease-spring) 0.05s backwards;
+  /* Apple Design §4 — spring animation with staggered delay */
+  animation: appleRise var(--duration-spring) var(--ease-spring) 0.05s backwards;
+  /* Apple Design §4 — spring transitions for interactive elements */
   transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
 .dash-hero-kicker {
@@ -809,8 +905,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border: 1px solid var(--line-glass);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
+  /* Apple Design §12 — glass material */
   backdrop-filter: blur(16px);
-  transition: border-color var(--duration-fast) var(--ease), box-shadow var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
+  /* Apple Design §4 — spring transitions for interactive elements */
+  transition: border-color var(--duration-fast) var(--ease-spring), box-shadow var(--duration-fast) var(--ease-spring), transform var(--duration-base) var(--ease-spring);
 }
 @media (hover: hover) {
   .add-task-row:hover { border-color: var(--ink-3); transform: translateY(-1px); }
@@ -837,6 +935,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border: 1px solid var(--line-glass);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
+  /* Apple Design §12 — glass material */
   backdrop-filter: blur(16px);
   display: flex;
   flex-direction: column;
@@ -847,8 +946,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   display: flex; align-items: center; gap: var(--space-3); padding: 14px 18px 14px 22px; min-height: 56px;
   background: transparent;
   border: none;
+  /* Apple Design §4 — spring animation for entrance */
   animation: appleRise var(--duration-slow) var(--ease-spring) backwards;
-  transition: background var(--duration-fast) var(--ease), transform 100ms var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
 }
 .card + .card { border-top: 1px solid var(--line-soft); }
 @media (hover: hover) {
@@ -873,7 +974,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
    the row visibly shrink away, so everything below eases into place instead of jumping. will-change hints
    the compositor since this runs on every dismiss/confirm — the highest-frequency animation in the app. */
 .card.dismissed, .card.confirming { overflow: hidden; will-change: transform, opacity, max-height; }
-.card.dismissed { animation: cardOut 0.32s var(--ease) forwards; }
+/* Apple Design §4 — use spring for dismiss animation */
+.card.dismissed { animation: cardOut var(--duration-slow) var(--ease-spring) forwards; }
 @keyframes cardOut {
   0%   { max-height: 160px; opacity: 1; transform: translateX(0); }
   60%  { max-height: 160px; opacity: 0; transform: translateX(24px); }
@@ -882,7 +984,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* "Looks good" gets its own beat — a checkmark pops in (the same ✓ motif used everywhere else done is
    shown: step-mark, done-check, the empty-state check) over a clear accent wash, THEN it slides away — so
    finishing a task reads as a small, legible reward instead of a barely-there color flicker. */
-.card.confirming { animation: cardConfirm 0.55s var(--ease-bounce) forwards; z-index: 1; }
+/* Apple Design §4 — momentum bounce for confirmation feedback */
+.card.confirming { animation: cardConfirm var(--duration-slow) var(--ease-bounce) forwards; z-index: 1; }
 @keyframes cardConfirm {
   0%   { max-height: 160px; background: transparent; }
   20%  { max-height: 160px; background: var(--accent-soft); }
@@ -890,13 +993,15 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   85%  { max-height: 160px; opacity: 0; background: transparent; transform: translateX(24px); }
   100% { max-height: 0; opacity: 0; background: transparent; transform: translateX(24px); }
 }
-.card.confirming::before { background: var(--accent); box-shadow: none; animation: confirmDot 0.5s var(--ease-bounce) forwards; }
+/* Apple Design §4 — momentum bounce for confirmation feedback */
+.card.confirming::before { background: var(--accent); box-shadow: none; animation: confirmDot var(--duration-slow) var(--ease-bounce) forwards; }
 @keyframes confirmDot { 0% { transform: scale(1); } 30% { transform: scale(2); } 55% { transform: scale(1.4); } 100% { transform: scale(1.4); opacity: 0; } }
 /* The checkmark itself — pops in with a slight overshoot, holds just long enough to read, fades with the row. */
 .confirm-check {
   position: absolute; right: 44px; top: 50%; transform: translateY(-50%) scale(0.4); opacity: 0;
   font-size: 17px; font-weight: var(--weight-bold); color: var(--accent); pointer-events: none;
-  animation: confirmCheck 0.5s var(--ease-bounce) forwards;
+  /* Apple Design §4 — momentum bounce for checkmark */
+  animation: confirmCheck var(--duration-slow) var(--ease-bounce) forwards;
 }
 @keyframes checkPop { 0% { transform: scale(0.7); } 55% { transform: scale(1.18); } 100% { transform: scale(1); } }
 @keyframes confirmCheck {
@@ -915,7 +1020,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .task-modal-overlay {
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center;
   padding: 0; background: rgba(16, 19, 23, 0.42);
-  animation: fadeIn 0.16s var(--ease); overflow-x: hidden; overflow-y: auto; height: 100dvh;
+  /* Apple Design §4 — spring animation for modal entrance */
+  animation: fadeIn var(--duration-base) var(--ease-spring); overflow-x: hidden; overflow-y: auto; height: 100dvh;
   /* Mobile scroll feel: momentum scrolling (iOS Safari still needs the -webkit prefix for it) and
      overscroll-behavior so scrolling past the top/bottom of the modal doesn't chain into the page behind
      it — a full-bleed modal rubber-banding the body underneath is the single most common "janky" mobile
@@ -933,7 +1039,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   padding-bottom: calc(20px + env(safe-area-inset-bottom));
   padding-left: calc(20px + env(safe-area-inset-left));
   padding-right: calc(20px + env(safe-area-inset-right));
-  animation: modalPop 0.22s var(--ease-house);
+  /* Apple Design §4 — spring animation for modal entrance */
+  animation: modalPop var(--duration-base) var(--ease-spring);
 }
 /* A note/deck's own capped-height inner scrollbox made sense in a small floating desktop card — full-bleed
    at every width it just produces a second, confusingly independent scroll region. Let the single outer
@@ -952,7 +1059,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 /* The modal renders TaskFocus, which has its own header — the old `.task-modal .card*` overrides that
    stripped collapsed-row chrome (caret, hover, the ✕) are gone with the markup they targeted. The ✕ still
    sits absolutely over the top-right corner, so .tf-title reserves that space via its own right margin. */
-/* Apple design §12 "materialize, don't just fade" — glass/blur surfaces animate blur radius + scale +
+/* Apple Design §12 "materialize, don't just fade" — glass/blur surfaces animate blur radius + scale +
    translateY together on enter so the surface reads as a real material arriving, not a flat fade-in.
    The blur collapses as the panel settles (it was blurry in transit, sharp when landed), which mirrors
    how a physical surface coming into focus feels. Closing is the symmetric reverse. */
@@ -960,8 +1067,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   from { opacity: 0; transform: translateY(12px) scale(0.97); filter: blur(4px); }
   to   { opacity: 1; transform: none; filter: blur(0); }
 }
-.task-modal-overlay.closing { animation: fadeOut 0.16s var(--ease) forwards; pointer-events: none; }
-.task-modal.closing { animation: modalOut 0.16s var(--ease) forwards; }
+/* Apple Design §4 — spring animation for modal exit */
+.task-modal-overlay.closing { animation: fadeOut var(--duration-base) var(--ease-spring) forwards; pointer-events: none; }
+.task-modal.closing { animation: modalOut var(--duration-base) var(--ease-spring) forwards; }
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes modalOut {
   from { opacity: 1; transform: none; filter: blur(0); }
@@ -1009,14 +1117,24 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .deck-popup { padding: 8px 4px 4px; text-align: center; }
 .deck-retry-label { font-size: 12px; font-weight: 600; color: var(--accent); margin: 0 0 var(--space-2); letter-spacing: -0.01em; }
 .deck-progress-bar { height: 4px; background: var(--line-soft); border-radius: var(--radius-pill); overflow: hidden; margin-bottom: var(--space-2); }
-.deck-progress-fill { height: 100%; background: var(--accent); border-radius: inherit; transition: width var(--duration-base) var(--ease-spring); }
+.deck-progress-fill { height: 100%; background: var(--accent); border-radius: inherit; /* Apple Design §4 — spring transition for progress */ transition: width var(--duration-slow) var(--ease-spring); }
 .deck-progress { font-size: 12px; color: var(--ink-3); margin-bottom: 14px; font-family: var(--mono, ui-monospace, monospace); font-weight: var(--weight-medium); }
 /* 3D flip: a fixed-perspective wrapper holding two absolutely-stacked faces that rotate together as one
    rigid card — front/back never overlap mid-flip because backface-visibility hides whichever is turned away. */
-.deck-card-3d { min-height: 220px; perspective: 1200px; cursor: pointer; user-select: none; margin-bottom: 8px; transition: transform var(--duration-fast) var(--ease-spring); }
+.deck-card-3d { 
+  min-height: 220px; 
+  perspective: 1200px; 
+  cursor: pointer; 
+  user-select: none; 
+  margin-bottom: 8px; 
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: transform var(--duration-instant) var(--ease-spring); 
+}
 .deck-card-3d:active { transform: scale(0.985); }
 .deck-card-inner {
-  position: relative; width: 100%; height: 220px; text-align: center; transition: transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative; width: 100%; height: 220px; text-align: center; 
+  /* Apple Design §4 — spring animation for flip */
+  transition: transform var(--duration-slow) var(--ease-spring);
   transform-style: preserve-3d;
 }
 .deck-card-3d.flipped .deck-card-inner { transform: rotateY(180deg); }
@@ -1104,7 +1222,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   padding: 12px 16px; border: 1px solid var(--line-glass); border-radius: var(--radius-sm);
   background: var(--surface); font-size: 14.5px; color: var(--ink); cursor: pointer;
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease-spring), box-shadow var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: border-color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring), box-shadow var(--duration-fast) var(--ease-spring);
 }
 .quiz-opt:hover:not(:disabled) { border-color: var(--ink-3); background: var(--bg-2); box-shadow: var(--shadow-card); }
 .quiz-opt:active:not(:disabled) { transform: scale(0.985); }
@@ -1175,7 +1294,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border: 1.5px solid var(--line); background: transparent; color: transparent;
   font-size: 12px; font-weight: var(--weight-semibold); line-height: 1; cursor: pointer; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: border-color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
 }
 /* 22px is the drawn size, but the TAP target has to clear 44px — this is the primary "mark done" control
    and it sits right next to the full-card open overlay, so a near-miss used to open the task instead of
@@ -1184,7 +1304,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @media (hover: hover) {
   .card-check:hover { border-color: var(--accent); transform: scale(1.08); }
 }
-.card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms var(--ease-bounce); }
+/* Apple Design §4 — momentum bounce for checkmark feedback */
+.card-check.checked { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop var(--duration-slow) var(--ease-bounce); }
 @media (hover: hover) {
   .card-check.checked:hover { transform: none; }
 }
@@ -1223,7 +1344,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .card-x {
   flex: none; width: 24px; height: 24px; border: none; background: none; color: var(--ink-3);
   font-size: 18px; line-height: 1; border-radius: var(--radius-sm); opacity: 0; cursor: pointer;
-  transition: opacity var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: opacity var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring), color var(--duration-instant) var(--ease-spring);
 }
 /* .card-x is a sibling of .card-main now (buttons can't nest), so the hover-reveal is scoped to the whole
    row instead of card-main specifically. */
@@ -1233,7 +1355,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 @media (hover: none) { .card-x { opacity: 0.6; } }
 .caret {
   flex: none; color: var(--ink-3); font-size: 17px; font-weight: var(--weight-regular); line-height: 1;
-  transition: transform var(--duration-base) var(--ease), opacity var(--duration-fast) var(--ease);
+  /* Apple Design §4 — spring transition for caret rotation */
+  transition: transform var(--duration-base) var(--ease-spring), opacity var(--duration-fast) var(--ease-spring);
 }
 /* Quieter on the task row specifically — a persistent full-strength caret on every row read as one more
    piece of always-on decoration; it's still there, just recedes until the row's actually hovered/focused. */
@@ -1268,9 +1391,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--line);
   background: var(--surface); color: var(--ink-2); font-size: var(--text-xs); font-weight: var(--weight-medium);
-  cursor: pointer; transition: all var(--duration-fast) var(--ease);
+  cursor: pointer; 
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: all var(--duration-instant) var(--ease-spring);
 }
 .tf-study-btn:hover { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.tf-study-btn:active { transform: scale(0.97); }
 
 /* The hero — the single thing to do right now. Deliberately the heaviest element on the screen. Its own
    margin-top (not the flat .task-focus gap) is what actually separates it from the header/progress
@@ -1281,7 +1407,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border-radius: var(--radius-lg, 22px); padding: var(--space-5) var(--space-5);
   margin-top: var(--space-3);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--duration-base) var(--ease), border-color var(--duration-base) var(--ease);
+  /* Apple Design §4 — spring transitions for interactive elements */
+  transition: box-shadow var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease-spring);
 }
 .hero-kicker { font-size: var(--text-xs); font-weight: var(--weight-bold); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; }
 .hero-step { font-size: 20px; font-weight: var(--weight-semibold); line-height: 1.4; margin: 0; letter-spacing: -0.015em; color: var(--ink); }
@@ -1317,14 +1444,17 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .disclosure-head {
   display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 48px; padding: 8px 4px;
   background: none; border: 0; text-align: left; font: inherit; color: var(--ink); cursor: pointer;
-  border-radius: var(--radius-sm); transition: background var(--duration-fast) var(--ease);
+  border-radius: var(--radius-sm); 
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: background var(--duration-instant) var(--ease-spring);
 }
 .disclosure-head:hover { background: var(--hover-wash); }
+.disclosure-head:active { transform: scale(0.99); }
 .disclosure-head .caret { transition: transform var(--duration-base) var(--ease-spring); }
 .disclosure.open .disclosure-head .caret { transform: rotate(90deg); }
 .disclosure-label { flex: 1; font-size: var(--text-base); font-weight: var(--weight-medium); }
 .disclosure-count { font-size: var(--text-sm); color: var(--ink-3); font-variant-numeric: tabular-nums; font-weight: var(--weight-medium); }
-.disclosure-body { padding: 4px 4px var(--space-3); animation: fadeIn 0.18s var(--ease); }
+.disclosure-body { padding: 4px 4px var(--space-3); /* Apple Design §4 — spring animation for expand/collapse */ animation: fadeIn var(--duration-spring) var(--ease-spring); }
 .tf-foot { display: flex; justify-content: flex-end; margin-top: var(--space-2); }
 
 .bullets { margin: 0; padding-left: 18px; }
@@ -1344,7 +1474,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   padding: 10px 14px; border: 1px solid var(--line-glass); border-radius: var(--radius-sm);
   background: var(--surface); text-align: left; cursor: pointer;
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease-spring), box-shadow var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: border-color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring), box-shadow var(--duration-fast) var(--ease-spring);
 }
 @media (hover: hover) { .prepared-chips .note-chip:hover { border-color: var(--ink-3); background: var(--bg-2); box-shadow: var(--shadow-card); } }
 .prepared-chips .note-chip:active { transform: scale(0.985); }
@@ -1438,7 +1569,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   flex: none; width: 36px; height: 36px; border-radius: 50%; border: none;
   background: var(--accent); color: #fff; font-size: 17px; line-height: 1; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: background var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring), opacity var(--duration-fast) var(--ease-spring);
 }
 .chat-send:hover:not(:disabled) { background: var(--accent-hover); }
 .chat-send:active:not(:disabled) { transform: scale(0.92); }
@@ -1453,9 +1585,12 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .walk-tab {
   display: flex; align-items: center; gap: var(--space-2); padding: 10px 16px; border-radius: var(--radius);
   border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: var(--text-base);
-  font-weight: var(--weight-medium); cursor: pointer; transition: border-color .15s, color .15s;
+  font-weight: var(--weight-medium); cursor: pointer; 
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: border-color var(--duration-instant) var(--ease-spring), color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring);
 }
-.walk-tab:hover { color: var(--ink-1); }
+.walk-tab:hover { color: var(--ink-1); background: var(--hover-wash); }
+.walk-tab:active { transform: scale(0.97); }
 .walk-tab.active { border-color: var(--accent); color: var(--accent); }
 .walk-tab-n { font-size: var(--text-xs); font-weight: 700; opacity: 0.6; }
 .walk-panel {
@@ -1508,13 +1643,14 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: var(--weight-semibold); line-height: 1; color: transparent;
   background: transparent; border: 1.5px solid var(--line); border-radius: 50%;
-  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), transform var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: border-color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
 }
 .step-mark.tickable { cursor: pointer; }
 @media (hover: hover) {
   .step-mark.tickable:hover { border-color: var(--accent); transform: scale(1.08); }
 }
-.step.done .step-mark { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms var(--ease-bounce); }
+.step.done .step-mark { background: var(--accent); border-color: var(--accent); color: #fff; /* Apple Design §4 — momentum bounce for checkmark */ animation: checkPop var(--duration-slow) var(--ease-bounce); }
 .step-mark.busy {
   border-color: var(--line);
   border-top-color: var(--accent);
@@ -1549,7 +1685,7 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .substep-expand { margin-top: 6px; }
 /* A step's own on-demand checklist — indented under the step text so it visually reads as "part of this
    step", one level down from the main .steps list rather than a sibling of it. */
-.substeps { list-style: none; margin: 8px 0 0; padding-left: 4px; display: flex; flex-direction: column; gap: var(--space-1); animation: fadeIn 0.18s var(--ease); }
+.substeps { list-style: none; margin: 8px 0 0; padding-left: 4px; display: flex; flex-direction: column; gap: var(--space-1); /* Apple Design §4 — spring animation for expand */ animation: fadeIn var(--duration-spring) var(--ease-spring); }
 .substep { display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--space-2); font-size: 13px; }
 .substep.done .substep-text { color: var(--ink-3); text-decoration: line-through; }
 .substep-text { flex: 1 1 auto; min-width: 0; }
@@ -1559,9 +1695,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border: 1.5px solid var(--line); background: transparent; color: transparent;
   font-size: 9px; line-height: 1; cursor: pointer; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: border-color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring);
 }
-.substep.done .substep-mark { background: var(--accent); border-color: var(--accent); color: #fff; animation: checkPop 320ms var(--ease-bounce); }
+.substep.done .substep-mark { background: var(--accent); border-color: var(--accent); color: #fff; /* Apple Design §4 — momentum bounce for checkmark */ animation: checkPop var(--duration-slow) var(--ease-bounce); }
 
 /* Sendables — review-then-send */
 .sendables { display: flex; flex-direction: column; gap: 10px; margin-top: var(--space-3); }
@@ -1588,7 +1725,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .draft-body-edit {
   width: 100%; min-height: 160px; max-height: 600px; font-family: inherit; font-size: 13px; line-height: 1.6;
   resize: vertical; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: 12px; margin-top: var(--space-2); transition: opacity var(--duration-fast) var(--ease);
+  padding: 12px; margin-top: var(--space-2); 
+  /* Apple Design §1 — instant feedback on focus */
+  transition: opacity var(--duration-instant) var(--ease-spring), border-color var(--duration-instant) var(--ease-spring);
 }
 .draft-body-edit:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); }
 .draft-body-edit:disabled, .draft-subject:disabled { opacity: 0.55; cursor: not-allowed; }
@@ -1610,10 +1749,11 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .connect-card {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 44px 32px 40px; display: flex; flex-direction: column; gap: 10px; align-items: center; text-align: center;
-  animation: fadeIn 0.3s var(--ease);
+  /* Apple Design §4 — spring animation for entrance */
+  animation: fadeIn var(--duration-base) var(--ease-spring);
 }
 .connect-mark { width: 64px; height: 64px; margin-bottom: var(--space-2); border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); }
-.connect-card h2 { font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -0.015em; }
+.connect-card h2 { font-family: var(--display); font-size: 22px; font-weight: 700; /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); }
 .connect-card p { font-size: 14px; color: var(--ink-2); line-height: 1.6; max-width: 400px; }
 .connect-card .btn { margin-top: var(--space-3); }
 
@@ -1624,13 +1764,13 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
 .completed-head { font-family: var(--mono); font-size: 10.5px; font-weight: var(--weight-medium); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
 
 /* Loading screen — one clear "loading" state so the whole list arrives at once (no half-populated flash). */
-.loading-screen { animation: fadeIn 0.2s var(--ease); }
+.loading-screen { /* Apple Design §4 — spring animation for entrance */ animation: fadeIn var(--duration-base) var(--ease-spring); }
 .loading-head { display: flex; align-items: center; gap: 10px; padding: 4px 2px 18px; }
 .loading-msg { font-size: 14px; color: var(--ink-2); font-weight: var(--weight-medium); }
 .spinner.sm { width: 16px; height: 16px; border-width: 2px; }
 .spinner.xs { width: 11px; height: 11px; border-width: 1.5px; display: inline-block; vertical-align: -1.5px; margin-right: 5px; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-/* Apple design §7 & §11 — top-level page entrance: a subtle 8px lift with opacity using ease-house curve. */
+/* Apple Design §7 & §11 — top-level page entrance: a subtle 8px lift with opacity using spring curve. */
 @keyframes pageIn {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
@@ -1651,14 +1791,17 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   max-width: 660px;
   margin: 0 auto;
   padding: clamp(32px, 6vh, 88px) 16px 120px;
-  animation: appleRise 0.5s var(--ease-spring) backwards;
+  /* Apple Design §4 — spring animation for entrance */
+  animation: appleRise var(--duration-spring) var(--ease-spring) backwards;
 }
 .settings-title {
   font-family: var(--display);
   font-size: clamp(28px, 5vw, 38px);
   font-weight: 700;
+  /* Apple Design §15 — negative tracking on large headings */
   letter-spacing: var(--tracking-tighter);
-  line-height: 1.1;
+  /* Apple Design §15 — tight leading on large text */
+  line-height: 1.05;
   color: var(--ink);
   margin-bottom: var(--space-5);
 }
@@ -1671,8 +1814,10 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   border: 1px solid var(--line-glass);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
+  /* Apple Design §12 — glass material */
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+  /* Apple Design §4 — spring transitions for interactive elements */
   transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
 .settings-sec h2 {
@@ -1735,9 +1880,9 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); box-sh
   text-align: left;
 }
 .sec-toggle h3 { margin: 0; }
-.sec-toggle .caret { color: var(--ink-3); font-size: 18px; line-height: 1; transition: transform var(--duration-fast) var(--ease-spring); }
+.sec-toggle .caret { color: var(--ink-3); font-size: 18px; line-height: 1; /* Apple Design §4 — spring transition for caret rotation */ transition: transform var(--duration-base) var(--ease-spring); }
 .sec-toggle .caret.open { transform: rotate(90deg); }
-.settings-reveal { animation: appleRise 0.25s var(--ease-spring); }
+.settings-reveal { /* Apple Design §4 — spring animation for reveal */ animation: appleRise var(--duration-base) var(--ease-spring); }
 
 .modal-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 12px 0; }
 .modal-row + .modal-row { border-top: 1px solid var(--line-soft); }
@@ -1763,13 +1908,15 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   position: absolute; inset: 0;
   background: var(--bg-3);
   border-radius: var(--radius-pill);
-  transition: background 200ms var(--ease-spring);
+  /* Apple Design §4 — spring transition for switch animation */
+  transition: background var(--duration-base) var(--ease-spring);
 }
 .switch-track::after {
   content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px;
   border-radius: 50%; background: #FFFFFF;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2), 0 0 1px rgba(0, 0, 0, 0.1);
-  transition: transform 200ms var(--ease-spring);
+  /* Apple Design §4 — spring transition for switch thumb */
+  transition: transform var(--duration-base) var(--ease-spring);
 }
 .switch input:checked + .switch-track { background: var(--ok); }
 .switch input:checked + .switch-track::after { transform: translateX(18px); }
@@ -1796,7 +1943,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-weight: 600;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-spring);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: all var(--duration-instant) var(--ease-spring);
 }
 .seg-btn:hover { color: var(--ink); }
 .seg-btn.on {
@@ -1852,7 +2000,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .profile-list li + li, .memory-list li + li { border-top: 1px solid var(--line-soft); }
 .profile-list .x, .memory-list .x, .grade-list .x {
   background: none; border: none; color: var(--ink-3); font-size: var(--text-md); line-height: 1; padding: 2px 6px;
-  border-radius: var(--radius-sm); transition: color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease), transform 100ms var(--ease);
+  border-radius: var(--radius-sm); 
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring), transform var(--duration-instant) var(--ease-spring);
 }
 .profile-list .x:hover, .memory-list .x:hover, .grade-list .x:hover { color: var(--warn); background: var(--bg-2); }
 .profile-list .x:active, .memory-list .x:active, .grade-list .x:active { transform: scale(0.85); }
@@ -1886,7 +2036,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop); padding: 30px 32px 32px;
-  animation: rise var(--duration-slow) var(--ease-house);
+  /* Apple Design §4 — spring animation for entrance */
+  animation: rise var(--duration-slow) var(--ease-spring);
 }
 @keyframes rise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 .onboard-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
@@ -1908,8 +2059,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .ob-state > div { display: flex; flex-direction: column; gap: 2px; }
 .ob-state b { font-size: 14px; font-weight: 600; }
 .ob-state span:last-child { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
-.ob-state-btn { width: 100%; background: none; border: none; text-align: left; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--duration-fast) var(--ease); }
+.ob-state-btn { width: 100%; background: none; border: none; text-align: left; border-radius: var(--radius-sm); cursor: pointer; /* Apple Design §1 — instant feedback on interaction */ transition: background var(--duration-instant) var(--ease-spring); }
 .ob-state-btn:hover { background: var(--accent-soft); }
+.ob-state-btn:active { transform: scale(0.99); }
 .ob-dot { flex: none; width: 11px; height: 11px; border-radius: 50%; margin-top: var(--space-1); }
 .ob-dot.done { background: var(--accent); }
 .ob-dot.need { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
@@ -1936,7 +2088,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .onboard-done-mark {
   width: 60px; height: 60px; margin: 4px auto 18px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: var(--accent-soft); color: var(--accent); animation: rise 0.5s var(--ease) 0.1s backwards;
+  background: var(--accent-soft); color: var(--accent); 
+  /* Apple Design §4 — spring animation with staggered delay */
+  animation: rise var(--duration-slow) var(--ease-spring) 0.1s backwards;
 }
 .onboard-skip { position: absolute; top: 18px; right: 18px; background: none; border: none; color: var(--ink-3); font-size: var(--text-sm); z-index: 1; }
 .onboard-skip:hover { color: var(--ink-2); }
@@ -1964,15 +2118,17 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border: 1px solid var(--line-glass);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-pop);
+  /* Apple Design §12 — glass material */
   backdrop-filter: blur(24px) saturate(190%);
   -webkit-backdrop-filter: blur(24px) saturate(190%);
   padding: 32px 28px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  animation: appleRise 0.5s var(--ease-spring);
+  /* Apple Design §4 — spring animation for entrance */
+  animation: appleRise var(--duration-spring) var(--ease-spring);
 }
-.login-title { font-family: var(--display); font-size: var(--text-xl); font-weight: 700; letter-spacing: var(--tracking-tight); color: var(--ink); }
+.login-title { font-family: var(--display); font-size: var(--text-xl); font-weight: 700; /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); color: var(--ink); }
 .login-sub { font-size: 14px; color: var(--ink-2); margin-top: -8px; line-height: 1.5; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field span { font-size: 12.5px; font-weight: var(--weight-semibold); color: var(--ink-2); letter-spacing: -0.01em; }
@@ -2005,10 +2161,12 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   height: 54px;
   padding: 0 clamp(20px, 5vw, 48px);
   background: var(--bar);
+  /* Apple Design §12 — glass material */
   backdrop-filter: blur(24px) saturate(190%);
   -webkit-backdrop-filter: blur(24px) saturate(190%);
   border-bottom: 1px solid var(--line-soft);
-  transition: background var(--duration-base) var(--ease), border-color var(--duration-base) var(--ease);
+  /* Apple Design §4 — spring transitions for scroll effects */
+  transition: background var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease-spring);
 }
 .landing-nav .brand {
   display: flex;
@@ -2050,7 +2208,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border: 1px solid var(--line);
   border-radius: var(--radius-pill);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: all var(--duration-instant) var(--ease-spring);
   backdrop-filter: blur(10px);
 }
 @media (hover: hover) {
@@ -2118,7 +2277,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 
 .hero-in {
-  animation: appleRise 0.7s var(--ease-spring) backwards;
+  /* Apple Design §4 — spring animation with staggered delay */
+  animation: appleRise var(--duration-slow) var(--ease-spring) backwards;
   animation-delay: var(--d, 0s);
 }
 @keyframes appleRise {
@@ -2130,7 +2290,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-family: var(--display);
   font-size: var(--text-3xl);
   font-weight: 700;
+  /* Apple Design §15 — negative tracking on large display headings */
   letter-spacing: var(--tracking-display);
+  /* Apple Design §15 — tight leading on large text */
   line-height: 1.05;
   max-width: 860px;
   color: var(--ink);
@@ -2244,9 +2406,11 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border: 1px solid var(--line-glass);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-pop);
+  /* Apple Design §12 — glass material */
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   overflow: hidden;
+  /* Apple Design §4 — spring transitions for interactive elements */
   transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring);
 }
 
@@ -2293,7 +2457,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: var(--radius-sm);
   background: var(--surface);
   border: 1px solid var(--line);
-  transition: all var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: all var(--duration-instant) var(--ease-spring);
 }
 .demo-item.active-item {
   border-color: var(--accent);
@@ -2375,8 +2540,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-family: var(--display);
   font-size: clamp(28px, 4.2vw, 44px);
   font-weight: 700;
+  /* Apple Design §15 — negative tracking on large headings */
   letter-spacing: var(--tracking-tighter);
-  line-height: 1.1;
+  /* Apple Design §15 — tight leading on large text */
+  line-height: 1.05;
   margin-bottom: var(--space-3);
   color: var(--ink);
 }
@@ -2403,7 +2570,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   text-decoration: none;
   color: inherit;
   position: relative;
-  transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease);
+  /* Apple Design §4 — spring transitions for interactive elements */
+  transition: transform var(--duration-base) var(--ease-spring), box-shadow var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease-spring);
 }
 @media (hover: hover) {
   .showcase-card:hover {
@@ -2436,7 +2604,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   right: 20px;
   color: var(--ink-3);
   font-size: 16px;
-  transition: transform var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
+  /* Apple Design §4 — spring transition for arrow movement */
+  transition: transform var(--duration-base) var(--ease-spring), color var(--duration-fast) var(--ease-spring);
 }
 .showcase-card:hover .showcase-arrow {
   transform: translateX(3px);
@@ -2473,7 +2642,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   border-radius: 4px 4px 0 0;
   background: var(--accent);
   opacity: 0.8;
-  transition: height var(--duration-base) var(--ease);
+  /* Apple Design §4 — spring transition for height changes */
+  transition: height var(--duration-base) var(--ease-spring);
 }
 .showcase-bar-day {
   font-size: 9px;
@@ -2588,13 +2758,17 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   background: var(--surface);
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
-  transition: transform var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: transform var(--duration-instant) var(--ease-spring), border-color var(--duration-instant) var(--ease-spring);
 }
 @media (hover: hover) {
   .glass-row:hover {
     transform: translateX(4px);
     border-color: var(--accent);
   }
+}
+.glass-row:active {
+  transform: scale(0.99);
 }
 .outcomes, .features {
   display: flex;
@@ -2665,13 +2839,17 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-weight: var(--weight-medium);
   color: var(--ink-2);
   cursor: pointer;
-  transition: all var(--duration-fast) var(--ease-spring);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: all var(--duration-instant) var(--ease-spring);
 }
 .segmented-item.active {
   background: var(--surface);
   color: var(--ink);
   font-weight: var(--weight-semibold);
   box-shadow: var(--shadow-sm);
+}
+.segmented-item:active {
+  transform: scale(0.97);
 }
 .walk-tab-n {
   font-family: var(--mono);
@@ -2825,13 +3003,15 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   background: var(--surface);
   padding: 18px 22px;
   box-shadow: var(--shadow-sm);
-  transition: all var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: border-color var(--duration-instant) var(--ease-spring), background var(--duration-instant) var(--ease-spring);
 }
 .faq-item summary {
   cursor: pointer;
   font-family: var(--display);
   font-size: 16px;
   font-weight: 600;
+  /* Apple Design §15 — negative tracking on headings */
   letter-spacing: var(--tracking-tight);
   color: var(--ink);
   list-style: none;
@@ -2848,7 +3028,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-3);
   flex-shrink: 0;
   transform: rotate(90deg);
-  transition: transform var(--duration-fast) var(--ease);
+  /* Apple Design §4 — spring transition for caret rotation */
+  transition: transform var(--duration-base) var(--ease-spring);
 }
 .faq-item[open] summary::after {
   transform: rotate(270deg);
@@ -2886,8 +3067,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-family: var(--display);
   font-size: clamp(30px, 4.5vw, 48px);
   font-weight: 700;
+  /* Apple Design §15 — negative tracking on large display headings */
   letter-spacing: var(--tracking-display);
-  line-height: 1.1;
+  /* Apple Design §15 — tight leading on large text */
+  line-height: 1.05;
   color: var(--ink);
 }
 .cta-band p {
@@ -2967,7 +3150,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .foot-group a {
   font-size: 13.5px;
   color: var(--ink-2);
-  transition: color var(--duration-fast) var(--ease);
+  /* Apple Design §1 — instant feedback on interaction */
+  transition: color var(--duration-instant) var(--ease-spring);
 }
 .foot-group a:hover {
   color: var(--accent);
@@ -2992,8 +3176,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 
 /* ─── Legal pages ──────────────────────────────────────────────────────────── */
 .legal { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(40px, 7vh, 72px) 24px 96px; }
-.legal h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); font-weight: 720; letter-spacing: -0.03em; margin-bottom: var(--space-5); }
-.legal h2 { font-size: 16px; font-weight: var(--weight-semibold); letter-spacing: -0.01em; margin: 30px 0 8px; }
+.legal h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); font-weight: 720; /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin-bottom: var(--space-5); }
+.legal h2 { font-size: 16px; font-weight: var(--weight-semibold); /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin: 30px 0 8px; }
 .legal p, .legal li { font-size: 14.5px; line-height: 1.65; color: var(--ink-2); }
 .legal p { margin-bottom: 10px; }
 .legal ul { margin: 0 0 12px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
