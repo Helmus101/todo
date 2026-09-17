@@ -4485,13 +4485,14 @@ export async function writeStepsFromContext(
     if (task.taskType && ["learn", "review", "practice", "prepare_assessment"].includes(task.taskType) && hasDomainContamination(task.title, filtered)) {
       filtered = [];
     }
-    // Critical title-match check: if <50% of steps contain keywords from the task title, likely completely wrong task
+    // Title-match warning: if 0% of steps contain keywords from the task title, log warning but still keep steps
+    // (a legitimate task might rephrase entirely, e.g. "Learn the Krebs cycle" → steps about mitochondria/energy)
     const kws = titleKeywords(task.title);
     if (kws.length && filtered.length) {
       const titleMatching = filtered.filter((s) => kws.some((k) => s.text.toLowerCase().includes(k))).length;
-      if (titleMatching / filtered.length < 0.5) {
-        console.warn(`[writeStepsFromContext] title mismatch for "${task.title.slice(0,40)}" — only ${titleMatching}/${filtered.length} steps mention task keywords; using fallback`);
-        filtered = [];
+      if (titleMatching === 0) {
+        // ZERO matches is suspicious — log for debugging, but still use the steps
+        console.warn(`[writeStepsFromContext] title keyword warning for "${task.title.slice(0,40)}" — no steps mention task keywords (${kws.join(", ")}); might be contaminated`);
       }
     }
     // Additional check: if filtering removed MORE than half the steps, likely severe contamination —
