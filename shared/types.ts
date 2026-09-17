@@ -715,6 +715,24 @@ export interface TaskContext {
  * index of a step that must be done first (so a dependent step waits, then can auto-run). `url` marks an
  * "open this page" step. `done`/`result` track completion.
  */
+/** An artifact Otto creates as part of task preparation — something Otto produces, not a user step. */
+export interface TaskArtifact {
+  title: string;
+  type: "note" | "flashcards" | "quiz" | "outline" | "checklist" | "reference" | "draft" | "summary" | "evidence_bank" | "other";
+  status: "created" | "needed" | "not_needed";
+  description?: string;
+  artifactId?: string; // Link to the actual artifact (note, flashcard deck, etc.)
+}
+
+/** A separate task discovered during research — unrelated to the current objective. */
+export interface SeparateTask {
+  title: string;
+  reason: string;
+  urgency?: number;
+  importance?: number;
+  when?: string;
+}
+
 export interface TaskStep {
   text: string;
   automatable: boolean;

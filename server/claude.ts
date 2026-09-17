@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
@@ -126,6 +126,180 @@ export function dropTrivialSteps(steps: TaskStep[]): TaskStep[] {
     if (trivial) console.log(`${new Date().toISOString()} [ai] dropped trivial step: "${s.text}"`);
     return !trivial;
   });
+}
+
+/**
+ * NEW ARCHITECTURE: Task-boundary validation filter
+ * Checks if a step directly contributes to completing the task's Definition of Done.
+ */
+export function validateStepAgainstDefinitionOfDone(step: TaskStep, definitionOfDone: string, taskTitle: string): boolean {
+  const stepText = step.text.toLowerCase();
+  const dodLower = definitionOfDone.toLowerCase();
+  const titleLower = taskTitle.toLowerCase();
+
+  // Research operations should never be user steps
+  if (isResearchOperation(stepText)) {
+    console.log(`${new Date().toISOString()} [ai] filtered research operation: "${step.text}"`);
+    return false;
+  }
+
+  // Steps about Otto's internal work should not be user steps
+  if (isInternalOttoWork(stepText)) {
+    console.log(`${new Date().toISOString()} [ai] filtered internal Otto work: "${step.text}"`);
+    return false;
+  }
+
+  // Steps about creating Otto's artifacts should not be user steps
+  if (isArtifactCreationStep(stepText)) {
+    console.log(`${new Date().toISOString()} [ai] filtered artifact creation step: "${step.text}"`);
+    return false;
+  }
+
+  // Check if step relates to the task
+  const relatesToTask = stepText.includes(titleLower.slice(0, 20)) || 
+                        dodLower.split(' ').some(word => word.length > 3 && stepText.includes(word));
+
+  if (!relatesToTask) {
+    console.log(`${new Date().toISOString()} [ai] filtered unrelated step: "${step.text}"`);
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Identifies research/internal operations that should never be user steps.
+ */
+function isResearchOperation(stepText: string): boolean {
+  const researchPatterns = [
+    /^(search|research|look up|find|google|re-search|re-run|re-fetch|retry)\b/i,
+    /^(re-|re\s)/i, // Any step starting with "Re-" that describes retry logic
+    /\b(search|research|fetch|read|open|check)\s+(the\s+)?(drive|gmail|calendar|docs|sheets|slides|web|internet)\b/i,
+    /\btry\s+different\s+(search|query|phrasing)\b/i,
+  ];
+  return researchPatterns.some(pattern => pattern.test(stepText));
+}
+
+/**
+ * Identifies steps about Otto's internal work that should not be user steps.
+ */
+function isInternalOttoWork(stepText: string): boolean {
+  const internalPatterns = [
+    /\breconnect\s+\w+\s+tool\b/i,
+    /\benable\s+(create|write)\s+tools?\b/i,
+    /\bplan[- ]?only\s+mode\b/i,
+    /\bopen\s+settings\b/i,
+    /\bgrant\s+permission\b/i,
+    /\bauthorize\s+otto\b/i,
+  ];
+  return internalPatterns.some(pattern => pattern.test(stepText));
+}
+
+/**
+ * Identifies steps about creating Otto's artifacts that should not be user steps.
+ */
+function isArtifactCreationStep(stepText: string): boolean {
+  const artifactPatterns = [
+    /\b(create|make|build|generate)\s+(flashcards?|quiz|study\s+guide|reference|outline|checklist|summary|evidence\s+bank)\b/i,
+    /\b(create|make|build|generate)\s+(a\s+)?(note|brief|fiche)\b/i,
+  ];
+  return artifactPatterns.some(pattern => pattern.test(stepText));
+}
+
+/**
+ * Main filter: applies task-boundary validation to all steps.
+ */
+export function filterStepsByDefinitionOfDone(
+  steps: TaskStep[], 
+  definitionOfDone: string, 
+  taskTitle: string
+): TaskStep[] {
+  return steps.filter(step => validateStepAgainstDefinitionOfDone(step, definitionOfDone, taskTitle));
+}
+
+/**
+ * NEW ARCHITECTURE: Separate artifacts from steps
+ * Identifies items that should be artifacts rather than user steps.
+ */
+export function separateArtifactsFromSteps(
+  steps: TaskStep[],
+  existingArtifacts: TaskArtifact[] = []
+): { filteredSteps: TaskStep[]; artifacts: TaskArtifact[] } {
+  const filteredSteps: TaskStep[] = [];
+  const artifacts: TaskArtifact[] = [...existingArtifacts];
+
+  for (const step of steps) {
+    const stepText = step.text.toLowerCase();
+    
+    // Check if this is about creating an artifact
+    if (/\b(create|make|build|draft|write)\s+(outline|summary|reference|checklist|evidence\s+bank|research\s+notes)\b/i.test(stepText)) {
+      // Extract artifact type
+      let type: TaskArtifact["type"] = "other";
+      if (/outline/i.test(stepText)) type = "outline";
+      else if (/summary/i.test(stepText)) type = "summary";
+      else if (/reference/i.test(stepText)) type = "reference";
+      else if (/checklist/i.test(stepText)) type = "checklist";
+      else if (/evidence\s+bank/i.test(stepText)) type = "evidence_bank";
+      else if (/research\s+notes/i.test(stepText)) type = "note";
+
+      const artifact: TaskArtifact = {
+        title: step.text,
+        type,
+        status: "needed",
+        description: `To be created by Otto before user steps`,
+      };
+      
+      // Check if this artifact already exists
+      const exists = artifacts.some(a => a.title.toLowerCase() === stepText);
+      if (!exists) {
+        artifacts.push(artifact);
+        console.log(`${new Date().toISOString()} [ai] extracted artifact: "${step.text}"`);
+      }
+    } else {
+      filteredSteps.push(step);
+    }
+  }
+
+  return { filteredSteps, artifacts };
+}
+
+/**
+ * NEW ARCHITECTURE: Separate unrelated tasks
+ * Identifies steps that should be separate tasks rather than steps in the current task.
+ */
+export function separateUnrelatedTasks(
+  steps: TaskStep[],
+  currentTaskTitle: string
+): { filteredSteps: TaskStep[]; separateTasks: SeparateTask[] } {
+  const filteredSteps: TaskStep[] = [];
+  const separateTasks: SeparateTask[] = [];
+
+  for (const step of steps) {
+    const stepText = step.text.toLowerCase();
+    const titleLower = currentTaskTitle.toLowerCase();
+
+    // Check if this step is about a completely different topic
+    const stepKeywords = stepText.split(/\s+/).filter(w => w.length > 3);
+    const titleKeywords = titleLower.split(/\s+/).filter(w => w.length > 3);
+    
+    const hasOverlap = stepKeywords.some(sk => 
+      titleKeywords.some(tk => sk.includes(tk) || tk.includes(sk))
+    );
+
+    if (!hasOverlap && stepText.length > 10) {
+      // This looks like a separate task
+      const separateTask: SeparateTask = {
+        title: step.text,
+        reason: "Discovered during research but unrelated to current task",
+      };
+      separateTasks.push(separateTask);
+      console.log(`${new Date().toISOString()} [ai] extracted separate task: "${step.text}"`);
+    } else {
+      filteredSteps.push(step);
+    }
+  }
+
+  return { filteredSteps, separateTasks };
 }
 /** The app's UI + AI-content language, toggled in Settings (defaults French). Every prompt that phrases
  *  user-facing text pulls this in rather than hardcoding a language. */
@@ -4369,6 +4543,18 @@ export async function runTask(
 }
 
 /**
+ * NEW ARCHITECTURE: Structured task planning output
+ * Defines the structure for task planning with artifacts, steps, and separate tasks.
+ */
+export interface TaskPlanningOutput {
+  definitionOfDone: string;
+  contextRelevance: string; // How the gathered context relates to the task
+  artifacts: TaskArtifact[];
+  steps: TaskStep[];
+  separateTasks: SeparateTask[];
+}
+
+/**
  * Plan-only mode's dedicated SECOND PASS for writing steps — separate from the research loop on purpose.
  * The research loop's transcript is full of raw tool-call JSON, retries, and reasoning by the time it reaches
  * "submit"; asking the SAME call to also produce the final actionable steps means the model is synthesizing
@@ -4415,93 +4601,100 @@ export async function writeStepsFromContext(
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}"\nWHY: "${task.why}"\n${taskTypeLine}${goalLine}${unknownsLine}\n\n${context.trim() ? `CONTEXT ALREADY RESEARCHED (do not research more, just use this):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}` +
+        content: `TASK TITLE: "${task.title}"\nTASK WHY: "${task.why}"\n${taskTypeLine}${goalLine}${unknownsLine}\n\n` +
+          `CORE INVARIANT: The task title is the OBJECTIVE. The Definition of Done is the SUCCESS CONDITION. ` +
+          `The context below is SUPPORTING INFORMATION only. Never let the context become the objective.\n\n` +
+          `${context.trim() ? `CONTEXT GATHERED (supporting information only — not the objective):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}` +
           assignmentBlock(task) + profileBlock(profile) + `\n\n` +
           languageLine(profile) + trackLine(profile) + nowBlock() +
-          `FIRST, decide: is this a BIG, multi-week/multi-stage project — a full essay, dissertation, thesis/` +
-          `mémoire, an IB Extended Essay/TOK/CAS/Internal Assessment, a group project, a major report — where a ` +
-          `flat "next 3 actions" list would bury the real timeline? Or an ordinary task that's actually doable ` +
-          `in one sitting or a few short steps?` +
-          (keywordHit ? ` (This one LOOKS like a big project from its title/why — confirm that reading unless the ` +
-            `actual content clearly contradicts it.)` : "") + `\n\n` +
-          `APP-PREP WORK IS NOT A USER STEP:\n` +
-          `Never write user steps that tell the student to build Otto's prep artifacts or retry Otto's source ` +
-          `gathering. These belong to the preparation phase, not the task checklist: "Build the figures de style ` +
-          `reference sheet", "Fetch the remaining pages", "Open the Vocabulaire français spreadsheet", "Search ` +
-          `Drive", "Re-run web searches", "Try different search phrasing". If that work is possible, Otto should ` +
-          `do it before this step-writing call. If one source failed or was truncated, use the sources already ` +
-          `available and create the best brief/flashcards/quiz possible; only ask the student for a source when ` +
-          `the actual assignment text is indispensable and unavailable.\n\n` +
-          `PEDAGOGICAL SEQUENCE ARCHITECTURE (for study / learning / review / exam prep tasks):\n` +
-          `If this is a learning, review, practice, or assessment prep task (taskType: "learn_understand", "review", "practice", "prepare_assessment"), ` +
-          `derive the step sequence from the core cognitive learning cycle:\n` +
-          `1. Learn / Understand (Review definitions, core rules, worked examples)\n` +
-          `2. Retrieve / Flashcards (Active recall of key terms/rules without looking)\n` +
-          `3. Apply (Targeted practice on 2-3 concrete problems/questions)\n` +
-          `4. Diagnose (Self-check or mini-quiz to identify weak spots)\n` +
-          `5. Repair & Re-test (Review mistakes from error log and re-verify mastery)\n\n` +
-          `IF BIG: break it into an ORDERED list of MILESTONES from where it stands now through final submission ` +
-          `(e.g. research question, source-gathering, outline, supervisor check-in, first draft, revision, final ` +
-          `submission — adapt to what this specific project actually needs, don't force every category to apply). ` +
-          `Each milestone needs a realistic "targetDate" (YYYY-MM-DD, relative to the CURRENT DATE above) spaced ` +
-          `out over the weeks/months a project like this genuinely takes — don't cram them all into the next few ` +
-          `days. 4 to 8 milestones, each text ≤10 words.\n\n` +
-          `IF ORDINARY: break the remaining work into a clear, ORDERED list of concrete, actionable steps — each ` +
-          `a SHORT one-liner, ONE clause (≤10 words: imperative verb + the specific thing, no hedging, no filler, ` +
-          `never multiple asks stacked with a colon/semicolon/"and") naming a BROAD next action. Keep the list ` +
-          `general enough to guide the student's work instead of micromanaging it: "Choose the birthday message ` +
-          `channel", "Review the prepared deck", "Write the introduction draft", "Book the chosen flights" are ` +
-          `good; tiny internal fragments like "Search syllabus for Paolo Scott", "Open Gmail", "Re-run web ` +
-          `search", or "Note required question type" are too narrow unless that exact single check is the whole ` +
-          `task. The steps are the USER'S path to the end state after Otto's prep is done, not Otto's own ` +
-          `research log. ` +
-          `For each step, include:\n` +
-          `- "text": concise action description (≤10 words)\n` +
-          `- "minutes": realistic duration estimate in minutes (e.g. 5, 10, 15, 25, 45)\n` +
-          `- "doneWhen": concrete completion condition (e.g. "Can state 5 key concepts with 1 example each without notes")\n` +
-          `- "checkpoint": mastery threshold or checkpoint rule (e.g. "Score ≥ 80% on quiz before moving to next step")\n` +
-          `- "difficulty": "easy" | "medium" | "hard"\n` +
-          `- "dependsOn": integer index (0-based, in THIS list) when a step must happen first\n` +
-          `- "automatable": boolean\n` +
-          `- "url", "question", "options": optional when needed\n\n` +
-          `If a resource above was already CREATED (not just found), do NOT list ` +
-          `"create X" as a step — that's done; instead say what to DO with it now (review it, send it, use it, ` +
-          `decide something). Only list creating a document/draft as a step if none of the resources above cover ` +
-          `it yet. NEVER split ONE action into a chain of steps that just narrate its own sub-parts. ` +
-          `1 to 5 steps, omit "dependsOn" when a step doesn't wait on another. A SINGLE step is a completely ` +
-          `normal, GOOD outcome when a task is simple.\n\n` +
-          `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
-          `graded/learning work itself as if it were already done or as Otto's job; that work always stays theirs. ` +
-          `Do not auto-advance the student through choices or learning: Otto prepares aids, drafts, and context, ` +
-          `but the child/student still reviews, decides, writes, sends, books, practices, or asks a person when ` +
-          `the action requires their judgment, consent, physical presence, or learning. ` +
-          `Every item must be directly about "${task.title}". ` +
-          `CRITICAL: Do NOT write steps about creating OTTO'S ARTIFACTS:\n` +
-          `  ✗ "Create flashcards for..." (Otto creates these, not the student)\n` +
-          `  ✗ "Create a quiz on..." (Otto creates these, not the student)\n` +
-          `  ✗ "Make a study guide..." (Otto creates this for you, not your step)\n` +
-          `  INSTEAD: If drilling vocabulary matters, say "Drill vocabulary with flashcards" — Otto creates them.\n` +
-          `  INSTEAD: If self-checking matters, say "Take the practice quiz" — Otto creates it.\n\n` +
-          `CRITICAL: Do NOT write steps that sound like Otto's internal work:\n` +
-          `  ✗ "Re-run the read..." (Otto re-running a fetch)\n` +
-          `  ✗ "Re-fetch the document..." (Otto retrying a lookup)\n` +
-          `  ✗ "Retry the search..." (Otto trying a search again)\n` +
-          `  ✗ "Re-run this task..." (Otto re-executing)\n` +
-          `  ✗ Any step starting with "Re-" that describes Otto's retry logic\n` +
-          `INSTEAD: If a resource needs reviewing/using, make that the step: "Review the Physics outline" not "Re-run the read".\n` +
-          `NEVER write a step about: reconnecting tools, enabling create/write tools, plan-only mode, opening Settings, or any Otto internal state — those are never the student's job and will be silently removed.\n\n` +
-          `Return ONLY this JSON: {"isBigProject": true|false, "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy"|"medium"|"hard", "targetDate": "YYYY-MM-DD" ` +
-          `(big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only), "url": "..." ` +
-          `(ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary ` +
-          `only, optional)}, ...]}.`,
+          `NEW ARCHITECTURE: Re-anchor to Original Task → Filter Context → Create Artifacts → Generate Minimum Required Subtasks\n\n` +
+          `STEP 1: Re-anchor to the ORIGINAL TASK\n` +
+          `The task title is the objective: "${task.title}"\n` +
+          `The Definition of Done is the success condition: ${task.goal || "define this concretely"}\n` +
+          `Answer: What is the user actually trying to accomplish? What does "done" mean for THIS exact task?\n\n` +
+          `STEP 2: Filter context for TASK RELEVANCE\n` +
+          `Review the gathered context above. Which parts actually help achieve the Definition of Done?\n` +
+          `Discard: unrelated curriculum materials, other subjects, unrelated deadlines, disconnected accounts.\n` +
+          `Keep: only information that directly supports completing "${task.title}".\n` +
+          `State briefly: Which context is relevant and why?\n\n` +
+          `STEP 3: Determine what OTTO can create\n` +
+          `Based on the RELEVANT context, what artifacts can Otto create RIGHT NOW to help complete this task?\n` +
+          `For STUDY/REVIEW tasks: summary, reference sheet, flashcards, practice questions, quiz\n` +
+          `For ESSAY tasks: evidence bank, thesis options, outline, draft sections\n` +
+          `For PRESENTATION tasks: research notes, slide outline, speaker notes\n` +
+          `For CODING tasks: implementation, tests, technical notes\n` +
+          `For PLANNING tasks: schedule, budget, checklist\n` +
+          `These are NOT user steps — Otto creates them BEFORE the student starts.\n\n` +
+          `STEP 4: Determine what the USER must do\n` +
+          `NOW that Otto has prepared what it can, what does the student ACTUALLY need to do?\n` +
+          `Each step must:\n` +
+          `- Directly contribute to the Definition of Done for "${task.title}"\n` +
+          `- Be something the student must do (not Otto)\n` +
+          `- Be concrete and actionable (not "research X" or "find Y")\n` +
+          `- Not be about creating Otto's artifacts (Otto creates those)\n` +
+          `- Not be internal Otto work (re-search, re-fetch, retry)\n` +
+          `- Not be an unrelated task discovered during research\n` +
+          `- Not be microscopic instructions (no 6-step sub-plans)\n\n` +
+          `STEP 5: Identify unrelated tasks discovered during research\n` +
+          `Did the research uncover other actionable items that are NOT part of "${task.title}"?\n` +
+          `Examples: "Send Weave reply", "Confirm IEO finals date". These become separate tasks, not steps.\n\n` +
+          `STEP 6: Decide if this is a BIG project\n` +
+          `Is this a multi-week/multi-stage project (essay, dissertation, IB Extended Essay/TOK/CAS/IA)?\n` +
+          `If YES: create milestones with targetDates (YYYY-MM-DD)\n` +
+          `If NO: create ordinary steps (2-6 meaningful actions)\n\n` +
+          `CRITICAL RULES:\n` +
+          `1. The TASK TITLE is the objective — never lose sight of it\n` +
+          `2. CONTEXT is supporting information only — never let it become the objective\n` +
+          `3. Research operations are NEVER user steps — Otto does them internally\n` +
+          `4. Artifact creation is NEVER a user step — Otto creates them first\n` +
+          `5. Unrelated tasks become separate tasks, not steps\n` +
+          `6. Each step must directly move toward the Definition of Done\n` +
+          `7. Generate the MINIMUM required subtasks — not everything that could be done\n\n` +
+          `Return ONLY this JSON:\n` +
+          `{\n` +
+          `  "definitionOfDone": "concrete success criteria for this exact task",\n` +
+          `  "contextRelevance": "brief explanation of which gathered context is relevant and why",\n` +
+          `  "artifacts": [{"title": "...", "type": "note|flashcards|quiz|outline|checklist|reference|draft|summary|evidence_bank|other", "status": "created|needed|not_needed", "description": "..."}],\n` +
+          `  "isBigProject": true|false,\n` +
+          `  "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy|medium|hard", "targetDate": "YYYY-MM-DD" (big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only), "url": "..." (ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary only, optional)}],\n` +
+          `  "separateTasks": [{"title": "...", "reason": "..."}]\n` +
+          `}`,
       }],
     }));
-    const out = firstJson<{ isBigProject?: boolean; steps?: { text?: string; minutes?: number; doneWhen?: string; checkpoint?: string; difficulty?: "easy" | "medium" | "hard"; automatable?: boolean; targetDate?: string; dependsOn?: number; url?: string; question?: string; options?: string[] }[] }>(String(res.choices?.[0]?.message?.content || ""));
-    const bigProject = typeof out?.isBigProject === "boolean" ? out.isBigProject : keywordHit;
+    
+    const out = firstJson<TaskPlanningOutput & { isBigProject?: boolean }>(String(res.choices?.[0]?.message?.content || ""));
+    
+    if (!out) {
+      console.log(`${new Date().toISOString()} [ai] writeStepsFromContext: failed to parse output, using fallback`);
+      return fallbackSteps;
+    }
+
+    const bigProject = typeof out.isBigProject === "boolean" ? out.isBigProject : keywordHit;
+    const definitionOfDone = out.definitionOfDone || task.goal || task.why;
+    
+    // Log the re-anchoring process
+    console.log(`${new Date().toISOString()} [ai] Task: "${task.title}"`);
+    console.log(`${new Date().toISOString()} [ai] Definition of Done: ${definitionOfDone}`);
+    if (out.contextRelevance) {
+      console.log(`${new Date().toISOString()} [ai] Context Relevance: ${out.contextRelevance}`);
+    }
+    
+    // Log artifacts
+    if (out.artifacts && out.artifacts.length > 0) {
+      console.log(`${new Date().toISOString()} [ai] Otto prepared ${out.artifacts.length} artifacts: ${out.artifacts.map(a => a.title).join(", ")}`);
+    }
+    
+    // Log separate tasks
+    if (out.separateTasks && out.separateTasks.length > 0) {
+      console.log(`${new Date().toISOString()} [ai] Discovered ${out.separateTasks.length} separate tasks: ${out.separateTasks.map(t => t.title).join(", ")}`);
+    }
+
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-    const rawSteps = out?.steps || [];
+    const rawSteps = out.steps || [];
     const linkUrls = new Set(links.map((l) => l.url));
-    const steps = sanitizeSteps(rawSteps
+    
+    // Apply the new architecture filters
+    let steps = sanitizeSteps(rawSteps
       .map((s, idx) => {
         const matched = !bigProject ? bestMatchingStep(String(s?.text || ""), fallbackSteps) : undefined;
         const own = sanitizeStepExtras(s);
@@ -4526,6 +4719,18 @@ export async function writeStepsFromContext(
           } : {}),
         };
       }), bigProject ? 8 : 6);
+    
+    // Apply task-boundary validation filter
+    steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
+    
+    // Apply artifact separation
+    const { filteredSteps: stepsWithoutArtifacts, artifacts } = separateArtifactsFromSteps(steps);
+    steps = stepsWithoutArtifacts;
+    
+    // Apply separate task extraction
+    const { filteredSteps: finalSteps, separateTasks } = separateUnrelatedTasks(steps, task.title);
+    steps = finalSteps;
+    
     const gated = bigProject ? steps : dropTrivialSteps(steps);
     const cleaned = dropProcessComplaintSteps(gated);
     // Also filter out any steps that describe Otto's internal retry/re-run logic
@@ -4556,8 +4761,15 @@ export async function writeStepsFromContext(
       console.warn(`[writeStepsFromContext] severe contamination detected for "${task.title.slice(0,40)}" — removed ${beforeSibling - filtered.length}/${beforeSibling} steps; using fallback`);
       filtered = [];
     }
+    
+    // TODO: Handle separateTasks - for now we just log them
+    // In a full implementation, these would be added to the task list via the task generation system
+    
     return filtered.length ? filtered : (noInternalOttoSteps.length && !severlyContaminated ? noInternalOttoSteps : fallbackSteps);
-  } catch { return fallbackSteps; }
+  } catch (e: any) {
+    console.log(`${new Date().toISOString()} [ai] writeStepsFromContext error: ${e?.message || e}`);
+    return fallbackSteps;
+  }
 }
 
 /**
