@@ -707,6 +707,18 @@ function isFolderHousekeepingDrift(title: string, steps: { text: string }[]): bo
   if (/\b(organi[sz]e|folder|clean ?up|file management|sort (my|the) files)\b/i.test(title)) return false; // legitimately about this
   return steps.every((s) => FOLDER_HOUSEKEEPING_STEP.test(s.text));
 }
+// A step that narrates OTTO'S OWN RUN/TOOL STATE instead of something the STUDENT should do — observed live
+// (right after CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ were moved out of the research phase into their own
+// later phase): "Recreate the missing write: no document, note, deck or email was produced this run because
+// no write/create tool was available — re-run once a creation tool is enabled" and "Re-run this task with a
+// write tool enabled" ended up AS steps — the model's own confusion about which phase it's in, leaked
+// straight through writeStepsFromContext into the student-facing plan. This is never a legitimate step no
+// matter how it's phrased: the student has no "creation tool" to enable and no way to "re-run" anything
+// themselves — that's Otto's own internal machinery, not their to-do list.
+const PROCESS_COMPLAINT_STEP = /\b(no (?:write|create|creation)\b[^.]{0,30}\btool\b|tool (?:was|is|wasn'?t) (?:not )?available|re-?run (?:this|the) task|once (?:a |the )?(?:creation|write) tool is enabled|recreate the missing\b|no (?:document|note|deck|email) was produced this run)\b/i;
+export function dropProcessComplaintSteps<T extends { text: string }>(steps: T[]): T[] {
+  return steps.filter((s) => !PROCESS_COMPLAINT_STEP.test(s.text));
+}
 // Capitalized single words that are common in step/artifact text but aren't proper-noun ENTITIES worth
 // checking (sentence starters, weekday/month names, Otto's own name, generic time words) — excluded so the
 // entity heuristic below doesn't flag ordinary sentences.
@@ -759,7 +771,15 @@ function textMentionsEntity(haystack: string, entity: string): boolean {
  *  legitimate, and an entity absent from title/why isn't necessarily wrong (a name first surfaced by
  *  legitimate research, e.g. a teacher's name in the énoncé, is caught by including sourceDetail below). */
 export function dropForeignEntitySteps<T extends { text: string }>(task: { title: string; why: string; sourceDetail?: string }, links: TaskLink[], steps: T[]): T[] {
-  const allow = `${task.title} ${task.why} ${task.sourceDetail || ""} ${links.map((l) => l.label).join(" ")}`;
+  // Deliberately NOT including `links` in the allowlist (a prior version did): a link found during broad
+  // research can ALREADY be the contaminated thing — the model reading an unrelated Gmail thread and adding
+  // it to "links" as something it found, then a step naming that same person passes this check simply
+  // because its own contaminated link vouches for it. Observed live: a "figures de style" task's steps
+  // included "Decide whether to reply to the Julien Tafanel thread" — unrelated to the task, but the run's
+  // own links apparently already carried that name in, so the old links-inclusive allowlist let it through.
+  // Only the task's OWN known facts (never anything the run itself found) are trustworthy as an allowlist.
+  void links; // kept in the signature — every call site already has it handy, and it may earn a narrower use later
+  const allow = `${task.title} ${task.why} ${task.sourceDetail || ""}`;
   return steps.filter((s) => extractEntities(s.text).every((e) => textMentionsEntity(allow, e)));
 }
 
@@ -3038,7 +3058,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   const messages: any[] = [{
     role: "user",
     content: !EXECUTION_ENABLED
-      ? head + deadlineHint + manualHint + `\nTHIS IS THE RESEARCH PHASE ONLY — gather what you need and record the real, substantive facts in submit's "context". Step breakdown and any note/flashcard-deck/quiz happen in LATER, separate phases once your research is complete — do not try to decide or write those here, and note/flashcard/quiz tools are not available in this phase. You DO have a tool to draft a Gmail email right now (never sending) for anything that genuinely needs one — don't leave "draft the reply" as a step when you could just do it now. This applies to LOOKUPS too: "search your school email for X", "check the calendar for Y", "look up Z in Drive" describe RESEARCH you have the exact same tools to do RIGHT NOW — run that search yourself and use what you find, never defer a lookup you could do this run. Once you've genuinely researched everything you can (never stop after one search that came up empty — vary the query, try a broader term, try a different app), call submit with the facts you found.`
+      ? head + deadlineHint + manualHint + `\nTHIS IS THE RESEARCH PHASE ONLY — gather what you need and record the real, substantive facts in submit's "context". Step breakdown and any note/flashcard-deck/quiz happen in LATER, separate phases once your research is complete, run automatically right after this one — you do not need to ask for them, wait for them, or mention them at all. Note/flashcard/quiz tools are simply not part of THIS phase's job, the same way you wouldn't complain that a hammer has no screwdriver — never write a step, a "did" bullet, or any part of "context"/"synthesis" that comments on a tool being missing/unavailable or asks to "re-run" anything; that's never something to tell the student, it's not their concern and it's not even true (the next phases run on their own). You DO have a tool to draft a Gmail email right now (never sending) for anything that genuinely needs one — don't leave "draft the reply" as a step when you could just do it now. This applies to LOOKUPS too: "search your school email for X", "check the calendar for Y", "look up Z in Drive" describe RESEARCH you have the exact same tools to do RIGHT NOW — run that search yourself and use what you find, never defer a lookup you could do this run. Once you've genuinely researched everything you can (never stop after one search that came up empty — vary the query, try a broader term, try a different app), call submit with the facts you found.`
       : focus
       // Focused single-step run (the user hit "Auto-do" on one automatable step).
       ? head + deadlineHint + `\nDo ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) — don't describe it, DO it — then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.`
@@ -3082,7 +3102,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
   // completely useless to the user. Catches: narrating what the user asked for, narrating the act of
   // searching/checking/retrieving itself (in EITHER first- or third-person, "I searched" / "Assistant
   // retrieved"), and a search described as having failed with no follow-up fact stated.
-  const META_NARRATION = /\b(user (requested|asked (for|about)|wants?)\b|(?:^|\. )(?:the )?assistant \w+ed\b|performed (a )?searches?\b|conduct(?:ed)? (a )?search(?:es)?\b|search(?:ed|ing)? (across|through|multiple|for)\b.{0,40}\bwithout (success|results?|luck)\b|checked (multiple|several|various)\b|looked (into|through) (multiple|several|various)\b|across multiple (google )?services\b|\bread emails? about\b|\bretrieved (?:the |a )?calendar event\b|\b(ran|did|made) (several|multiple|a few)\b.{0,40}\b(lookups?|searches?|queries)\b|\breturned (empty|no|nothing)\b|\bcame (up|back) empty\b)/i;
+  const META_NARRATION = /\b(user (requested|asked (for|about)|wants?)\b|(?:^|\. )(?:the )?assistant \w+ed\b|performed (a )?searches?\b|conduct(?:ed)? (a )?search(?:es)?\b|search(?:ed|ing)? (across|through|multiple|for)\b.{0,40}\bwithout (success|results?|luck)\b|checked (multiple|several|various)\b|looked (into|through) (multiple|several|various)\b|across multiple (google )?services\b|\bread emails? about\b|\bretrieved (?:the |a )?calendar event\b|\b(ran|did|made) (several|multiple|a few)\b.{0,40}\b(lookups?|searches?|queries)\b|\breturned (empty|no|nothing)\b|\bcame (up|back) empty\b|\bno (?:write|create|creation)\b[^.]{0,30}\btool\b|\btool (?:was|is|wasn'?t) (?:not )?available\b|\bre-?run (?:this|the) task\b)/i;
   // MISSION INTEGRITY: catches a claim that Otto did the student's actual graded/learning work FOR them —
   // the one line the whole "companion, not do-it-all" mission is built around. Checked against synthesis/did
   // (the model's own narrative of what it produced), the same place every other claim-verification check in
@@ -3260,6 +3280,7 @@ export async function runTask(task: { title: string; why: string; source?: strin
       const before = d.steps.length;
       let filtered = dropForeignEntitySteps(task, d.links, d.steps);
       filtered = dropSiblingBleedSteps(task, siblingTasks || [], filtered);
+      filtered = dropProcessComplaintSteps(filtered);
       if (before > 0 && filtered.length < before / 2 && finishBacks < 2 && (MAX - 1 - i) >= 2) {
         return `REJECTED: most of your "steps" turned out to be about OTHER tasks/obligations, not ` +
           `"${task.title}" itself — you likely read something unrelated during research and turned it into a ` +

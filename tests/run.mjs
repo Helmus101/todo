@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -970,6 +970,24 @@ section("dropForeignEntitySteps — cross-task contamination backstop");
   check("keeps the on-topic step while dropping the foreign ones from a mixed batch", dropForeignEntitySteps(task, [], [onTopic, foreign1, foreign2]).length === 1);
   const taskWithDetail = { title: "Reply to Kosova", why: "Follow up with Professor Kosova about IEO France", sourceDetail: "" };
   check("a name present in the task's own why is NOT flagged as foreign", dropForeignEntitySteps(taskWithDetail, [], [{ text: "Send Professor Kosova the drafted follow-up email" }]).length === 1);
+  // Regression: `links` used to be part of the allowlist too — but a link found during broad research can
+  // ALREADY be the contaminated thing (the model reading an unrelated Gmail thread and adding it as a
+  // "link" it found), so a foreign name that only appears in links used to slip through. Observed live: a
+  // "figures de style" task's steps included "Decide whether to reply to the Julien Tafanel thread" — his
+  // name wasn't in the task's own title/why/sourceDetail, only (apparently) in a contaminated link.
+  const contaminatedLink = { label: "Julien Tafanel thread", url: "https://mail.google.com/x" };
+  check("a foreign name present ONLY in links is still dropped (links are not a trusted allowlist)", dropForeignEntitySteps(task, [contaminatedLink], [{ text: "Decide whether to reply to the Julien Tafanel thread" }]).length === 0);
+}
+
+section("dropProcessComplaintSteps — Otto's own run/tool-state must never leak into the student's steps");
+{
+  const complaint1 = { text: "Recreate the missing write: no document, note, deck or email was produced this run because no write/create tool was available — re-run once a creation tool is enabled" };
+  const complaint2 = { text: "Re-run this task with a write tool enabled" };
+  const onTopic = { text: "Open the Math AA HL paper and list its questions" };
+  check("drops a step narrating a missing write/create tool", dropProcessComplaintSteps([complaint1]).length === 0);
+  check("drops a step asking to re-run the task", dropProcessComplaintSteps([complaint2]).length === 0);
+  check("keeps a genuine on-topic step untouched", dropProcessComplaintSteps([onTopic]).length === 1);
+  check("keeps the on-topic step while dropping the process-complaint ones from a mixed batch", dropProcessComplaintSteps([onTopic, complaint1, complaint2]).length === 1);
 }
 
 section("dropSiblingBleedSteps — cross-task bleed backstop #2 (non-entity contamination)");
