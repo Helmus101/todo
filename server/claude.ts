@@ -753,8 +753,8 @@ export function dropProcessComplaintSteps<T extends { text: string }>(steps: T[]
 // that genuinely IS about communication (e.g. "Write parent letter for EJM transition").
 const ADMIN_COMM_STEP = /\b(parent\s+letters?|announcement\s+(message|email|draft|text|letter)|school\s+office|contact\s+(email|address|the\s+school|the\s+teacher|teacher\s+contact)|send\s+(a\s+)?(short\s+)?(message|email|letter)\s+(asking|to\s+ask|to\s+confirm|confirming)|ask\s+for\s+a\s+reply\s+deadline|staff\s+(announcement|update|email|meeting|memo)|website\s+update|transition\s+timeline\s+wording|internal\s+staff|confirm\s+with\s+(the\s+)?school\s+whether|official\s+\w+\s+(calendar|handbook)\s+or|handover\s+wording|parallel\s+internal)\b/i;
 
-// Otto's internal retry/re-run steps that should never appear in the student's task list
-const OTTO_INTERNAL_STEP = /^(re-?run|re-?fetch|re-?read|retry|re-attempt|re-execute|re-query)\s+/i;
+// Otto's internal/setup steps that should never appear in the student's task list (not their actual work)
+const OTTO_INTERNAL_STEP = /^(re-?run|re-?fetch|re-?read|retry|re-attempt|re-execute|re-query|reconnect|enable|open\s+settings|approve|sign\s+in)\s+/i;
 const STUDY_TASK_TYPES = new Set<string>(["learn_understand", "review", "practice", "prepare_assessment", "homework_problem_set"]);
 /** On a known study-type task, strip steps that are clearly admin/communication/announcement work — almost
  *  always bleed-in from an unrelated email or calendar item read during research. Not applied to non-study
@@ -3925,10 +3925,12 @@ export async function runTask(
     // why an empty plan is never acceptable either).
     const checkStepContamination = (d: RunOutput): string | null => {
       const before = d.steps.length;
-      let filtered = dropForeignEntitySteps(task, d.links, d.steps);
+      // Filter out Otto's internal actions (reconnect, settings, etc) and process complaints upfront
+      let filtered = d.steps.filter((s) => !OTTO_INTERNAL_STEP.test(s.text));
+      filtered = dropProcessComplaintSteps(filtered);
+      filtered = dropForeignEntitySteps(task, d.links, filtered);
       const afterEntity = filtered.length;
       filtered = dropSiblingBleedSteps(task, siblingTasks || [], filtered);
-      filtered = dropProcessComplaintSteps(filtered);
       // Semantic domain check: if steps describe a completely different task domain, flag it
       if (hasDomainContamination(task.title, filtered) && finishBacks < 2 && (MAX - 1 - i) >= 2) {
         return `REJECTED: your steps describe work in a different domain than "${task.title}" — ` +
