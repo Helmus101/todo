@@ -826,7 +826,20 @@ export function dropForeignEntitySteps<T extends { text: string }>(task: { title
   // Only the task's OWN known facts (never anything the run itself found) are trustworthy as an allowlist.
   void links; // kept in the signature — every call site already has it handy, and it may earn a narrower use later
   const allow = `${task.title} ${task.why} ${task.sourceDetail || ""}`;
-  return steps.filter((s) => extractEntities(s.text).every((e) => textMentionsEntity(allow, e)));
+  return steps.filter((s) => {
+    // The FIRST word of a step is its sentence-leading imperative verb ("Analyse les schémas…", "Ouvre le
+    // manuel…", "Contact Pierre…") — capitalized in French exactly like a proper noun would be, and the
+    // English-only verb list in ENTITY_STOPWORDS can't cover every verb in either language ("Analyze"
+    // slipped through in English, wrongly dropping a legitimate step; in French — this app's PRIMARY
+    // audience — virtually every step starts with an uncovered verb, so this filter was quietly deleting
+    // ENTIRE legitimate French step lists and tripping the severe-contamination fallback on them). Skip the
+    // first word before entity extraction: a genuine multi-word foreign name is still caught (its later
+    // words survive the skip — "Pierre Cotteau…" → "Cotteau…" still matches the regex), and a foreign
+    // single-word name in first position is the sibling-bleed check's (dropSiblingBleedSteps) job to
+    // catch — not worth trading the entire French-language step UX for.
+    const body = s.text.replace(/^\S+\s+/, "");
+    return extractEntities(body).every((e) => textMentionsEntity(allow, e));
+  });
 }
 
 /** Cross-task bleed backstop #2, alongside dropForeignEntitySteps above: that check only catches steps
