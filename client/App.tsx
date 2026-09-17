@@ -651,6 +651,17 @@ export function App() {
     setSeenTasks((prev) => { const next = new Set(prev); next.add(openId); saveSeenTasks(next); return next; });
   }, [openId]);
 
+  // Keep a stable reference to the task being studied so background syncs (syncTasks every 5min, or on
+  // tab focus) don't remove it from the `tasks` array and unmount StudyMode mid-session — the root cause
+  // of "study mode randomly exits." Updates studyModeTask when the task is found in tasks (so step
+  // changes propagate), but NEVER clears it when the task is missing (preserving the study session).
+  useEffect(() => {
+    if (!route.startsWith("study/")) return;
+    const taskId = route.split("/")[1];
+    const task = tasks.find(t => t.id === taskId);
+    if (task) setStudyModeTask(task);
+  }, [route, tasks]);
+
   // Legal pages are PUBLIC — reachable logged-out or in, and even before status loads. Rendered before
   // the LangContext.Provider further down mounts, so they get their own — otherwise useLang() inside them
   // silently defaults to French regardless of the account's actual language (or the signed-out visitor's
@@ -696,15 +707,16 @@ export function App() {
 
   if (route.startsWith("study/")) {
     const taskId = route.split("/")[1];
-    const task = tasks.find(t => t.id === taskId);
+    // Use the stable studyModeTask (survives background syncs) if it matches, otherwise look up from tasks.
+    const task = studyModeTask?.id === taskId ? studyModeTask : tasks.find(t => t.id === taskId);
     if (task) {
       return (
         <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
           <NotifyContext.Provider value={notify}>
             <StudyMode
               task={task}
-              onExit={() => navigate("tasks")}
-              onTaskUpdate={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))}
+              onExit={() => { setStudyModeTask(null); navigate("tasks"); }}
+              onTaskUpdate={(u) => { setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x))); setStudyModeTask(u); }}
               userId={status?.user}
               language={status?.language === "en" ? "en" : "fr"}
             />
