@@ -4423,6 +4423,12 @@ export async function writeStepsFromContext(
           `EITHER WAY, this is for a STUDENT: every step/milestone must be something THEY do — never phrase the ` +
           `graded/learning work itself as if it were already done or as Otto's job; that work always stays theirs. ` +
           `Every item must be directly about "${task.title}". ` +
+          `CRITICAL: Do NOT write steps about creating OTTO'S ARTIFACTS:\n` +
+          `  ✗ "Create flashcards for..." (Otto creates these, not the student)\n` +
+          `  ✗ "Create a quiz on..." (Otto creates these, not the student)\n` +
+          `  ✗ "Make a study guide..." (Otto creates this for you, not your step)\n` +
+          `  INSTEAD: If drilling vocabulary matters, say "Drill vocabulary with flashcards" — Otto creates them.\n` +
+          `  INSTEAD: If self-checking matters, say "Take the practice quiz" — Otto creates it.\n\n` +
           `CRITICAL: Do NOT write steps that sound like Otto's internal work:\n` +
           `  ✗ "Re-run the read..." (Otto re-running a fetch)\n` +
           `  ✗ "Re-fetch the document..." (Otto retrying a lookup)\n` +
@@ -4479,10 +4485,19 @@ export async function writeStepsFromContext(
     if (task.taskType && ["learn", "review", "practice", "prepare_assessment"].includes(task.taskType) && hasDomainContamination(task.title, filtered)) {
       filtered = [];
     }
+    // Critical title-match check: if <50% of steps contain keywords from the task title, likely completely wrong task
+    const kws = titleKeywords(task.title);
+    if (kws.length && filtered.length) {
+      const titleMatching = filtered.filter((s) => kws.some((k) => s.text.toLowerCase().includes(k))).length;
+      if (titleMatching / filtered.length < 0.5) {
+        console.warn(`[writeStepsFromContext] title mismatch for "${task.title.slice(0,40)}" — only ${titleMatching}/${filtered.length} steps mention task keywords; using fallback`);
+        filtered = [];
+      }
+    }
     // Additional check: if filtering removed MORE than half the steps, likely severe contamination —
     // reject all of them and use fallback instead (better an honest "continue working" than half-wrong steps)
     const severlyContaminated = beforeSibling > 0 && filtered.length < beforeSibling / 2;
-    if (severlyContaminated) {
+    if (severlyContaminated && filtered.length > 0) {
       console.warn(`[writeStepsFromContext] severe contamination detected for "${task.title.slice(0,40)}" — removed ${beforeSibling - filtered.length}/${beforeSibling} steps; using fallback`);
       filtered = [];
     }
