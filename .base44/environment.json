@@ -1,0 +1,37 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "DEEPSEEK_API_KEY",
+      "description": "DeepSeek API key for AI task generation/execution. Get it from https://platform.deepseek.com — required for AI features to work.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "COMPOSIO_API_KEY",
+      "description": "Composio API key for Gmail/Calendar/Drive integrations. Get it from https://composio.dev — required for integration features to work.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "SESSION_SECRET",
+      "description": "Long random string to sign session cookies (e.g. `openssl rand -hex 32`). Only required in production.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "CREDENTIAL_ENCRYPTION_KEY",
+      "description": "AES-256-GCM key to encrypt the Pronote login token. Without it, Pronote connect refuses to run. Generate with `openssl rand -hex 32`.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "SUPABASE_URL",
+      "description": "Supabase project URL for cloud persistence. Run supabase.sql in the Supabase SQL editor first.",
+      "requiredAtBoot": false
+    },
+    {
+      "name": "SUPABASE_SERVICE_KEY",
+      "description": "Supabase service key (bypasses RLS, server-side only). Required for cloud persistence and login/signup to work.",
+      "requiredAtBoot": false
+    }
+  ]
+}
