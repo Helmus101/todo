@@ -977,6 +977,22 @@ section("dropForeignEntitySteps — cross-task contamination backstop");
   // name wasn't in the task's own title/why/sourceDetail, only (apparently) in a contaminated link.
   const contaminatedLink = { label: "Julien Tafanel thread", url: "https://mail.google.com/x" };
   check("a foreign name present ONLY in links is still dropped (links are not a trusted allowlist)", dropForeignEntitySteps(task, [contaminatedLink], [{ text: "Decide whether to reply to the Julien Tafanel thread" }]).length === 0);
+
+  // Regression: the first word of a step is its sentence-leading imperative VERB, capitalized like a proper
+  // noun in French too — ENTITY_STOPWORDS is English-only, so French steps ("Analyse les schémas…") and even
+  // uncovered English verbs ("Analyze the diagrams…") were being flagged as foreign entities and dropped,
+  // deleting ENTIRE legitimate step lists on French tasks (the app's primary audience).
+  const frTask = { title: "Contrôle de SVT sur la génétique", why: "Réviser la méiose et le brassage génétique", sourceDetail: "" };
+  const frSteps = [
+    { text: "Analyse les schémas de méiose du manuel" },
+    { text: "Ouvre le manuel à la partie génétique" },
+    { text: "Termine la fiche de révision sur le brassage" },
+  ];
+  check("keeps French steps that start with a capitalized French imperative verb", dropForeignEntitySteps(frTask, [], frSteps).length === 3);
+  check("keeps an English step starting with a verb missing from ENTITY_STOPWORDS ('Analyze')", dropForeignEntitySteps({ title: "SVT test on genetics", why: "Revise meiosis", sourceDetail: "" }, [], [{ text: "Analyze the meiosis diagrams in the textbook" }]).length === 1);
+  check("still drops a French step naming a foreign person ('Margaux Lefèvre' absent from task fields)", dropForeignEntitySteps(frTask, [], [{ text: "Contacte Margaux Lefèvre pour la répétition du club de théâtre" }]).length === 0);
+  check("still drops a foreign multi-word name even when it starts the step (later words survive the verb skip)", dropForeignEntitySteps(task, [], [{ text: "Pierre Cotteau de Simencourt — confirm the IEO France finals date" }]).length === 0);
+  check("keeps a step naming a person PRESENT in the task's own why, French phrasing intact", dropForeignEntitySteps({ title: "Répondre à Madame Kosova", why: "Suivi du professeur Kosova sur l'IEO France", sourceDetail: "" }, [], [{ text: "Envoie à Madame Kosova le brouillon du suivi" }]).length === 1);
 }
 
 section("dropProcessComplaintSteps — Otto's own run/tool-state must never leak into the student's steps");
