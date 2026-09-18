@@ -408,7 +408,7 @@ async function processExecuteTask(job: store.Job): Promise<string> {
     if (updated?.steps?.length) {
       const expandable = updated.steps
         .filter((s) => !s.done && !s.synthetic && !s.automatable && !s.substeps?.length && tasks.needsAutoBreakdown(s.text))
-        .slice(0, 2);
+        .slice(0, 5);
       let substepRunsLeft = 2;
       for (const s of expandable) {
         try {

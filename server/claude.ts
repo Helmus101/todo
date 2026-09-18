@@ -115,8 +115,9 @@ function taskKeywords(title: string): string[] {
 
 /** Make the task boundary explicit for every producer, including manual tasks. A model may use a
  * related-looking noun from research instead of the user's actual objective; prefixing only those
- * steps that lack the task's own keywords preserves natural steps while making the boundary impossible
- * to miss in the UI and in later execution prompts. */
+ * steps that are CLEARLY off-topic (no keyword match AND no task-label overlap) preserves natural
+ * steps while catching genuine drift. Deliberately soft: a step the model deliberately rephrased
+ * with related terms should keep its natural wording, not get a mechanical prefix. */
 export function anchorStepsToTask(steps: TaskStep[], title: string, maxCount: number): TaskStep[] {
   const keywords = taskKeywords(title);
   const taskLabel = title.trim().slice(0, 120);
@@ -509,7 +510,8 @@ const MISSION =
   `one item, reply to a one-line message) is not multi-part — it needs a single step, or even none: just the ` +
   `reminder itself. Manufacturing 3-4 steps out of something that's really one action ("go to the library",` +
   ` "find the book", "return it", "confirm it's returned") is the OPPOSITE of this rule — it's clutter, not ` +
-  `structure. Match the plan's size to the task's real complexity, never pad it to look thorough.\n` +
+  `structure. Match the plan's size to the task's real complexity — sometimes that's one step, ` +
+  `sometimes it's many; let the actual work decide, not a fixed number. Never pad it to look thorough.\n` +
   `3. EXECUTE ONLY THE PARTS THAT DON'T TEACH THE STUDENT ANYTHING AND DON'T NEED A HUMAN — logistics, ` +
   `scheduling, finding information, compiling reference material, drafting routine messages. NEVER the part ` +
   `that IS the learning: don't write the essay, don't solve the problem set, don't answer the exam question, ` +
@@ -1671,7 +1673,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   // final round below is the safety net for a straggler.
   // Keep unattended discovery bounded: one focused pass plus a short safety margin is enough. A
   // pathological connector/tool call must never hold task generation open for minutes.
-  const MAX = 4;
+  const MAX = 6;
   let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
   const tok = () => ({ in: tokIn, out: tokOut, cachedIn: tokCached }); // so the fallback sweep is metered too
   let didRead = false;        // has the model actually called ANY read tool yet?
@@ -2392,7 +2394,7 @@ let steps = anchorStepsToTask(sanitizeSteps(out.steps
         doneWhen: s?.doneWhen ? String(s.doneWhen).slice(0, 150) : undefined,
         checkpoint: s?.checkpoint ? String(s.checkpoint).slice(0, 150) : undefined,
   difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
-  })), 6), task.title, 6);
+  })), 15), task.title, 15);
   
   // Apply task-boundary validation
     steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
@@ -4108,7 +4110,7 @@ export async function runTask(
   // after a live report of heavy DeepSeek spend with nothing to show for it — a stuck/pathological task
   // (tool errors, a huge thread, retries) was burning most of its cost in the LAST few rounds, the most
   // expensive ones since the transcript is largest by then, often without ever reaching submit.
-  const MAX = EXECUTION_ENABLED ? 6 : 7;
+  const MAX = EXECUTION_ENABLED ? 8 : 7;
   let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
   // Circuit breaker: round count alone doesn't bound cost — a pathological task (a huge thread, tool errors
   // burning rounds, retries) can cost 10-20× a normal run. Cap the TOTAL tokens a single run may spend; once
@@ -4669,7 +4671,21 @@ export async function runTask(
       // Capped at 6000 so full thread context / doc contents fit without being truncated.
       messages.push({ role: "tool", tool_call_id: (tu as any).id || `tool_${Date.now()}`, content: untrustedToolResult(String(content).slice(0, 6000)) });
     }
-    if (submitted) return withTokens(submitted);
+    if (submitted) {
+      // ── ARTIFACT CREATION ON SUCCESSFUL SUBMIT ──────────────────────────────
+      // decideArtifact was only called on the rescue path (when the model didn't submit), which meant a
+      // successful submit NEVER produced in-app artifacts (notes, flashcards, quizzes). Call it here too
+      // so every completed task gets the same artifact treatment, using the research context the model
+      // already gathered. Best-effort — a decideArtifact failure never blocks the task from returning.
+      try {
+        const artifactResult = await decideArtifact(task, submitted.context || "", submitted.steps || [], profile);
+        if (artifactResult.tokens) { tokIn += artifactResult.tokens.in; tokOut += artifactResult.tokens.out; tokCached += artifactResult.tokens.cachedIn; }
+        if (artifactResult.note) { notesCreated.push(artifactResult.note); logAudit("artifact", fr ? `Fiche créée : « ${artifactResult.note.title} »` : `Note created: "${artifactResult.note.title}"`); }
+        if (artifactResult.flashcards) { flashcardsCreated.push(artifactResult.flashcards); logAudit("artifact", fr ? `Cartes créées : « ${artifactResult.flashcards.title} » (${artifactResult.flashcards.cards.length})` : `Flashcards created: "${artifactResult.flashcards.title}" (${artifactResult.flashcards.cards.length})`); }
+        if (artifactResult.quiz) { quizzesCreated.push(artifactResult.quiz); logAudit("artifact", fr ? `Quiz créé : « ${artifactResult.quiz.title} » (${artifactResult.quiz.questions.length} questions)` : `Quiz created: "${artifactResult.quiz.title}" (${artifactResult.quiz.questions.length} questions)`); }
+      } catch { /* best-effort — never blocks the submitted result from returning */ }
+      return withTokens(submitted);
+    }
   }
   // Rescue path: if the model never called submit, ask it once (without tools) to produce a final JSON result.
   let rescueText = "";
@@ -4920,7 +4936,7 @@ export async function writeStepsFromContext(
             needsPermission: own.needsPermission || matched?.needsPermission || undefined,
           } : {}),
         };
-      }), bigProject ? 8 : 6);
+      }), bigProject ? 20 : 15);
     
     // Apply task-boundary validation filter
     steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
@@ -5112,14 +5128,14 @@ export async function expandStep(
         role: "user",
         content: `TASK: "${task.title}" (${task.why})\nSTEP TO BREAK DOWN: "${step.text}"${linksBlock}\n\n` +
           languageLine(profile) +
-          `Break this ONE step into 1 to 6 small, concrete sub-actions the student can tick off one at a time — ` +
-          `each a SHORT imperative (≤10 words), specific enough to just start doing, no vague categories like ` +
-          `"plan it out". Use as FEW as the step genuinely needs: if it's really just one thing, return ONE ` +
-          `sub-action, don't pad to hit a higher count. Never split a single real action into several ` +
-          `sub-actions that just restate or narrate each other's sub-parts ("identify X", "replace X", ` +
-          `"update X", "test X", "remove old X" for what's really one swap/migration) — merge those into ` +
-          `however few genuinely distinct sub-actions the step actually has. This is for a STUDENT: every ` +
-          `sub-step is something THEY do — never phrase the graded/` +
+      `Break this ONE step into small, concrete sub-actions the student can tick off one at a time — ` +
+      `each a SHORT imperative (≤10 words), specific enough to just start doing, no vague categories like ` +
+      `"plan it out". Use AS MANY or AS FEW sub-actions as the step genuinely needs: it could be one, two, ` +
+      `five, or more — let the actual complexity of the step decide, not a fixed count. Never split a single ` +
+          `real action into several sub-actions that just restate or narrate each other's sub-parts ("identify ` +
+          `X", "replace X", "update X", "test X", "remove old X" for what's really one swap/migration) — merge ` +
+          `those into however few genuinely distinct sub-actions the step actually has. This is for a STUDENT: ` +
+          `every sub-step is something THEY do — never phrase the graded/` +
           `learning work itself (writing, arguing, solving) as if it were already done or as Otto's job. Stay ` +
           `strictly inside the scope of "${step.text}" — do not re-plan the whole task, only this one step.\n\n` +
           `If one of RESOURCES ALREADY ON THIS TASK above is exactly the page a sub-action needs, give that ` +
@@ -5146,7 +5162,6 @@ export async function expandStep(
         return { text, url, automatable };
       })
       .filter((s) => s.text)
-      .slice(0, 6)
       .map(({ text, url, automatable }) => ({ text, done: false, ...(url ? { url } : {}), ...(automatable ? { automatable: true } : {}) }));
   } catch { return []; }
 }
@@ -5292,7 +5307,9 @@ export function reconcileArtifactClaims<T extends { synthesis?: string; did?: st
 
 export function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[], taskTitle?: string, definitionOfDone?: string): RunOutput {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
-  const steps: TaskStep[] = sanitizeSteps(rawSteps
+  // Anchor steps to the task title so a model can't drift to a related-but-different noun from research.
+  // Always applied — not gated on definitionOfDone, which is often undefined for manual/pronote tasks.
+  const steps: TaskStep[] = anchorStepsToTask(rawSteps
     .map((s: any, idx: number) => ({
       text: truncateStepText(String(s?.text || "")), // keep steps to a scannable one-liner, not a paragraph
       automatable: !!s?.automatable,
@@ -5300,27 +5317,26 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
       // would permanently block the step client-side.
       dependsOn: Number.isInteger(s?.dependsOn) && s.dependsOn >= 0 && s.dependsOn < rawSteps.length && s.dependsOn !== idx ? s.dependsOn : undefined,
       ...sanitizeStepExtras(s),
-    })), 6); // fewer, tighter steps — a short list reads better than an exhaustive one
-  
-  // Apply new architecture filters if task info is available
+    })), taskTitle || "", 15); // generous ceiling — let the AI decide the right number of steps for the task
+
+  // Apply contamination filters ALWAYS — not gated on definitionOfDone (often undefined for manual/pronote
+  // tasks), which left cross-contamination unchecked for the majority of real tasks.
   let filteredSteps = steps;
-  if (taskTitle && definitionOfDone) {
-    // Apply task-boundary validation
-    filteredSteps = filterStepsByDefinitionOfDone(filteredSteps, definitionOfDone, taskTitle);
-    
-    // Apply artifact separation
-    const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(filteredSteps);
-    filteredSteps = stepsWithoutArtifacts;
-    
-    // Apply separate task extraction
-    const { filteredSteps: finalSteps } = separateUnrelatedTasks(filteredSteps, taskTitle);
-    filteredSteps = finalSteps;
-    
-    // Apply triviality gate
-    filteredSteps = dropTrivialSteps(filteredSteps);
-    
-    console.log(`${new Date().toISOString()} [ai] finalize: applied new architecture filters to ${steps.length} steps, resulted in ${filteredSteps.length} steps`);
-  }
+  // Apply task-boundary validation (use a fallback definitionOfDone from the title when none is provided)
+  filteredSteps = filterStepsByDefinitionOfDone(filteredSteps, definitionOfDone || taskTitle || "", taskTitle || "");
+
+  // Apply artifact separation
+  const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(filteredSteps);
+  filteredSteps = stepsWithoutArtifacts;
+
+  // Apply separate task extraction
+  const { filteredSteps: finalSteps } = separateUnrelatedTasks(filteredSteps, taskTitle || "");
+  filteredSteps = finalSteps;
+
+  // Apply triviality gate
+  filteredSteps = dropTrivialSteps(filteredSteps);
+
+  console.log(`${new Date().toISOString()} [ai] finalize: ${steps.length} raw steps → ${filteredSteps.length} final (anchored + filtered)`);
   // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.
   const kindLabel = (url: string): string =>
     /docs\.google\.com\/document/i.test(url) ? "the Google Doc Otto created"
@@ -5562,7 +5578,7 @@ export interface ChatResult {
 // comment elsewhere) eat the whole budget while synthesizing several tool results into one answer, it can
 // come back GENUINELY EMPTY — which the caller then reports to the user as a hard 502 ("Otto couldn't
 // reply just now"), even though nothing actually crashed. Raised to give a multi-lookup turn real headroom.
-const CHAT_MAX_ROUNDS = 5;
+const CHAT_MAX_ROUNDS = 7;
 const CHAT_MAX_ARTIFACTS = 2;
 const CHAT_TOKEN_CEILING = 40_000;
 
@@ -5759,6 +5775,13 @@ export async function chatAboutTask(
     `in a way that reads as being watched. Over weeks and months this compounds: you're not just answering ` +
     `today's question, you're helping them get better at reasoning through problems and judging their own ` +
     `work so they need you less over time — treat that as the actual long-run goal, not a slogan.\n\n` +
+    `11. HANDLE OFF-TOPIC QUESTIONS NATURALLY. If the student asks something completely unrelated to this ` +
+    `task (e.g. "who is Annie?", "what time is it in Tokyo?"), DON'T just reply with a generic "I'm here — ` +
+    `what part of this is giving you trouble?" — that reads like a broken bot. Instead: (a) if it's a quick ` +
+    `factual question you can answer, answer it briefly and then gently steer back ("Anyway — back to this ` +
+    `task. Where were we?"); (b) if you genuinely don't know, say so honestly ("I'm not sure who Annie is — ` +
+    `is that someone from your class?"); (c) if it's a personal question, be warm but honest about your role. ` +
+    `Never fabricate. The student should feel heard, not redirected by a loop.\n\n` +
 
     `THE LINE YOU NEVER CROSS — this is what makes Otto different from asking a chatbot to do it:\n` +
     `Never produce the graded work itself. No essay/dissertation paragraphs (not even "just the intro"), no ` +
