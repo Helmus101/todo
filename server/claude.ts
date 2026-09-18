@@ -4946,86 +4946,37 @@ async function decideArtifact(
     const client = deepseekClient();
     const tt = task.taskType;
     const taskText = `${task.title} ${task.why} ${task.sourceSubject || ""} ${task.sourceDetail || ""} ${task.goal || ""}`.toLowerCase();
+    // Still used by the fallback further down (isStudyTask) to decide whether a substantive-context safety
+    // net applies — NOT to force a directive any more (see below: the model now judges freely).
     const isAcademic = !!task.sourceSubject || /\b(study|revise|revision|learn|understand|practice|quiz|test|exam|contr[oô]le|devoir|homework|exercise|essay|introduction|commentaire|dissertation|literature|lang|fran[cç]ais|math|physics|chem|history|geography|economics|business|vocab|vocabulary|grammar|figures? de style)\b/i.test(taskText);
-    const asksQuiz = /\b(quiz|self-?check|check understanding|diagnos|practice|exam|test|contr[oô]le|assessment|questions?|drill problems?)\b/i.test(taskText);
-    const asksFlashcards = /\b(flashcards?|cards?|deck|vocab|vocabulary|terms?|definitions?|formulas?|dates?|authors?|movements?|figures? de style|recall|memor(?:ize|ise))\b/i.test(taskText);
-    const asksNote = /\b(note|fiche|guide|brief|outline|plan|checklist|introduction|commentaire|dissertation|essay|write|draft|message|email|reply|structure|packing list|itinerary|budget)\b/i.test(taskText);
     const stepsText = steps.length ? steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n") : "(none)";
     const taskTypeHint = tt ? `TASK TYPE: ${tt}\n` : "";
     const goalHint = task.goal ? `GOAL / DEFINITION OF DONE: ${task.goal}\n` : "";
 
-    // --- Determine exactly what to build based on task type, upfront ---
-    // These are directives, not suggestions — the model must follow them.
-    let directive: string;
-    let wantFlashcards = false;
-    let wantQuiz = false;
-    let wantNote = false;
-    if (tt === "learn_understand") {
-      // Learn phase: flashcards to encode concepts + quiz to verify they actually stuck.
-      directive = `Build BOTH:\n1. FLASHCARDS — one card per key term/concept/formula (8-15 cards). Back must be a full explanation, not a one-word answer.\n2. QUIZ — 4-6 application questions that test WHETHER the student can use these concepts, not just recall their labels. Each "why" must explain why the correct answer is right AND why each wrong option is wrong.`;
-      wantFlashcards = true; wantQuiz = true;
-    } else if (tt === "review") {
-      // Review phase: quiz to surface gaps first, then flashcards as a drill tool.
-      directive = `Build BOTH:\n1. QUIZ — 4-6 diagnostic questions. Prioritise the most commonly confused or forgotten aspects of this topic. Detailed "why" per question.\n2. FLASHCARDS — drill set for the terms/facts the quiz covers, so the student can fill the gaps the quiz reveals.`;
-      wantFlashcards = true; wantQuiz = true;
-    } else if (tt === "practice" || tt === "prepare_assessment") {
-      // Pure practice/exam prep: diagnostic quiz only.
-      directive = `Build a QUIZ — 5-8 exam-style questions matching the rigour of a real contrôle/IB paper/bac for this subject and level. Detailed "why" per question explaining the reasoning, not just confirming the answer.`;
-      wantQuiz = true;
-    } else if (tt === "homework_problem_set") {
-      // Homework: the exercises ARE the practice — a reference note beats a quiz.
-      directive = `Build a NOTE — a concise method/formula reference the student can keep open while working through the exercises. Use markdown with bold key terms, numbered method steps, and a worked mini-example if relevant. Do NOT build a quiz.`;
-      wantNote = true;
-    } else if (tt === "write" || tt === "research") {
-      // Writing/research: an outline or checklist note is the artifact.
-      directive = `Build a NOTE — a structured outline or checklist that scaffolds the writing/research. Include: argument structure (claim → evidence → analysis), key sources to consult, and common pitfalls. Use markdown headers and bullets.`;
-      wantNote = true;
-    } else if (tt === "project" || tt === "create") {
-      // Project: milestone checklist / creative brief.
-      directive = `Build a NOTE — a milestone checklist or creative brief. Break the project into concrete deliverables with clear "done when" criteria. Use markdown headers and checkboxes (- [ ]).`;
-      wantNote = true;
-    } else if (tt === "administrative") {
-      // Administrative: create a brief or checklist if there's substantive work involved
-      // (e.g., "compile a revision doc" should produce the actual doc, not just steps)
-      directive = `If this task involves CREATING a document/brief (compiling, collecting, drafting), build a NOTE with the compiled content. Otherwise output {"none": true}.`;
-      wantNote = true; // try to create, but accept {"none": true} if not applicable
-    } else if (tt === "analyze" || tt === "problem_solve") {
-      directive = asksQuiz
-        ? `Build a QUIZ — 4-6 application questions that check whether the student can use the method or concepts. Detailed "why" per question.`
-        : `Build a NOTE — a concise method/reference guide with the key concepts, common traps, and a small parallel example if relevant.`;
-      wantQuiz = asksQuiz;
-      wantNote = !asksQuiz;
-    } else if (isAcademic) {
-      // Classifier backstop: generated/manual tasks are sometimes missing a precise taskType. Use the
-      // actual task wording so academic tasks still get a concrete artifact instead of silently returning
-      // {"none": true}. Multiple artifacts are fine when the wording calls for both drill and diagnosis.
-      wantFlashcards = asksFlashcards || /\b(revise|revision|learn|study)\b/i.test(taskText);
-      wantQuiz = asksQuiz || /\b(prepare|practice)\b/i.test(taskText);
-      wantNote = asksNote || (!wantFlashcards && !wantQuiz);
-      const parts = [
-        wantNote ? "1. NOTE — a concise method/outline/reference guide that helps the student do the work themselves." : "",
-        wantFlashcards ? "2. FLASHCARDS — 8-15 cards for the key terms, definitions, formulas, dates, authors, movements, or recall facts." : "",
-        wantQuiz ? "3. QUIZ — 4-6 diagnostic/application questions with plausible options and detailed feedback." : "",
-      ].filter(Boolean);
-      directive = `Build the useful in-app artifact(s) implied by the task wording:\n${parts.join("\n")}`;
-    } else {
-      // Other unknown non-academic types — no artifact unless the task explicitly asked for one.
-      if (asksNote || asksFlashcards || asksQuiz) {
-        wantNote = asksNote;
-        wantFlashcards = asksFlashcards;
-        wantQuiz = asksQuiz;
-        directive = `Build the explicitly requested artifact(s):${wantNote ? "\n- NOTE for the requested brief/outline/checklist." : ""}${wantFlashcards ? "\n- FLASHCARDS for the requested recall deck." : ""}${wantQuiz ? "\n- QUIZ for the requested self-check/practice questions." : ""}`;
-      } else {
-        directive = `Output {"none": true} — this task has no content worth drilling or summarising in-app.`;
-      }
-    }
-
-    // Build the JSON schema line dynamically based on what we actually want
-    const schemaFields: string[] = ['"none": false'];
-    if (wantNote) schemaFields.push('"note": {"title":"...","body":"..."} | null');
-    if (wantFlashcards) schemaFields.push('"flashcards": {"title":"...","cards":[{"front":"...","back":"..."}]} | null');
-    if (wantQuiz) schemaFields.push('"quiz": {"title":"...","questions":[{"q":"...","options":["...","...","...","..."],"correct":0,"why":"..."}]} | null');
-    const schemaLine = `Return ONLY valid JSON — no commentary, no markdown fences:\n{${schemaFields.join(", ")}}`;
+    // One free judgment call, not a rigid per-taskType directive: describe the three artifact kinds Otto can
+    // build in-app and let the model decide which (if any) genuinely help THIS specific task — including
+    // "none" as a fully legitimate answer. Light task-type hints stay in the prompt as GUIDANCE (taskTypeHint/
+    // goalHint above), not as a forced branch — a review task will still usually lean quiz+flashcards because
+    // that's genuinely what reviewing calls for, but the model isn't boxed into it if the actual content
+    // doesn't fit. Multiple artifacts are fine when the task genuinely calls for more than one; most tasks
+    // need at most one, plenty need none at all — a logistics/admin task with nothing to compile, or a task
+    // whose own steps ARE the work, should freely come back {"none": true}.
+    const directive =
+      `Would a QUIZ, a FLASHCARD DECK, a NOTE (brief/outline/checklist/reference), or NONE of these genuinely ` +
+      `help the student with this task? Choose only what's truly useful:\n` +
+      `- QUIZ: 4-8 diagnostic/application questions, plausible wrong options, a "why" explaining each — for ` +
+      `checking real understanding, not just recall. Good for revision/exam-prep/self-checks.\n` +
+      `- FLASHCARDS: 8-15 front→back cards — for discrete facts/terms/vocab/formulas/dates genuinely worth ` +
+      `drilling. Good for learning/memorizing new material.\n` +
+      `- NOTE: a concise brief/outline/checklist/method-reference — for scaffolding a bigger piece of work ` +
+      `(an essay, a project, a compiled list/plan) or explaining HOW to do something. NOT a restatement of the ` +
+      `steps list in prose.\n` +
+      `Skip anything that would just restate the task's own steps in different words, or that has nothing ` +
+      `substantive to build from (thin/empty research context is a strong signal to skip). If NOTHING here is ` +
+      `genuinely worth creating, output {"none": true} — that is a normal, good outcome for most logistics/` +
+      `admin/single-action tasks.`;
+    const schemaLine = `Return ONLY valid JSON — no commentary, no markdown fences:\n` +
+      `{"none": false, "note": {"title":"...","body":"..."} | null, "flashcards": {"title":"...","cards":[{"front":"...","back":"..."}]} | null, "quiz": {"title":"...","questions":[{"q":"...","options":["...","...","...","..."],"correct":0,"why":"..."}]} | null}`;
 
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
@@ -5061,11 +5012,14 @@ async function decideArtifact(
     if (out.flashcards) { const r = makeDeck(out.flashcards); if ("deck" in r) flashcards = r.deck; }
     if (out.quiz) { const r = makeQuiz(out.quiz); if ("quiz" in r) quiz = r.quiz; }
 
-    // Fallback: if a study task clearly called for an artifact and the model produced nothing, create a
-    // conservative note ONLY when there is substantive researched context to base it on. Do not fabricate a
-    // generic quiz/deck; a bad artifact is worse than none.
+    // Fallback: if this is a study task and the model judged "none" but there's real researched content to
+    // work with, don't let a genuinely useful study task come back completely empty-handed — create a
+    // conservative note ONLY when there is substantive context to base it on. Do not fabricate a generic
+    // quiz/deck; a bad artifact is worse than none. (The model was already freely offered all three kinds
+    // above and chose none — this is a safety net for the case where declining looks like an oversight
+    // rather than a genuine judgment call, not a way to override a deliberate "none".)
     const isStudyTask = ["learn_understand", "review", "practice", "prepare_assessment", "analyze", "problem_solve"].includes(tt || "") || isAcademic;
-    if (isStudyTask && (wantNote || wantFlashcards || wantQuiz) && !note && !flashcards && !quiz) {
+    if (isStudyTask && !note && !flashcards && !quiz) {
       const contextLooksLikeSearchLog = /\b(searched|performed searches|ran queries|came back empty|returned no results|without success|re-?run)\b/i.test(context);
       const substantiveContext = context.trim().length >= 180 && !contextLooksLikeSearchLog;
       if (substantiveContext) {
