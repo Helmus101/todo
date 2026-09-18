@@ -24,6 +24,12 @@
 - `curl -s localhost:5273/api/status` → JSON with `loggedIn: false, cloud: false, aiReady: false` (values reflect which credentials are set)
 - Landing page renders French marketing copy + login form at `localhost:5273/`
 
+## Task execution architecture (non-blocking)
+
+- **Kick loop** (`/api/jobs/kick`): fires `drain()` in the background and returns immediately — the client's 4s poll loop is never blocked by a long AI call. `claimJob` is atomic, so the next kick finds the job already claimed and returns instantly.
+- **`enqueueAndDrain`** (jobs.ts): accepts `drainInline` param. Task creation and `runViaJob` pass `false` → the HTTP response returns immediately with the task in "queued" status, and the kick loop processes the job within seconds. No timeout/limit on the work itself.
+- **Chat** (`/api/tasks/:id/chat`): when the AI fails but `chatAboutTask` provides a fallback reply, the route returns 200 with the reply and saves artifacts — chat always returns a response, never a hard 500.
+
 ## Local dev
 
 ```bash
