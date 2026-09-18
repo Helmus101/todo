@@ -202,6 +202,8 @@ function isArtifactCreationStep(stepText: string): boolean {
   const artifactPatterns = [
     /\b(create|make|build|generate)\s+(flashcards?|quiz|study\s+guide|reference|outline|checklist|summary|evidence\s+bank)\b/i,
     /\b(create|make|build|generate)\s+(a\s+)?(note|brief|fiche)\b/i,
+    // French — the app defaults to French, so English-only patterns miss "Créer des flashcards", "Faire une fiche", etc.
+    /\b(cr[ée]er?|faire|construire|g[ée]n[ée]rer|pr[ée]parer|r[ée]diger|élaborer)\s+(?:une?\s+|des\s+|d['e]\s*)?(flashcards?|quiz|guide\s+d['e]tude|r[ée]f[ée]rence|plan|checklist|r[ée]sum[ée]|banque\s+de\s+preuves|note|fiche|brief)\b/i,
   ];
   return artifactPatterns.some(pattern => pattern.test(stepText));
 }
@@ -231,8 +233,8 @@ export function separateArtifactsFromSteps(
   for (const step of steps) {
     const stepText = step.text.toLowerCase();
     
-    // Check if this is about creating an artifact
-    if (/\b(create|make|build|draft|write)\s+(outline|summary|reference|checklist|evidence\s+bank|research\s+notes)\b/i.test(stepText)) {
+    // Check if this is about creating an artifact (bilingual — app defaults to French)
+    if (/\b(create|make|build|draft|write|cr[ée]er?|faire|construire|r[ée]diger|élaborer)\s+(?:une?\s+|des\s+|d['e]\s*)?(outline|summary|reference|checklist|evidence\s+bank|research\s+notes|plan|r[ée]sum[ée]|r[ée]f[ée]rence|banque\s+de\s+preuves|notes\s+de\s+recherche)\b/i.test(stepText)) {
       // Extract artifact type
       let type: TaskArtifact["type"] = "other";
       if (/outline/i.test(stepText)) type = "outline";
@@ -4070,10 +4072,10 @@ export async function runTask(
   // left artifact creation as a step (incl. the "Approve creating a Google Doc" dodge) instead of doing it.
   // Matches build verbs + an artifact noun; deliberately excludes update/edit/revise (editing an existing
   // doc genuinely needs approval).
-  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?|flashcards?|quiz(?:zes)?|study\s+sets?|vocab(?:ulary)?\s+sets?|revision\s+sets?)\b/i;
+  const CREATE_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together|cr[ée]\w*|construi\w*|g[ée]n[ée]\w*|r[ée]di\w*|élabor\w*|fai\w*|compil\w*)\b[^.]*\b(google\s+)?(docs?|documents?|sheets?|spreadsheets?|slides?|decks?|presentations?|trackers?|briefs?|notes?|checklists?|flashcards?|quiz(?:zes)?|study\s+sets?|vocab(?:ulary)?\s+sets?|revision\s+sets?|fiches?|cartes?)\b/i;
   // In-app artifact step: matches steps that describe creating flashcards/quiz/note/brief/study-set
   // that Otto owns in Phase 3 — these should be stripped AFTER Phase 3 runs, not bounced back.
-  const IN_APP_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together|mak\w*|prepar\w*)\b[^.]*\b(flashcards?|quiz(?:zes)?|study\s+sets?|vocab(?:ulary)?\s+sets?|revision\s+(cards?|sets?|sheet)|fiches?|brief)\b/i;
+  const IN_APP_ARTIFACT_STEP = /\b(creat\w*|build\w*|compil\w*|generat\w*|assembl\w*|put together|mak\w*|prepar\w*|cr[ée]\w*|construi\w*|g[ée]n[ée]\w*|r[ée]di\w*|élabor\w*|fai\w*)\b[^.]*\b(flashcards?|quiz(?:zes)?|study\s+sets?|vocab(?:ulary)?\s+sets?|revision\s+(cards?|sets?|sheet)|fiches?|brief|cartes?)\b/i;
   // "context" describing the REQUEST or the SEARCH PROCESS instead of what was actually found — e.g. "User
   // requested information about Gabrielle; performed searches across multiple Google services" or "Assistant
   // retrieved calendar event for essay writing, read emails about X, and searched for Y on Drive and Gmail
