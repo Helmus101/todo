@@ -1165,7 +1165,7 @@ app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (
     const profile = req.session.profile || emptyProfile();
     
     // Regenerate steps using the new architecture
-    const newSteps = await writeStepsFromContext(
+    const stepsResult = await writeStepsFromContext(
       {
         title: t.title,
         why: t.why,
@@ -1190,7 +1190,7 @@ app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (
     // Update the task with new steps
     const taskIndex = (req.session.tasks || []).findIndex((x) => x.id === t.id);
     if (taskIndex >= 0) {
-      req.session.tasks![taskIndex].steps = newSteps;
+      req.session.tasks![taskIndex].steps = stepsResult.steps;
       req.session.tasks![taskIndex].updatedAt = new Date().toISOString();
       await commit(req);
     }

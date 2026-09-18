@@ -1405,8 +1405,13 @@ export async function applyAdaptiveRegeneration(task: WebTask, profile: Profile)
     );
 
     // Replace the remaining steps with adaptively regenerated ones
-    task.steps = [...task.steps.slice(0, firstFailedIdx + 1), ...regenerated];
+    task.steps = [...task.steps.slice(0, firstFailedIdx + 1), ...regenerated.steps];
     task.updatedAt = new Date().toISOString();
+    
+    // Log any artifacts identified during regeneration
+    if (regenerated.artifacts && regenerated.artifacts.length > 0) {
+      console.log(`[adaptiveSteps] Regeneration identified ${regenerated.artifacts.length} artifacts: ${regenerated.artifacts.map(a => a.title).join(", ")}`);
+    }
   } catch {
     // best-effort — if regeneration fails, keep original steps
   }

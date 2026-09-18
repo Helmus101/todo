@@ -2322,14 +2322,14 @@ export async function regenerateStepsWithScaffolding(
   failurePatterns: Record<string, number>,
   currentSteps: TaskStep[],
   profile?: Profile,
-): Promise<TaskStep[]> {
+): Promise<{ steps: TaskStep[]; artifacts: TaskArtifact[] }> {
   try {
     // Build a hint about what failed so the model can add scaffolding
     const failedConcepts = Object.entries(failurePatterns)
       .filter(([_, count]) => count >= 2)
       .map(([concept]) => concept);
 
-    if (!failedConcepts.length) return currentSteps; // no patterns, no need to replan
+    if (!failedConcepts.length) return { steps: currentSteps, artifacts: [] }; // no patterns, no need to replan
 
     const client = deepseekClient();
     const failureHint = failedConcepts.length
@@ -2398,7 +2398,7 @@ export async function regenerateStepsWithScaffolding(
     }));
 
     const out = firstJson<TaskPlanningOutput>(String(res.choices?.[0]?.message?.content || ""));
-    if (!out?.steps?.length) return currentSteps;
+    if (!out?.steps?.length) return { steps: currentSteps, artifacts: [] };
 
     let steps = sanitizeSteps(out.steps
       .map((s: any) => ({
@@ -2422,10 +2422,10 @@ export async function regenerateStepsWithScaffolding(
 
     console.log(`${new Date().toISOString()} [ai] regenerateStepsWithScaffolding: applied new architecture, ${out.steps.length} raw steps → ${steps.length} final steps`);
 
-    return steps;
+    return { steps, artifacts: out.artifacts || [] };
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] regenerateStepsWithScaffolding error: ${e?.message || e}`);
-    return currentSteps; // on error, keep original steps
+    return { steps: currentSteps, artifacts: [] }; // on error, keep original steps
   }
 }
 
@@ -4472,11 +4472,23 @@ export async function runTask(
               draft.did = (draft.did || []).filter((d) =>
                 !CLAIM_VERBS.test(d) || /research|gather|found|identif/i.test(d) ||
                 wroteAny || draft.links.length > 0 || draft.sendables.length > 0);
-              // ── PHASE 2 — PREPARE HELPFUL ARTIFACTS ───────────────────────────────
-              // Research is done. Before writing the user's remaining steps, prepare any useful note/deck/
-              // quiz so the step writer knows what already exists and can say "use/take/review it" instead
-              // of leaving "create a deck/quiz/note" as a fake student action.
-              const artifactResult = await decideArtifact(task, draft.context, [], profile);
+              
+              // ── PHASE 2 — BROAD USER STEPS, from the end goal ──────────────────────
+              // Now decide what the user still has to do to reach the finished state. This runs before
+              // artifact creation so the planner can identify what artifacts Otto should create.
+              const stepsResult = await writeStepsFromContext(task, draft.context, draft.links, [], siblingTasks || [], draft.did || [], profile, undefined);
+              draft.steps = (stepsMatchTitle(task.title, stepsResult.steps) && !isFolderHousekeepingDrift(task.title, stepsResult.steps))
+                ? stepsResult.steps.filter((s) => !IN_APP_ARTIFACT_STEP.test(s.text))
+                : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false } as any];
+
+              // Log the artifacts that were identified as needed during planning
+              if (stepsResult.artifacts && stepsResult.artifacts.length > 0) {
+                console.log(`${new Date().toISOString()} [ai] Plan identified ${stepsResult.artifacts.length} artifacts to create: ${stepsResult.artifacts.map(a => a.title).join(", ")}`);
+              }
+
+              // ── PHASE 3 — PREPARE HELPFUL ARTIFACTS ───────────────────────────────
+              // Now create the artifacts that were identified as needed in the planning phase.
+              const artifactResult = await decideArtifact(task, draft.context, draft.steps, profile, stepsResult.artifacts);
               if (artifactResult.tokens) { tokIn += artifactResult.tokens.in; tokOut += artifactResult.tokens.out; tokCached += artifactResult.tokens.cachedIn; }
               const allow = `${task.title} ${task.why} ${task.sourceDetail || ""}`;
               const titleOk = (title: string) => extractEntities(title).every((e) => textMentionsEntity(allow, e)) && !bleedsToSibling(title, task, siblingTasks || []);
@@ -4496,14 +4508,6 @@ export async function runTask(
                 preparedDid.push(`Prepared quiz: ${artifactResult.quiz.title}`);
                 logAudit("artifact", fr ? `Quiz créé : « ${artifactResult.quiz.title} » (${artifactResult.quiz.questions.length} questions)` : `Quiz created: "${artifactResult.quiz.title}" (${artifactResult.quiz.questions.length} questions)`);
               }
-
-              // ── PHASE 3 — BROAD USER STEPS, from the end goal ──────────────────────
-              // Now decide what the user still has to do to reach the finished state. This runs after
-              // preparation specifically to avoid cross-contaminating steps with Otto's own artifact work.
-              const steps2 = await writeStepsFromContext(task, draft.context, draft.links, [], siblingTasks || [], preparedDid, profile, undefined);
-              draft.steps = (stepsMatchTitle(task.title, steps2) && !isFolderHousekeepingDrift(task.title, steps2))
-                ? steps2.filter((s) => !IN_APP_ARTIFACT_STEP.test(s.text))
-                : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false } as any];
               // Cross-task bleed-in backstop, unconditional (see dropForeignEntitySteps/dropSiblingBleedSteps'
               // own comments) — phase 3's own output still gets the same scrutiny as any other step source.
               const bleedReject = checkStepContamination(draft);
@@ -4809,9 +4813,9 @@ export async function writeStepsFromContext(
   did: string[] = [],
   profile?: Profile,
   modelJudgedBigProject?: boolean,
-): Promise<TaskStep[]> {
+): Promise<{ steps: TaskStep[]; artifacts: TaskArtifact[] }> {
   const keywordHit = modelJudgedBigProject === true || isBigIbProject(profile, task.title, task.why);
-  if (!context.trim() && !keywordHit) return fallbackSteps;
+  if (!context.trim() && !keywordHit) return { steps: fallbackSteps, artifacts: [] };
   try {
     const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY FOUND/CREATED:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
@@ -4911,7 +4915,7 @@ export async function writeStepsFromContext(
     
     if (!out) {
       console.log(`${new Date().toISOString()} [ai] writeStepsFromContext: failed to parse output, using fallback`);
-      return fallbackSteps;
+      return { steps: fallbackSteps, artifacts: [] };
     }
 
     const bigProject = typeof out.isBigProject === "boolean" ? out.isBigProject : keywordHit;
@@ -5013,10 +5017,10 @@ export async function writeStepsFromContext(
       filtered = [];
     }
 
-    return filtered.length ? filtered : (noInternalOttoSteps.length && !severlyContaminated ? noInternalOttoSteps : fallbackSteps);
+    return { steps: filtered.length ? filtered : (noInternalOttoSteps.length && !severlyContaminated ? noInternalOttoSteps : fallbackSteps), artifacts: out.artifacts || [] };
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] writeStepsFromContext error: ${e?.message || e}`);
-    return fallbackSteps;
+    return { steps: fallbackSteps, artifacts: [] };
   }
 }
 
@@ -5031,6 +5035,7 @@ async function decideArtifact(
   context: string,
   steps: { text: string }[],
   profile?: Profile,
+  plannedArtifacts?: TaskArtifact[],
 ): Promise<{ note?: TaskNote; flashcards?: TaskFlashcards; quiz?: TaskQuiz; tokens?: { in: number; out: number; cachedIn: number } }> {
   try {
     const client = deepseekClient();
@@ -5051,6 +5056,9 @@ async function decideArtifact(
     // doesn't fit. Multiple artifacts are fine when the task genuinely calls for more than one; most tasks
     // need at most one, plenty need none at all — a logistics/admin task with nothing to compile, or a task
     // whose own steps ARE the work, should freely come back {"none": true}.
+    const plannedArtifactsHint = plannedArtifacts && plannedArtifacts.length > 0
+      ? `\nPLANNED ARTIFACTS (create these if genuinely useful):\n${plannedArtifacts.map(a => `- ${a.type}: ${a.title} (${a.description || ""})`).join("\n")}`
+      : "";
     const directive =
       `Would a QUIZ, a FLASHCARD DECK, a NOTE (brief/outline/checklist/reference), or NONE of these genuinely ` +
       `help the student with this task? Choose only what's truly useful:\n` +
@@ -5064,7 +5072,7 @@ async function decideArtifact(
       `Skip anything that would just restate the task's own steps in different words, or that has nothing ` +
       `substantive to build from (thin/empty research context is a strong signal to skip). If NOTHING here is ` +
       `genuinely worth creating, output {"none": true} — that is a normal, good outcome for most logistics/` +
-      `admin/single-action tasks.`;
+      `admin/single-action tasks.\n${plannedArtifactsHint}`;
     const schemaLine = `Return ONLY valid JSON — no commentary, no markdown fences:\n` +
       `{"none": false, "note": {"title":"...","body":"..."} | null, "flashcards": {"title":"...","cards":[{"front":"...","back":"..."}]} | null, "quiz": {"title":"...","questions":[{"q":"...","options":["...","...","...","..."],"correct":0,"why":"..."}]} | null}`;
 
