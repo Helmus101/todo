@@ -65,11 +65,25 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
       // other's write lands). Keeps this tab in sync without waiting for the NEXT /api/status poll.
       const freshToken = r.headers.get("x-csrf-token");
       if (freshToken) csrfToken = freshToken;
-      // A genuine CSRF mismatch (403, and the header above just handed us the CORRECT token) is retried
-      // ONCE with that fresh token instead of surfacing a hard error — reported live as routine background
-      // calls (pronote/touch, /api/metrics) failing outright on the exact race described above. Bounded to
-      // one retry and never re-entered (isCsrfRetry) so a genuinely stale/logged-out session still fails
-      // fast rather than looping.
+      // A CSRF mismatch can still arrive without a usable replacement header when the request lands on a
+      // freshly-created serverless instance. Re-read /api/status once to obtain the session's authoritative
+      // token, then replay only the original request. This is deliberately limited to the server's CSRF error
+      // (not AI-paused/budget 403s), so real product gates are never hidden or retried indefinitely.
+      if (r.status === 403 && !isCsrfRetry) {
+        const errorText = String((await r.clone().json().catch(() => ({})))?.error || "");
+        if (/session expired or invalid/i.test(errorText)) {
+          try {
+            const statusResponse = await fetch("/api/status");
+            const status = await statusResponse.json().catch(() => ({}));
+            if (status?.csrfToken && status.csrfToken !== (init?.headers as any)?.["x-csrf-token"]) {
+              const recoveredToken = String(status.csrfToken);
+              csrfToken = recoveredToken;
+              return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": recoveredToken } }, retries, true);
+            }
+          } catch { /* preserve the original 403 for the caller */ }
+        }
+      }
+      // The normal path remains a one-shot retry when the server can echo the current token directly.
       if (r.status === 403 && !isCsrfRetry && freshToken && freshToken !== (init?.headers as any)?.["x-csrf-token"]) {
         return req(url, { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": freshToken } }, retries, true);
       }
