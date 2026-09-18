@@ -342,7 +342,19 @@ async function requireAuthAsync(req: express.Request, res: express.Response, nex
       // client's header actually matches that, this instance's copy was simply behind, not the client.
       const fresh = await peekSessionCsrfToken(req.sessionID);
       if (fresh && fresh === header) { req.session.csrfToken = fresh; }
-      else { res.setHeader(CSRF_HEADER, req.session.csrfToken || ""); res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." }); return; }
+      else {
+        // Echo the TRUE current token (from the bypass-cache Supabase read above), not this instance's own
+        // stale `req.session.csrfToken` — the client's own retry-once logic (client/api.ts's `req()`) reads
+        // exactly this header and retries ONE time with whatever it finds there. Echoing the stale value
+        // guaranteed that single retry would just resend a token already known to be wrong, so it always
+        // failed too — the request only ever recovered by chance, if it happened to land on a DIFFERENT,
+        // already-caught-up instance on some LATER unrelated call. Echoing `fresh` here (when we actually
+        // have it) lets the very next retry succeed immediately instead of depending on luck. Reported live
+        // as a persistent, never-resolving 403 on routine background calls (pronote/touch, /api/metrics).
+        res.setHeader(CSRF_HEADER, fresh || req.session.csrfToken || "");
+        res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." });
+        return;
+      }
     }
   }
   // Echo the CURRENT (possibly just-reconciled) token back on every authenticated response — lets the
