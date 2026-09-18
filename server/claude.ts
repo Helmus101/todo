@@ -2396,17 +2396,26 @@ let steps = anchorStepsToTask(sanitizeSteps(out.steps
   difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
   })), 15), task.title, 15);
   
-  // Apply task-boundary validation
-    steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
-    
+  // filterStepsByDefinitionOfDone NOT applied here — see its own doc comment: isResearchOperation() blindly
+  // rejects ANY step starting with "Research"/"Find" REGARDLESS of context, directly conflicting with the
+  // established, more careful design below (dropTrivialSteps + the automatable-flip in finalize/DOABLE_VERBS):
+  // "Research X and compile a list" is a LEGITIMATE step Otto does itself once flipped automatable — only a
+  // step actually left to the student that's nothing but a bare lookup should ever be dropped. Verified live:
+  // this crashed tests/run.mjs by zeroing out legitimate research-and-compile steps. Its other two checks
+  // (isInternalOttoWork/isArtifactCreationStep) duplicate OTTO_INTERNAL_STEP/IN_APP_ARTIFACT_STEP, which
+  // already run elsewhere in this same pipeline — nothing lost by skipping this layer entirely.
+
     // Apply artifact separation
     const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(steps);
     steps = stepsWithoutArtifacts;
-    
-    // Apply separate task extraction
-    const { filteredSteps: finalSteps } = separateUnrelatedTasks(steps, task.title);
-    steps = finalSteps;
-    
+
+    // separateUnrelatedTasks is deliberately NOT applied here — see its own comment: the "separate tasks" it
+    // extracts are only ever logged, never actually created anywhere (a half-finished feature), while the
+    // steps they're pulled from are gone for good. Its keyword-overlap heuristic is also too aggressive on
+    // ordinary steps with few words in common with the title ("Pick a date" on a trip/event task, verified
+    // live: it crashed tests/run.mjs by zeroing out a task's entire step list). Pure regression with no
+    // compensating benefit until separateTasks is actually wired up to create those tasks for real.
+
     // Apply triviality gate
     steps = dropTrivialSteps(steps);
     
@@ -4938,17 +4947,21 @@ export async function writeStepsFromContext(
         };
       }), bigProject ? 20 : 15);
     
-    // Apply task-boundary validation filter
-    steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
-    
+    // filterStepsByDefinitionOfDone NOT applied here — see the identical comment at its other call site
+    // (finalize(), a few hundred lines up) for why: isResearchOperation() blindly rejects any step starting
+    // with "Research"/"Find" regardless of context, conflicting with the established automatable-flip design
+    // below (a research-and-compile step Otto does itself is legitimate). Verified live: crashed tests by
+    // zeroing out valid steps.
+
     // Apply artifact separation
     const { filteredSteps: stepsWithoutArtifacts, artifacts } = separateArtifactsFromSteps(steps);
     steps = stepsWithoutArtifacts;
     
-    // Apply separate task extraction
-    const { filteredSteps: finalSteps, separateTasks } = separateUnrelatedTasks(steps, task.title);
-    steps = finalSteps;
-    
+    // separateUnrelatedTasks NOT applied here — see the identical comment at its other call site above
+    // (finalize()) for why: a half-finished feature that only logs what it extracts, never creates it, while
+    // permanently deleting the steps it pulled out based on a keyword-overlap heuristic that misfires on
+    // ordinary on-topic steps.
+
     const gated = bigProject ? steps : dropTrivialSteps(steps);
     const cleaned = dropProcessComplaintSteps(gated);
     // Also filter out any steps that describe Otto's internal retry/re-run logic, or that talk ABOUT the
@@ -4981,10 +4994,7 @@ export async function writeStepsFromContext(
       console.warn(`[writeStepsFromContext] severe contamination detected for "${task.title.slice(0,40)}" — removed ${beforeSibling - filtered.length}/${beforeSibling} steps; using fallback`);
       filtered = [];
     }
-    
-    // TODO: Handle separateTasks - for now we just log them
-    // In a full implementation, these would be added to the task list via the task generation system
-    
+
     return filtered.length ? filtered : (noInternalOttoSteps.length && !severlyContaminated ? noInternalOttoSteps : fallbackSteps);
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] writeStepsFromContext error: ${e?.message || e}`);
@@ -5322,19 +5332,29 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // Apply contamination filters ALWAYS — not gated on definitionOfDone (often undefined for manual/pronote
   // tasks), which left cross-contamination unchecked for the majority of real tasks.
   let filteredSteps = steps;
-  // Apply task-boundary validation (use a fallback definitionOfDone from the title when none is provided)
-  filteredSteps = filterStepsByDefinitionOfDone(filteredSteps, definitionOfDone || taskTitle || "", taskTitle || "");
+  // filterStepsByDefinitionOfDone NOT applied here — see its own doc comment (top of file) for why:
+  // isResearchOperation() blindly rejects any step starting with "Research"/"Find" regardless of context,
+  // which conflicts with the established automatable-flip design (a research-and-compile step Otto does
+  // itself is legitimate, not a violation) and was verified live to crash on valid steps. The contamination
+  // filters that follow below (dropForeignEntitySteps, dropSiblingBleedSteps, domain checks, etc.) already
+  // give this path real protection without that false-positive risk.
 
   // Apply artifact separation
   const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(filteredSteps);
   filteredSteps = stepsWithoutArtifacts;
 
-  // Apply separate task extraction
-  const { filteredSteps: finalSteps } = separateUnrelatedTasks(filteredSteps, taskTitle || "");
-  filteredSteps = finalSteps;
+  // separateUnrelatedTasks NOT applied here — see the identical comment at its other call sites (finalize(),
+  // writeStepsFromContext) for why: a half-finished feature (extracted "separate tasks" are only ever
+  // logged, never actually created) whose keyword-overlap heuristic destructively removes ordinary on-topic
+  // steps with few words in common with the title.
 
-  // Apply triviality gate
-  filteredSteps = dropTrivialSteps(filteredSteps);
+  // NOTE: the triviality gate does NOT run here — it runs further down (see "Triviality gate runs HERE,
+  // after automatable is settled"), AFTER the DOABLE-verb flip below has had a chance to mark a step like
+  // "Research X and compile a list" as Otto's own automatable work. A premature dropTrivialSteps() call used
+  // to sit here too, evaluating steps BEFORE that flip — silently deleting exactly the research/compile
+  // steps the flip exists to save, since they still looked like a bare trivial lookup at this earlier point.
+  // Verified live: this crashed tests/run.mjs by zeroing out valid steps. Removed; the single, correctly-
+  // ordered call downstream already covers this same ground.
 
   console.log(`${new Date().toISOString()} [ai] finalize: ${steps.length} raw steps → ${filteredSteps.length} final (anchored + filtered)`);
   // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.

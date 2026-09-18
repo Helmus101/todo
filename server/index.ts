@@ -2360,17 +2360,19 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // lost or consumed before the task reached cloud storage. Do this before draining so this same kick can
     // claim the repaired job; enqueueJob is idempotent, so concurrent tabs are safe.
     await jobs.recoverOrphanedQueuedTasks(email, 3).catch((e: any) => console.warn("[kick] orphan recovery failed:", e?.message || e));
-    void jobs.drain(1, undefined, email).catch((e: any) => console.error("[kick] background drain failed:", e?.message || e));
-    // Reload + merge from cloud on EVERY kick, not just "when this kick's own drain finished" — jobs run
-    // entirely against the cloud account row (loadState → mutate → saveState, see jobs.ts's own top-of-file
-    // comment), never touching any specific request's `req.session`. Since the drain above is now fire-and-
-    // forget (not awaited — see the NON-BLOCKING comment), THIS request can never know synchronously whether
-    // ITS OWN drain call finished; a PREVIOUS kick's background job finishing between polls is the common
-    // case anyway. Without this reload, `tasks: req.session.tasks` below would keep echoing back the same
-    // stale queued/executing status forever — reported live as "Otto is working forever" / the dashboard
-    // never advancing past "queued" even though the job had long since completed server-side. Bounded cost:
-    // this route is only ever polled while the client's own hasActiveWork() gate is true (a real job is in
-    // flight), never as an indefinite background poll.
+    // AWAITED, deliberately — a prior "non-blocking" version fired this with `void` and returned immediately,
+    // reasoning that draining could take minutes and shouldn't freeze the client's 4s poll loop. That traded
+    // one bug for a WORSE one on Vercel serverless: the function invocation can freeze/be torn down the
+    // instant the HTTP response is sent, with no `waitUntil` anywhere in this codebase to keep it alive —
+    // so a job could get CLAIMED (status "running", a 15min lock — see store.ts's LOCK_MS) and then simply
+    // never finish, because the code that was supposed to run it got killed the moment `res.json` below
+    // fired. No later kick could reclaim it until that 15min lock expired. Reported live as a manually-
+    // created task stuck at "Queued" / "Otto is getting this ready…" indefinitely — the exact shape this
+    // produces. The original worry (minutes-long blocking) is now much smaller than it was: runTask itself
+    // is bounded to ~90s by its own time-budget circuit breaker (see claude.ts's checkTimeBudget), so a
+    // single kick now blocks for, at most, roughly that long — a real, honest wait for real work, not an
+    // indefinite stall. `kicking.current` client-side already serializes kicks, so this doesn't double up.
+    const out = await jobs.drain(1, undefined, email).catch((e: any) => { console.error("[kick] drain failed:", e?.message || e); return { processed: 0, failed: 0 }; });
     // READ-ONLY with respect to the session store: build the response from a fresh cloud-merged view, but
     // do NOT call saveSession() here. This route fires every 4s for the entire duration any job is active —
     // persisting its own merge back to the store raced a slower concurrent write (e.g. a journal save's
@@ -2396,7 +2398,7 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
       } catch { /* best-effort — fall back to whatever the session already has */ }
     }
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
-    res.json({ processed: 0, failed: 0, active, activeTaskIds, tasks: responseTasks });
+    res.json({ processed: out.processed, failed: out.failed, active, activeTaskIds, tasks: responseTasks });
   } catch (e: any) { res.status(500).json({ error: e?.message || "kick failed" }); }
 });
 
