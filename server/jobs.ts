@@ -587,6 +587,23 @@ export async function drain(limit = 3, budgetMs = 240_000, userEmail?: string): 
  *  kick loop (see /api/jobs/kick) picks up the job within seconds.  This avoids the request hanging for
  *  the entire AI call duration (the "takes forever" / ERR_CONNECTION_RESET reports) without adding any
  *  timeout or limit on the work itself. */
+/** Ensure a task can never remain visibly queued without a durable execution job behind it.
+ * A successful task write and job enqueue are normally one flow, but a dropped response, stale instance,
+ * or a cloud write race can leave the task status committed while the job insert was not. The open-tab kick
+ * is the fastest recovery path; cron also calls the same logic through its orphaned-task pass. */
+export async function recoverOrphanedQueuedTasks(email: string, limit = 3): Promise<string[]> {
+  const { list } = await loadUser(email);
+  const active = new Set(await store.activeJobTaskIds(email));
+  const orphaned = list
+    .filter((t) => canonStatus(t.status) === "queued" && !active.has(t.id) && t.source !== "studylog")
+    .slice(0, limit);
+  for (const t of orphaned) {
+    await store.enqueueJob(email, "execute_task", t.id);
+    void store.recordEvent(email, "queued", { taskId: t.id, message: "Recovered an orphaned task execution" });
+  }
+  return orphaned.map((t) => t.id);
+}
+
 export async function enqueueAndDrain(email: string, type: store.JobType, taskId?: string, input?: any, drainInline = true): Promise<store.Job> {
   const job = await store.enqueueJob(email, type, taskId, input);
   // Also attempt a drain when the job comes back "running", not just "queued" — a job left running by a
