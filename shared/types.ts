@@ -749,7 +749,8 @@ export interface TaskStep {
    *  runStep, so a focused step-run that merely produced an artifact isn't kept perpetually unfinished. */
   synthetic?: boolean;
   /** The ONE piece of info the agent needs from the user to automate this step (a choice, a date, a name).
-   *  The client shows it inline with `options` as tappable answers + a free-text input; answering runs the step. */
+   *  The client shows it inline with `options` as tappable answers + a free-text input; answering runs the step.
+   *  NOTE: Currently disabled - backend never sets this field. */
   question?: string;
   options?: string[];   // 2-4 likely answers, best inference first (tap-to-answer MCQ)
   /** ISO date (YYYY-MM-DD) this step should land by — set only for a big IB project broken into milestones

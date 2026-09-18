@@ -3862,8 +3862,6 @@ const RUN_TOOLS = [
         needsPermission: { type: "boolean", description: "true = ONLY if the tool returned PERMISSION_REQUIRED. The action is automatable but needs user approval first. Requires automatable=true." },
         dependsOn: { type: "number", description: "index of an earlier step that must finish first — use it for an automatable step that waits on a user step; omit if none" },
         url: { type: "string", description: "a link that puts the user ONE click from doing this step — directions (Google Maps dir link), a tel: number, the exact booking/payment/return page, a form. Include one whenever it exists or can be constructed; not just for 'open a page' steps." },
-        question: { type: "string", description: "LAST RESORT for most things — one short, specific question, set ONLY when a detail is genuinely missing that you could NOT find in the apps OR infer from context, AND it materially changes the output. You must have searched (inbox/Drive/calendar/their profile/the web) AND been unable to make a reasonable assumption first. A question you could have answered yourself is a failure. NEVER ask them to pick the OUTPUT FORMAT/deliverable type (note vs doc vs flashcards vs email, etc.) — that's your own implementation choice to make from the task itself, never something to hand back to the student; a title like 'Reply to Denis' already tells you the deliverable is an email, full stop. Only ask about a FACT only they know (which thread, what was decided, a missing number). ONE real exception where you should ask readily, not as a last resort: schoolwork that references specific source material you don't actually have (a worksheet's exact questions, a teacher's rubric/guide, 'the three questions' from a handout not in any attachment) — writing a vague one-size step assuming the student can fill in content you never saw is worse than asking them to paste it; ask for the actual text rather than guess at it. Keep automatable=true (you'll run it once they answer)." },
-        options: { type: "array", items: { type: "string" }, description: "2-4 likely ANSWERS to 'question', your BEST inference FIRST — each one gets tapped AS-IS and run literally, so every option must be a real, complete answer you could act on if picked (e.g. '12 stores', 'This Friday', 'Skip it'). NEVER a meta-option like 'I'll type my own answer' / 'I have it, let me paste it' / 'Something else' — a free-text field is ALWAYS shown below the options already, so one of those does nothing but submit that literal sentence as if it were the answer. If free text is the realistic response, just omit 'options' entirely." },
         minutes: { type: "number", description: "realistic minutes this step takes (1-240) — a genuine estimate from what the step involves, omit if you can't judge one. See TIME ESTIMATES." },
       }, required: ["text", "automatable"] },
     },
@@ -4747,23 +4745,11 @@ export async function runTask(
   // transient tool/API error is already handled per-round above, so reaching here means the agent RAN but
   // couldn't converge on a concrete action.
   //
-  // Return an HONEST result — no fabricated "executed" claim, no artifact — but NOT the old vague "This one
-  // needs your call — take it from here" + "Open and handle: <title>" filler: that read as Otto having done
-  // nothing at all, with no way for the student to tell the AI what it's actually missing. Turn it into a
-  // real, answerable question instead, using the EXISTING step-level question/options mechanism (see
-  // sanitizeStepExtras above) that until now only the model itself chose to use mid-run, never the harness
-  // on this terminal fallback path. Once answered, a normal re-run has the missing fact and can proceed.
-  const sourceUrl = (task.links || []).find((l) => l?.url)?.url;
-  const missingContext = String(task.sourceDetail || task.why || "").trim();
-  // Capped well under sanitizeStepExtras' 200-char limit — a question truncated mid-sentence would be
-  // exactly the kind of confusing half-output this fallback exists to replace.
-  const question = missingContext
-    ? `I searched your apps and the web but couldn't find enough to prepare "${task.title.slice(0, 40)}". Can you paste the actual instructions/text (or a photo)?`
-    : `I couldn't tell what "${task.title.slice(0, 40)}" actually needs — what's the specific task here?`;
+  // Return a minimal result without asking for user input - just let the user continue working on the task.
   return withTokens(finalize({
-    synthesis: "Couldn't prepare this on my own — I need one detail from you first.",
+    synthesis: "",
     did: [],
-    steps: [{ text: `Answer Otto's question about "${task.title.slice(0, 50)}"`, automatable: true, question, ...(sourceUrl ? { url: sourceUrl } : {}) }],
+    steps: [{ text: profile?.language === "fr" ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false }],
     links: [],
     sendables: [],
   }, rescueText, profileUpdates));
