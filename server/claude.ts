@@ -115,8 +115,9 @@ function taskKeywords(title: string): string[] {
 
 /** Make the task boundary explicit for every producer, including manual tasks. A model may use a
  * related-looking noun from research instead of the user's actual objective; prefixing only those
- * steps that lack the task's own keywords preserves natural steps while making the boundary impossible
- * to miss in the UI and in later execution prompts. */
+ * steps that are CLEARLY off-topic (no keyword match AND no task-label overlap) preserves natural
+ * steps while catching genuine drift. Deliberately soft: a step the model deliberately rephrased
+ * with related terms should keep its natural wording, not get a mechanical prefix. */
 export function anchorStepsToTask(steps: TaskStep[], title: string, maxCount: number): TaskStep[] {
   const keywords = taskKeywords(title);
   const taskLabel = title.trim().slice(0, 120);
@@ -509,7 +510,8 @@ const MISSION =
   `one item, reply to a one-line message) is not multi-part — it needs a single step, or even none: just the ` +
   `reminder itself. Manufacturing 3-4 steps out of something that's really one action ("go to the library",` +
   ` "find the book", "return it", "confirm it's returned") is the OPPOSITE of this rule — it's clutter, not ` +
-  `structure. Match the plan's size to the task's real complexity, never pad it to look thorough.\n` +
+  `structure. Match the plan's size to the task's real complexity — sometimes that's one step, ` +
+  `sometimes it's many; let the actual work decide, not a fixed number. Never pad it to look thorough.\n` +
   `3. EXECUTE ONLY THE PARTS THAT DON'T TEACH THE STUDENT ANYTHING AND DON'T NEED A HUMAN — logistics, ` +
   `scheduling, finding information, compiling reference material, drafting routine messages. NEVER the part ` +
   `that IS the learning: don't write the essay, don't solve the problem set, don't answer the exam question, ` +
@@ -1671,7 +1673,7 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   // final round below is the safety net for a straggler.
   // Keep unattended discovery bounded: one focused pass plus a short safety margin is enough. A
   // pathological connector/tool call must never hold task generation open for minutes.
-  const MAX = 4;
+  const MAX = 6;
   let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
   const tok = () => ({ in: tokIn, out: tokOut, cachedIn: tokCached }); // so the fallback sweep is metered too
   let didRead = false;        // has the model actually called ANY read tool yet?
@@ -2392,7 +2394,7 @@ let steps = anchorStepsToTask(sanitizeSteps(out.steps
         doneWhen: s?.doneWhen ? String(s.doneWhen).slice(0, 150) : undefined,
         checkpoint: s?.checkpoint ? String(s.checkpoint).slice(0, 150) : undefined,
   difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
-  })), 6), task.title, 6);
+  })), 15), task.title, 15);
   
   // Apply task-boundary validation
     steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
@@ -4108,7 +4110,7 @@ export async function runTask(
   // after a live report of heavy DeepSeek spend with nothing to show for it — a stuck/pathological task
   // (tool errors, a huge thread, retries) was burning most of its cost in the LAST few rounds, the most
   // expensive ones since the transcript is largest by then, often without ever reaching submit.
-  const MAX = EXECUTION_ENABLED ? 6 : 5;
+  const MAX = EXECUTION_ENABLED ? 8 : 7;
   let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
   // Circuit breaker: round count alone doesn't bound cost — a pathological task (a huge thread, tool errors
   // burning rounds, retries) can cost 10-20× a normal run. Cap the TOTAL tokens a single run may spend; once
@@ -4265,7 +4267,7 @@ export async function runTask(
     // DESCRIBED the note/flashcard deck it should have created rather than actually creating it. readCalls
     // was tracked for the empty-plan rejection (hasConnectedApps && readCalls===0 further down) but never
     // used to widen this exemption — the same "real progress, don't bail early" reasoning applies either way.
-    if (i >= 4 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !readCalls && !finishBacks) break;
+    if (i >= 5 && !wroteAny && !focus && !hasArtifactIds && !searchedWeb && !readCalls && !finishBacks) break;
     // Circuit breaker: a run that has already burned the token ceiling stops here — another round only
     // deepens the overspend. The rescue pass below salvages whatever was gathered into an honest result.
     if (overTokenCeiling()) { console.warn(`${new Date().toISOString()} [ai] runTask hit token ceiling (${tokIn + tokOut}) — stopping at round ${i}`); break; }
@@ -4934,7 +4936,7 @@ export async function writeStepsFromContext(
             needsPermission: own.needsPermission || matched?.needsPermission || undefined,
           } : {}),
         };
-      }), bigProject ? 8 : 6);
+      }), bigProject ? 20 : 15);
     
     // Apply task-boundary validation filter
     steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
@@ -5126,14 +5128,14 @@ export async function expandStep(
         role: "user",
         content: `TASK: "${task.title}" (${task.why})\nSTEP TO BREAK DOWN: "${step.text}"${linksBlock}\n\n` +
           languageLine(profile) +
-      `Break this ONE step into 2 to 4 small, concrete sub-actions the student can tick off one at a time — ` +
+      `Break this ONE step into small, concrete sub-actions the student can tick off one at a time — ` +
       `each a SHORT imperative (≤10 words), specific enough to just start doing, no vague categories like ` +
-      `"plan it out". Use as FEW as the step genuinely needs: if it's really just one thing, return ONE ` +
-      `sub-action, don't pad to hit a higher count. Never split a single real action into several ` +
-          `sub-actions that just restate or narrate each other's sub-parts ("identify X", "replace X", ` +
-          `"update X", "test X", "remove old X" for what's really one swap/migration) — merge those into ` +
-          `however few genuinely distinct sub-actions the step actually has. This is for a STUDENT: every ` +
-          `sub-step is something THEY do — never phrase the graded/` +
+      `"plan it out". Use AS MANY or AS FEW sub-actions as the step genuinely needs: it could be one, two, ` +
+      `five, or more — let the actual complexity of the step decide, not a fixed count. Never split a single ` +
+          `real action into several sub-actions that just restate or narrate each other's sub-parts ("identify ` +
+          `X", "replace X", "update X", "test X", "remove old X" for what's really one swap/migration) — merge ` +
+          `those into however few genuinely distinct sub-actions the step actually has. This is for a STUDENT: ` +
+          `every sub-step is something THEY do — never phrase the graded/` +
           `learning work itself (writing, arguing, solving) as if it were already done or as Otto's job. Stay ` +
           `strictly inside the scope of "${step.text}" — do not re-plan the whole task, only this one step.\n\n` +
           `If one of RESOURCES ALREADY ON THIS TASK above is exactly the page a sub-action needs, give that ` +
@@ -5160,7 +5162,6 @@ export async function expandStep(
         return { text, url, automatable };
       })
       .filter((s) => s.text)
-      .slice(0, 4)
       .map(({ text, url, automatable }) => ({ text, done: false, ...(url ? { url } : {}), ...(automatable ? { automatable: true } : {}) }));
   } catch { return []; }
 }
@@ -5316,7 +5317,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
       // would permanently block the step client-side.
       dependsOn: Number.isInteger(s?.dependsOn) && s.dependsOn >= 0 && s.dependsOn < rawSteps.length && s.dependsOn !== idx ? s.dependsOn : undefined,
       ...sanitizeStepExtras(s),
-    })), taskTitle || "", 6); // fewer, tighter steps — a short list reads better than an exhaustive one
+    })), taskTitle || "", 15); // generous ceiling — let the AI decide the right number of steps for the task
 
   // Apply contamination filters ALWAYS — not gated on definitionOfDone (often undefined for manual/pronote
   // tasks), which left cross-contamination unchecked for the majority of real tasks.
@@ -5577,7 +5578,7 @@ export interface ChatResult {
 // comment elsewhere) eat the whole budget while synthesizing several tool results into one answer, it can
 // come back GENUINELY EMPTY — which the caller then reports to the user as a hard 502 ("Otto couldn't
 // reply just now"), even though nothing actually crashed. Raised to give a multi-lookup turn real headroom.
-const CHAT_MAX_ROUNDS = 5;
+const CHAT_MAX_ROUNDS = 7;
 const CHAT_MAX_ARTIFACTS = 2;
 const CHAT_TOKEN_CEILING = 40_000;
 
