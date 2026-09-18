@@ -5346,9 +5346,34 @@ export function reconcileArtifactClaims<T extends { synthesis?: string; did?: st
 
 export function finalize(out: any, fallbackText: string, profileUpdates: ProfileUpdate[], taskTitle?: string, definitionOfDone?: string): RunOutput {
   const rawSteps = Array.isArray(out?.steps) ? out.steps : [];
+  
+  // Filter out steps that start with the full task title (bad pattern - indicates internal work leaking)
+  const taskTitlePrefix = taskTitle ? new RegExp(`^${taskTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[:,-]`, 'i') : null;
+  const withoutTitlePrefix = taskTitlePrefix ? rawSteps.filter((s: any) => !taskTitlePrefix.test(s.text)) : rawSteps;
+  
+  // Apply new architecture filters if task info is available
+  let preAnchorSteps = withoutTitlePrefix;
+  if (taskTitle && definitionOfDone) {
+    // Apply task-boundary validation
+    preAnchorSteps = filterStepsByDefinitionOfDone(preAnchorSteps, definitionOfDone, taskTitle);
+    
+    // Apply artifact separation
+    const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(preAnchorSteps);
+    preAnchorSteps = stepsWithoutArtifacts;
+    
+    // Apply separate task extraction
+    const { filteredSteps: finalSteps } = separateUnrelatedTasks(preAnchorSteps, taskTitle);
+    preAnchorSteps = finalSteps;
+    
+    // Apply triviality gate
+    preAnchorSteps = dropTrivialSteps(preAnchorSteps);
+    
+    console.log(`${new Date().toISOString()} [ai] finalize: applied new architecture filters to ${withoutTitlePrefix.length} steps, resulted in ${preAnchorSteps.length} steps`);
+  }
+  
   // Anchor steps to the task title so a model can't drift to a related-but-different noun from research.
   // Always applied — not gated on definitionOfDone, which is often undefined for manual/pronote tasks.
-  const steps: TaskStep[] = anchorStepsToTask(rawSteps
+  const steps: TaskStep[] = anchorStepsToTask(preAnchorSteps
     .map((s: any, idx: number) => ({
       text: truncateStepText(String(s?.text || "")), // keep steps to a scannable one-liner, not a paragraph
       automatable: !!s?.automatable,
@@ -5369,8 +5394,14 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // give this path real protection without that false-positive risk.
 
   // Apply artifact separation
+  const beforeArtifactCount = filteredSteps.length;
   const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(filteredSteps);
   filteredSteps = stepsWithoutArtifacts;
+  
+  // Log how many artifact creation steps were filtered
+  if (beforeArtifactCount !== filteredSteps.length) {
+    console.log(`${new Date().toISOString()} [ai] finalize: filtered ${beforeArtifactCount - filteredSteps.length} artifact creation steps from research phase`);
+  }
 
   // separateUnrelatedTasks NOT applied here — see the identical comment at its other call sites (finalize(),
   // writeStepsFromContext) for why: a half-finished feature (extracted "separate tasks" are only ever
@@ -5385,7 +5416,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // Verified live: this crashed tests/run.mjs by zeroing out valid steps. Removed; the single, correctly-
   // ordered call downstream already covers this same ground.
 
-  console.log(`${new Date().toISOString()} [ai] finalize: ${steps.length} raw steps → ${filteredSteps.length} final (anchored + filtered)`);
+  console.log(`${new Date().toISOString()} [ai] finalize: ${rawSteps.length} raw steps → ${preAnchorSteps.length} after title-prefix & architecture filters → ${steps.length} after anchoring → ${filteredSteps.length} final (contamination filters)`);
   // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.
   const kindLabel = (url: string): string =>
     /docs\.google\.com\/document/i.test(url) ? "the Google Doc Otto created"
