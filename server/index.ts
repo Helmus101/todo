@@ -2342,14 +2342,29 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // lost or consumed before the task reached cloud storage. Do this before draining so this same kick can
     // claim the repaired job; enqueueJob is idempotent, so concurrent tabs are safe.
     await jobs.recoverOrphanedQueuedTasks(email, 3).catch((e: any) => console.warn("[kick] orphan recovery failed:", e?.message || e));
-    void jobs.drain(1, undefined, email).then(async (out) => {
-      if (out.processed || out.failed) {
-        try {
-          const cloud = await loadState(email);
-          // Best-effort session refresh — the next kick/sync will pick up the updated tasks regardless.
-        } catch { /* best-effort */ }
-      }
-    }).catch((e: any) => console.error("[kick] background drain failed:", e?.message || e));
+    void jobs.drain(1, undefined, email).catch((e: any) => console.error("[kick] background drain failed:", e?.message || e));
+    // Reload + merge from cloud on EVERY kick, not just "when this kick's own drain finished" — jobs run
+    // entirely against the cloud account row (loadState → mutate → saveState, see jobs.ts's own top-of-file
+    // comment), never touching any specific request's `req.session`. Since the drain above is now fire-and-
+    // forget (not awaited — see the NON-BLOCKING comment), THIS request can never know synchronously whether
+    // ITS OWN drain call finished; a PREVIOUS kick's background job finishing between polls is the common
+    // case anyway. Without this reload, `tasks: req.session.tasks` below would keep echoing back the same
+    // stale queued/executing status forever — reported live as "Otto is working forever" / the dashboard
+    // never advancing past "queued" even though the job had long since completed server-side. Bounded cost:
+    // this route is only ever polled while the client's own hasActiveWork() gate is true (a real job is in
+    // flight), never as an indefinite background poll.
+    if (cloudEnabled()) {
+      try {
+        // bypassCache: this route exists specifically to surface a job's completion within seconds of it
+        // happening — loadState's normal 3min per-instance cache would silently defeat that promise on a
+        // cold/stale warm instance, leaving the dashboard stuck on "queued" for up to 3min even though the
+        // job finished immediately. Bounded cost: only paid while a real job is actively in flight (see the
+        // comment above this block), not on every idle poll.
+        const cloud = await loadState(email, { bypassCache: true });
+        req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
+        void saveSession(req);
+      } catch { /* best-effort — fall back to whatever the session already has */ }
+    }
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
     res.json({ processed: 0, failed: 0, active, activeTaskIds, tasks: req.session.tasks || [] });
   } catch (e: any) { res.status(500).json({ error: e?.message || "kick failed" }); }
