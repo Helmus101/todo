@@ -2338,6 +2338,10 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // kick (4s later) finds the job already claimed/running and returns instantly; when the job finishes,
     // the following kick picks up the updated cloud state and the client sees the result.
     const email = req.session.user!;
+    // Repair the rare but user-visible partial commit where the task says queued while its job insert was
+    // lost or consumed before the task reached cloud storage. Do this before draining so this same kick can
+    // claim the repaired job; enqueueJob is idempotent, so concurrent tabs are safe.
+    await jobs.recoverOrphanedQueuedTasks(email, 3).catch((e: any) => console.warn("[kick] orphan recovery failed:", e?.message || e));
     void jobs.drain(1, undefined, email).then(async (out) => {
       if (out.processed || out.failed) {
         try {
