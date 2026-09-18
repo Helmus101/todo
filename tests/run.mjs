@@ -81,6 +81,18 @@ const dayMergedReversed = dedupeTasks([freshDay, staleDay]);
 check("same-anchor tie is order-independent", dayMergedReversed.length === 1 && dayMergedReversed[0].flashcards?.length === 1 && dayMergedReversed[0].logText === "Motion graphs & quadratics");
 // …and anchorless title dups still merge (agent-sweep fallback, non-manual source).
 check("anchorless title dup still merges", dedupeTasks([{ ...doneOld, anchorKey: undefined }, { ...newEmail, anchorKey: undefined }]).length === 1);
+// TWO DIFFERENT DAYS must never collapse into one, even within dedupeTasks' fuzzy sameTask fallback.
+// distinctiveTokens() drops words of length <= 2, silently stripping the "09"/"11"/"12" month/day digits out
+// of BOTH a bare "YYYY-MM-DD" title and a "Daily study log — YYYY-MM-DD" why — leaving every studylog task
+// in the same year with the IDENTICAL distinctive-token set, a perfect nearDup "match" via sameTask(). Real
+// bug reproduced live as "journal entries/flashcards not saving to cloud": day 2 silently discarded day 1
+// (or vice versa) on the very next dedupeTasks pass (every commit/GET runs one), despite each having its own
+// distinct, real anchorKey — anchor identity is what actually distinguishes them, never title/why text.
+const day1 = { ...base, id: "day-1", title: "2026-09-11", why: "Daily study log — 2026-09-11", source: "studylog", status: "needs_review", anchorKey: "studylog:2026-09-11", logDate: "2026-09-11", logText: "Motion graphs", flashcards: [{ id: "d1", title: "Physics", cards: [{ front: "f", back: "b" }], createdAt: "2026-09-11T10:00:00.000Z" }], updatedAt: "2026-09-11T10:00:00.000Z" };
+const day2 = { ...base, id: "day-2", title: "2026-09-12", why: "Daily study log — 2026-09-12", source: "studylog", status: "needs_review", anchorKey: "studylog:2026-09-12", logDate: "2026-09-12", logText: "Figures de style", flashcards: [{ id: "d2", title: "French", cards: [{ front: "f2", back: "b2" }], createdAt: "2026-09-12T10:00:00.000Z" }], updatedAt: "2026-09-12T10:00:00.000Z" };
+const twoDaysMerged = dedupeTasks([day1, day2]);
+check("two DIFFERENT studylog days both survive dedupeTasks (distinct anchors)", twoDaysMerged.length === 2);
+check("day 1's flashcards survive alongside day 2's", twoDaysMerged.some((t) => t.logDate === "2026-09-11" && t.flashcards?.length === 1) && twoDaysMerged.some((t) => t.logDate === "2026-09-12" && t.flashcards?.length === 1));
 // MANUAL tasks are a deliberate user action — fuzzy title similarity must NEVER swallow a fresh manual add
 // into an old dismissed/done one just because the wording is similar (regression: "add task, it instantly
 // disappears" when retesting with a similarly-worded title after an earlier dismissed/done attempt).

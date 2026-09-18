@@ -343,6 +343,19 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
       // task and it auto-deletes" bug — with no error anywhere, because betterOf legitimately keeps the
       // higher-ranked handled copy and the fresh manual card is dropped into it.
       if ((t.source === "manual" || k.source === "manual") && (isHandled(k.status) || isHandled(t.status))) return false;
+      // Two DIFFERENT studylog entries (day/week/month) must NEVER fall through to the fuzzy sameTask below.
+      // distinctiveTokens() drops any word of length <= 2 — which silently strips the "09"/"17" month/day
+      // digits out of both `title` (a bare "YYYY-MM-DD") and `why` ("Daily study log — YYYY-MM-DD"), leaving
+      // EVERY studylog task in the same calendar year with the IDENTICAL distinctive-token set {"2026"} /
+      // {"daily","study","log","2026"} — a perfect nearDup match. sameTask() then judges ANY two different
+      // days "the same task", and dedupeTasks' non-anchor-matched branch (the `else` below) picks ONE winner
+      // outright with no artifact/text union (unlike the anchor-matched branch above) — silently discarding
+      // an entire day's journal entry AND flashcards on the very next cloud merge. Reported live as "journal
+      // entries/flashcards not saving to cloud" / "saved but gone after refresh". Each studylog entry's real
+      // identity is its anchorKey (studylog:<date>, week:<monday>, month:<month>) — already checked exactly
+      // above — so two studylog tasks reaching this line already have PROVABLY DIFFERENT anchors and must
+      // never be considered the same entity by title/why text alone.
+      if (t.source === "studylog" && k.source === "studylog") return false;
       return sameTask(k, t);
     });
     if (i >= 0) {

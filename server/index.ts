@@ -2353,6 +2353,19 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // never advancing past "queued" even though the job had long since completed server-side. Bounded cost:
     // this route is only ever polled while the client's own hasActiveWork() gate is true (a real job is in
     // flight), never as an indefinite background poll.
+    // READ-ONLY with respect to the session store: build the response from a fresh cloud-merged view, but
+    // do NOT call saveSession() here. This route fires every 4s for the entire duration any job is active —
+    // persisting its own merge back to the store raced a slower concurrent write (e.g. a journal save's
+    // multi-second AI generation, committed at the END of that request) and could OVERWRITE the store with
+    // a snapshot that predates it: kick reads session+cloud (neither yet has the journal edit) → the journal
+    // request finishes and writes its own edit to the store → a LATER kick, already mid-flight from before
+    // that write, still finishes and persists ITS OWN (stale, pre-edit) merge — landing after the journal's
+    // write and silently erasing it. Reported live as "journal entries/flashcards not saving to cloud" and,
+    // separately, as slower task generation (an extra write on top of the extra read on every 4s tick). The
+    // response body below only needs the MERGED VIEW for THIS reply — never persisting it removes the race
+    // entirely, since every actual mutation (journal save, step-done, job execution, ...) still durably
+    // commits through its own route exactly as before; kick just stops being a second, uncoordinated writer.
+    let responseTasks = req.session.tasks || [];
     if (cloudEnabled()) {
       try {
         // bypassCache: this route exists specifically to surface a job's completion within seconds of it
@@ -2361,12 +2374,11 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
         // job finished immediately. Bounded cost: only paid while a real job is actively in flight (see the
         // comment above this block), not on every idle poll.
         const cloud = await loadState(email, { bypassCache: true });
-        req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
-        void saveSession(req);
+        responseTasks = mergeTasks(cloud.tasks || [], responseTasks);
       } catch { /* best-effort — fall back to whatever the session already has */ }
     }
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
-    res.json({ processed: 0, failed: 0, active, activeTaskIds, tasks: req.session.tasks || [] });
+    res.json({ processed: 0, failed: 0, active, activeTaskIds, tasks: responseTasks });
   } catch (e: any) { res.status(500).json({ error: e?.message || "kick failed" }); }
 });
 
