@@ -3522,9 +3522,11 @@ const RUN_SYSTEM =
   `Based on the RELEVANT context, what will Otto ACTUALLY DO ITSELF before showing the user anything?\n` +
   `Otto's steps include:\n` +
   `- Research: search Drive, Gmail, web for missing information\n` +
-  `- Artifact creation: summaries, reference sheets, flashcards, practice questions, quizzes, outlines, evidence banks\n` +
+  `- Artifact creation: CALL CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ TO ACTUALLY CREATE artifacts when useful\n` +
+  `  For study tasks: CREATE_NOTE for reference sheets, CREATE_FLASHCARDS for vocab/definitions, CREATE_QUIZ for practice\n` +
   `- Prep work: organizing information, compiling data, drafting content\n` +
-  `Otto EXECUTES these steps INTERNALLY — the user never sees them.\n\n` +
+  `Otto EXECUTES these steps INTERNALLY — the user never sees them.\n` +
+  `CRITICAL: When you identify that an artifact would be useful, CALL THE CREATE TOOL IMMEDIATELY.\n\n` +
   `STEP 4: Determine what the USER must do (VISIBLE STEPS)\n` +
   `NOW that Otto has done what it can, what does the student ACTUALLY need to do?\n` +
   `User steps include ONLY:\n` +
@@ -3544,7 +3546,8 @@ const RUN_SYSTEM =
   `4. User steps are ONLY what the user must do — not research, not artifact creation\n` +
   `5. Unrelated tasks become separate tasks, not steps\n` +
   `6. Each user step must directly move toward the Definition of Done\n` +
-  `7. Generate the MINIMUM required user steps — not everything that could be done\n\n` +
+  `7. Generate the MINIMUM required user steps — not everything that could be done\n` +
+  `8. FOR STUDY TASKS: CREATE ACTUAL ARTIFACTS (notes/flashcards/quizzes) using the tools — do not leave artifact creation as a user step\n\n` +
   `(3) SPLIT THE WORK — for each step decide who owns it: YOU (automatable — anything you can do with your ` +
   `tools or by finding information) vs the USER (only a judgment/approval, a login/credential, a payment, or ` +
   `a physical act). Default to YOURS when unsure.\n` +
@@ -4027,11 +4030,10 @@ export async function runTask(
   // email — see readOnlyPlusPrep. Anything document-shaped goes through Otto's own in-house note/flashcard/
   // quiz tools instead (CREATE_NOTE_TOOL etc. below — always available, not gated by EXECUTION_ENABLED).
   const scopedExtras = EXECUTION_ENABLED || !extras ? extras : readOnlyPlusPrep(extras);
-  // CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ are deliberately NOT offered here — phase 1 (this loop) is
-  // research only. Artifact creation is its own phase 3 (decideArtifact, below), run once with the
-  // complete research context AND the real step breakdown already in hand, never as a tool the model could
-  // reach for mid-research before it actually knows what the finished task needs.
-  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
+  // CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ ARE NOW offered during research — when Otto identifies that
+  // an artifact would be genuinely useful, it should create it immediately rather than deferring to a separate
+  // decision phase. This ensures artifacts are actually created for study tasks.
+  const tools = [...RUN_TOOLS, WEB_SEARCH_TOOL, CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, ...(scopedExtras?.tools?.length ? scopedExtras.tools : [])];
   const connectedLine = extras?.connected?.length
     ? `\nConnected apps you can use (${EXECUTION_ENABLED ? "read + reversible writes; never send/post/delete" : "read-only, plus drafting a Gmail email — never sending, never creating a real external Google Doc/Sheet/Slides"}): ${extras.connected.join(", ")}.\n`
     : `\nNo apps are connected yet — if you can't proceed without one, say so in the synthesis and put "Connect the app in Settings" as a step.\n`;
@@ -5337,8 +5339,12 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   const taskTitlePrefix = taskTitle ? new RegExp(`^${taskTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[:,-]`, 'i') : null;
   const withoutTitlePrefix = taskTitlePrefix ? rawSteps.filter((s: any) => !taskTitlePrefix.test(s.text)) : rawSteps;
   
+  // Also filter out steps that are obviously Otto's internal work (consolidate, decide, gather, identify, extract, build)
+  const ottoInternalVerbs = /\b(consolidat\w*|decid\w*|gather\w*|identif\w*|extract\w*|build\w*|prepar\w*|organiz\w*|compil\w*|assembl\w*|collect\w*|draft\w*|generat\w*|creat\w*|mak\w*)\b[^.]*\b(documents?|sheets?|decks?|notes?|flashcards?|quiz(?:zes)?|revision|reference|list|information|data|content|output|deliverable)\b/i;
+  const withoutOttoInternal = withoutTitlePrefix.filter((s: any) => !ottoInternalVerbs.test(s.text));
+  
   // Apply new architecture filters if task info is available
-  let preAnchorSteps = withoutTitlePrefix;
+  let preAnchorSteps = withoutOttoInternal;
   if (taskTitle && definitionOfDone) {
     // Apply task-boundary validation
     preAnchorSteps = filterStepsByDefinitionOfDone(preAnchorSteps, definitionOfDone, taskTitle);
@@ -5402,7 +5408,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // Verified live: this crashed tests/run.mjs by zeroing out valid steps. Removed; the single, correctly-
   // ordered call downstream already covers this same ground.
 
-  console.log(`${new Date().toISOString()} [ai] finalize: ${rawSteps.length} raw steps → ${preAnchorSteps.length} after title-prefix & architecture filters → ${steps.length} after anchoring → ${filteredSteps.length} final (contamination filters)`);
+  console.log(`${new Date().toISOString()} [ai] finalize: ${rawSteps.length} raw steps → ${withoutTitlePrefix.length} after title-prefix → ${withoutOttoInternal.length} after otto-internal → ${preAnchorSteps.length} after architecture filters → ${steps.length} after anchoring → ${filteredSteps.length} final (contamination filters)`);
   // Generic labels ("Open", "Link", a bare URL) tell the user nothing — name the artifact by its URL kind.
   const kindLabel = (url: string): string =>
     /docs\.google\.com\/document/i.test(url) ? "the Google Doc Otto created"
