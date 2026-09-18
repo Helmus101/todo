@@ -107,6 +107,29 @@ export const isTrivialStep = (text: string, url?: string): boolean =>
  *  below) — `finalize` still needs to run its DOABLE/JUDGMENT automatable-flip on the raw `false` steps
  *  this returns before that gate can tell a genuinely-handed-to-the-user step from Otto's own work that
  *  just hasn't been flipped to automatable yet. */
+function taskKeywords(title: string): string[] {
+  return title.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
+    .filter((word) => word.length > 3 && !/^(the|this|that|with|from|your|into|for|and|task|prepare|review|complete|create|make|write|study|learn|practice)$/i.test(word));
+}
+
+/** Make the task boundary explicit for every producer, including manual tasks. A model may use a
+ * related-looking noun from research instead of the user's actual objective; prefixing only those
+ * steps that lack the task's own keywords preserves natural steps while making the boundary impossible
+ * to miss in the UI and in later execution prompts. */
+export function anchorStepsToTask(steps: TaskStep[], title: string, maxCount: number): TaskStep[] {
+  const keywords = taskKeywords(title);
+  const taskLabel = title.trim().slice(0, 120);
+  const anchored = steps.map((step) => {
+    const text = truncateStepText(String(step.text || ""));
+    const matches = !keywords.length || keywords.some((word) => text.toLowerCase().includes(word));
+    return matches || text.toLowerCase().includes(taskLabel.toLowerCase())
+      ? { ...step, text }
+      : { ...step, text: truncateStepText(`${taskLabel}: ${text}`) };
+  });
+  return sanitizeSteps(anchored, maxCount);
+}
+
 export function sanitizeSteps(steps: TaskStep[], maxCount: number): TaskStep[] {
   return steps
     .filter((s) => s.text)
@@ -617,7 +640,7 @@ export const PLAN_ONLY_OVERRIDE =
   `one phone number, one link) does NOT clear this bar by itself — that belongs in a step's own text or the ` +
   `task's links, not a whole separate note; a note needs several things worth compiling TOGETHER, not one ` +
   `thing worth restating. Renewing/returning a library loan, confirming a single appointment, a one-step ` +
-  `errand — these almost never need a note even when you found a real detail (an address, a due date, a ` +
+  `errand �� these almost never need a note even when you found a real detail (an address, a due date, a ` +
   `renew-online link): put that detail directly in the step, done. When in doubt for a logistics task, ` +
   `leave it as steps and skip the note. ` +
   `A FICHE IS ONLY WORTH MAKING IF IT HAS THE REAL CONTENT — the actual formulas, the actual vocabulary, the ` +
@@ -1646,7 +1669,9 @@ export async function generateTasks(profile?: Profile, extras?: AgentTools, hand
   // Each round re-sends the whole growing transcript (tools + history) — rounds are the real cost driver.
   // The prompt tells the agent to BATCH searches as parallel calls in one round, so 6 is plenty; the forced
   // final round below is the safety net for a straggler.
-  const MAX = 6;
+  // Keep unattended discovery bounded: one focused pass plus a short safety margin is enough. A
+  // pathological connector/tool call must never hold task generation open for minutes.
+  const MAX = 4;
   let tokIn = 0, tokOut = 0, tokCached = 0, rounds = 0;
   const tok = () => ({ in: tokIn, out: tokOut, cachedIn: tokCached }); // so the fallback sweep is metered too
   let didRead = false;        // has the model actually called ANY read tool yet?
@@ -2359,17 +2384,17 @@ export async function regenerateStepsWithScaffolding(
     if (!out?.steps?.length) return currentSteps;
 
     // Apply the new architecture filters
-    let steps = sanitizeSteps(out.steps
-      .map((s: any) => ({
+let steps = anchorStepsToTask(sanitizeSteps(out.steps
+    .map((s: any) => ({
         text: truncateStepText(String(s?.text || "")),
         automatable: false,
         minutes: s?.minutes || 15,
         doneWhen: s?.doneWhen ? String(s.doneWhen).slice(0, 150) : undefined,
         checkpoint: s?.checkpoint ? String(s.checkpoint).slice(0, 150) : undefined,
-        difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
-      })), 6);
-    
-    // Apply task-boundary validation
+  difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
+  })), 6), task.title, 6);
+  
+  // Apply task-boundary validation
     steps = filterStepsByDefinitionOfDone(steps, definitionOfDone, task.title);
     
     // Apply artifact separation
@@ -3858,7 +3883,7 @@ const RUN_TOOLS = [
     },
     follow_ups: {
       type: "array",
-      description: "DISTINCT NEW obligations you discovered while working that deserve their OWN full task — NOT a step of this one. Use this when a 'step' is really a separate, substantial action Otto could plan and execute on its own (e.g. this task was 'reply to X', but you found the user should also 'reach out to Y association' — that's a whole new outreach, not a sub-step). Each becomes its own task Otto will work next. Use SPARINGLY: 0-2, only for genuinely separate substantial actions; a one-click send or a quick human decision is a step/sendable, NOT a follow-up. Never restate THIS task — including under DIFFERENT WORDING: observed live, a task 'Ensure suitable gear/clothing is ready for a trip' spun off follow-ups 'Create a packing list for the trip' AND 'Make sure nothing essential is left behind' — three separate tasks for the exact same single obligation, just paraphrased three ways. Before adding a follow-up, ask: is this genuinely a DIFFERENT real-world thing to do, or just this same task's own goal restated/rephrased? If it's the same goal, it belongs in THIS task's own steps/context, never as a follow-up.",
+      description: "DISTINCT NEW obligations you discovered while working that deserve their OWN full task — NOT a step of this one. Use this when a 'step' is really a separate, substantial action Otto could plan and execute on its own (e.g. this task was 'reply to X', but you found the user should also 'reach out to Y association' — that's a whole new outreach, not a sub-step). Each becomes its own task Otto will work next. Use SPARINGLY: 0-2, only for genuinely separate substantial actions; a one-click send or a quick human decision is a step/sendable, NOT a follow-up. Never restate THIS task — including under DIFFERENT WORDING: observed live, a task 'Ensure suitable gear/clothing is ready for a trip' spun off follow-ups 'Create a packing list for the trip' AND 'Make sure nothing essential is left behind' �� three separate tasks for the exact same single obligation, just paraphrased three ways. Before adding a follow-up, ask: is this genuinely a DIFFERENT real-world thing to do, or just this same task's own goal restated/rephrased? If it's the same goal, it belongs in THIS task's own steps/context, never as a follow-up.",
       items: { type: "object", properties: {
         title: { type: "string", description: "the new task as a specific imperative naming who+what, ≤ 11 words, e.g. 'Reach out to Fleur de Bitume association at HEC'" },
         why: { type: "string", description: "one short clause, ≤12 words: why it matters / what triggered it" },
@@ -4069,7 +4094,7 @@ export async function runTask(
   const messages: any[] = [{
     role: "user",
     content: !EXECUTION_ENABLED
-      ? head + deadlineHint + manualHint + `\nTHIS IS THE RESEARCH PHASE ONLY — gather what you need and record the real, substantive facts in submit's "context". Step breakdown and any note/flashcard-deck/quiz happen in LATER, separate phases once your research is complete, run automatically right after this one — you do not need to ask for them, wait for them, or mention them at all. Note/flashcard/quiz tools are simply not part of THIS phase's job, the same way you wouldn't complain that a hammer has no screwdriver — never write a step, a "did" bullet, or any part of "context"/"synthesis" that comments on a tool being missing/unavailable or asks to "re-run" anything; that's never something to tell the student, it's not their concern and it's not even true (the next phases run on their own). You DO have a tool to draft a Gmail email right now (never sending) for anything that genuinely needs one — don't leave "draft the reply" as a step when you could just do it now. This applies to LOOKUPS too: "search your school email for X", "check the calendar for Y", "look up Z in Drive" describe RESEARCH you have the exact same tools to do RIGHT NOW — run that search yourself and use what you find, never defer a lookup you could do this run. Once you've genuinely researched everything you can (never stop after one search that came up empty — vary the query, try a broader term, try a different app), call submit with the facts you found.`
+      ? head + deadlineHint + manualHint + `\nTHIS IS THE RESEARCH PHASE ONLY — gather what you need and record the real, substantive facts in submit's "context". Step breakdown and any note/flashcard-deck/quiz happen in LATER, separate phases once your research is complete, run automatically right after this one — you do not need to ask for them, wait for them, or mention them at all. Note/flashcard/quiz tools are simply not part of THIS phase's job, the same way you wouldn't complain that a hammer has no screwdriver ��� never write a step, a "did" bullet, or any part of "context"/"synthesis" that comments on a tool being missing/unavailable or asks to "re-run" anything; that's never something to tell the student, it's not their concern and it's not even true (the next phases run on their own). You DO have a tool to draft a Gmail email right now (never sending) for anything that genuinely needs one — don't leave "draft the reply" as a step when you could just do it now. This applies to LOOKUPS too: "search your school email for X", "check the calendar for Y", "look up Z in Drive" describe RESEARCH you have the exact same tools to do RIGHT NOW — run that search yourself and use what you find, never defer a lookup you could do this run. Once you've genuinely researched everything you can (never stop after one search that came up empty — vary the query, try a broader term, try a different app), call submit with the facts you found.`
       : focus
       // Focused single-step run (the user hit "Auto-do" on one automatable step).
       ? head + deadlineHint + `\nDo ONLY this one step now: "${focus}". Actually DO it with your tools (draft/create/update) — don't describe it, DO it — then submit: synthesis = what you did; steps = [] unless something still genuinely needs the user.`
