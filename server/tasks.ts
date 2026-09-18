@@ -258,7 +258,11 @@ const dedupeLinksByUrl = (lists: (TaskLink[] | undefined)[], cap: number): TaskL
   for (const list of lists) for (const l of list || []) {
     if (!l?.url || seen.has(l.url)) continue;
     seen.add(l.url);
-    out.push(l);
+    // Keep it short — a link is a chip on the card, not a sentence. The model's own tool schemas already ask
+    // for a short label ("Draft reply to Sarah", never a bare URL/hostname), but nothing enforced it, so a
+    // wordy/rambling label could still slip through. Single choke point since every link (research finds,
+    // created docs, evidence) merges through here before ever reaching a task.
+    out.push(l.label && l.label.length > 60 ? { ...l, label: `${l.label.slice(0, 59)}…` } : l);
     if (out.length >= cap) return out;
   }
   return out;
