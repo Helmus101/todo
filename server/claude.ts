@@ -935,6 +935,12 @@ const ADMIN_COMM_STEP = /\b(parent\s+letters?|announcement\s+(message|email|draf
 
 // Otto's internal/setup steps that should never appear in the student's task list (not their actual work)
 const OTTO_INTERNAL_STEP = /^(re-?run|re-?fetch|re-?read|retry|re-attempt|re-execute|re-query|reconnect|enable|open\s+settings|approve|sign\s+in)\s+/i;
+// A step written in THIRD PERSON about "the student"/"the user" ("Confirm with the student which…", "Ask the
+// user whether…") is Otto's own internal planning note leaking through — never a genuine to-do, since a real
+// step addresses the reader directly (imperative "Confirm which…", or "you"), not as someone else being
+// discussed. Observed live: "Confirm with the student which French/English course track... is being taken" on
+// a task the STUDENT is themselves looking at — nonsensical as a to-do (they'd be confirming with themselves).
+const THIRD_PERSON_STUDENT_STEP = /\b(the\s+student|the\s+user)\b/i;
 const STUDY_TASK_TYPES = new Set<string>(["learn_understand", "review", "practice", "prepare_assessment", "homework_problem_set"]);
 /** On a known study-type task, strip steps that are clearly admin/communication/announcement work — almost
  *  always bleed-in from an unrelated email or calendar item read during research. Not applied to non-study
@@ -4257,7 +4263,7 @@ export async function runTask(
     const checkStepContamination = (d: RunOutput): string | null => {
       const before = d.steps.length;
       // Filter out Otto's internal actions (reconnect, settings, etc) and process complaints upfront
-      let filtered = d.steps.filter((s) => !OTTO_INTERNAL_STEP.test(s.text));
+      let filtered = d.steps.filter((s) => !OTTO_INTERNAL_STEP.test(s.text) && !THIRD_PERSON_STUDENT_STEP.test(s.text));
       filtered = dropProcessComplaintSteps(filtered);
       filtered = dropForeignEntitySteps(task, d.links, filtered);
       const afterEntity = filtered.length;
@@ -4841,8 +4847,10 @@ export async function writeStepsFromContext(
     
     const gated = bigProject ? steps : dropTrivialSteps(steps);
     const cleaned = dropProcessComplaintSteps(gated);
-    // Also filter out any steps that describe Otto's internal retry/re-run logic
-    const noInternalOttoSteps = cleaned.filter((s) => !OTTO_INTERNAL_STEP.test(s.text));
+    // Also filter out any steps that describe Otto's internal retry/re-run logic, or that talk ABOUT the
+    // student in third person instead of addressing them directly (both are Otto's own planning notes
+    // leaking through, never a genuine to-do — see THIRD_PERSON_STUDENT_STEP's own comment).
+    const noInternalOttoSteps = cleaned.filter((s) => !OTTO_INTERNAL_STEP.test(s.text) && !THIRD_PERSON_STUDENT_STEP.test(s.text));
     // Apply full contamination checking: same multi-layer filtering as during phase 1
     let filtered = dropForeignEntitySteps(task, links, noInternalOttoSteps);
     const beforeSibling = filtered.length;
