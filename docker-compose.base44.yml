@@ -1,0 +1,29 @@
+services:
+  app:
+    image: node:24-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    ports:
+      - "3000:5273"
+    environment:
+      - NODE_ENV=development
+      - PORT=8788
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+      - BASE44_PUBLIC_HOST_SUFFIX
+      - BASE44_SANDBOX_HOST_DOMAIN
+    env_file:
+      - ./.env.base44-defaults
+      - /run/base44/app.env
+    command: >
+      bash -c "
+        npm install --no-audit --no-fund &&
+        npm run dev
+      "
+    healthcheck:
+      test: ["CMD", "bash", "-c", "curl -sf http://localhost:5273/api/status || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s

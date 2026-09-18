@@ -1111,7 +1111,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
       // Draining inline (not just enqueueJob) matters here: without it the task sat at "queued" until the
       // next cron tick or manual Kick — on Vercel Hobby cron that's once a day — which is exactly the "stuck
       // on Queued with no progress" bug reported live from a fresh manual task.
-      try { await jobs.enqueueAndDrain(req.session.user!, "execute_task", added.id); } catch { /* client kick / cron will still pick it up */ }
+      try { await jobs.enqueueAndDrain(req.session.user!, "execute_task", added.id, undefined, false); } catch { /* client kick / cron will still pick it up */ }
     }
     res.json(req.session.tasks);
   } catch (e: any) {
@@ -1278,7 +1278,13 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // broke; 502 was misleading in the browser console (read as an infra crash) for what's really an
     // in-app soft failure — reported live as confusing "Bad Gateway" errors that had nothing to do with
     // any gateway.
-    if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+    // When the AI itself failed (empty completion, DeepSeek error), chatAboutTask's finish("") already
+    // sets a graceful fallback reply in out.reply.  Returning a hard 500 here used to throw that reply
+    // AND any artifacts the turn managed to create away, leaving the student with a broken "couldn't
+    // reply" error and no chat bubble at all.  Instead: if we have a fallback reply, treat it as a
+    // successful turn so the reply and artifacts are saved and the student always gets a response.
+    if (out.error && !out.reply?.trim()) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+    if (out.error) void recordMetric(req.session.user!, "chat_fallback_reply", 1);
     if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
     // Score the chat-style arm: the only IMMEDIATELY observable outcome of one turn is whether the guardrail
     // held (a genuinely unhelpful/off-boundary reply) — a richer "did they send a follow-up" reward would
@@ -1379,7 +1385,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
   const user = req.session.user!;
   const id = String(req.params.id);
   try {
-    const job = await jobs.enqueueAndDrain(user, type, id, input);
+    const job = await jobs.enqueueAndDrain(user, type, id, input, false);
     // enqueueJob is idempotent PER TASK, not per job type — if a job of a DIFFERENT kind is already active
     // for this task (e.g. an auto-queued execute_task still running when the user asks to revise), it
     // returns THAT job as-is, silently discarding the new input (the revise note never gets applied).
@@ -2322,15 +2328,26 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     // even with the tab open and kicking every 4s — this was reported live as "task constantly queued,
     // never executed" for a task that only ran ~20 minutes later, once its OWN turn came up in the global
     // queue instead of the very next kick.
-    const out = await jobs.drain(1, undefined, req.session.user!);
-    const [active, activeTaskIds] = await Promise.all([countActiveJobs(req.session.user!), activeJobTaskIds(req.session.user!)]);
-    // Refresh this session's view of the cloud copy the job just wrote.
-    if (out.processed || out.failed) {
-      const cloud = await loadState(req.session.user!);
-      req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
-      await saveSession(req);
-    }
-    res.json({ ...out, active, activeTaskIds, tasks: req.session.tasks || [] });
+    //
+    // NON-BLOCKING: a kick used to `await jobs.drain(...)` — which blocks for the ENTIRE duration of one
+    // job's AI call (potentially minutes).  While that single HTTP request hung, the client's 4-second
+    // kick loop was frozen (kicking.current = true), so no further kicks could fire and the dashboard
+    // went stale for the whole run.  Worse, a long-enough hang hit the proxy/browser timeout and surfaced
+    // as ERR_CONNECTION_RESET — the exact "takes forever" / "kick failed" reports.  Fire the drain in
+    // the background instead and return the current state immediately.  claimJob is atomic, so the next
+    // kick (4s later) finds the job already claimed/running and returns instantly; when the job finishes,
+    // the following kick picks up the updated cloud state and the client sees the result.
+    const email = req.session.user!;
+    void jobs.drain(1, undefined, email).then(async (out) => {
+      if (out.processed || out.failed) {
+        try {
+          const cloud = await loadState(email);
+          // Best-effort session refresh — the next kick/sync will pick up the updated tasks regardless.
+        } catch { /* best-effort */ }
+      }
+    }).catch((e: any) => console.error("[kick] background drain failed:", e?.message || e));
+    const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
+    res.json({ processed: 0, failed: 0, active, activeTaskIds, tasks: req.session.tasks || [] });
   } catch (e: any) { res.status(500).json({ error: e?.message || "kick failed" }); }
 });
 

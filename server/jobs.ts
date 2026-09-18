@@ -580,8 +580,14 @@ export async function drain(limit = 3, budgetMs = 240_000, userEmail?: string): 
 }
 
 /** Enqueue a job and drain inline — the interactive path: the request that asked for work sees it done
- *  (or already-in-flight) before responding, while the SAME queue gives cron the offline path. */
-export async function enqueueAndDrain(email: string, type: store.JobType, taskId?: string, input?: any): Promise<store.Job> {
+ *  (or already-in-flight) before responding, while the SAME queue gives cron the offline path.
+ *
+ *  `drainInline` (default true): when false, the job is enqueued and its task status is marked "queued"
+ *  but the drain is NOT awaited — the HTTP response returns immediately and the client's non-blocking
+ *  kick loop (see /api/jobs/kick) picks up the job within seconds.  This avoids the request hanging for
+ *  the entire AI call duration (the "takes forever" / ERR_CONNECTION_RESET reports) without adding any
+ *  timeout or limit on the work itself. */
+export async function enqueueAndDrain(email: string, type: store.JobType, taskId?: string, input?: any, drainInline = true): Promise<store.Job> {
   const job = await store.enqueueJob(email, type, taskId, input);
   // Also attempt a drain when the job comes back "running", not just "queued" — a job left running by a
   // worker that got killed mid-request (serverless execution-time limit cutting off a long sweep/run
@@ -593,10 +599,12 @@ export async function enqueueAndDrain(email: string, type: store.JobType, taskId
   if (job.status === "queued" || job.status === "running") {
     // Make the queued state VISIBLE before work starts (execution types only — sweeps aren't a task).
     if (taskId && type !== "sweep" && job.status === "queued") await markTaskStatus(email, taskId, "queued").catch(() => {});
-    // Scoped to THIS account — an unscoped drain() claims the global oldest queued job across every user
-    // (see the /api/jobs/kick fix for the same bug), which would make an interactive "run this now" request
-    // process a stranger's job instead of the one it just enqueued.
-    await drain(2, undefined, email);
+    if (drainInline) {
+      // Scoped to THIS account — an unscoped drain() claims the global oldest queued job across every user
+      // (see the /api/jobs/kick fix for the same bug), which would make an interactive "run this now" request
+      // process a stranger's job instead of the one it just enqueued.
+      await drain(2, undefined, email);
+    }
   }
   return (await store.getJob(job.id, email)) || job;
 }
