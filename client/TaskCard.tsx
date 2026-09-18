@@ -652,12 +652,20 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
   // no way out but waiting. Surface a manual retry after a few seconds instead of leaving it an inert spinner.
   const [showRetry, setShowRetry] = useState(false);
   const [retryingRefine, setRetryingRefine] = useState(false);
+  const [showStuckRetry, setShowStuckRetry] = useState(false);
+  const [retryingStuckTask, setRetryingStuckTask] = useState(false);
   useEffect(() => {
     if (!task.unrefined) { setShowRetry(false); return; }
     setShowRetry(false);
     const id = setTimeout(() => setShowRetry(true), 8000);
     return () => clearTimeout(id);
   }, [task.unrefined, task.id]);
+  useEffect(() => {
+    if (!isInFlight(task.status) || task.unrefined) { setShowStuckRetry(false); return; }
+    setShowStuckRetry(false);
+    const id = setTimeout(() => setShowStuckRetry(true), 15000);
+    return () => clearTimeout(id);
+  }, [task.status, task.unrefined, task.id, task.updatedAt]);
   const retryRefine = async () => {
     setRetryingRefine(true);
     try {
@@ -687,6 +695,20 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
           <div className="hero-acts">
             <button className="btn ghost" disabled={retryingRefine} onClick={() => void retryRefine()}>
               {retryingRefine ? L("Relance…", "Retrying…") : L("Ça prend du temps — réessayer maintenant", "Taking a while — retry now")}
+            </button>
+          </div>
+        ) : null}
+        {!task.unrefined && showStuckRetry ? (
+          <div className="hero-acts">
+            <button
+              className="btn ghost"
+              disabled={retryingStuckTask}
+              onClick={() => {
+                setRetryingStuckTask(true);
+                try { onRun(true); } finally { window.setTimeout(() => setRetryingStuckTask(false), 1200); }
+              }}
+            >
+              {retryingStuckTask ? L("Relance…", "Retrying…") : L("Ça prend du temps — relancer", "Taking a while — retry")}
             </button>
           </div>
         ) : null}
