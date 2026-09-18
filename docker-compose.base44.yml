@@ -1,0 +1,30 @@
+# Base44 dev environment — runs the app from cloned source with live reload.
+# Single service: `npm run dev` starts both the Express backend (tsx watch, 8788)
+# and the Vite dev server (5273) via concurrently. Vite proxies /api, /auth,
+# /integrations to the backend, so only port 5273 needs to be public.
+services:
+  app:
+    image: node:24-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - node_modules:/app/node_modules
+    ports:
+      - "3000:5273"
+    environment:
+      - PORT=8788
+      - NODE_ENV=development
+      # Vite >= 6.1 appends this to allowedHosts; the platform sets it.
+      - __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS
+    env_file:
+      - /run/base44/app.env
+    command: sh -c "npm install && npm run dev"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5273/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+volumes:
+  node_modules:
