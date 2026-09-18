@@ -12,6 +12,30 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // no permissive CORS is set anywhere on this API), cached here, and attached to every mutating request
 // below. `api.status()` is the one place that ever sets this.
 let csrfToken: string | null = null;
+// In-flight/completed priming fetch, shared across every caller that needs a token before csrfToken is set.
+// Exists because App.tsx's `status` STATE is restored synchronously from localStorage on mount (see its own
+// CACHED_STATUS) — so `status?.loggedIn`/`connected` can read true, and effects gated on them can fire a
+// mutating call, on the VERY FIRST RENDER, well before the real network /api/status round-trip (the only
+// thing that ever actually sets `csrfToken`, which is in-memory only and never itself persisted) resolves.
+// That mutating request used to just go out with no header at all — `requireAuth` server-side then sees a
+// session that already HAS a token (persisted, unlike this module-level variable) but a request with NONE,
+// a mismatch no retry can fix (the retry-once logic below only helps when the SERVER's echoed token differs
+// from what was ALREADY sent — there's nothing to compare against here). Reported live as a persistent 403
+// on early calls (recordMetric, generate) that fire from a mount-time effect. Fixed by making every mutating
+// request WAIT for a real token first if it doesn't have one yet, priming from the shared in-flight fetch
+// instead of either duplicating it per-caller or racing it.
+let primingFetch: Promise<void> | null = null;
+async function primeCsrfToken(): Promise<void> {
+  if (csrfToken) return;
+  if (!primingFetch) {
+    primingFetch = fetch("/api/status")
+      .then((r) => r.json())
+      .then((s: any) => { if (s?.csrfToken) csrfToken = s.csrfToken; })
+      .catch(() => { /* best-effort — the caller proceeds with whatever it has, same as before this fix */ })
+      .finally(() => { primingFetch = null; }); // let a LATER genuine miss (e.g. after logout/login) re-prime
+  }
+  await primingFetch;
+}
 
 // Best-effort read of the account's chosen language, straight from what App.tsx already persists on every
 // status load — this module has no React context to read LangContext from. Several server error strings
@@ -49,9 +73,11 @@ function translateServerError(msg: string): string {
 async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = false): Promise<Response> {
   // Attach the CSRF token to every mutating request — GET/HEAD are read-only and exempt server-side too
   // (see requireAuth), so no point adding the header there. `csrfToken` is null before the first successful
-  // /api/status call (e.g. the very first request of a fresh page load); that's fine, those early requests
-  // are pre-login and unauthenticated anyway (requireAuth's check only applies once req.session.user exists).
+  // /api/status call resolves — WAIT for that (via primeCsrfToken, see its own comment) rather than firing a
+  // mutating request with no header at all: a mount-time effect gated on locally-cached (not yet server-
+  // confirmed) "logged in" state can otherwise fire before that first status round-trip ever completes.
   const method = (init?.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && !csrfToken && !isCsrfRetry) await primeCsrfToken();
   if (method !== "GET" && method !== "HEAD" && csrfToken) {
     init = { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": csrfToken } };
   }
