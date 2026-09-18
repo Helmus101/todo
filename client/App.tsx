@@ -660,19 +660,21 @@ export function App() {
     const taskId = route.split("/")[1];
     const task = tasks.find(t => t.id === taskId);
     if (!task) return;
-    // Never let this overwrite regress the chat thread mid-session. `onTaskUpdate` (below, passed to
-    // StudyMode) updates studyModeTask directly on every chat turn — but a background `syncTasks` fetch
-    // (tab focus/visibilitychange, or the 5min tick) can resolve with a STALER `tasks` array than what's
-    // already here, either from plain request-ordering (the GET started before the chat POST landed) or
-    // the cross-instance session-cache race documented in server/store.ts's peekTaskChat comment. Without
-    // this guard, THIS effect re-fires on every `tasks` change and blindly overwrites studyModeTask with
-    // that stale copy — visibly "blanking" the chat back to an earlier point. Keep whichever chat is
-    // longer; everything else (steps, status, etc.) still tracks the latest `tasks` entry as before.
-    setStudyModeTask((prev) =>
-      prev?.id === task.id && (prev.chat?.length || 0) > (task.chat?.length || 0)
-        ? { ...task, chat: prev.chat }
-        : task
-    );
+    // Never let this overwrite or replace the live study thread with a stale background response. A
+    // refresh can return the same number of messages but an older conversation (or omit a just-sent
+    // optimistic turn), so comparing lengths alone is not sufficient. Preserve the local thread unless
+    // the incoming task contains every local entry in the same order. Everything else tracks the latest
+    // task snapshot as before.
+    setStudyModeTask((prev) => {
+      if (prev?.id !== task.id) return task;
+      const localChat = prev.chat || [];
+      const incomingChat = task.chat || [];
+      const incomingContainsLocal = localChat.every((entry, index) => {
+        const incoming = incomingChat[index];
+        return incoming?.role === entry.role && incoming?.text === entry.text;
+      });
+      return incomingContainsLocal ? task : { ...task, chat: localChat };
+    });
   }, [route, tasks]);
 
   // Legal pages are PUBLIC — reachable logged-out or in, and even before status loads. Rendered before
@@ -733,8 +735,28 @@ export function App() {
                 // Register like patchTask does (see keepLocalHandled) — a chat turn is a local mutation too,
                 // so a background syncTasks racing this update doesn't get treated as unconditionally newer.
                 localMutations.current.set(u.id, Date.now());
-                setTasks((prev) => prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]);
-                setStudyModeTask(u);
+                setTasks((prev) => prev.some((x) => x.id === u.id)
+                  ? prev.map((x) => {
+                      if (x.id !== u.id) return x;
+                      const existingChat = x.chat || [];
+                      const incomingChat = u.chat || [];
+                      const incomingContainsExisting = existingChat.every((entry, index) => {
+                        const incoming = incomingChat[index];
+                        return incoming?.role === entry.role && incoming?.text === entry.text;
+                      });
+                      return incomingContainsExisting ? u : { ...u, chat: existingChat };
+                    })
+                  : [...prev, u]);
+                setStudyModeTask((prev) => {
+                  if (prev?.id !== u.id) return u;
+                  const existingChat = prev.chat || [];
+                  const incomingChat = u.chat || [];
+                  const incomingContainsExisting = existingChat.every((entry, index) => {
+                    const incoming = incomingChat[index];
+                    return incoming?.role === entry.role && incoming?.text === entry.text;
+                  });
+                  return incomingContainsExisting ? u : { ...u, chat: existingChat };
+                });
               }}
               userId={status?.user}
               language={status?.language === "en" ? "en" : "fr"}
