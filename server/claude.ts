@@ -224,10 +224,12 @@ function isInternalOttoWork(stepText: string): boolean {
  */
 function isArtifactCreationStep(stepText: string): boolean {
   const artifactPatterns = [
-    /\b(create|make|build|generate)\s+(flashcards?|quiz|study\s+guide|reference|outline|checklist|summary|evidence\s+bank)\b/i,
-    /\b(create|make|build|generate)\s+(a\s+)?(note|brief|fiche)\b/i,
+    /\b(create|make|build|generate|draft|write|compile|assemble|prepare|organize|extract)\s+(outline|summary|reference|checklist|evidence\s+bank|research\s+notes|revision\s+sheet|study\s+guide|flashcards?|quiz|practice\s+questions|fiche|brief|deck|presentation|document|doc|sheet|list|content|information|data|definitions|examples|effects)\b/i,
+    /\b(create|make|build|generate|draft|write|compile|assemble|prepare|organize|extract)\s+(a\s+)?(note|brief|fiche|deck|presentation|document|doc|sheet|list)\b/i,
+    /\b(build|create|draft|write|make)\s+(a\s+)?(revision|study|vocab|vocabulary|reference)\s+(sheet|list|guide|bank)\b/i,
+    /\b(extract|gather|collect|compile)\s+(content|information|data|definitions|examples|effects)\s+(from|into)\b/i,
     // French — the app defaults to French, so English-only patterns miss "Créer des flashcards", "Faire une fiche", etc.
-    /\b(cr[ée]er?|faire|construire|g[ée]n[ée]rer|pr[ée]parer|r[ée]diger|élaborer)\s+(?:une?\s+|des\s+|d['e]\s*)?(flashcards?|quiz|guide\s+d['e]tude|r[ée]f[ée]rence|plan|checklist|r[ée]sum[ée]|banque\s+de\s+preuves|note|fiche|brief)\b/i,
+    /\b(cr[ée]er?|faire|construire|g[ée]n[ée]rer|pr[ée]parer|r[ée]diger|élaborer|extraire|compiler|rassembler)\s+(?:une?\s+|des\s+|d['e]\s*)?(flashcards?|quiz|guide\s+d['e]tude|r[ée]f[ée]rence|plan|checklist|r[ée]sum[ée]|banque\s+de\s+preuves|note|fiche|brief|contenu|informations?|donn[ée]es?|d[ée]finitions?|exemples?)\b/i,
   ];
   return artifactPatterns.some(pattern => pattern.test(stepText));
 }
@@ -326,6 +328,18 @@ export function separateUnrelatedTasks(
   }
 
   return { filteredSteps, separateTasks };
+}
+
+/**
+ * Cleanup function: remove artifact creation steps from existing tasks
+ * This is for migrating old tasks that have persisted artifact creation steps.
+ */
+export function cleanupArtifactCreationSteps(steps: TaskStep[]): TaskStep[] {
+  const cleaned = steps.filter(step => !isArtifactCreationStep(step.text));
+  if (cleaned.length !== steps.length) {
+    console.log(`${new Date().toISOString()} [ai] cleanup: removed ${steps.length - cleaned.length} artifact creation steps from existing task`);
+  }
+  return cleaned;
 }
 /** The app's UI + AI-content language, toggled in Settings (defaults French). Every prompt that phrases
  *  user-facing text pulls this in rather than hardcoding a language. */
@@ -2337,7 +2351,7 @@ export async function regenerateStepsWithScaffolding(
           `CONTEXT GATHERED (supporting information only — not the objective):\n${context.slice(0, 500)}\n` +
           `CURRENT STEPS (already completed or in progress):\n${currentSteps.slice(0, 3).map(s => `- ${s.text}`).join("\n")}\n` +
           failureHint +
-          `\n\nNEW ARCHITECTURE: Re-anchor to Original Task → Filter Context → Create Artifacts → Generate Minimum Required Subtasks\n\n` +
+          `\n\nNEW ARCHITECTURE: TWO-STEP PLANNING — Otto's Internal Steps → User's Visible Steps\n\n` +
           `STEP 1: Re-anchor to the ORIGINAL TASK\n` +
           `The task title is the objective: "${task.title}"\n` +
           `The Definition of Done is the success condition: ${definitionOfDone}\n` +
@@ -2346,81 +2360,68 @@ export async function regenerateStepsWithScaffolding(
           `Review the gathered context above. Which parts actually help achieve the Definition of Done?\n` +
           `Discard: unrelated curriculum materials, other subjects, unrelated deadlines, disconnected accounts.\n` +
           `Keep: only information that directly supports completing "${task.title}".\n\n` +
-          `STEP 3: Determine what OTTO can create\n` +
-          `Based on the RELEVANT context, what artifacts can Otto create RIGHT NOW to help complete this task?\n` +
-          `For STUDY/REVIEW: summary, reference sheet, flashcards, practice questions, quiz\n` +
-          `For ESSAY: evidence bank, thesis options, outline, draft sections\n` +
-          `For PRESENTATION: research notes, slide outline, speaker notes\n` +
-          `For CODING: implementation, tests, technical notes\n` +
-          `For PLANNING: schedule, budget, checklist\n` +
-          `These are NOT user steps — Otto creates them BEFORE the student starts.\n\n` +
-          `STEP 4: Determine what the USER must do\n` +
-          `NOW that Otto has prepared what it can, what does the student ACTUALLY need to do?\n` +
-          `Each step must:\n` +
-          `- Directly contribute to the Definition of Done for "${task.title}"\n` +
-          `- Be something the student must do (not Otto)\n` +
-          `- Be concrete and actionable (not "research X" or "find Y")\n` +
-          `- Not be about creating Otto's artifacts (Otto creates those)\n` +
-          `- Not be internal Otto work (re-search, re-fetch, retry)\n` +
-          `- Not be an unrelated task discovered during research\n` +
-          `- Not be microscopic instructions (no 6-step sub-plans)\n\n` +
+          `STEP 3: Plan OTTO'S INTERNAL STEPS (what Otto will do itself)\n` +
+          `Based on the RELEVANT context, what will Otto ACTUALLY DO ITSELF?\n` +
+          `Otto's internal steps include:\n` +
+          `- Research: search Drive, Gmail, web for missing information\n` +
+          `- Artifact creation: summaries, reference sheets, flashcards, practice questions, quizzes, outlines, evidence banks\n` +
+          `- Prep work: organizing information, compiling data, drafting content\n` +
+          `Otto EXECUTES these steps INTERNALLY — the user never sees them.\n` +
+          `List in "artifacts" — these represent what Otto will create.\n\n` +
+          `STEP 4: Plan USER'S VISIBLE STEPS (what the user must do)\n` +
+          `NOW that Otto has done what it can, what does the student ACTUALLY need to do?\n` +
+          `User steps include ONLY:\n` +
+          `- Decisions/judgments only the student can make\n` +
+          `- Physical actions the student must perform\n` +
+          `- Logins/credentials only the student has\n` +
+          `- Payments or approvals\n` +
+          `- Genuine review/approval of Otto's work\n` +
+          `User steps are SHORT (≤12 words), concrete, and action-oriented.\n` +
+          `List in "steps" — these are what the user sees.\n\n` +
           `CRITICAL RULES:\n` +
           `1. The TASK TITLE is the objective — never lose sight of it\n` +
           `2. CONTEXT is supporting information only — never let it become the objective\n` +
-          `3. Research operations are NEVER user steps — Otto does them internally\n` +
-          `4. Artifact creation is NEVER a user step — Otto creates them first\n` +
+          `3. Otto's steps are INTERNAL — never shown to the user\n` +
+          `4. User steps are ONLY what the user must do — not research, not artifact creation\n` +
           `5. Unrelated tasks become separate tasks, not steps\n` +
-          `6. Each step must directly move toward the Definition of Done\n` +
-          `7. Generate the MINIMUM required subtasks — not everything that could be done\n\n` +
+          `6. Each user step must directly move toward the Definition of Done\n` +
+          `7. Generate the MINIMUM required user steps — not everything that could be done\n\n` +
           `Return ONLY this JSON:\n` +
           `{\n` +
           `  "definitionOfDone": "concrete success criteria for this exact task",\n` +
           `  "contextRelevance": "brief explanation of which gathered context is relevant and why",\n` +
           `  "artifacts": [{"title": "...", "type": "note|flashcards|quiz|outline|checklist|reference|draft|summary|evidence_bank|other", "status": "created|needed|not_needed", "description": "..."}],\n` +
-          `  "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy|medium|hard", "automatable": false, "dependsOn": 0, "url": "...", "question": "...", "options": ["..."]}]\n` +
-          `}`,
+          `  "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy|medium|hard", "automatable": false (ALWAYS false for user steps), "dependsOn": 0, "url": "...", "question": "...", "options": ["..."]}]\n` +
+          `}\n\n` +
+          `IMPORTANT: All steps must have automatable=false — these are USER steps only. Otto's internal work goes in artifacts.`,
       }],
     }));
 
     const out = firstJson<TaskPlanningOutput>(String(res.choices?.[0]?.message?.content || ""));
     if (!out?.steps?.length) return currentSteps;
 
-    // Apply the new architecture filters
-let steps = anchorStepsToTask(sanitizeSteps(out.steps
-    .map((s: any) => ({
+    let steps = sanitizeSteps(out.steps
+      .map((s: any) => ({
         text: truncateStepText(String(s?.text || "")),
         automatable: false,
         minutes: s?.minutes || 15,
         doneWhen: s?.doneWhen ? String(s.doneWhen).slice(0, 150) : undefined,
         checkpoint: s?.checkpoint ? String(s.checkpoint).slice(0, 150) : undefined,
-  difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
-  })), 15), task.title, 15);
-  
-  // filterStepsByDefinitionOfDone NOT applied here — see its own doc comment: isResearchOperation() blindly
-  // rejects ANY step starting with "Research"/"Find" REGARDLESS of context, directly conflicting with the
-  // established, more careful design below (dropTrivialSteps + the automatable-flip in finalize/DOABLE_VERBS):
-  // "Research X and compile a list" is a LEGITIMATE step Otto does itself once flipped automatable — only a
-  // step actually left to the student that's nothing but a bare lookup should ever be dropped. Verified live:
-  // this crashed tests/run.mjs by zeroing out legitimate research-and-compile steps. Its other two checks
-  // (isInternalOttoWork/isArtifactCreationStep) duplicate OTTO_INTERNAL_STEP/IN_APP_ARTIFACT_STEP, which
-  // already run elsewhere in this same pipeline — nothing lost by skipping this layer entirely.
+        difficulty: ["easy", "medium", "hard"].includes(s?.difficulty) ? s.difficulty : "medium",
+      })), 6);
 
-    // Apply artifact separation
+    // filterStepsByDefinitionOfDone and separateUnrelatedTasks are deliberately NOT applied here — see their
+    // shared doc comments (top of file) for why: isResearchOperation() blindly rejects any step starting
+    // with "Research"/"Find" regardless of context (conflicting with the automatable-flip design elsewhere),
+    // and separateUnrelatedTasks permanently deletes ordinary on-topic steps via a keyword-overlap heuristic
+    // while only ever logging what it extracts, never actually creating it as a real task. Both verified live
+    // to crash tests/run.mjs by zeroing out valid steps.
     const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(steps);
     steps = stepsWithoutArtifacts;
-
-    // separateUnrelatedTasks is deliberately NOT applied here — see its own comment: the "separate tasks" it
-    // extracts are only ever logged, never actually created anywhere (a half-finished feature), while the
-    // steps they're pulled from are gone for good. Its keyword-overlap heuristic is also too aggressive on
-    // ordinary steps with few words in common with the title ("Pick a date" on a trip/event task, verified
-    // live: it crashed tests/run.mjs by zeroing out a task's entire step list). Pure regression with no
-    // compensating benefit until separateTasks is actually wired up to create those tasks for real.
-
-    // Apply triviality gate
     steps = dropTrivialSteps(steps);
-    
+
     console.log(`${new Date().toISOString()} [ai] regenerateStepsWithScaffolding: applied new architecture, ${out.steps.length} raw steps → ${steps.length} final steps`);
-    
+
     return steps;
   } catch (e: any) {
     console.log(`${new Date().toISOString()} [ai] regenerateStepsWithScaffolding error: ${e?.message || e}`);
@@ -2644,11 +2645,11 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
           "   - 'required': class-source specific ('study what we did in class', 'review chapter 4', 'prep for tomorrow's test')\n" +
           "6. NEW ARCHITECTURE GUIDANCE:\n" +
           "   - CORE INVARIANT: The task title is the OBJECTIVE. The Definition of Done is the SUCCESS CONDITION. Context is SUPPORTING INFORMATION only. Never let context become the objective.\n" +
-          "   - Research operations are NEVER user steps — Otto does them internally\n" +
-          "   - Artifact creation is NEVER a user step — Otto creates them first\n" +
+          "   - Otto's steps are INTERNAL — research, artifact creation, prep work — the user never sees these\n" +
+          "   - User steps are ONLY what the user must do — decisions, physical actions, logins, payments, approvals\n" +
           "   - Unrelated tasks become separate tasks, not steps\n" +
-          "   - Each step must directly move toward the Definition of Done\n" +
-          "   - Generate the MINIMUM required subtasks — not everything that could be done\n" +
+          "   - Each user step must directly move toward the Definition of Done\n" +
+          "   - Generate the MINIMUM required user steps — not everything that could be done\n" +
           "7. TITLE & WHY: Crisp imperative title (≤9 words) naming the concrete object/person, and concise intent (why ≤12 words). Output STRICT JSON only." },
         { role: "user", content: profileBlock(profile) +
           `\nRaw note: "${raw.slice(0, 300)}"\n\n` +
@@ -3510,42 +3511,40 @@ const RUN_SYSTEM =
   `(2) PLAN — from that context, fix the OBJECTIVE (what "done" actually looks like for THIS task) ` +
   `and map out the exact plan to achieve it: define what needs to be done, the sequence of research/writing steps, which tools to use, and which artifact(s) to produce. ` +
   `Define EXACTLY what you will create or update before you start.\n\n` +
-  `NEW ARCHITECTURE — TASK BOUNDARY VALIDATION:\n` +
+  `NEW ARCHITECTURE — TWO-STEP PLANNING:\n` +
   `CORE INVARIANT: The TASK TITLE is the OBJECTIVE. The DEFINITION OF DONE is the SUCCESS CONDITION. ` +
   `The CONTEXT you gather is SUPPORTING INFORMATION only. Never let the context become the objective.\n\n` +
   `STEP 1: Define the Definition of Done\n` +
   `What does "success" look like for this specific task? Be concrete: not "study physics" but "can solve 5 projectile motion problems without notes".\n\n` +
   `STEP 2: Filter context for TASK RELEVANCE\n` +
   `Review the gathered context. Which parts actually help achieve the Definition of Done? Discard unrelated curriculum materials, other subjects, unrelated deadlines. Keep only information that directly supports completing THIS task.\n\n` +
-  `STEP 3: Determine what OTTO can create\n` +
-  `Based on the RELEVANT context, what artifacts can Otto create RIGHT NOW to help complete this task?\n` +
-  `For STUDY/REVIEW: summary, reference sheet, flashcards, practice questions, quiz\n` +
-  `For ESSAY: evidence bank, thesis options, outline, draft sections\n` +
-  `For PRESENTATION: research notes, slide outline, speaker notes\n` +
-  `For CODING: implementation, tests, technical notes\n` +
-  `For PLANNING: schedule, budget, checklist\n` +
-  `These are NOT user steps — Otto creates them BEFORE the student starts.\n\n` +
-  `STEP 4: Determine what the USER must do\n` +
-  `NOW that Otto has prepared what it can, what does the student ACTUALLY need to do?\n` +
-  `Each step must:\n` +
-  `- Directly contribute to the Definition of Done for THIS task\n` +
-  `- Be something the student must do (not Otto)\n` +
-  `- Be concrete and actionable (not "research X" or "find Y")\n` +
-  `- Not be about creating Otto's artifacts (Otto creates those)\n` +
-  `- Not be internal Otto work (re-search, re-fetch, retry)\n` +
-  `- Not be an unrelated task discovered during research\n` +
-  `- Not be microscopic instructions (no 6-step sub-plans)\n\n` +
+  `STEP 3: Determine what OTTO will do (INTERNAL STEPS)\n` +
+  `Based on the RELEVANT context, what will Otto ACTUALLY DO ITSELF before showing the user anything?\n` +
+  `Otto's steps include:\n` +
+  `- Research: search Drive, Gmail, web for missing information\n` +
+  `- Artifact creation: summaries, reference sheets, flashcards, practice questions, quizzes, outlines, evidence banks\n` +
+  `- Prep work: organizing information, compiling data, drafting content\n` +
+  `Otto EXECUTES these steps INTERNALLY — the user never sees them.\n\n` +
+  `STEP 4: Determine what the USER must do (VISIBLE STEPS)\n` +
+  `NOW that Otto has done what it can, what does the student ACTUALLY need to do?\n` +
+  `User steps include ONLY:\n` +
+  `- Decisions/judgments only the student can make\n` +
+  `- Physical actions the student must perform\n` +
+  `- Logins/credentials only the student has\n` +
+  `- Payments or approvals\n` +
+  `- Genuine review/approval of Otto's work\n` +
+  `User steps are SHORT (≤12 words), concrete, and action-oriented.\n\n` +
   `STEP 5: Identify unrelated tasks discovered during research\n` +
   `Did the research uncover other actionable items that are NOT part of THIS task?\n` +
   `Examples: "Send Weave reply", "Confirm IEO finals date". These become separate tasks, not steps.\n\n` +
   `CRITICAL RULES:\n` +
   `1. The TASK TITLE is the objective — never lose sight of it\n` +
   `2. CONTEXT is supporting information only — never let it become the objective\n` +
-  `3. Research operations are NEVER user steps — Otto does them internally\n` +
-  `4. Artifact creation is NEVER a user step — Otto creates them first\n` +
+  `3. Otto's steps are INTERNAL — never shown to the user\n` +
+  `4. User steps are ONLY what the user must do — not research, not artifact creation\n` +
   `5. Unrelated tasks become separate tasks, not steps\n` +
-  `6. Each step must directly move toward the Definition of Done\n` +
-  `7. Generate the MINIMUM required subtasks — not everything that could be done\n\n` +
+  `6. Each user step must directly move toward the Definition of Done\n` +
+  `7. Generate the MINIMUM required user steps — not everything that could be done\n\n` +
   `(3) SPLIT THE WORK — for each step decide who owns it: YOU (automatable — anything you can do with your ` +
   `tools or by finding information) vs the USER (only a judgment/approval, a login/credential, a payment, or ` +
   `a physical act). Default to YOURS when unsure.\n` +
@@ -4834,7 +4833,7 @@ export async function writeStepsFromContext(
           `${context.trim() ? `CONTEXT GATHERED (supporting information only — not the objective):\n${context}` : "No research was needed for this one — plan it from the task itself."}${linksBlock}${didBlock}` +
           assignmentBlock(task) + profileBlock(profile) + `\n\n` +
           languageLine(profile) + trackLine(profile) + nowBlock() +
-          `NEW ARCHITECTURE: Re-anchor to Original Task → Filter Context → Create Artifacts → Generate Minimum Required Subtasks\n\n` +
+          `NEW ARCHITECTURE: TWO-STEP PLANNING — Otto's Internal Steps → User's Visible Steps\n\n` +
           `STEP 1: Re-anchor to the ORIGINAL TASK\n` +
           `The task title is the objective: "${task.title}"\n` +
           `The Definition of Done is the success condition: ${task.goal || "define this concretely"}\n` +
@@ -4844,17 +4843,35 @@ export async function writeStepsFromContext(
           `Discard: unrelated curriculum materials, other subjects, unrelated deadlines, disconnected accounts.\n` +
           `Keep: only information that directly supports completing "${task.title}".\n` +
           `State briefly: Which context is relevant and why?\n\n` +
-          `STEP 3: Determine what OTTO can create\n` +
-          `Based on the RELEVANT context, what artifacts can Otto create RIGHT NOW to help complete this task?\n` +
-          `For STUDY/REVIEW tasks: summary, reference sheet, flashcards, practice questions, quiz\n` +
-          `For ESSAY tasks: evidence bank, thesis options, outline, draft sections\n` +
-          `For PRESENTATION tasks: research notes, slide outline, speaker notes\n` +
-          `For CODING tasks: implementation, tests, technical notes\n` +
-          `For PLANNING tasks: schedule, budget, checklist\n` +
-          `These are NOT user steps — Otto creates them BEFORE the student starts.\n\n` +
-          `STEP 4: Determine what the USER must do\n` +
-          `NOW that Otto has prepared what it can, what does the student ACTUALLY need to do?\n` +
-          `Each step must:\n` +
+          `STEP 3: Plan OTTO'S INTERNAL STEPS (what Otto will do itself)\n` +
+          `Based on the RELEVANT context, what will Otto ACTUALLY DO ITSELF?\n` +
+          `Otto's internal steps include:\n` +
+          `- Research: search Drive, Gmail, web for missing information\n` +
+          `- Artifact creation: summaries, reference sheets, flashcards, practice questions, quizzes, outlines, evidence banks\n` +
+          `- Prep work: organizing information, compiling data, drafting content\n` +
+          `Otto EXECUTES these steps INTERNALLY — the user never sees them.\n` +
+          `List in "artifacts" — these represent what Otto will create.\n\n` +
+          `STEP 4: Plan USER'S VISIBLE STEPS (what the user must do)\n` +
+          `NOW that Otto has done what it can, what does the student ACTUALLY need to do?\n` +
+          `User steps include ONLY:\n` +
+          `- Decisions/judgments only the student can make\n` +
+          `- Physical actions the student must perform\n` +
+          `- Logins/credentials only the student has\n` +
+          `- Payments or approvals\n` +
+          `- Genuine review/approval of Otto's work\n` +
+          `User steps are SHORT (≤12 words), concrete, and action-oriented.\n` +
+          `List in "steps" — these are what the user sees.\n\n` +
+          `STEP 5: Identify unrelated tasks discovered during research\n` +
+          `Did the research uncover other actionable items that are NOT part of THIS task?\n` +
+          `Examples: "Send Weave reply", "Confirm IEO finals date". These become separate tasks, not steps.\n\n` +
+          `CRITICAL RULES:\n` +
+          `1. The TASK TITLE is the objective — never lose sight of it\n` +
+          `2. CONTEXT is supporting information only — never let it become the objective\n` +
+          `3. Otto's steps are INTERNAL — never shown to the user\n` +
+          `4. User steps are ONLY what the user must do — not research, not artifact creation\n` +
+          `5. Unrelated tasks become separate tasks, not steps\n` +
+          `6. Each user step must directly move toward the Definition of Done\n` +
+          `7. Generate the MINIMUM required user steps — not everything that could be done\n\n` +
           `- Directly contribute to the Definition of Done for "${task.title}"\n` +
           `- Be something the student must do (not Otto)\n` +
           `- Be concrete and actionable (not "research X" or "find Y")\n` +
@@ -4872,20 +4889,21 @@ export async function writeStepsFromContext(
           `CRITICAL RULES:\n` +
           `1. The TASK TITLE is the objective — never lose sight of it\n` +
           `2. CONTEXT is supporting information only — never let it become the objective\n` +
-          `3. Research operations are NEVER user steps — Otto does them internally\n` +
-          `4. Artifact creation is NEVER a user step — Otto creates them first\n` +
+          `3. Otto's steps are INTERNAL — never shown to the user\n` +
+          `4. User steps are ONLY what the user must do — not research, not artifact creation\n` +
           `5. Unrelated tasks become separate tasks, not steps\n` +
-          `6. Each step must directly move toward the Definition of Done\n` +
-          `7. Generate the MINIMUM required subtasks — not everything that could be done\n\n` +
+          `6. Each user step must directly move toward the Definition of Done\n` +
+          `7. Generate the MINIMUM required user steps — not everything that could be done\n\n` +
           `Return ONLY this JSON:\n` +
           `{\n` +
           `  "definitionOfDone": "concrete success criteria for this exact task",\n` +
           `  "contextRelevance": "brief explanation of which gathered context is relevant and why",\n` +
           `  "artifacts": [{"title": "...", "type": "note|flashcards|quiz|outline|checklist|reference|draft|summary|evidence_bank|other", "status": "created|needed|not_needed", "description": "..."}],\n` +
           `  "isBigProject": true|false,\n` +
-          `  "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy|medium|hard", "targetDate": "YYYY-MM-DD" (big only), "automatable": false (ordinary only), "dependsOn": 0 (ordinary only), "url": "..." (ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary only, optional)}],\n` +
+          `  "steps": [{"text": "...", "minutes": 15, "doneWhen": "...", "checkpoint": "...", "difficulty": "easy|medium|hard", "targetDate": "YYYY-MM-DD" (big only), "automatable": false (ALWAYS false for user steps), "dependsOn": 0 (ordinary only), "url": "..." (ordinary only, optional), "question": "..." (ordinary only, optional), "options": ["..."] (ordinary only, optional)}],\n` +
           `  "separateTasks": [{"title": "...", "reason": "..."}]\n` +
-          `}`,
+          `}\n\n` +
+          `IMPORTANT: All steps must have automatable=false — these are USER steps only. Otto's internal work goes in artifacts.`,
       }],
     }));
     
@@ -5276,7 +5294,10 @@ export async function studyHelp(
     ],
   }));
   const raw = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 800);
-  const reply = raw || (profile?.language === "en" ? "I'm here — what part of this is tripping you up?" : "Je suis là — qu'est-ce qui te bloque exactement ?");
+  // Honest failure message, not a pretend-present "what's tripping you up?" — see chatAboutTask's identical
+  // fix (its finish()) for why: this text only ever shows when the AI call genuinely came back empty/failed,
+  // never because Otto is waiting on the student to clarify something.
+  const reply = raw || (profile?.language === "en" ? "Otto couldn't reply just now — try again in a moment." : "Otto n'a pas pu répondre tout de suite — réessaie dans un instant.");
   return { reply, tokens: usageOf(res), ...(raw ? {} : { error: true }) };
 }
 
@@ -5577,7 +5598,7 @@ export interface ChatResult {
    *  exact chat bubble where the "won't do your graded work" boundary held, instead of that only being
    *  visible in the per-task Activity log. */
   guardrailTripped: boolean;
-  /** Set ONLY when `reply` is the generic "I'm here — what part of this is giving you trouble?" fallback
+  /** Set ONLY when `reply` is the honest "Otto couldn't reply just now — try again in a moment" fallback
    *  because the request genuinely failed (DeepSeek error, or the model came back with empty content) —
    *  never for a normal short reply that happens to be brief. Lets the client show this as a real error
    *  ("Otto couldn't reply — try again") instead of rendering it as an in-character chat bubble, which used
@@ -5934,7 +5955,12 @@ export async function chatAboutTask(
     const cleaned = truncateCleanly(reply.trim(), 2400);
     if (!cleaned) {
       result.error = true;
-      result.reply = fr ? "Je suis là — qu'est-ce qui te bloque exactement ?" : "I'm here — what part of this is giving you trouble?";
+      // NEVER the old "I'm here — what part of this is giving you trouble?" — that pretended Otto was
+      // present and just didn't understand, when what actually happened is the AI call came back empty/
+      // failed (after the retries above already had their chance). Same honest wording used everywhere
+      // else a chat turn genuinely fails (server/index.ts's own 500 path, client/StudyMode.tsx's catch) —
+      // consistent, and doesn't put words in the student's mouth about what's "giving them trouble".
+      result.reply = fr ? "Otto n'a pas pu répondre tout de suite — réessaie dans un instant." : "Otto couldn't reply just now — try again in a moment.";
     } else {
       result.reply = cleaned;
     }

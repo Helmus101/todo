@@ -1202,6 +1202,29 @@ app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (
   }
 });
 
+// Cleanup artifact creation steps from all existing tasks (migration for old tasks)
+app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000), async (req, res) => {
+  const { cleanupArtifactCreationSteps } = await import("./claude.ts");
+  try {
+    let totalCleaned = 0;
+    for (const task of req.session.tasks || []) {
+      if (task.steps && task.steps.length) {
+        const before = task.steps.length;
+        task.steps = cleanupArtifactCreationSteps(task.steps);
+        const after = task.steps.length;
+        totalCleaned += (before - after);
+      }
+    }
+    if (totalCleaned > 0) {
+      await commit(req);
+    }
+    res.json({ cleaned: totalCleaned, tasks: req.session.tasks || [] });
+  } catch (e: any) {
+    console.error("[tasks] cleanup error:", e);
+    res.status(500).json({ error: e?.message || "Couldn't cleanup steps — try again." });
+  }
+});
+
 // Per-task coaching chat — grounded in that one task's own context/steps, so a student stuck on it can
 // talk it through with Otto without re-explaining the situation. Rate-limited + budget-gated like every
 // other interactive AI call; capped history (CHAT_CAP) keeps a long-running task's thread bounded.
