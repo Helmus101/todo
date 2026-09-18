@@ -1093,7 +1093,18 @@ export function dropSiblingBleedTitles<T extends { title: string }>(
 // names forward so an existing deployment's DEEPSEEK_MODEL=deepseek-chat env var doesn't start hard-failing
 // every AI call the moment the old names stop working; new deployments should just set the new names directly.
 const LEGACY_DEEPSEEK_MODEL_MAP: Record<string, string> = { "deepseek-chat": "deepseek-v4-flash", "deepseek-reasoner": "deepseek-v4-pro" };
-const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || ""] || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+// Provider switch — AI_PROVIDER=nvidia routes every AI call (deepseekClient()/DEEPSEEK_MODEL, kept named as-
+// is deliberately: both are referenced 25+ times across this file, and renaming them for a still-optional
+// provider swap would be a large, purely-cosmetic diff for no behavior change) through NVIDIA's OpenAI-
+// compatible NIM endpoint instead. Defaults to "deepseek" — an existing deployment with no AI_PROVIDER set
+// keeps its exact current behavior. Switching back is just unsetting AI_PROVIDER (or setting it back to
+// "deepseek") — DEEPSEEK_API_KEY/DEEPSEEK_MODEL stay untouched either way, nothing about the DeepSeek path
+// is removed or altered.
+const AI_PROVIDER = (process.env.AI_PROVIDER || "deepseek").toLowerCase();
+const USING_NVIDIA = AI_PROVIDER === "nvidia";
+const DEEPSEEK_MODEL = USING_NVIDIA
+  ? (process.env.NVIDIA_MODEL || "mistralai/mistral-nemotron")
+  : (LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || ""] || process.env.DEEPSEEK_MODEL || "deepseek-v4-flash");
 
 // CRITICAL: deepseek-v4-flash (and -pro) are REASONING models — they emit hidden reasoning tokens that
 // count against `max_tokens` BEFORE the visible answer. Confirmed live: a classify call spends ~400-1500+
@@ -1127,19 +1138,29 @@ const DEEPSEEK_MODEL = LEGACY_DEEPSEEK_MODEL_MAP[process.env.DEEPSEEK_MODEL || "
 const OUT = { classify: 8000, generate: 8000, run: 8000, rescue: 8000, pick: 4000, refine: 3000, steps: 1500, plan: 1800, chat: 8000, studylog: 14000, theme: 2000, studentModel: 2000, artifact: 8000 } as const;
 
 export function aiReady(): boolean {
-  return !!process.env.DEEPSEEK_API_KEY;
+  return !!process.env[USING_NVIDIA ? "NVIDIA_API_KEY" : "DEEPSEEK_API_KEY"];
 }
 
-/** Pull token usage from a DeepSeek response, INCLUDING the cache-hit portion of the prompt tokens
- *  (dramatically cheaper — see callCostUsd). DeepSeek exposes it as `prompt_cache_hit_tokens` and/or the
- *  OpenAI-shaped `prompt_tokens_details.cached_tokens`; read both defensively. `in` is the FULL prompt count. */
+/** Pull token usage from an AI response, INCLUDING the cache-hit portion of the prompt tokens (dramatically
+ *  cheaper on DeepSeek — see callCostUsd). DeepSeek exposes it as `prompt_cache_hit_tokens` and/or the
+ *  OpenAI-shaped `prompt_tokens_details.cached_tokens`; read both defensively — NVIDIA's NIM endpoints don't
+ *  report a cache-hit split at all (prompt_tokens_details comes back null), so cachedIn is simply 0 there,
+ *  same as any provider with no cache-aware pricing. `in` is the FULL prompt token count either way. */
 function usageOf(res: any): { in: number; out: number; cachedIn: number } {
   const u = res?.usage || {};
   const cachedIn = Number(u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0) || 0;
   return { in: Number(u.prompt_tokens) || 0, out: Number(u.completion_tokens) || 0, cachedIn };
 }
 
+// Named deepseekClient() deliberately kept as-is (see AI_PROVIDER's own comment above) — 25+ call sites
+// across this file just want "the active chat-completions client," and this is a straight swap on which
+// provider that resolves to, not a new concept worth threading a rename through every call site for.
 function deepseekClient(): OpenAI {
+  if (USING_NVIDIA) {
+    const apiKey = process.env.NVIDIA_API_KEY;
+    if (!apiKey) throw new Error("Set NVIDIA_API_KEY in web/.env (or unset AI_PROVIDER to go back to DeepSeek).");
+    return new OpenAI({ apiKey, baseURL: "https://integrate.api.nvidia.com/v1", timeout: 90_000, maxRetries: 0 });
+  }
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("Set DEEPSEEK_API_KEY in web/.env.");
   return new OpenAI({
