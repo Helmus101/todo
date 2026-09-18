@@ -3930,6 +3930,12 @@ async function planResearch(
   } catch { return []; } // planning failure just means the loop falls back to its own general algorithm
 }
 
+// The ONE exception to "runTask never throws" (see checkTimeBudget's own comment, and the rescue-path
+// catch's comment further down, for the full reasoning): a distinguishable class so that catch block can
+// tell "genuinely stuck, worth a fresh attempt" apart from every other error, which stays swallowed into an
+// honest fallback exactly as before.
+class RunTimeoutRestart extends Error {}
+
 /**
  * Run a task as a bounded tool-using agent over the user's CONNECTED apps (Composio): it gathers facts and
  * does the reversible work (drafts, docs, tasks, updates) itself, then submits a context + synthesis + the
@@ -4067,6 +4073,39 @@ export async function runTask(
   // the round-6/8 cut above for the same fix from the other direction) and stops that runaway sooner, per-attempt.
   const RUN_TOKEN_CEILING = 130_000;
   const overTokenCeiling = () => tokIn + tokOut > RUN_TOKEN_CEILING;
+  // Wall-clock target: a task's generation should average ~1.5min, not just be bounded by round/token
+  // ceilings (a run can stay under both yet still take minutes if individual AI calls are slow). Once over
+  // budget, don't just blindly keep going OR blindly cut it off — check how far through generation this run
+  // actually is (round count is the simplest honest proxy here: MAX is the same fixed budget every run
+  // shares, so `i/MAX` is comparable across runs). Close to done (>=80% of the round budget used) → the
+  // remaining work is small, so let it finish rather than throw away nearly-complete progress. Still early
+  // (<80%) → this run is genuinely running long for the amount of progress made (a slow/stuck AI call, not
+  // just a naturally big task) — THROW rather than accept a rushed/truncated result: jobs.ts's own retry
+  // mechanism (throwing marks a job failed_retryable, retried up to max_attempts) then gives it a genuine
+  // fresh attempt instead of silently shipping a half-finished plan.
+  const runStartedAt = Date.now();
+  const TIME_BUDGET_MS = 90_000;
+  let timeBudgetChecked = false;
+  const checkTimeBudget = (roundIndex: number): void => {
+    if (timeBudgetChecked || Date.now() - runStartedAt < TIME_BUDGET_MS) return;
+    timeBudgetChecked = true;
+    const progressPct = Math.round(((roundIndex + 1) / MAX) * 100);
+    if (progressPct >= 80) {
+      console.warn(`${new Date().toISOString()} [ai] runTask over 1.5min budget at round ${roundIndex} (${progressPct}% of round budget) — close enough to finish, continuing`);
+    } else {
+      console.warn(`${new Date().toISOString()} [ai] runTask over 1.5min budget at round ${roundIndex} (only ${progressPct}% of round budget) — restarting via retry instead of shipping a rushed result`);
+      // RunTimeoutRestart (defined just above runTask) is a DELIBERATE exception to "runTask never throws"
+      // (see the rescue-path fallback's own comment, a few hundred lines down, on why every OTHER error is
+      // swallowed into an honest fallback rather than retried — a vacuous task just burns the retry budget
+      // re-discovering it has nothing to do). A run barely started (<80% of its own round budget) yet
+      // already past 1.5min is a genuinely stuck/slow call instead — a fresh attempt can actually fix that.
+      // This throw happens BEFORE the loop reaches the rescue pass's own inner try/catch (which only wraps
+      // ITS OWN AI call, not the whole loop) and the outer block is `try { ... } finally { ... }` — no
+      // catch — so a `finally` never swallows a throw, it just runs its cleanup log and lets this propagate
+      // straight out of runTask to jobs.ts's real retry mechanism (max_attempts: 3).
+      throw new RunTimeoutRestart(`Task generation exceeded its 1.5min time budget at only ${progressPct}% progress — restarting`);
+    }
+  };
   // Has the agent performed ANY write/create yet? Drives the deterministic act-now enforcement below.
   const WRITE_NAME = /(CREATE|UPDATE|APPEND|PATCH|MODIFY|BATCH|DRAFT|INSERT|WRITE|REPLACE|QUICK_ADD|MOVE|COPY|ADD_)/i;
   // Verbs that claim PRODUCED work — used to catch a report that says it did something with no artifact/
@@ -4184,6 +4223,9 @@ export async function runTask(
     // Circuit breaker: a run that has already burned the token ceiling stops here — another round only
     // deepens the overspend. The rescue pass below salvages whatever was gathered into an honest result.
     if (overTokenCeiling()) { console.warn(`${new Date().toISOString()} [ai] runTask hit token ceiling (${tokIn + tokOut}) — stopping at round ${i}`); break; }
+    // 1.5min wall-clock target (see checkTimeBudget's own comment): close to done → let it finish; still
+    // early → throw so jobs.ts genuinely restarts this task instead of shipping a rushed result.
+    checkTimeBudget(i);
     // Mid-loop nudge: if the agent has used many turns without calling submit, remind it to
     // actually WRITE the data (not just keep reading) and move toward finishing.
     // Write-aware enforcement: prompts alone don't stop read-forever drift (observed live: 8 rounds of
