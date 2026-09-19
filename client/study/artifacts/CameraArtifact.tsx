@@ -95,7 +95,10 @@ export function CameraArtifact() {
             {tracking.status === "error" && (
               <div className="sm-camera-ml-error">
                 <EyeOff size={18} />
-                <span>ML model failed to load — preview only</span>
+                <span>Concentration tracking unavailable — camera preview only</span>
+                {process.env.NODE_ENV === "development" && tracking.errorMessage && (
+                  <span className="sm-camera-ml-error-detail">{tracking.errorMessage}</span>
+                )}
               </div>
             )}
             {/* Face detected badge */}

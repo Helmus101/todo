@@ -17,6 +17,7 @@ export interface FaceTrackingState {
   movement: number;          // 0–100 rolling movement intensity
   movementStatus: string;    // "Still" | "Slight" | "Active" | "Restless"
   landmarks: Array<{ x: number; y: number; z: number }> | null;
+  errorMessage?: string;     // detailed error message for debugging
 }
 
 const IDLE: FaceTrackingState = {
@@ -33,6 +34,7 @@ const IDLE: FaceTrackingState = {
   movement: 0,
   movementStatus: "—",
   landmarks: null,
+  errorMessage: undefined,
 };
 
 // ── Blendshape helper ────────────────────────────────────────────────────────
@@ -102,25 +104,46 @@ export function useFaceTracking(
         const fileset = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm",
         );
-        const landmarker = await FaceLandmarker.createFromOptions(fileset, {
-          baseOptions: {
-            modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            delegate: "GPU",
-          },
-          outputFaceBlendshapes: true,
-          outputFacialTransformationMatrixes: true,
-          numFaces: 1,
-          runningMode: "VIDEO",
-        });
+        
+        // Try GPU first, fall back to CPU if it fails
+        let landmarker;
+        try {
+          landmarker = await FaceLandmarker.createFromOptions(fileset, {
+            baseOptions: {
+              modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+              delegate: "GPU",
+            },
+            outputFaceBlendshapes: true,
+            outputFacialTransformationMatrixes: true,
+            numFaces: 1,
+            runningMode: "VIDEO",
+          });
+        } catch (gpuError) {
+          console.warn("[FaceTracking] GPU delegate failed, falling back to CPU:", gpuError);
+          landmarker = await FaceLandmarker.createFromOptions(fileset, {
+            baseOptions: {
+              modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+              delegate: "CPU",
+            },
+            outputFaceBlendshapes: true,
+            outputFacialTransformationMatrixes: true,
+            numFaces: 1,
+            runningMode: "VIDEO",
+          });
+        }
+        
         if (cancelled) {
           landmarker.close();
           return;
         }
         landmarkerRef.current = landmarker;
         setState((s) => ({ ...s, status: "ready" }));
-      } catch {
-        if (!cancelled) setState((s) => ({ ...s, status: "error" }));
+      } catch (err: any) {
+        console.error("[FaceTracking] Failed to load:", err);
+        const errorMsg = err?.message || String(err);
+        if (!cancelled) setState((s) => ({ ...s, status: "error", errorMessage: errorMsg }));
       }
     })();
 
