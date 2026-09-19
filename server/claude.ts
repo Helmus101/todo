@@ -4019,160 +4019,288 @@ export async function runTask(
   academic?: AcademicContext,
   siblingTasks?: { title: string; why?: string }[],
 ): Promise<RunOutput> {
-  // NEW SIMPLE 5-STEP PIPELINE
+  // ── 5-STEP EXECUTION PIPELINE ──────────────────────────────────────────────
+  // Once we have the task + definition of done, execution follows this order:
+  //   1. Ask the AI which available tools are most useful → pick them
+  //   2. Ask the AI what searches to run → run them → look at results → ask for follow-up
+  //      searches → run those → gather all context
+  //   3. Ask the AI what information could be useful → come up with a few ideas
+  //   4. With all context in hand, ask the AI to create small, minimal, actionable steps
+  //   5. Ask the AI whether an artifact (quiz/flashcard) is necessary → only if YES
+  // The order is a guideline, not a rigid checklist — the AI can skip a step that doesn't
+  // apply (e.g. no web searches needed for a simple task), but it always goes top-to-bottom.
   const fr = profile?.language === "fr";
   const definitionOfDone = task.goal || task.why;
-  const availableTools = extras?.tools?.map(t => t.name) || ["web_search", "Gmail", "Calendar", "Drive"];
-  
+  const client = deepseekClient();
+  const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+
+  let tokIn = 0;
+  let tokOut = 0;
   let context = "";
   let links: TaskLink[] = [];
   let notes: TaskNote[] = [];
   let flashcards: TaskFlashcards[] = [];
   let quizzes: TaskQuiz[] = [];
-  let tokIn = 0;
-  let tokOut = 0;
-  
-  try {
-    // STEP 1: Query AI for useful tools
-    const toolsPrompt = `Task: "${task.title}"\nWhy: "${task.why}"\nDefinition of Done: ${definitionOfDone}\n\nAvailable tools: ${availableTools.join(", ")}\n\nWhich tools would be most useful for this task? Return JSON: {"usefulTools": ["tool1", "tool2"]}`;
-    const toolsRes = await deepseekClient().chat.completions.create({
-      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-      max_tokens: 200,
+  let did: string[] = [];
+  const audit: AuditEvent[] = [];
+
+  const baseCtx = profileBlock(profile) + assignmentBlock(task) + academicBlock(academic);
+  const langLine = languageLine(profile) + trackLine(profile) + personalContextLine(profile) + studentModelLine(profile);
+  const nowLine = nowBlock();
+
+  /** Helper: one JSON chat call, accumulates tokens. */
+  async function ask(prompt: string, maxTokens: number): Promise<any> {
+    const res = await retryRequest(() => client.chat.completions.create({
+      model, max_tokens: maxTokens, temperature: 0.2,
       response_format: { type: "json_object" },
-      messages: [{ role: "user", content: toolsPrompt + languageLine(profile) }],
-    });
-    tokIn += toolsRes.usage?.prompt_tokens || 0;
-    tokOut += toolsRes.usage?.completion_tokens || 0;
-    const toolsOut = firstJson<{ usefulTools?: string[] }>(String(toolsRes.choices?.[0]?.message?.content || ""));
-    const usefulTools = toolsOut?.usefulTools || [];
-    
-    // STEP 2: Query AI for searches → run searches → gather results
-    const searchesPrompt = `Task: "${task.title}"\nWhy: "${task.why}"\nDefinition of Done: ${definitionOfDone}\n\nWhat searches should I perform? Return JSON: {"searches": ["search query 1", "search query 2"]}`;
-    const searchesRes = await deepseekClient().chat.completions.create({
-      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-      max_tokens: 300,
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: searchesPrompt + languageLine(profile) }],
-    });
-    tokIn += searchesRes.usage?.prompt_tokens || 0;
-    tokOut += searchesRes.usage?.completion_tokens || 0;
-    const searchesOut = firstJson<{ searches?: string[] }>(String(searchesRes.choices?.[0]?.message?.content || ""));
-    const searches = searchesOut?.searches || [];
-    
-    let searchResults: string[] = [];
-    for (const query of searches) {
-      const result = await runWebSearch({ query });
-      const parsed = JSON.parse(result);
-      searchResults.push(...parsed.slice(0, 3).map((r: any) => r.title || r.url || "").join(", "));
-    }
-    
-    context = searchResults.length ? `Search results:\n${searchResults.join("\n")}` : "";
-    
-    // STEP 3: Query AI for useful information
-    const infoPrompt = `Task: "${task.title}"\nWhy: "${task.why}"\nDefinition of Done: ${definitionOfDone}\n\nContext gathered:\n${context}\n\nWhat information would be useful? Return JSON: {"info": ["info1", "info2"]}`;
-    const infoRes = await deepseekClient().chat.completions.create({
-      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-      max_tokens: 300,
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: infoPrompt + languageLine(profile) }],
-    });
-    tokIn += infoRes.usage?.prompt_tokens || 0;
-    tokOut += infoRes.usage?.completion_tokens || 0;
-    const infoOut = firstJson<{ info?: string[] }>(String(infoRes.choices?.[0]?.message?.content || ""));
-    const usefulInfo = infoOut?.info || [];
-    
-    if (usefulInfo.length) {
-      context += `\n\nUseful information:\n${usefulInfo.join("\n")}`;
-    }
-    
-    // STEP 4: Query AI to create minimal actionable steps
-    const stepsPrompt = `Task: "${task.title}"\nWhy: "${task.why}"\nDefinition of Done: ${definitionOfDone}\n\nContext:\n${context}\n\nCreate 2-6 minimal, actionable steps to help the user achieve this. Each step should be short (≤12 words) and concrete. Return JSON: {"steps": [{"text": "step text", "automatable": false}]}`;
-    const stepsRes = await deepseekClient().chat.completions.create({
-      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-      max_tokens: 400,
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: stepsPrompt + languageLine(profile) }],
-    });
-    tokIn += stepsRes.usage?.prompt_tokens || 0;
-    tokOut += stepsRes.usage?.completion_tokens || 0;
-    const stepsOut = firstJson<{ steps?: Array<{ text: string; automatable?: boolean }> }>(String(stepsRes.choices?.[0]?.message?.content || ""));
-    const steps = (stepsOut?.steps || []).map((s: any) => ({
-      text: s.text,
-      automatable: s.automatable ?? false,
+      messages: [{ role: "user", content: prompt + langLine + nowLine }],
     }));
-    
-    // STEP 5: Query AI if artifacts needed → generate if yes
-    const artifactPrompt = `Task: "${task.title}"\nWhy: "${task.why}"\nDefinition of Done: ${definitionOfDone}\n\nContext:\n${context}\n\nIs a brief quiz or flashcard deck necessary? Return JSON: {"needsArtifact": true/false, "type": "quiz|flashcard|none"}`;
-    const artifactRes = await deepseekClient().chat.completions.create({
-      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-      max_tokens: 200,
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: artifactPrompt + languageLine(profile) }],
-    });
-    tokIn += artifactRes.usage?.prompt_tokens || 0;
-    tokOut += artifactRes.usage?.completion_tokens || 0;
-    const artifactOut = firstJson<{ needsArtifact?: boolean; type?: string }>(String(artifactRes.choices?.[0]?.message?.content || ""));
-    
-    if (artifactOut?.needsArtifact && artifactOut.type === "flashcard") {
-      const deckPrompt = `Task: "${task.title}"\nContext:\n${context}\n\nCreate 8-15 flashcards. Return JSON: {"title": "deck title", "cards": [{"front": "question", "back": "answer"}]}`;
-      const deckRes = await deepseekClient().chat.completions.create({
-        model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-        max_tokens: 1000,
-        response_format: { type: "json_object" },
-        messages: [{ role: "user", content: deckPrompt + languageLine(profile) }],
-      });
-      tokIn += deckRes.usage?.prompt_tokens || 0;
-      tokOut += deckRes.usage?.completion_tokens || 0;
-      const deckOut = firstJson<{ title?: string; cards?: Array<{ front: string; back: string }> }>(String(deckRes.choices?.[0]?.message?.content || ""));
-      if (deckOut?.title && deckOut?.cards) {
-        const deck = makeDeck(deckOut);
-        if ("deck" in deck) flashcards.push(deck.deck);
-      }
-    } else if (artifactOut?.needsArtifact && artifactOut.type === "quiz") {
-      const quizPrompt = `Task: "${task.title}"\nContext:\n${context}\n\nCreate 4-8 quiz questions. Return JSON: {"title": "quiz title", "questions": [{"q": "question", "options": ["a", "b", "c", "d"], "correct": 0, "why": "explanation"}]}`;
-      const quizRes = await deepseekClient().chat.completions.create({
-        model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-        max_tokens: 1500,
-        response_format: { type: "json_object" },
-        messages: [{ role: "user", content: quizPrompt + languageLine(profile) }],
-      });
-      tokIn += quizRes.usage?.prompt_tokens || 0;
-      tokOut += quizRes.usage?.completion_tokens || 0;
-      const quizOut = firstJson<{ title?: string; questions?: any[] }>(String(quizRes.choices?.[0]?.message?.content || ""));
-      if (quizOut?.title && quizOut?.questions) {
-        const quiz = makeQuiz(quizOut);
-        if ("quiz" in quiz) quizzes.push(quiz.quiz);
+    tokIn += res.usage?.prompt_tokens || 0;
+    tokOut += res.usage?.completion_tokens || 0;
+    return firstJson<any>(String(res.choices?.[0]?.message?.content || "")) || {};
+  }
+
+  try {
+    // ── STEP 1: Which tools are most useful? ────────────────────────────────
+    const availableToolNames = extras?.tools?.map((t) => t.name).filter(Boolean) || [];
+    const allTools = [...new Set([...availableToolNames, "web_search"])]; // web_search is always available
+    const toolsOut = await ask(
+      `You are helping a student with this task.\n` +
+      `TASK: "${task.title}"\n` +
+      `WHY: "${task.why}"\n` +
+      `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+      `AVAILABLE TOOLS: ${allTools.join(", ")}\n` +
+      `Tools include web search and any connected integrations (Gmail, Calendar, Drive, Notion, etc.).\n\n` +
+      `Which of these tools would be MOST useful for completing this task? ` +
+      `Pick only the ones that genuinely help — don't list everything. ` +
+      `Return JSON: {"usefulTools": ["tool1", "tool2"], "reason": "brief why"}`,
+      250,
+    );
+    const usefulTools: string[] = toolsOut.usefulTools || [];
+    if (usefulTools.length) audit.push({ at: new Date().toISOString(), kind: "tool", label: `tools: ${usefulTools.join(", ")}` });
+
+    // ── STEP 2: What searches to run? → run → look at results → follow-up ────
+    // First round: ask the AI what searches to do.
+    const searchesOut = await ask(
+      `You are helping a student with this task.\n` +
+      `TASK: "${task.title}"\n` +
+      `WHY: "${task.why}"\n` +
+      `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+      `USEFUL TOOLS SELECTED: ${usefulTools.join(", ") || "none"}\n\n` +
+      `What web searches should be performed to gather the context needed for this task? ` +
+      `Each query should target ONE specific missing fact or piece of context — not a vague topic. ` +
+      `For an academic task, search for the NOTION (the topic itself, how it's taught/tested at this level), ` +
+      `never the answer to the student's own exercise. ` +
+      `Return 1-5 search queries. If no web search is needed, return an empty array.\n` +
+      `Return JSON: {"searches": ["query 1", "query 2"]}`,
+      300,
+    );
+    let searches: string[] = searchesOut.searches || [];
+
+    // Run the first round of searches and gather results.
+    const allSearchResults: { query: string; results: { title: string; url: string; snippet?: string }[] }[] = [];
+    for (const query of searches) {
+      try {
+        const raw = await runWebSearch({ query });
+        const parsed = JSON.parse(raw) as { title: string; url: string; snippet?: string }[];
+        allSearchResults.push({ query, results: parsed });
+        audit.push({ at: new Date().toISOString(), kind: "tool", label: `web_search: ${query}` });
+      } catch { /* a failed search is not fatal */ }
+    }
+
+    // Look at the results and ask the AI if follow-up searches are needed.
+    if (allSearchResults.length) {
+      const resultsSummary = allSearchResults.map((r) =>
+        `Query: "${r.query}"\n${r.results.slice(0, 3).map((x) => `- ${x.title}: ${x.snippet || x.url}`).join("\n")}`,
+      ).join("\n\n");
+
+      const followUpOut = await ask(
+        `You are helping a student with this task.\n` +
+        `TASK: "${task.title}"\n` +
+        `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+        `SEARCH RESULTS SO FAR:\n${resultsSummary}\n\n` +
+        `Based on these results, are there any FOLLOW-UP searches that would help? ` +
+        `Look for new entities, names, dates, or gaps that surfaced and need a targeted search. ` +
+        `If the results are sufficient, return an empty array.\n` +
+        `Return JSON: {"searches": ["query 1", "query 2"]}`,
+        300,
+      );
+      const followUps: string[] = followUpOut.searches || [];
+
+      for (const query of followUps.slice(0, 3)) { // cap follow-ups to avoid runaway loops
+        try {
+          const raw = await runWebSearch({ query });
+          const parsed = JSON.parse(raw) as { title: string; url: string; snippet?: string }[];
+          allSearchResults.push({ query, results: parsed });
+          audit.push({ at: new Date().toISOString(), kind: "tool", label: `web_search: ${query}` });
+        } catch { /* */ }
       }
     }
-    
+
+    // Build the context string from all search results.
+    if (allSearchResults.length) {
+      const parts = allSearchResults.map((r) =>
+        `[${r.query}]\n${r.results.slice(0, 4).map((x) => `- ${x.title}${x.snippet ? ` — ${x.snippet.slice(0, 200)}` : ""} (${x.url})`).join("\n")}`,
+      );
+      context = `Web research:\n${parts.join("\n\n")}`;
+      // Collect useful links from search results.
+      for (const r of allSearchResults) for (const x of r.results.slice(0, 2)) {
+        if (x.url && !links.some((l) => l.url === x.url)) {
+          links.push({ label: x.title.slice(0, 60), url: x.url });
+        }
+      }
+      links = links.slice(0, 5);
+    }
+
+    // ── STEP 3: What information could be useful? ───────────────────────────
+    const infoOut = await ask(
+      `You are helping a student with this task.\n` +
+      `TASK: "${task.title}"\n` +
+      `WHY: "${task.why}"\n` +
+      `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+      `${context ? `CONTEXT GATHERED SO FAR:\n${context}\n\n` : ""}` +
+      `What information would be useful for the student to have to achieve this definition of done? ` +
+      `Come up with a few ideas — things they should know, understand, or have ready. ` +
+      `Be concrete and specific to THIS task, not generic advice. ` +
+      `Return JSON: {"info": ["idea 1", "idea 2", "idea 3"]}`,
+      400,
+    );
+    const usefulInfo: string[] = infoOut.info || [];
+    if (usefulInfo.length) {
+      context += `${context ? "\n\n" : ""}Useful information to have:\n${usefulInfo.map((i) => `- ${i}`).join("\n")}`;
+    }
+
+    // ── STEP 4: Create small, minimal, actionable steps ─────────────────────
+    const stepsOut = await ask(
+      `There is this task: "${task.title}".\n` +
+      `The user wants to have this definition of done: ${definitionOfDone}\n\n` +
+      `Based on all this information:\n${context || "(no external context was needed — plan from the task itself)"}\n\n` +
+      `Create small, minimal, actionable steps to help the user achieve this.\n` +
+      `RULES:\n` +
+      `- 2-6 steps, each a short concrete one-liner (≤12 words).\n` +
+      `- Only steps the STUDENT must do (decisions, physical actions, logins, review, practice).\n` +
+      `- Never include research/search steps (that's already done above).\n` +
+      `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
+      `- Match the plan's size to the task's real complexity — one step is fine for a simple task.\n` +
+      `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
+      `Return JSON: {"steps": [{"text": "...", "automatable": false, "minutes": 15, "doneWhen": "...", "difficulty": "easy|medium|hard"}], "definitionOfDone": "refined if needed"}`,
+      600,
+    );
+
+    let steps: TaskStep[] = (stepsOut.steps || []).map((s: any) => ({
+      text: truncateStepText(String(s.text || "")),
+      automatable: !!s.automatable,
+      ...sanitizeStepExtras(s),
+    }));
+    // Apply the same quality gates every step list passes through.
+    steps = anchorStepsToTask(steps, task.title, 8);
+    steps = dropTrivialSteps(steps);
+    if (stepsOut.definitionOfDone && String(stepsOut.definitionOfDone).trim()) {
+      // The model may refine the definition of done during step planning — keep it.
+    }
+
+    // ── STEP 5: Is an artifact necessary? → ONLY if the AI says yes ──────────
+    // This is a deliberate gate: artifacts are NEVER auto-generated. The AI must
+    // explicitly say yes, and specify which type. No defaulting, no guessing.
+    const artifactOut = await ask(
+      `There is this task: "${task.title}".\n` +
+      `The user wants to have this definition of done: ${definitionOfDone}\n\n` +
+      `Context:\n${context || "(no external context)"}\n\n` +
+      `For this task, is any artifact (specifically a brief quiz or flashcard deck) necessary?\n` +
+      `A flashcard deck is for drilling discrete facts (vocab, definitions, formulas, dates).\n` +
+      `A quiz is for checking understanding before a test (new questions, not the student's own exercise).\n` +
+      `If the task is logistics/admin (booking, paying, scheduling), the answer is almost always no.\n` +
+      `If the task is academic revision/prep, a flashcard deck or quiz may genuinely help.\n` +
+      `NEVER auto-generate — only say yes if it would genuinely help the student achieve the definition of done.\n` +
+      `Return JSON: {"needsArtifact": false, "type": "none", "reason": "brief why or why not"}`,
+      200,
+    );
+
+    // The gate: needsArtifact must be EXPLICITLY true AND type must be flashcard or quiz.
+    // Never default to generating — if the AI didn't clearly say yes, skip it.
+    if (artifactOut.needsArtifact === true && (artifactOut.type === "flashcard" || artifactOut.type === "quiz")) {
+      if (artifactOut.type === "flashcard") {
+        const deckOut = await ask(
+          `Create a flashcard deck for this task.\n` +
+          `TASK: "${task.title}"\n` +
+          `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+          `Context:\n${context}\n\n` +
+          `Create 8-15 flashcards with real, specific content from the context above. ` +
+          `One idea per card. Front: asks for recall, never leaks the answer. Back: the answer, detailed enough to teach.\n` +
+          `Return JSON: {"title": "deck title", "cards": [{"front": "...", "back": "..."}]}`,
+          1500,
+        );
+        const deck = makeDeck(deckOut);
+        if ("deck" in deck) {
+          flashcards.push(deck.deck);
+          did.push(fr ? `Créé un jeu de flashcards : ${deck.deck.title}` : `Created flashcard deck: ${deck.deck.title}`);
+          audit.push({ at: new Date().toISOString(), kind: "artifact", label: `flashcards: ${deck.deck.title}` });
+        }
+      } else if (artifactOut.type === "quiz") {
+        const quizOut = await ask(
+          `Create a quiz for this task.\n` +
+          `TASK: "${task.title}"\n` +
+          `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+          `Context:\n${context}\n\n` +
+          `Create 4-8 multiple-choice quiz questions with NEW questions on the same notion (never the student's own exercise). ` +
+          `Each question needs 2-4 options, a correct index, and a one-line explanation.\n` +
+          `Return JSON: {"title": "quiz title", "questions": [{"q": "...", "options": ["a", "b", "c", "d"], "correct": 0, "why": "..."}]}`,
+          2000,
+        );
+        const quiz = makeQuiz(quizOut);
+        if ("quiz" in quiz) {
+          quizzes.push(quiz.quiz);
+          did.push(fr ? `Créé un quiz : ${quiz.quiz.title}` : `Created quiz: ${quiz.quiz.title}`);
+          audit.push({ at: new Date().toISOString(), kind: "artifact", label: `quiz: ${quiz.quiz.title}` });
+        }
+      }
+    } else {
+      // Explicitly did NOT generate an artifact — this is the correct default.
+      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: skipped (${artifactOut.reason || "not needed"})` });
+    }
+
+    // Build the synthesis line.
+    const didLines: string[] = [];
+    if (allSearchResults.length) didLines.push(fr ? `Recherche web effectuée (${allSearchResults.length} requêtes)` : `Web research done (${allSearchResults.length} queries)`);
+    if (flashcards.length) didLines.push(fr ? `Flashcards créées` : `Flashcards created`);
+    if (quizzes.length) didLines.push(fr ? `Quiz créé` : `Quiz created`);
+    const synthesis = didLines.length
+      ? (fr ? `${didLines.join(", ")}. ${steps.length} étape(s) restante(s).` : `${didLines.join(", ")}. ${steps.length} step(s) left.`)
+      : (fr ? `Analyse terminée. ${steps.length} étape(s) à faire.` : `Analysis done. ${steps.length} step(s) to do.`);
+
     return {
-      synthesis: fr ? "Préparé les étapes et les supports de révision." : "Prepared steps and revision materials.",
-      did: [],
-      steps,
+      context: context || (fr ? "Analyse basée sur la tâche elle-même." : "Analyzed from the task itself."),
+      synthesis,
+      did: did.length ? did : [],
+      steps: steps.length ? steps : [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false }],
       links,
       sendables: [],
       notes: notes.length ? notes : undefined,
       flashcards: flashcards.length ? flashcards : undefined,
       quizzes: quizzes.length ? quizzes : undefined,
-      context,
       profileUpdates: [],
       tokens: { in: tokIn, out: tokOut, cachedIn: 0 },
+      audit: audit.length ? audit : undefined,
     };
   } catch (e: any) {
     console.error(`${new Date().toISOString()} [ai] runTask error: ${e?.message || e}`);
     return {
-      synthesis: "",
+      context,
+      synthesis: fr ? "Erreur lors de l'analyse. Réessaie." : "Error during analysis. Retry.",
       did: [],
       steps: [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false }],
       links: [],
       sendables: [],
-      context,
+      notes: notes.length ? notes : undefined,
+      flashcards: flashcards.length ? flashcards : undefined,
+      quizzes: quizzes.length ? quizzes : undefined,
       profileUpdates: [],
       tokens: { in: tokIn, out: tokOut, cachedIn: 0 },
+      audit: audit.length ? audit : undefined,
     };
   }
 }
-  // The audit trail (logAudit below) is shown to the student/parent verbatim (client/TaskCard.tsx's
+
 /**
  * NEW ARCHITECTURE: Structured task planning output
  * Defines the structure for task planning with artifacts, steps, and separate tasks.
