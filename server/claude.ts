@@ -4753,29 +4753,29 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   const withoutTitlePrefix = taskTitlePrefix ? rawSteps.filter((s: any) => !taskTitlePrefix.test(s.text)) : rawSteps;
   
   // Also filter out steps that are obviously Otto's internal work (consolidate, decide, gather, identify, extract, build)
-  const ottoInternalVerbs = /\b(consolidat\w*|decid\w*|gather\w*|identif\w*|extract\w*|build\w*|prepar\w*|organiz\w*|compil\w*|assembl\w*|collect\w*|draft\w*|generat\w*|creat\w*|mak\w*)\b[^.]*\b(documents?|sheets?|decks?|notes?|flashcards?|quiz(?:zes)?|revision|reference|list|information|data|content|output|deliverable)\b/i;
+  // Noun set deliberately narrow — GENUINE Otto artifact types only (document/sheet/deck/note/flashcard/quiz/
+  // reference), never generic words like "list"/"information"/"data"/"content"/"output"/"deliverable": those
+  // appear constantly in completely ordinary, legitimate steps ("Research X and compile a LIST of options"
+  // matched the old broader set via "compile...list", silently deleting a step the DOABLE-verb flip further
+  // down exists specifically to keep — see checkStepContamination's identical comment on isResearchOperation
+  // for the same failure mode via a different regex. Verified live: crashed tests/run.mjs by zeroing steps.
+  const ottoInternalVerbs = /\b(consolidat\w*|decid\w*|gather\w*|identif\w*|extract\w*|build\w*|prepar\w*|organiz\w*|compil\w*|assembl\w*|collect\w*|draft\w*|generat\w*|creat\w*|mak\w*)\b[^.]*\b(documents?|sheets?|decks?|notes?|flashcards?|quiz(?:zes)?|revision|reference)\b/i;
   const withoutOttoInternal = withoutTitlePrefix.filter((s: any) => !ottoInternalVerbs.test(s.text));
   
-  // Apply new architecture filters if task info is available
-  let preAnchorSteps = withoutOttoInternal;
-  if (taskTitle && definitionOfDone) {
-    // Apply task-boundary validation
-    preAnchorSteps = filterStepsByDefinitionOfDone(preAnchorSteps, definitionOfDone, taskTitle);
-    
-    // Apply artifact separation
-    const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(preAnchorSteps);
-    preAnchorSteps = stepsWithoutArtifacts;
-    
-    // Apply separate task extraction
-    const { filteredSteps: finalSteps } = separateUnrelatedTasks(preAnchorSteps, taskTitle);
-    preAnchorSteps = finalSteps;
-    
-    // Apply triviality gate
-    preAnchorSteps = dropTrivialSteps(preAnchorSteps);
-    
-    console.log(`${new Date().toISOString()} [ai] finalize: applied new architecture filters to ${withoutTitlePrefix.length} steps, resulted in ${preAnchorSteps.length} steps`);
-  }
-  
+  // filterStepsByDefinitionOfDone / separateUnrelatedTasks / a premature dropTrivialSteps are deliberately
+  // NOT applied here (a "new architecture" block used to run all three at this early point, gated on
+  // taskTitle+definitionOfDone) — see the identical, detailed comment a bit further down (right before the
+  // contamination-filter pipeline) for why each one is unsafe: isResearchOperation() blindly rejects any
+  // step starting with "Research"/"Find" regardless of context; separateUnrelatedTasks permanently deletes
+  // ordinary on-topic steps via a keyword-overlap heuristic while only ever logging what it extracts; and
+  // dropTrivialSteps here runs BEFORE the DOABLE-verb automatable-flip further down, so a step like "Find a
+  // time that works for the team" still looks like a bare trivial lookup at this point and gets deleted
+  // before the flip ever gets a chance to mark it as Otto's own work. Verified live: this exact block
+  // crashed tests/run.mjs by zeroing out valid steps — twice now, in two different locations within this
+  // same function, after two separate rewrites reintroduced it. artifactSeparation and the anchoring/
+  // contamination pipeline below already give real protection without this false-positive risk.
+  const preAnchorSteps = withoutOttoInternal;
+
   // Anchor steps to the task title so a model can't drift to a related-but-different noun from research.
   // Always applied — not gated on definitionOfDone, which is often undefined for manual/pronote tasks.
   const steps: TaskStep[] = anchorStepsToTask(preAnchorSteps

@@ -275,10 +275,13 @@ export const api = {
   confirm: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/confirm`),
   reject: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reject`),
   dismiss: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/dismiss`),
-  // 25s: an execute_step run through the queue can involve a real tool call (open a page, search, draft
-  // something) — long enough to let a normal one finish, short enough that a stuck click surfaces an
-  // error instead of sitting there looking broken.
-  runStep: (id: string, index: number, answer?: string): Promise<WebTask> => postTimed(`/api/tasks/${id}/step/${index}/run`, 25000, answer ? { answer } : undefined),
+  // 100s: an execute_step run now drains INLINE through runViaJob (server/index.ts) — a deliberate click
+  // actually does the work and waits for the real result, rather than just enqueueing and hoping the
+  // background kick loop picks it up. runTask itself is bounded to ~90s by its own time-budget circuit
+  // breaker (see claude.ts's checkTimeBudget); this must stay safely ABOVE that so a legitimately-slower-
+  // but-still-bounded run doesn't get aborted client-side right as the server is about to finish it (the
+  // old 25s value predates that circuit breaker and would now abort even a normal, in-budget run).
+  runStep: (id: string, index: number, answer?: string): Promise<WebTask> => postTimed(`/api/tasks/${id}/step/${index}/run`, 100_000, answer ? { answer } : undefined),
   stepDone: (id: string, index: number, done = true, result?: string): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/done`, { done, result }),
   expandStep: (id: string, index: number): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/expand`),
   substepDone: (id: string, index: number, subIndex: number, done = true): Promise<WebTask[]> => post(`/api/tasks/${id}/step/${index}/substep/${subIndex}/done`, { done }),

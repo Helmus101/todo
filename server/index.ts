@@ -1426,7 +1426,15 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
   const user = req.session.user!;
   const id = String(req.params.id);
   try {
-    const job = await jobs.enqueueAndDrain(user, type, id, input, false);
+    // drainInline (default true, no override here): this handles every DELIBERATE interactive click — Run
+    // now, Revise, Run this step — which must actually DO the work and hand back the real result, not just
+    // enqueue and hope the separate background kick loop (client's 4s poll, see App.tsx) picks it up in
+    // time. A prior "false" override here left a manual click silently doing nothing but flip the task to
+    // "queued" — reported live as "Run now doesn't work". Safe to await inline now: runTask itself is
+    // bounded to ~90s by its own time-budget circuit breaker (see claude.ts's checkTimeBudget), so this
+    // request blocks for a real, bounded amount of time doing real work — not the unbounded, potentially-
+    // minutes-long hang that originally motivated making jobs non-blocking elsewhere.
+    const job = await jobs.enqueueAndDrain(user, type, id, input);
     // enqueueJob is idempotent PER TASK, not per job type — if a job of a DIFFERENT kind is already active
     // for this task (e.g. an auto-queued execute_task still running when the user asks to revise), it
     // returns THAT job as-is, silently discarding the new input (the revise note never gets applied).
