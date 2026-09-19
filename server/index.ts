@@ -15,7 +15,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, peekTaskChat } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -1858,6 +1858,19 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
       const fg = await checkFeynmanGap(text, req.session.profile);
       if (fg) { addUsage(req.session.profile ||= emptyProfile(), fg.tokens, "studylog"); t.feynmanGap = fg.gap; }
       else t.feynmanGap = undefined;
+    } catch { /* best-effort */ }
+    // Durable-fact extraction, same "separate, best-effort, never blocks the flashcards" posture as the two
+    // calls above — see extractJournalMemory's own comment for why this stays a SEPARATE small call rather
+    // than folded into generateDailyStudyCards. Applied into profile.courses (the SAME category/mechanism
+    // chat's own "remember" tool already writes to), which profileBlock already surfaces in every future
+    // agent/chat prompt — this is the one piece of wiring that makes a journal entry's durable insight
+    // available to Otto in chat generally, not just re-readable within the Journal feature itself.
+    try {
+      const jm = await extractJournalMemory(text, req.session.profile);
+      if (jm) {
+        addUsage(req.session.profile ||= emptyProfile(), jm.tokens, "studylog");
+        for (const fact of jm.facts) tasks.applyProfileUpdate(req.session.profile, { category: "course", fact });
+      }
     } catch { /* best-effort */ }
     t.updatedAt = new Date().toISOString();
     // Awaited (not fire-and-forget) — this is THE write that actually creates the day's journal/flashcards

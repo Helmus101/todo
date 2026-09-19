@@ -3108,6 +3108,54 @@ export async function checkFeynmanGap(logText: string, profile?: Profile): Promi
   } catch { return null; }
 }
 
+/** Extracts 0-2 DURABLE, generalizable facts from a journal entry worth remembering long-term — a
+ *  professor's grading quirk, a recurring conceptual mix-up, a genuine subject preference — as opposed to
+ *  "what they studied today" (which belongs in the flashcards, not durable memory). Applied into
+ *  profile.courses (applyProfileUpdate, same category the "remember" tool already uses from chat/task runs),
+ *  which profileBlock ALREADY surfaces in every agent/chat prompt — so this is the one piece of wiring that
+ *  makes journal-derived facts available to Otto EVERYWHERE, not just within the Journal feature itself, per
+ *  direct request ("things learned in journal should stay in memory... AI can reference it in chat too").
+ *  Separate, best-effort side call — same posture as checkFeynmanGap/generateDailyPracticeProblem right next
+ *  to this in the route: a failure here never blocks the day's actual flashcards, and this call is
+ *  deliberately NOT folded into generateDailyStudyCards' own schema (see that function's own comment on why
+ *  it stays small/simple — a richer combined ask was found live to fail more often than the extra content
+ *  was worth). Small threshold to skip logistics-only entries with nothing durable to extract. */
+export async function extractJournalMemory(logText: string, profile?: Profile): Promise<{ facts: string[]; tokens: { in: number; out: number; cachedIn: number } } | null> {
+  const raw = String(logText || "").trim();
+  if (raw.length < 40) return null;
+  try {
+    const client = deepseekClient();
+    const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
+    const res = await retryRequest(() => client.chat.completions.create({
+      model,
+      max_tokens: 300,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content:
+          languageLine(profile) + trackLine(profile) +
+          `Read the student's own "what I learned today" journal entry. Extract 0-2 facts genuinely worth ` +
+          `REMEMBERING LONG-TERM about how THIS student learns — not what they studied today, that's already ` +
+          `captured elsewhere. Only extract something that would still be true and useful weeks from now: a ` +
+          `recurring conceptual mix-up ("consistently confuses métaphore and métonymie"), a real preference ` +
+          `("prefers worked examples over abstract proofs"), a teacher/class-specific pattern they mentioned ` +
+          `("Mr. X's tests always include a data-analysis question"), a genuine strength or blind spot that ` +
+          `keeps showing up. Do NOT extract: today's topic, a one-off event, generic study advice, anything ` +
+          `already obvious from the subject name alone. Most entries have NOTHING durable to extract — that's ` +
+          `the normal, common case, output an empty array, don't force it. Each fact: one short plain ` +
+          `sentence, ≤20 words, no preamble.\n\n` +
+          `Return ONLY this JSON: {"facts": ["...", ...]} (0 to 2 items, empty array is normal/expected).` },
+        { role: "user", content: `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""` },
+      ],
+    }));
+    const out = firstJson<{ facts?: string[] }>(res.choices[0]?.message?.content || "");
+    const facts = Array.isArray(out?.facts) ? out.facts.map((f) => String(f).trim().slice(0, 200)).filter(Boolean).slice(0, 2) : [];
+    const tokens = usageOf(res);
+    if (facts.length) console.log(`${new Date().toISOString()} [ai] extractJournalMemory: ${facts.length} fact(s) extracted`);
+    return { facts, tokens };
+  } catch { return null; }
+}
+
 /** End-of-week summary deck: synthesizes across the week's daily entries, weighted by a REAL spaced-
  *  repetition signal (Leitner box breakdown — see spacedRepetitionBlock/nextLeitnerReview) rather than
  *  either re-testing everything evenly or only tracking "wrong or not". Also decides, per week, whether a
