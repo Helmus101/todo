@@ -36,8 +36,16 @@ function isHttpUrl(url: string): boolean {
   try { const u = new URL(url); return u.protocol === "http:" || u.protocol === "https:"; } catch { return false; }
 }
 
+// Google's Docs/Drive viewer specifically DETECTS the allow-scripts+allow-same-origin combination (the
+// well-known sandbox-escape pairing) and refuses to render at all when both are present ("This content is
+// blocked. Contact the site owner to fix the issue.") — so the stricter, allow-same-origin-less sandbox
+// must stay for Google's own domains specifically, even though every OTHER site gets allow-same-origin
+// below for real compatibility (see the iframe's own comment).
+const GOOGLE_DOCS_HOST_RE = /^https:\/\/(docs|drive)\.google\.com\//i;
+
 export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
   const canEmbed = !!url && isHttpUrl(url);
+  const isGoogleDocsHost = !!url && GOOGLE_DOCS_HOST_RE.test(url);
 
   return (
     <div className="sm-document-body">
@@ -46,13 +54,20 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
           {canEmbed ? (
             // sandbox WITHOUT allow-top-navigation(-by-user-activation): the embedded page can run its own
             // scripts and open a new tab, but neither it nor a link clicked inside it can ever navigate/
-            // redirect the OUTER Otto page to another site.
-            // Also WITHOUT allow-same-origin: combined with allow-scripts, that pairing lets sandboxed
-            // content strip its own sandbox — a well-known escape browsers warn about, and Google's
-            // Docs/Drive viewer specifically detects it and refuses to render at all ("This content is
-            // blocked. Contact the site owner to fix the issue.") rather than serve the document.
+            // redirect the OUTER Otto page to another site. That guarantee holds regardless of the
+            // allow-same-origin choice below, since top-navigation is withheld either way.
+            //
+            // allow-same-origin: included for every site EXCEPT Google Docs/Drive (see GOOGLE_DOCS_HOST_RE's
+            // own comment — their viewer refuses to render at all if it detects allow-scripts+allow-same-
+            // origin together). Without it, a sandboxed page has no origin of its own at all (an opaque
+            // "null" origin) — cookies, localStorage, and any same-origin API call silently fail, which is
+            // why most ordinary sites (course pages, Wikipedia, school portals — anything beyond the
+            // specifically-tested Padlet/Drive cases) never fully loaded. The residual risk this reopens is
+            // a malicious embedded site escaping ITS OWN sandbox restrictions — real, but bounded: it still
+            // can never navigate/redirect the outer Otto page (allow-top-navigation is never granted), so
+            // the attack surface is "misbehaves within its own frame," not "attacks Otto directly."
             <iframe className="sm-embed" src={toEmbeddableUrl(url)} title={title}
-              sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" />
+              sandbox={`allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox${isGoogleDocsHost ? "" : " allow-same-origin"}`} />
           ) : (
             <div className="sm-document-reference">
               <strong>{title}</strong>
