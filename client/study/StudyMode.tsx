@@ -10,6 +10,7 @@ import type {
   SessionStatus,
 } from "./StudyTypes.ts";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
+import { startStudyBlocking, stopStudyBlocking } from "./extensionBridge.ts";
 import { StudySetup, type PomodoroChoice, type AudioChoice } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
 import { ArtifactCanvas } from "./ArtifactCanvas.tsx";
@@ -600,6 +601,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     setElapsedSeconds(0);
     setPhaseSeconds(0);
     setPhase("session");
+    startStudyBlocking(); // no-op if the Otto Tabs extension isn't installed — see extensionBridge.ts
     enterFullscreen(); // called synchronously from the Start button's click, so the browser's user-gesture requirement is satisfied
     const logId = crypto.randomUUID();
     setSessionLog({
@@ -649,6 +651,9 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     noiseRef.current?.stop();
     stopCustomAudio();
     exitFullscreen();
+    // Only ever called from EndSessionModal's long-press-gated End button (see its own comment) — the
+    // deliberate action that's SUPPOSED to unblock. No-op if the extension isn't installed.
+    stopStudyBlocking();
     if (env) {
       updateEnv({ sessionStatus: "ended", timerElapsed: elapsedSeconds });
       const finalLog: SessionLog = {

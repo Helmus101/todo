@@ -66,6 +66,24 @@ export function shouldKeepLocal(cur: WebTask | undefined, incoming: WebTask, mut
   return false;
 }
 
+/** Union two copies of a task's chat thread by (role, at, text) — the client-side twin of server/tasks.ts's
+ *  own unionChat, used everywhere a background sync's copy of a task needs merging against the locally-held
+ *  Study Mode thread. Deliberately KEY-based, not a positional "incoming[i] must equal local[i]" prefix
+ *  check (an earlier version of this used that and was fragile: the moment any single message's shape
+ *  differed cosmetically between the optimistic local echo and a round-tripped server copy — an artifacts
+ *  chip attached after the round trip, whitespace normalized server-side — the ENTIRE incoming thread was
+ *  discarded, which is what "chat sometimes auto-deletes stuff" actually was: a background sync's fresher
+ *  copy with a genuinely NEW message from another tab/device losing outright to a local copy that only
+ *  LOOKED different by one cosmetic field on one older message). Exported for the same testability reason as
+ *  shouldKeepLocal above. */
+export function unionChatEntries<T extends { role: string; text: string; at: string }>(local: T[], incoming: T[]): T[] {
+  if (!local.length) return incoming;
+  const key = (c: T) => `${c.role}|${c.at}|${c.text}`;
+  const seen = new Set(incoming.map(key));
+  return [...incoming, ...local.filter((c) => !seen.has(key(c)))]
+    .sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+}
+
 // Translate a sweep job's skip/failure line into user terms — an honest reason, never a fake all-clear.
 function sweepSkipMessage(note: string, en?: boolean): string {
   if (/nothing connected/i.test(note)) return en
@@ -662,18 +680,22 @@ export function App() {
     if (!task) return;
     // Never let this overwrite or replace the live study thread with a stale background response. A
     // refresh can return the same number of messages but an older conversation (or omit a just-sent
-    // optimistic turn), so comparing lengths alone is not sufficient. Preserve the local thread unless
-    // the incoming task contains every local entry in the same order. Everything else tracks the latest
-    // task snapshot as before.
+    // optimistic turn), so comparing lengths alone is not sufficient.
+    // UNION by (role, at, text) — the same key-based approach server-side's unionChat (tasks.ts) already
+    // uses for exactly this — rather than a positional "incoming[i] must equal local[i]" prefix check: that
+    // was fragile precisely because "sometimes" (not always) a background sync's copy of a message can carry
+    // a slightly different shape than the optimistic local echo (an artifacts chip attached after a round
+    // trip, whitespace normalized server-side, etc.) — the MOMENT any single position failed to match
+    // exactly, the entire incoming thread was discarded outright instead of just that one already-duplicate
+    // entry, which is what "chat sometimes auto-deletes stuff" actually was: not messages vanishing, but a
+    // background sync's fresher copy (with a genuinely NEW message from another tab/device) losing entirely
+    // to a local copy that just LOOKED different by one cosmetic field on one older message.
     setStudyModeTask((prev) => {
       if (prev?.id !== task.id) return task;
       const localChat = prev.chat || [];
-      const incomingChat = task.chat || [];
-      const incomingContainsLocal = localChat.every((entry, index) => {
-        const incoming = incomingChat[index];
-        return incoming?.role === entry.role && incoming?.text === entry.text;
-      });
-      return incomingContainsLocal ? task : { ...task, chat: localChat };
+      if (!localChat.length) return task;
+      const merged = unionChatEntries(localChat, task.chat || []);
+      return { ...task, chat: merged };
     });
   }, [route, tasks]);
 
@@ -739,23 +761,15 @@ export function App() {
                   ? prev.map((x) => {
                       if (x.id !== u.id) return x;
                       const existingChat = x.chat || [];
-                      const incomingChat = u.chat || [];
-                      const incomingContainsExisting = existingChat.every((entry, index) => {
-                        const incoming = incomingChat[index];
-                        return incoming?.role === entry.role && incoming?.text === entry.text;
-                      });
-                      return incomingContainsExisting ? u : { ...u, chat: existingChat };
+                      if (!existingChat.length) return u;
+                      return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
                     })
                   : [...prev, u]);
                 setStudyModeTask((prev) => {
                   if (prev?.id !== u.id) return u;
                   const existingChat = prev.chat || [];
-                  const incomingChat = u.chat || [];
-                  const incomingContainsExisting = existingChat.every((entry, index) => {
-                    const incoming = incomingChat[index];
-                    return incoming?.role === entry.role && incoming?.text === entry.text;
-                  });
-                  return incomingContainsExisting ? u : { ...u, chat: existingChat };
+                  if (!existingChat.length) return u;
+                  return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
                 });
               }}
               userId={status?.user}
@@ -2043,7 +2057,18 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
     <StudyMode
       task={task}
       onExit={() => navigate("tasks")}
-      onTaskUpdate={(u) => setTasks((prev) => prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u])}
+      // Free-study session (no linked task, its own synthetic "study id" task) — same chat-union protection
+      // as the task-linked path above, previously entirely missing here: a plain replace let a stale
+      // background sync directly overwrite a fresher local chat with no merge at all, the most exposed of
+      // the three onTaskUpdate call sites to "chat sometimes auto-deletes stuff".
+      onTaskUpdate={(u) => setTasks((prev) => prev.some((x) => x.id === u.id)
+        ? prev.map((x) => {
+            if (x.id !== u.id) return x;
+            const existingChat = x.chat || [];
+            if (!existingChat.length) return u;
+            return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
+          })
+        : [...prev, u])}
       userId={status?.user}
       language={en ? "en" : "fr"}
     />

@@ -9,5 +9,7 @@ window.addEventListener("message", (e) => {
   try {
     if (d.type === "weave-open-tab" && d.url) chrome.runtime.sendMessage({ type: "open-tab", url: String(d.url), group });
     else if (d.type === "weave-open-tabs" && Array.isArray(d.urls)) chrome.runtime.sendMessage({ type: "open-tabs", urls: d.urls.map(String), group });
+    else if (d.type === "weave-study-mode-start") chrome.runtime.sendMessage({ type: "study-mode-start", origin: window.location.origin });
+    else if (d.type === "weave-study-mode-end") chrome.runtime.sendMessage({ type: "study-mode-end" });
   } catch { /* ignore */ }
 });

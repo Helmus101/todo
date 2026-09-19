@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Study Mode is active</title>
+    <style>
+      :root {
+        --ink: #1d1d1f; --ink-2: #6e6e73; --ink-3: #aeaeb2;
+        --accent: #2563eb; --accent-soft: rgba(37, 99, 235, 0.10);
+        --line: rgba(0, 0, 0, 0.08);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        height: 100%;
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+        color: var(--ink); background: #fff;
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        display: flex; align-items: center; justify-content: center;
+        padding: 24px;
+      }
+      .card { max-width: 420px; text-align: center; }
+      .mark {
+        width: 56px; height: 56px; border-radius: 16px; background: var(--accent-soft); color: var(--accent);
+        display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;
+      }
+      h1 { font-size: 21px; font-weight: 680; letter-spacing: -0.01em; margin-bottom: 10px; }
+      p { color: var(--ink-2); margin-bottom: 24px; }
+      .hint { font-size: 13px; color: var(--ink-3); }
+      #back {
+        display: inline-block; padding: 11px 20px; border-radius: 10px; background: var(--accent);
+        color: #fff; text-decoration: none; font-weight: 600; font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="mark">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" stroke-width="2" />
+          <path d="M12 8v4l3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+      </div>
+      <h1>This site is blocked — Study Mode is active</h1>
+      <p>Other sites stay blocked until you deliberately end the session in Otto (hold the End button).</p>
+      <a id="back" href="#">Back to Otto</a>
+      <p class="hint" style="margin-top: 18px;">Not studying right now? End the session in the Otto tab to unblock everything.</p>
+    </div>
+    <script src="blocked.js"></script>
+  </body>
+</html>

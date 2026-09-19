@@ -4774,6 +4774,20 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 .sm-btn-sm { min-height: 34px; }
 .sm-btn-lg { min-height: 46px; padding: 0 var(--space-5); font-size: var(--text-md); border-radius: var(--radius); }
+.sm-btn-danger { border-color: var(--vermilion); color: var(--vermilion); }
+.sm-btn-danger:hover { background: var(--vermilion); color: #fff; }
+/* Hold-to-confirm End Session button — a fill sweeps left-to-right as the student holds, so the gesture is
+   visibly a deliberate "commit to this", not a click that can happen by accident. --hold-progress (0..1) is
+   set inline from JS on every animation frame; the fill's width just tracks it directly, no JS-driven style
+   writes beyond that one custom property. */
+.sm-btn-hold { position: relative; overflow: hidden; isolation: isolate; }
+.sm-btn-hold-fill {
+  position: absolute; inset: 0; width: calc(var(--hold-progress, 0) * 100%);
+  background: var(--vermilion); z-index: 0; pointer-events: none;
+}
+.sm-btn-hold-label { position: relative; z-index: 1; transition: color var(--duration-fast) var(--ease); }
+.sm-btn-holding .sm-btn-hold-label { color: #fff; }
+.sm-modal-hold-hint { font-size: 12px; color: var(--ink-3); text-align: center; margin-top: var(--space-2); }
 .sm-drawer {
   position: absolute;
   right: 0;
