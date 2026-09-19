@@ -114,6 +114,48 @@ export function estimateWhen(quadrant: Quadrant, now: Date = new Date()): string
   return new Date(now.getTime() + APPROX_DAYS_BY_QUADRANT[quadrant] * 86_400_000).toISOString();
 }
 
+const MONTH_NAMES: Record<string, number> = {
+  january: 0, jan: 0, janvier: 0,
+  february: 1, feb: 1, février: 1, fevrier: 1,
+  march: 2, mar: 2, mars: 2,
+  april: 3, apr: 3, avril: 3,
+  may: 4, mai: 4,
+  june: 5, jun: 5, juin: 5,
+  july: 6, jul: 6, juillet: 6,
+  august: 7, aug: 7, août: 7, aout: 7,
+  september: 8, sep: 8, sept: 8, septembre: 8,
+  october: 9, oct: 9, octobre: 9,
+  november: 10, nov: 10, novembre: 10,
+  december: 11, dec: 11, décembre: 11, decembre: 11,
+};
+// "September 23", "Sep 23", "23 September", "23 septembre" — the two orders French/English text actually use.
+const DATE_EN_RE = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})\b/i;
+const DATE_FR_RE = /\b(\d{1,2})\s+(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre)\b/i;
+
+/** Deterministic (never model-invented) same as estimateWhen, but tries to actually READ a stated date out
+ *  of the task's own text FIRST — a safety net for when the model's own "when" field extraction misses an
+ *  explicit date embedded in ordinary prose ("on his September 23 birthday") and would otherwise silently
+ *  fall through to the generic days-out-by-quadrant guess (estimateWhen), giving a materially wrong date
+ *  for a task that actually named one. Returns undefined (not a fallback itself) when no date-like text is
+ *  found, so callers still chain into estimateWhen() as the final fallback. Recurring-event heuristic: if
+ *  the parsed month/day already passed by more than a month this year (e.g. "March 3" read in November),
+ *  it's read as next year's occurrence (a birthday, an annual deadline) rather than a stale past date. */
+export function extractDateFromText(text: string, now: Date = new Date()): string | undefined {
+  const enMatch = DATE_EN_RE.exec(text);
+  const frMatch = enMatch ? null : DATE_FR_RE.exec(text); // English checked first — "may" ⊂ both patterns' word sets, no overlap risk either way, but keep it deterministic
+  const monthWord = (enMatch ? enMatch[1] : frMatch?.[2])?.toLowerCase().replace(/\.$/, "");
+  const day = Number(enMatch ? enMatch[2] : frMatch?.[1]);
+  if (!monthWord) return undefined;
+  const month = MONTH_NAMES[monthWord];
+  if (month === undefined || !Number.isFinite(day) || day < 1 || day > 31) return undefined;
+  const year = now.getFullYear();
+  let d = new Date(Date.UTC(year, month, day, 12, 0, 0)); // noon UTC — avoids any local-timezone date-shift
+  if (Number.isNaN(d.getTime())) return undefined;
+  const oneMonthAgo = now.getTime() - 31 * 86_400_000;
+  if (d.getTime() < oneMonthAgo) d = new Date(Date.UTC(year + 1, month, day, 12, 0, 0));
+  return d.toISOString();
+}
+
 /** Anti-procrastination core: urgency must climb DETERMINISTICALLY as a hard deadline nears, not sit
  *  frozen at whatever the model guessed the day the task was created. A homework due in 10 days would
  *  otherwise rank exactly as calmly the day before it's due as it did when first spotted — the opposite
@@ -1030,9 +1072,10 @@ export function foldGenerated(existing: WebTask[], genTasks: {
     const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : g.source === "pronote" ? "Open attachment" : "Open source", url: g.link }] : undefined;
     const id = randomUUID();
     freshIds.add(id);
-    const when = g.when || estimateWhen(e.quadrant, now_);
+    const textDate = extractDateFromText(`${g.title} ${g.why}`, now_);
+    const when = g.when || textDate || estimateWhen(e.quadrant, now_);
     candidates.push({
-      id, title: g.title, why: g.why, when, whenApprox: !g.when, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
+      id, title: g.title, why: g.why, when, whenApprox: !g.when && !textDate, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: g.status || "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
       // Also surface the anchor source (the actual email/event/attachment this task is about) as a
@@ -1070,12 +1113,15 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
   const e = eisenhower(urgency, importance);
   const now = new Date().toISOString();
   const explicit = explicitWhen || refined?.when;
+  const finalTitle = (refined?.title || title).trim().slice(0, 120);
+  const finalWhy = refined?.why || "Added by you.";
+  const textDate = explicit ? undefined : extractDateFromText(`${finalTitle} ${finalWhy}`);
   const task: WebTask = {
     id: randomUUID(),
-    title: (refined?.title || title).trim().slice(0, 120),
-    why: refined?.why || "Added by you.",
-    when: explicit || estimateWhen(e.quadrant),
-    whenApprox: !explicit,
+    title: finalTitle,
+    why: finalWhy,
+    when: explicit || textDate || estimateWhen(e.quadrant),
+    whenApprox: !explicit && !textDate,
     source: "manual", risk: "low", urgency, importance, quadrant: e.quadrant, score: e.score,
     status: "ready", createdAt: now,
     taskType: refined?.taskType,
@@ -1110,8 +1156,9 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
   t.quadrant = e.quadrant;
   t.score = e.score;
   const refinedWhen = refined.when ?? t.when;
-  t.when = refinedWhen || estimateWhen(e.quadrant);
-  t.whenApprox = !refinedWhen;
+  const textDate = refinedWhen ? undefined : extractDateFromText(`${t.title} ${t.why}`);
+  t.when = refinedWhen || textDate || estimateWhen(e.quadrant);
+  t.whenApprox = !refinedWhen && !textDate;
   if (refined.taskType) t.taskType = refined.taskType;
   if (refined.goal) t.goal = refined.goal;
   if (refined.infoRequirement) t.infoRequirement = refined.infoRequirement;

@@ -1,6 +1,6 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
@@ -1392,6 +1392,19 @@ section("estimateWhen / whenApprox — every task gets a real deadline, none are
   const approxTask = { when: estimateWhen("schedule", now), urgency: 0.4, importance: 0.6, quadrant: "schedule", score: 2, status: "ready" };
   applyDeadlineUrgency([approxTask], new Date(now.getTime() + 5 * 86_400_000));
   check("estimated deadlines still feed the anti-procrastination urgency curve as the estimate nears", approxTask.urgency > 0.4);
+
+  // A date stated in ordinary prose ("on his September 23 birthday") that the model failed to lift into
+  // its own `when` field must still be read deterministically, rather than silently falling through to the
+  // generic days-out-by-quadrant guess (the reported bug: "~Sep 25" for a task naming September 23).
+  const birthdayTask = [{ title: "Wish Christiaan well on his September 23 birthday", why: "", source: "manual", risk: "low", urgency: 0.3, importance: 0.5 }];
+  const foldedBirthday = foldGenerated([], birthdayTask, [], now);
+  check("a date named in the title is read even when the model left `when` empty", foldedBirthday[0]?.when?.slice(0, 10) === "2026-09-23");
+  check("a date read from title text is NOT flagged approximate — it's a real stated date", !foldedBirthday[0]?.whenApprox);
+
+  check("extractDateFromText reads 'Month Day' (English)", extractDateFromText("Buy a gift before September 23", now)?.slice(0, 10) === "2026-09-23");
+  check("extractDateFromText reads 'Day Month' (French)", extractDateFromText("Anniversaire le 23 septembre", now)?.slice(0, 10) === "2026-09-23");
+  check("extractDateFromText rolls a month/day already >1 month past into next year (recurring events)", extractDateFromText("His birthday was March 3", now)?.slice(0, 4) === "2027");
+  check("extractDateFromText returns undefined when no date-like text is present", extractDateFromText("Finish the lab report", now) === undefined);
 }
 
 section("weakCardFronts — the study-journal week summary's 'what did I get wrong' signal");
