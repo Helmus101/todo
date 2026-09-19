@@ -15,7 +15,7 @@
     "dev:client": "wait-on -t 60000 tcp:127.0.0.1:8788 && vite",
     "predev": "bash scripts/zip-extension.sh",
     "prebuild": "bash scripts/zip-extension.sh",
-    "build": "vite build",
+    "build": "vite build && tsx scripts/prerender-landing.tsx",
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx tests/run.mjs"

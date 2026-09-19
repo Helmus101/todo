@@ -3714,7 +3714,11 @@ function Walkthrough({ lang }: { lang: "fr" | "en" }) {
 }
 
 /** Marketing landing (signed out, route /). Apple Design aesthetic with elevated typography and copywriting. */
-function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
+// Exported (not just used internally) so scripts/prerender-landing.tsx can render it in isolation at build
+// time — the only piece of this whole SPA that gets static HTML pre-baked into dist/index.html, since it's
+// the only screen a logged-out visitor or a non-JS crawler/link-unfurler ever needs to see real content
+// for. See that script's own comment for why this is a build-time static render, not per-request SSR.
+export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: "fr" | "en") => void }) {
   const en = lang === "en";
   const L = (fr: string, e: string) => (en ? e : fr);
   const DRAFT = L(
