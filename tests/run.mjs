@@ -1421,35 +1421,40 @@ section("weakCardFronts — the study-journal week summary's 'what did I get wro
   check("a day with no flashcards at all is handled without throwing", weakCardFronts([{ ...dayA, id: "c", flashcards: undefined }]).length === 0);
 }
 
-section("anchorStepsToTask — title-prefix glue-on false positives");
+section("anchorStepsToTask — no longer glues the title onto step text");
 {
-  // The reported bug: a title phrased as an artifact-production instruction ("Build figures de style
+  // First reported bug: a title phrased as an artifact-production instruction ("Build figures de style
   // flashcards and identification quiz") legitimately shares almost no vocabulary with genuine per-step
-  // study instructions, since the title describes what OTTO builds, not the study topic itself. Nearly
-  // every step failed the old keyword-match check and got the whole title glued on as "Title: step text".
+  // study instructions. A first fix (only prefix when a MINORITY of steps mismatch) helped but didn't
+  // hold: a SECOND real report hit the exact 50/50 boundary — "Cancel or keep Docusign now the 30-day
+  // trial ended" is a plain decision task where administrative steps like "Note the exact next billing
+  // date" or "Compare that count with free alternatives" naturally don't repeat the title's own words
+  // ("cancel"/"keep"/"docusign"/"trial"/"ended"), landing exactly at a 4-of-8 match ratio — not `< 0.5`,
+  // so the old per-step prefixing still fired on the other 4. Keyword-overlap-with-the-title is just not a
+  // reliable drift signal for a normally-worded step list; the function no longer tries to guess at
+  // contamination this way at all (see dropForeignEntitySteps below for the real, evidence-based check).
   const buildTitle = "Build figures de style flashcards and identification quiz";
   const genuineSteps = [
     { text: "Read the five-step identification routine aloud once.", done: false },
     { text: "Memorise the outil de comparaison list cold.", done: false },
     { text: "Work the ready-made flashcard deck front to back, naming aloud.", done: false },
-    { text: "Recite each close-pair discriminator aloud from memory.", done: false },
-    { text: "Take the mixed identification quiz closed-book and timed.", done: false },
   ];
   const anchored = anchorStepsToTask(genuineSteps, buildTitle, 12);
   check("on-topic steps under an artifact-production title are NOT prefixed with the title", anchored.every((s) => !s.text.startsWith(buildTitle)));
   check("step text otherwise passes through unchanged", anchored[0].text === "Read the five-step identification routine aloud once.");
 
-  // Genuine drift — most steps ARE on-topic, but one clearly names an unrelated task's subject — should
-  // still get flagged, so the heuristic isn't disabled outright.
-  const mixedTitle = "Finish the algebra worksheet";
-  const mixedSteps = [
-    { text: "Solve every algebra problem on the worksheet.", done: false },
-    { text: "Check each algebra answer against the key.", done: false },
-    { text: "Reply to the club president about the bake sale schedule.", done: false },
+  const docusignTitle = "Cancel or keep Docusign now the 30-day trial ended";
+  const docusignSteps = [
+    { text: "Log into Docusign; open Settings > Account > Plan and Billing", done: false },
+    { text: "Note the exact next billing date and plan price", done: false },
+    { text: "Count monthly e-signs needed for Weave and L'Atypic", done: false },
+    { text: "Compare that count with free alternatives like Dropbox Sign", done: false },
+    { text: "Decide: cancel today, or keep and accept the charge", done: false },
+    { text: "If already charged, open a support ticket requesting refund", done: false },
   ];
-  const anchoredMixed = anchorStepsToTask(mixedSteps, mixedTitle, 12);
-  check("a genuinely off-topic step among mostly-on-topic ones still gets flagged", anchoredMixed.some((s) => s.text.startsWith(mixedTitle)));
-  check("the on-topic steps in that same batch stay unprefixed", anchoredMixed.filter((s) => !s.text.startsWith(mixedTitle)).length === 2);
+  const anchoredDocusign = anchorStepsToTask(docusignSteps, docusignTitle, 12);
+  check("the exact reported Docusign case: none of the 6 steps get the title glued on", anchoredDocusign.every((s) => !s.text.startsWith(docusignTitle)));
+  check("Docusign steps otherwise pass through verbatim", anchoredDocusign[1].text === "Note the exact next billing date and plan price");
 }
 
 section("needsAutoBreakdown — only auto-expand a step when it's genuinely complicated");

@@ -96,60 +96,25 @@ const TRIVIAL_EXEMPT = /\b(with|ask|from|(?:talk|speak|refer|report|turn|reach o
 export const isTrivialStep = (text: string, url?: string): boolean =>
   !TRIVIAL_EXEMPT.test(text) && (SEARCH_INSTRUCTION.test(text) || (BARE_NAVIGATION.test(text) && !url));
 
-/** Rules every step-list producer must pass, regardless of which pass generated it (the normal submit
- *  path, the rescue/fallback paths, or the refinement pass) — one hook so a filter added here can't be
- *  forgotten on one of the three. Deliberately does NOT apply the triviality gate (see dropTrivialSteps
- *  below) — `finalize` still needs to run its DOABLE/JUDGMENT automatable-flip on the raw `false` steps
- *  this returns before that gate can tell a genuinely-handed-to-the-user step from Otto's own work that
- *  just hasn't been flipped to automatable yet. */
-function taskKeywords(title: string): string[] {
-  return title.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
-    // Excludes both generic filler AND generic artifact-production vocabulary (build/flashcards/quiz/deck/
-    // notes/...) \u2014 a title like "Build figures de style flashcards and identification quiz" describes the
-    // DELIVERABLE Otto produces, not the study topic, so genuine on-topic steps ("Memorise the outil de
-    // comparaison list cold") legitimately share none of those words. Anchoring on them made nearly every
-    // real step look "off-topic" and get the whole title glued onto its text as a `Title: ` prefix \u2014 see
-    // anchorStepsToTask below, and the bug report this stopword list expansion fixes.
-    .filter((word) => word.length > 3 && !/^(the|this|that|with|from|your|into|for|and|task|prepare|review|complete|create|make|build|write|study|learn|practice|flashcards?|quizz?es?|decks?|notes?|identification)$/i.test(word));
-}
-
-/** Loose singular/plural match: "flashcard" should anchor against a keyword "flashcards" (and vice versa)
- *  instead of failing a strict substring check purely over a trailing "s". */
-function looseWordMatch(text: string, word: string): boolean {
-  if (text.includes(word)) return true;
-  const stem = word.replace(/s$/, "");
-  return stem.length > 3 && text.includes(stem);
-}
-
-/** Make the task boundary explicit for every producer, including manual tasks. A model may use a
- * related-looking noun from research instead of the user's actual objective; prefixing only those
- * steps that are CLEARLY off-topic (no keyword match AND no task-label overlap) preserves natural
- * steps while catching genuine drift. Deliberately soft: a step the model deliberately rephrased
- * with related terms should keep its natural wording, not get a mechanical prefix. */
-export function anchorStepsToTask(steps: TaskStep[], title: string, maxCount: number): TaskStep[] {
-  const keywords = taskKeywords(title);
-  const taskLabel = title.trim().slice(0, 120);
-  const texts = steps.map((step) => truncateStepText(String(step.text || "")));
-  const matchesOf = (text: string) =>
-    !keywords.length || keywords.some((word) => looseWordMatch(text.toLowerCase(), word)) ||
-    text.toLowerCase().includes(taskLabel.toLowerCase());
-  // If almost NO step matches the title's remaining keywords, that's not N separate steps drifting
-  // off-topic — it's the keyword set itself being a poor anchor for this title's phrasing (e.g. a title
-  // phrased as an artifact-production instruction, "Build X flashcards and Y quiz", whose own vocabulary
-  // legitimately doesn't recur in genuine per-step study instructions). Prefixing nearly every step with
-  // the full title in that case just glues confusing noise onto otherwise-fine text. Only apply the
-  // prefix when a MINORITY of steps fail to match — the signal this heuristic actually exists to catch
-  // (one or two steps genuinely drifted onto an unrelated topic), not a systemic vocabulary mismatch.
-  const matchCount = texts.filter(matchesOf).length;
-  const mostlyMismatched = steps.length > 0 && matchCount / steps.length < 0.5;
-  const anchored = steps.map((step, i) => {
-    const text = texts[i];
-    return mostlyMismatched || matchesOf(text)
-      ? { ...step, text }
-      : { ...step, text: truncateStepText(`${taskLabel}: ${text}`) };
-  });
-  return sanitizeSteps(anchored, maxCount);
+/** Historically also glued the full task title onto any step whose text didn't literally repeat one of
+ *  the title's own significant words (a crude cross-task-contamination guard). Removed after TWO separate
+ *  real reports of it firing on entirely legitimate steps: a title phrased as an artifact-production
+ *  instruction ("Build X flashcards and Y quiz") or a plain decision ("Cancel or keep Docusign now the
+ *  30-day trial ended") naturally produces per-step instructions that don't repeat the title's own
+ *  vocabulary — "Note the exact next billing date", "Compare that count with free alternatives" — because
+ *  they're worded naturally, not because they drifted onto a different task. In the Docusign case exactly
+ *  half the steps failed the keyword check, which is well within normal variation for a well-written step
+ *  list, not a signal of contamination; raising the mismatch threshold further would just move where the
+ *  next false positive lands rather than fix the underlying unreliability of keyword-overlap as a drift
+ *  signal. Genuine cross-task contamination (a different task's content actually bleeding in) is now
+ *  caught by the more targeted, evidence-based checks that run later in the same pipeline —
+ *  dropForeignEntitySteps (flags steps naming a person/place absent from the task's own title/why/
+ *  sourceDetail) and dropSiblingBleedSteps — so this function no longer needs to also guess at it. Kept as
+ *  a thin passthrough (rather than removed outright) since several call sites still use it for the
+ *  truncate + sanitizeSteps + maxCount-cap bundle. */
+export function anchorStepsToTask(steps: TaskStep[], _title: string, maxCount: number): TaskStep[] {
+  const truncated = steps.map((step) => ({ ...step, text: truncateStepText(String(step.text || "")) }));
+  return sanitizeSteps(truncated, maxCount);
 }
 
 export function sanitizeSteps(steps: TaskStep[], maxCount: number): TaskStep[] {
