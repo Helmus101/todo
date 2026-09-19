@@ -179,7 +179,7 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
   }, []);
   
   // Get subject-specific focus score
-  const subjectFocus = task.sourceSubject && profile?.focusStats?.subjectFocus?.[task.sourceSubject];
+  const subjectFocus = task.sourceSubject ? profile?.focusStats?.subjectFocus?.[task.sourceSubject] : undefined;
   const focusScore = subjectFocus ?? profile?.focusStats?.avgConcentration;
   const showFocusScore = focusScore !== undefined && focusScore < 100 && !isDone;
   

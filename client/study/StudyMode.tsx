@@ -26,6 +26,7 @@ import { api } from "../api.ts";
 import { NoisePlayer, type NoiseType } from "./noise.ts";
 import { tileWithinBounds } from "./tileLayout.ts";
 import { extractPdfText } from "./pdfText.ts";
+import { useFocusCamera } from "./useFocusCamera.ts";
 
 interface StudyModeProps {
   task: WebTask;
@@ -308,6 +309,17 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     acc.headPoseStabilitySum += poseStab;
     acc.count += 1;
   }, []);
+
+  // Owns the camera stream + on-device face-tracking ML pipeline for the WHOLE session — instantiated
+  // once here rather than inside the "Camera" artifact widget, so it keeps running for as long as the
+  // student has left it on, regardless of whether that one widget panel is currently open on the canvas
+  // (see useFocusCamera.ts's own doc comment for why this used to break).
+  const focusCamera = useFocusCamera({
+    taskId: task.id,
+    taskTitle: task.title,
+    subject: task.sourceSubject,
+    onMetricsUpdate: handleFaceMetricsUpdate,
+  });
 
   const doneSteps = task.steps?.filter(s => s.done).length ?? 0;
   const totalSteps = task.steps?.length ?? 0;
@@ -1072,7 +1084,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
             onOpenDeck: (id, title) => openArtifactByKind("deck", id, title),
             onOpenQuiz: (id, title) => openArtifactByKind("quiz", id, title),
           }}
-          onFaceMetricsUpdate={handleFaceMetricsUpdate}
+          camera={focusCamera}
         />
 
         {/* ── Panels (Layer 2) ── */}

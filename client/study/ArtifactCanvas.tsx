@@ -52,13 +52,15 @@ interface ArtifactCanvasProps {
     onOpenDeck: (id: string, title: string) => void;
     onOpenQuiz: (id: string, title: string) => void;
   };
-  onFaceMetricsUpdate?: (metrics: any) => void;
+  // Owned/lived in StudyMode.tsx (via useFocusCamera) — same reasoning as `chat` above, plus the camera's
+  // stream and ML tracking must survive this widget being closed and reopened, so it can't be owned here.
+  camera?: import("./useFocusCamera.ts").FocusCamera;
 }
 
 export function ArtifactCanvas({
   artifacts, notes, scratchpad, task, taskId, environmentId,
   onUpdateArtifact, onAddArtifact, onRemoveArtifact,
-  onNotesChange, onScratchpadChange, onToggleStep, onToggleSubstep, onCompleteTask, language = "en", backgroundImageUrl, chat, onFaceMetricsUpdate,
+  onNotesChange, onScratchpadChange, onToggleStep, onToggleSubstep, onCompleteTask, language = "en", backgroundImageUrl, chat, camera,
 }: ArtifactCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
@@ -197,7 +199,7 @@ export function ArtifactCanvas({
       case "task":
         return <TaskInfoArtifact task={task} onToggleStep={onToggleStep} onToggleSubstep={onToggleSubstep} onComplete={onCompleteTask} />;
       case "camera":
-        return <CameraArtifact onMetricsUpdate={onFaceMetricsUpdate} />;
+        return camera ? <CameraArtifact camera={camera} /> : null;
       default:
         return null;
     }

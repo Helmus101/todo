@@ -1,222 +1,78 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, Eye, Activity, Move, EyeOff, Loader2, X } from "lucide-react";
-import { useFaceTracking, type FaceTrackingState } from "../useFaceTracking.ts";
+import type { FocusCamera } from "../useFocusCamera.ts";
 
 interface CameraArtifactProps {
-  onMetricsUpdate?: (metrics: FaceTrackingState) => void;
-  onBreakSuggestion?: (message: string) => void;
-  taskId?: string;
-  taskTitle?: string;
-  subject?: string;
+  camera: FocusCamera;
 }
 
-export function CameraArtifact({ onMetricsUpdate, onBreakSuggestion, taskId, taskTitle, subject }: CameraArtifactProps) {
+// Landmark-dot indices around the eyes — same set useFaceTracking.ts draws onto its own (detached, never
+// visible) tracking canvas; duplicated here in miniature so this widget's own overlay canvas can render an
+// independent copy from `tracking.landmarks` without needing the actual tracked <canvas> element, which
+// stays owned by useFocusCamera and outlives this widget's own mount/unmount.
+const EYE_LANDMARK_IDX = [33, 133, 159, 145, 362, 263, 386, 374];
+
+/** Purely a *view* onto the shared FocusCamera (see useFocusCamera.ts) — this widget can be freely closed
+ *  and reopened by the student without affecting the underlying camera stream or ML tracking, which live
+ *  at the StudyMode session level and keep running regardless of whether this panel is on screen. */
+export function CameraArtifact({ camera }: CameraArtifactProps) {
+  const { enabled, error, tracking, stream, startCamera, stopCamera } = camera;
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [enabled, setEnabled] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [videoReady, setVideoReady] = useState(false);
 
-  const tracking = useFaceTracking(videoRef, canvasRef, enabled);
-
-  // Session tracking
-  const sessionStartTimeRef = useRef<number | null>(null);
-  const metricsHistoryRef = useRef<FaceTrackingState[]>([]);
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastBreakSuggestionRef = useRef<number>(0);
-  const lastConcentrationRef = useRef<number>(100);
-
-  const saveSession = async () => {
-    const metrics = metricsHistoryRef.current;
-    if (metrics.length < 10) return; // Need at least 10 data points
-    
-    const startTime = sessionStartTimeRef.current;
-    if (!startTime) return;
-    
-    const endTime = Date.now();
-    const duration = Math.round((endTime - startTime) / 60000); // minutes
-    
-    // Calculate aggregated metrics
-    const avgConcentration = metrics.reduce((sum, m) => sum + m.concentration, 0) / metrics.length;
-    const avgMovement = metrics.reduce((sum, m) => sum + m.movement, 0) / metrics.length;
-    const avgBlinkRate = metrics.reduce((sum, m) => sum + m.blinkRate, 0) / metrics.length;
-    const gazeOnScreenPct = metrics.filter(m => m.gazeStatus === "On screen").length / metrics.length * 100;
-    const avgHeadYaw = metrics.reduce((sum, m) => sum + m.headYaw, 0) / metrics.length;
-    const avgHeadPitch = metrics.reduce((sum, m) => sum + m.headPitch, 0) / metrics.length;
-    const avgHeadRoll = metrics.reduce((sum, m) => sum + m.headRoll, 0) / metrics.length;
-    
-    // Calculate concentration variance (stability)
-    const variance = metrics.reduce((sum, m) => sum + Math.pow(m.concentration - avgConcentration, 2), 0) / metrics.length;
-    const concentrationVariance = Math.sqrt(variance);
-    
-    // Determine focus stability
-    let focusStability: "stable" | "unstable" | "highly_variable";
-    if (concentrationVariance < 15) focusStability = "stable";
-    else if (concentrationVariance < 30) focusStability = "unstable";
-    else focusStability = "highly_variable";
-    
-    // Determine session quality
-    let quality: "excellent" | "good" | "fair" | "poor";
-    if (avgConcentration >= 80 && gazeOnScreenPct >= 90) quality = "excellent";
-    else if (avgConcentration >= 65 && gazeOnScreenPct >= 75) quality = "good";
-    else if (avgConcentration >= 50 && gazeOnScreenPct >= 60) quality = "fair";
-    else quality = "poor";
-    
-    const session = {
-      id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" 
-        ? crypto.randomUUID() 
-        : Math.random().toString(36).slice(2) + Date.now().toString(36),
-      taskId,
-      taskTitle,
-      subject,
-      startTime: new Date(startTime).toISOString(),
-      endTime: new Date(endTime).toISOString(),
-      duration,
-      avgConcentration: Math.round(avgConcentration),
-      avgMovement: Math.round(avgMovement),
-      avgBlinkRate: Math.round(avgBlinkRate),
-      gazeOnScreenPct: Math.round(gazeOnScreenPct),
-      avgHeadYaw: Math.round(avgHeadYaw),
-      avgHeadPitch: Math.round(avgHeadPitch),
-      avgHeadRoll: Math.round(avgHeadRoll),
-      concentrationVariance: Math.round(concentrationVariance),
-      focusStability,
-      taskCompleted: false, // TODO: Determine from task state
-      quality,
-    };
-    
-    try {
-      await fetch("/api/focus/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(session),
-      });
-    } catch (err) {
-      console.error("Failed to save focus session:", err);
-    }
-    
-    // Reset for next session
-    sessionStartTimeRef.current = null;
-    metricsHistoryRef.current = [];
-  };
-
+  // Attach the shared stream to THIS widget's own preview <video> — a MediaStream can back multiple video
+  // elements simultaneously, so this is just a second, disposable consumer of the same camera feed.
   useEffect(() => {
-    if (enabled && tracking.status === "ready" && onMetricsUpdate) {
-      onMetricsUpdate(tracking);
-      
-      // Track metrics for session aggregation
-      if (!sessionStartTimeRef.current) {
-        sessionStartTimeRef.current = Date.now();
-      }
-      metricsHistoryRef.current.push({ ...tracking });
-      
-      // Detect focus decay for break suggestions
-      const now = Date.now();
-      const concentration = tracking.concentration;
-      const lastConc = lastConcentrationRef.current;
-      
-      // If concentration has been below 40 for 2+ minutes, suggest a break
-      if (concentration < 40 && lastConc < 40) {
-        const lowFocusDuration = now - lastBreakSuggestionRef.current;
-        if (lowFocusDuration > 120000 && onBreakSuggestion) { // 2 minutes
-          onBreakSuggestion("Focus has been low for a while — consider taking a 5-minute break to refresh");
-          lastBreakSuggestionRef.current = now;
-        }
-      }
-      
-      // If concentration dropped sharply (>20 points) in last 30 seconds
-      if (lastConc - concentration > 20 && onBreakSuggestion) {
-        const timeSinceLastSuggestion = now - lastBreakSuggestionRef.current;
-        if (timeSinceLastSuggestion > 180000) { // 3 minutes between suggestions
-          onBreakSuggestion("Focus dropped sharply — a short break might help");
-          lastBreakSuggestionRef.current = now;
-        }
-      }
-      
-      lastConcentrationRef.current = concentration;
-      
-      // Debounce session save (save 1 second after metrics stop updating)
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = setTimeout(() => {
-        saveSession();
-      }, 1000);
-    }
-  }, [enabled, tracking, onMetricsUpdate, onBreakSuggestion]);
-
-  useEffect(
-    () => () => {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    },
-    [],
-  );
-
-  const stopCamera = () => {
-    // Save session when camera is stopped
-    if (sessionStartTimeRef.current && metricsHistoryRef.current.length >= 10) {
-      saveSession();
-    }
-    
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.srcObject = null;
-    }
-    setVideoReady(false);
-    setEnabled(false);
-  };
-
-  const attachStream = async () => {
     const video = videoRef.current;
-    const stream = streamRef.current;
-    if (!video || !stream) return;
-
+    if (!video || !enabled || !stream) {
+      setVideoReady(false);
+      return;
+    }
     video.muted = true;
     video.playsInline = true;
     video.srcObject = stream;
-    try {
-      await video.play();
-      setVideoReady(true);
-    } catch {
-      setError("The camera preview could not be started. Check browser camera permission and try again.");
-      stopCamera();
-    }
-  };
+    video.play().catch(() => {});
+    return () => {
+      video.pause();
+      video.srcObject = null;
+    };
+  }, [enabled, stream]);
 
-  // The video element only exists after consent changes the view from the
-  // consent screen to the live screen. Attach the already-approved stream on
-  // the next render instead of trying to mount it against a null ref.
+  // Draw this widget's own overlay from the shared tracking state (landmarks are plain normalized
+  // coordinates, not tied to any particular canvas) — independent of useFaceTracking's own internal canvas.
   useEffect(() => {
-    if (enabled) void attachStream();
-  }, [enabled]);
-
-  const startCamera = async () => {
-    setError(null);
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError("Camera access is not supported in this browser.");
-      return;
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const w = (canvas.width = video.videoWidth || canvas.clientWidth);
+    const h = (canvas.height = video.videoHeight || canvas.clientHeight);
+    ctx.clearRect(0, 0, w, h);
+    const lms = tracking.landmarks;
+    if (!lms || !lms.length) return;
+    ctx.fillStyle = "rgba(100, 200, 255, 0.55)";
+    for (const p of lms) {
+      ctx.beginPath();
+      ctx.arc(p.x * w, p.y * h, 1.1, 0, Math.PI * 2);
+      ctx.fill();
     }
-    try {
-      streamRef.current = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-        audio: false,
-      });
-      setVideoReady(false);
-      setEnabled(true);
-    } catch {
-      setError("Camera access was not granted. Nothing was recorded or uploaded.");
-      stopCamera();
+    ctx.fillStyle = "rgba(0, 255, 180, 0.85)";
+    for (const idx of EYE_LANDMARK_IDX) {
+      const p = lms[idx];
+      if (!p) continue;
+      ctx.beginPath();
+      ctx.arc(p.x * w, p.y * h, 2.2, 0, Math.PI * 2);
+      ctx.fill();
     }
-  };
+  }, [tracking.landmarks]);
 
   // ── Concentration ring colour ──
   const conc = tracking.concentration;
   const ringColor = conc >= 70 ? "#34c759" : conc >= 40 ? "#ff9f0a" : "#ff3b30";
   const ringBg = "rgba(255,255,255,0.12)";
 
-  // SVG circle progress
   const R = 26;
   const C = 2 * Math.PI * R;
   const dash = (conc / 100) * C;
@@ -231,9 +87,10 @@ export function CameraArtifact({ onMetricsUpdate, onBreakSuggestion, taskId, tas
           <h3>Private focus camera</h3>
           <p>
             Optional. On-device ML tracks your face, eyes, and movement to estimate concentration. Video
-            stays in this browser — never recorded, uploaded, or stored.
+            stays in this browser — never recorded, uploaded, or stored. Once on, it keeps working for the
+            rest of the session even if you close this panel.
           </p>
-          <button className="sm-btn sm-btn-primary" onClick={startCamera}>
+          <button className="sm-btn sm-btn-primary" onClick={() => void startCamera()}>
             Allow camera
           </button>
           {error && (
@@ -343,7 +200,7 @@ export function CameraArtifact({ onMetricsUpdate, onBreakSuggestion, taskId, tas
           )}
 
           <div className="sm-camera-live-note">
-            Live preview only · on-device ML · not recorded or uploaded
+            Live preview only · on-device ML · not recorded or uploaded · keeps tracking even if you close this panel
           </div>
           <button className="sm-btn sm-btn-ghost" onClick={stopCamera}>
             <X size={14} /> Turn camera off
