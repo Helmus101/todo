@@ -17,7 +17,7 @@ import { BookOpen } from "lucide-react";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
-  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
+  withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, CondensedUserMessage, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
 } from "./ui.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
@@ -1246,7 +1246,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
             {m.role === "user" && m.stepText ? <span className="chat-step-tag">{L("Étape", "Step")} {(m.stepIndex ?? 0) + 1} · {m.stepText}</span> : null}
             {/* Assistant replies get light markdown; a student's own message stays literal — pasting "**"
                 from their notes shouldn't get eaten. */}
-            {m.role === "assistant" ? renderChatText(m.text) : m.text}
+            {m.role === "assistant" ? renderChatText(m.text) : <CondensedUserMessage text={m.text} />}
             {m.artifacts?.length ? (
               <div className="chat-artifact-chips">
                 {m.artifacts.map((a) => {

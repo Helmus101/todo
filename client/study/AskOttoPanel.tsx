@@ -1,6 +1,6 @@
 import { useRef, useEffect, useContext } from "react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText, useThinkingWord, LangContext } from "../ui.tsx";
+import { renderChatText, useThinkingWord, LangContext, CondensedUserMessage } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
@@ -116,7 +116,7 @@ export function AskOttoPanel({
             {m.role === "user" && m.stepText ? <span className="sm-ai-step-tag">Step {(m.stepIndex ?? 0) + 1} · {m.stepText}</span> : null}
             {/* renderChatText returns its own <p>/<ul> blocks — must NOT be wrapped in another <p> (invalid
                 nesting silently breaks paragraph spacing, browsers auto-close the outer tag). */}
-            {m.role === "assistant" ? renderChatText(m.text) : <p>{m.text}</p>}
+            {m.role === "assistant" ? renderChatText(m.text) : <p><CondensedUserMessage text={m.text} /></p>}
             {m.artifacts?.length ? (
               <div className="sm-ai-artifact-chips">
                 {m.artifacts.map((a) => {

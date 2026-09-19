@@ -1565,6 +1565,20 @@ input:focus, textarea:focus {
 .chat-sender { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 4px; }
 .chat-sender-user { color: rgba(255,255,255,0.75); }
 .chat-sender-assistant { color: var(--ink-3); }
+.chat-msg-toggle {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  color: currentColor;
+  opacity: 0.75;
+}
+.chat-msg-toggle:hover { opacity: 1; }
 .chat-user {
   align-self: flex-end;
   background: linear-gradient(180deg, #0077ED 0%, #0066D6 100%);

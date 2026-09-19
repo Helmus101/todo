@@ -450,6 +450,41 @@ export function renderChatText(text: string): ReactNode {
   return blocks;
 }
 
+// A long pasted message (a whole essay draft, a big chunk of notes) used to just sit there at full height,
+// pushing the actual conversation off-screen and making the thread feel like a wall of text instead of a
+// chat. Collapse anything past this rough length/line count behind a "Show more" toggle — long enough that
+// an ordinary question/answer never collapses (most real messages are well under this), short enough that a
+// genuinely long paste actually gets shortened.
+const USER_MESSAGE_COLLAPSE_CHARS = 320;
+const USER_MESSAGE_COLLAPSE_LINES = 6;
+const USER_MESSAGE_PREVIEW_CHARS = 220;
+
+/** A USER chat message (never assistant — Otto's own replies stay through renderChatText/full display, this
+ *  is specifically for what the STUDENT typed/pasted), collapsed behind a "Show more" toggle once it's long
+ *  enough to be disruptive. Plain text only (matches every current call site: user messages are never run
+ *  through markdown rendering — see renderChatText's own comment on why not). Local, per-render state only;
+ *  no need to persist which messages were expanded across a reload, re-collapsing on next view is fine. */
+export function CondensedUserMessage({ text }: { text: string }): ReactNode {
+  const L = useLang();
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > USER_MESSAGE_COLLAPSE_CHARS || text.split("\n").length > USER_MESSAGE_COLLAPSE_LINES;
+  if (!isLong) return text;
+  if (expanded) {
+    return (
+      <>
+        {text}
+        <button type="button" className="chat-msg-toggle" onClick={() => setExpanded(false)}>{L("Réduire", "Show less")}</button>
+      </>
+    );
+  }
+  return (
+    <>
+      {text.slice(0, USER_MESSAGE_PREVIEW_CHARS).trimEnd()}…
+      <button type="button" className="chat-msg-toggle" onClick={() => setExpanded(true)}>{L("Voir plus", "Show more")}</button>
+    </>
+  );
+}
+
 type StudyHelpCard =
   | { kind: "flashcard"; front: string; back: string }
   | { kind: "quiz"; question: string; options: string[]; correct: number };
@@ -503,7 +538,7 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
                     other chat surface in the app already runs assistant text through renderChatText; this
                     one-off sidebar had simply never been wired up to it. User's own text stays plain, same
                     rule as everywhere else (a student pasting "**" from their notes shouldn't get it eaten). */}
-                {h.role === "assistant" ? renderChatText(h.text) : h.text}
+                {h.role === "assistant" ? renderChatText(h.text) : <CondensedUserMessage text={h.text} />}
               </div>
             ))}
             {busy && <p className="study-help-msg assistant study-help-thinking">…</p>}
