@@ -1410,8 +1410,13 @@ section("weakCardFronts — the study-journal week summary's 'what did I get wro
 
 section("needsAutoBreakdown — only auto-expand a step when it's genuinely complicated");
 {
-  check("broad-scope verb ('review') flags for auto-breakdown", needsAutoBreakdown("Review the Brave Search API prepaid billing change"));
-  check("broad-scope verb ('research') flags for auto-breakdown", needsAutoBreakdown("Research colleges"));
+  // A SHORT broad-scope-verb step ("Review X", "Research colleges") deliberately does NOT auto-expand —
+  // see the function's own comment: auto-breaking every short "review"/"prepare" step produced the reported
+  // failure mode of one step ballooning into 8 sub-steps instead of 8 real steps at generation time. The
+  // broad-scope-verb trigger only fires once a step is ALSO genuinely long (>120 chars).
+  check("SHORT broad-scope-verb step does NOT auto-expand", !needsAutoBreakdown("Review the Brave Search API prepaid billing change"));
+  check("SHORT broad-scope-verb step ('research colleges') does NOT auto-expand", !needsAutoBreakdown("Research colleges"));
+  check("LONG broad-scope-verb step (>120 chars) DOES flag for auto-breakdown", needsAutoBreakdown("Review the entire Brave Search API prepaid billing change history, including every past invoice, rate adjustment, and refund issued this year"));
   check("an already-concrete single action does NOT get auto-expanded", !needsAutoBreakdown("Email the professor"));
   check("a short imperative does NOT get auto-expanded", !needsAutoBreakdown("Submit the form"));
   check("a long multi-clause step flags even without a broad-scope verb", needsAutoBreakdown("Call the dentist, confirm the appointment time, and ask about insurance coverage"));

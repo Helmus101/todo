@@ -4061,8 +4061,11 @@ export async function runTask(
       const content = String(res.choices?.[0]?.message?.content || "");
       const parsed = firstJson<any>(content);
       if (!parsed) {
+        // Truncated preview only — never the full content. This can be a student's real task details/
+        // personal context; logging it unbounded to Vercel's log aggregator (retained, searchable, visible
+        // beyond just this process) is a real exposure, not just noise, for zero extra diagnostic value
+        // over the 500-char preview already here.
         console.error(`${new Date().toISOString()} [ai] ask failed to parse JSON. Content: ${content.slice(0, 500)}`);
-        console.error(`${new Date().toISOString()} [ai] full content: ${content}`);
         return {};
       }
       return parsed;
