@@ -4048,27 +4048,46 @@ export async function runTask(
   const langLine = languageLine(profile) + trackLine(profile) + personalContextLine(profile) + studentModelLine(profile);
   const nowLine = nowBlock();
 
-  /** Helper: one JSON chat call, accumulates tokens. */
+  /** Helper: one JSON chat call, accumulates tokens. Retries ONCE on truncation (finish_reason "length" OR
+   *  a parse failure on a genuinely non-empty response) with a bumped budget and a "be more concise"
+   *  instruction — DeepSeek v4's hidden reasoning tokens count against max_tokens (see OUT's own comment
+   *  elsewhere in this file), so a tight budget can silently eat the whole thing before any visible JSON
+   *  comes out, especially for a JSON-array-of-objects response (steps, each with several fields) rather
+   *  than a short list of strings. Without this retry, a truncated response just returned {} — reported
+   *  live as a task ending up with a single generic "Continue working on: X" step instead of the real plan,
+   *  the exact failure the caller's OWN fallback-for-empty-array branch exists to catch, but shouldn't need
+   *  to reach nearly this often. */
   async function ask(prompt: string, maxTokens: number): Promise<any> {
-    try {
+    const attempt = async (tokens: number, extraInstruction: string): Promise<{ parsed: any; truncated: boolean } | null> => {
       const res = await retryRequest(() => client.chat.completions.create({
-        model, max_tokens: maxTokens, temperature: 0.2,
+        model, max_tokens: tokens, temperature: 0.2,
         response_format: { type: "json_object" },
-        messages: [{ role: "user", content: prompt + langLine + nowLine }],
+        messages: [{ role: "user", content: prompt + extraInstruction + langLine + nowLine }],
       }));
       tokIn += res.usage?.prompt_tokens || 0;
       tokOut += res.usage?.completion_tokens || 0;
       const content = String(res.choices?.[0]?.message?.content || "");
+      const truncated = res.choices?.[0]?.finish_reason === "length";
       const parsed = firstJson<any>(content);
       if (!parsed) {
         // Truncated preview only — never the full content. This can be a student's real task details/
         // personal context; logging it unbounded to Vercel's log aggregator (retained, searchable, visible
         // beyond just this process) is a real exposure, not just noise, for zero extra diagnostic value
         // over the 500-char preview already here.
-        console.error(`${new Date().toISOString()} [ai] ask failed to parse JSON. Content: ${content.slice(0, 500)}`);
-        return {};
+        console.error(`${new Date().toISOString()} [ai] ask failed to parse JSON${truncated ? " (truncated — finish_reason: length)" : ""}. Content: ${content.slice(0, 500)}`);
+        return { parsed: null, truncated };
       }
-      return parsed;
+      return { parsed, truncated };
+    };
+    try {
+      const first = await attempt(maxTokens, "");
+      if (first?.parsed && !first.truncated) return first.parsed;
+      if (first?.parsed && first.truncated) return first.parsed; // valid JSON that still fits — use it, no need to retry
+      // Either unparseable, or cut off before any JSON closed — retry ONCE with real headroom (2.5x, floor
+      // 2000) and an explicit steer toward brevity, so the retry is less likely to hit the SAME ceiling.
+      console.log(`${new Date().toISOString()} [ai] ask retrying with a larger budget after truncation/parse failure`);
+      const second = await attempt(Math.max(maxTokens * 2.5, 2000), "\n\nBe concise — short phrases, no extra commentary. Fit your ENTIRE answer well within the token budget.");
+      return second?.parsed || {};
     } catch (err: any) {
       console.error(`${new Date().toISOString()} [ai] ask error: ${err?.message || err}`);
       console.error(`${new Date().toISOString()} [ai] error stack: ${err?.stack || "no stack"}`);
@@ -4094,7 +4113,10 @@ export async function runTask(
       `Which of these tools would be MOST useful for completing this task? ` +
       `Pick only the ones that genuinely help — don't list everything. ` +
       `Return JSON: {"usefulTools": ["tool1", "tool2"], "reason": "brief why"}`,
-      250,
+      // 250 was verified live to truncate before any JSON closed (DeepSeek v4's hidden reasoning tokens eat
+      // into max_tokens regardless of how small the actual output is — see ask()'s own comment). Even this
+      // tiny payload needs real headroom.
+      600,
     );
     const usefulTools: string[] = toolsOut.usefulTools || [];
     console.log(`${new Date().toISOString()} [ai] step 1 result: usefulTools=${usefulTools.join(",")}`);
@@ -4118,7 +4140,7 @@ export async function runTask(
       `never the answer to the student's own exercise. ` +
       `Return 1-5 search queries. If no web search is needed, return an empty array.\n` +
       `Return JSON: {"searches": ["query 1", "query 2"]}`,
-      300,
+      600, // same truncation risk as step 1's budget — see that comment
     );
     let searches: string[] = searchesOut.searches || [];
     console.log(`${new Date().toISOString()} [ai] step 2 result: ${searches.length} searches`);
@@ -4149,7 +4171,7 @@ export async function runTask(
         `Look for new entities, names, dates, or gaps that surfaced and need a targeted search. ` +
         `If the results are sufficient, return an empty array.\n` +
         `Return JSON: {"searches": ["query 1", "query 2"]}`,
-        300,
+        600, // same truncation risk as step 1's budget — see that comment
       );
       const followUps: string[] = followUpOut.searches || [];
 
@@ -4190,7 +4212,7 @@ export async function runTask(
       `Come up with a few ideas — things they should know, understand, or have ready. ` +
       `Be concrete and specific to THIS task, not generic advice. ` +
       `Return JSON: {"info": ["idea 1", "idea 2", "idea 3"]}`,
-      400,
+      800, // same truncation risk as step 1's budget — see that comment
     );
     const usefulInfo: string[] = infoOut.info || [];
     console.log(`${new Date().toISOString()} [ai] step 3 result: ${usefulInfo.length} info items`);
@@ -4214,7 +4236,11 @@ export async function runTask(
       `- Match the plan's size to the task's real complexity — 3 steps for a simple task, more for a complex one. Never pad to look thorough.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
       `Return JSON: {"steps": [{"text": "...", "automatable": false, "minutes": 15, "doneWhen": "...", "difficulty": "easy|medium|hard"}], "definitionOfDone": "refined if needed"}`,
-      800,
+      // 800 was verified live to truncate mid-JSON on an ordinary task (DeepSeek v4's hidden reasoning
+      // tokens count against max_tokens — see ask()'s own comment) — up to 10 step objects, each with 5
+      // fields, needs real headroom. ask() now also retries once with a bumped budget on truncation, but
+      // starting realistically sized means that retry (extra latency + cost) is the rare case, not routine.
+      2200,
     );
 
     let steps: TaskStep[] = (stepsOut.steps || []).map((s: any) => ({
@@ -4266,7 +4292,7 @@ export async function runTask(
       `You can request MULTIPLE artifacts if the task genuinely calls for it (e.g. flashcards AND a note).\n` +
       `Return JSON: {"artifacts": [{"type": "flashcards", "reason": "..."}], "needsArtifact": true/false}\n` +
       `Set needsArtifact to true if any artifacts are requested. Use an empty array with needsArtifact=false if none.`,
-      250,
+      600, // same truncation risk as step 1's budget — see that comment
     );
 
     // Process artifact requests — support flashcards, quizzes, AND notes.
