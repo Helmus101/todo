@@ -4061,13 +4061,16 @@ export async function runTask(
       const content = String(res.choices?.[0]?.message?.content || "");
       const parsed = firstJson<any>(content);
       if (!parsed) {
-        console.error(`${new Date().toISOString()} [ai] ask failed to parse JSON: ${content.slice(0, 200)}`);
+        console.error(`${new Date().toISOString()} [ai] ask failed to parse JSON. Content: ${content.slice(0, 500)}`);
+        console.error(`${new Date().toISOString()} [ai] full content: ${content}`);
         return {};
       }
       return parsed;
     } catch (err: any) {
       console.error(`${new Date().toISOString()} [ai] ask error: ${err?.message || err}`);
-      throw err;
+      console.error(`${new Date().toISOString()} [ai] error stack: ${err?.stack || "no stack"}`);
+      // Return empty object instead of throwing to avoid breaking the entire pipeline
+      return {};
     }
   }
 
@@ -4092,6 +4095,9 @@ export async function runTask(
     );
     const usefulTools: string[] = toolsOut.usefulTools || [];
     console.log(`${new Date().toISOString()} [ai] step 1 result: usefulTools=${usefulTools.join(",")}`);
+    if (!usefulTools.length) {
+      console.warn(`${new Date().toISOString()} [ai] step 1: no tools selected, using default (web_search)`);
+    }
     if (usefulTools.length) audit.push({ at: new Date().toISOString(), kind: "tool", label: `tools: ${usefulTools.join(", ")}` });
 
     // ── STEP 2: What searches to run? → run → look at results → follow-up ────
@@ -4227,6 +4233,11 @@ export async function runTask(
         automatable: !!s.automatable,
         ...sanitizeStepExtras(s),
       })).filter((s: TaskStep) => s.text).slice(0, 12);
+    }
+    // If stepsOut itself is empty (AI returned no steps), create a fallback step
+    if (!steps.length) {
+      console.warn(`${new Date().toISOString()} [ai] step 4: no steps from AI, creating fallback`);
+      steps = [{ text: fr ? `Avancer sur : ${task.title}` : `Continue working on: ${task.title}`, automatable: false }];
     }
     if (stepsOut.definitionOfDone && String(stepsOut.definitionOfDone).trim()) {
       // The model may refine the definition of done during step planning — keep it.
