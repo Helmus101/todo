@@ -91,9 +91,11 @@ app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
 // (Docker/self-host) path and every API response.
 const CSP = [
   "default-src 'self'",
-  // https://cdn.plaid.com: Plaid Link's own hosted JS (client/App.tsx's FinancePage loads it directly) — the
-  // ONLY external script this app loads; everything else stays self-only.
-  "script-src 'self' 'wasm-unsafe-eval' https://cdn.plaid.com",
+  // https://cdn.plaid.com: Plaid Link's own hosted JS (client/App.tsx's FinancePage loads it directly).
+  // https://cdn.jsdelivr.net: MediaPipe's tasks-vision wasm loader (client-side face/presence tracking for
+  // Study Mode's opt-in focus check) — connect-src below already allowed jsdelivr for the wasm binary fetch,
+  // but the loader's own <script> tag was still being blocked since script-src didn't independently list it.
+  "script-src 'self' 'wasm-unsafe-eval' https://cdn.plaid.com https://cdn.jsdelivr.net",
   "style-src 'self' 'unsafe-inline'",
   // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
   // blob: URL (StudySetup's/StudyMode's upload flow, same origin as the PDF blob: already allowed under
