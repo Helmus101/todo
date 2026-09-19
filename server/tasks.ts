@@ -39,9 +39,17 @@ export function unionChat<T extends { role: string; text: string; at: string }>(
 export function needsAutoBreakdown(stepText: string): boolean {
   const t = stepText.trim();
   if (!t) return false;
-  if (BROAD_SCOPE_STEP_RE.test(t)) return true;
+  // Only auto-breakdown a step that is GENUINELY too long or multi-clause — not just because it starts
+  // with a broad-scope verb like "prepare" or "review". A step like "Prepare for the physics assessment"
+  // is a legitimate single step that should have been broken into individual steps at GENERATION time
+  // (runTask step 4), not auto-expanded into substeps after the fact. Auto-breaking every "prepare" step
+  // produced the exact failure mode reported live: one step with 8 sub-steps instead of 8 real steps.
+  // Keep the broad-scope verb check ONLY for genuinely long steps (> 100 chars), and require 3+ clauses
+  // for the clause-based trigger (2 was too easy to hit on a normal step with an "and" in it).
   const clauses = (t.match(/,| and | et |;/gi) || []).length;
-  return t.length > 60 || clauses >= 2;
+  if (clauses >= 3) return true;
+  if (t.length > 120 && BROAD_SCOPE_STEP_RE.test(t)) return true;
+  return false;
 }
 
 /** Fold a learned fact into the person-profile. 'name'/'about' replace. List facts REPLACE an existing
