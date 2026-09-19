@@ -3402,7 +3402,7 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
   };
   return (
     <div className="login-page">
-      <header className="landing-nav">
+      <header className="landing-nav glass-nav">
         <a className="brand" href="/"><Logo size={20} /> Otto</a>
         <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
       </header>
@@ -3455,6 +3455,7 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
           )}
           <a className="login-back" href="/">{L("← Retour à l'accueil", "← Back to home")}</a>
           <div className="login-legal">{L("En continuant, tu acceptes nos ", "By continuing you agree to our ")}<a href="/terms">{L("conditions", "Terms")}</a> {L("et notre", "&")} <a href="/privacy">{L("politique de confidentialité", "Privacy Policy")}</a>.</div>
+          <div className="login-copyright">© 2026 Otto</div>
         </div>
       </main>
     </div>
@@ -3881,7 +3882,7 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
           </nav>
         </div>
         <div className="foot-bottom">
-          <span className="foot-mit">{L("Otto · Conçu avec les principes Apple Design", "Otto · Crafted with Apple Design Principles")}</span>
+          <span className="foot-mit">© 2026 Otto · {L("Conçu avec les principes Apple Design", "Crafted with Apple Design Principles")}</span>
           <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
         </div>
       </footer>
@@ -3907,7 +3908,7 @@ function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: (
   };
   return (
     <div className="landing legal-page">
-      <header className="landing-nav">
+      <header className="landing-nav glass-nav">
         <a className="brand" href="/"><Logo size={22} /> Otto</a>
       </header>
       <main className="legal unlimited-page">
@@ -3927,6 +3928,9 @@ function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: (
         )}
         <a className="legal-back" href="/">← {en ? "Back to Otto" : "Retour à Otto"}</a>
       </main>
+      <footer className="legal-foot">
+        <span className="foot-mit">© 2026 Otto · {en ? "Crafted with Apple Design Principles" : "Conçu avec les principes Apple Design"}</span>
+      </footer>
     </div>
   );
 }
@@ -3942,7 +3946,7 @@ function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
   const L = useLang();
   return (
     <div className="landing legal-page">
-      <header className="landing-nav">
+      <header className="landing-nav glass-nav">
         <a className="brand" href="/"><Logo size={22} /> Otto</a>
         <nav className="landing-navlinks">
           <a className="btn ghost" href="/privacy">{L("Confidentialité", "Privacy")}</a>
@@ -3954,6 +3958,9 @@ function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
         <p className="legal-meta">{L(`Dernière mise à jour : ${LEGAL_UPDATED} · Géré par ${LEGAL_ENTITY} · Contact : ${LEGAL_EMAIL}`, `Last updated: ${LEGAL_UPDATED} · Operated by ${LEGAL_ENTITY} · Contact: ${LEGAL_EMAIL}`)}</p>
         <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
       </main>
+      <footer className="legal-foot">
+        <span className="foot-mit">© 2026 Otto · {L("Conçu avec les principes Apple Design", "Crafted with Apple Design Principles")}</span>
+      </footer>
     </div>
   );
 }

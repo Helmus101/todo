@@ -2153,7 +2153,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .onboard-progress span { width: 22px; height: 4px; border-radius: 2px; background: var(--line); transition: background 300ms var(--ease); }
 .onboard-progress span.on { background: var(--accent); }
 .onboard-step { animation: fadeIn 0.32s var(--ease); }
-.onboard-step h2 { font-size: var(--text-2xl); font-weight: var(--weight-bold); letter-spacing: -0.025em; margin-bottom: var(--space-2); }
+.onboard-step h2 { font-family: var(--display); font-size: var(--text-2xl); font-weight: var(--weight-bold); letter-spacing: -0.025em; margin-bottom: var(--space-2); }
 .onboard-lead { font-size: 14.5px; color: var(--ink-2); line-height: 1.6; margin-bottom: 22px; }
 .onboard-name { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-1); }
 .onboard-name span { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-2); }
@@ -3282,8 +3282,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 
 /* ─── Legal pages ──────────────────────────────────────────────────────────── */
 .legal { width: 100%; max-width: 680px; margin: 0 auto; padding: clamp(40px, 7vh, 72px) 24px 96px; }
-.legal h1 { font-size: clamp(1.8rem, 4vw, 2.4rem); font-weight: 720; /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin-bottom: var(--space-5); }
-.legal h2 { font-size: 16px; font-weight: var(--weight-semibold); /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin: 30px 0 8px; }
+.legal h1 { font-family: var(--display); font-size: clamp(1.8rem, 4vw, 2.4rem); font-weight: 700; /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin-bottom: var(--space-5); }
+.legal h2 { font-family: var(--display); font-size: 16px; font-weight: var(--weight-semibold); /* Apple Design §15 — negative tracking on headings */ letter-spacing: var(--tracking-tight); margin: 30px 0 8px; }
 .legal p, .legal li { font-size: 14.5px; line-height: 1.65; color: var(--ink-2); }
 .legal p { margin-bottom: 10px; }
 .legal ul { margin: 0 0 12px; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
@@ -3294,6 +3294,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .legal-back { display: inline-block; margin-top: var(--space-5); font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--accent); }
 .login-legal { text-align: center; font-size: 11.5px; color: var(--ink-3); line-height: 1.5; margin-top: 2px; }
 .login-legal a { color: var(--ink-2); font-weight: var(--weight-medium); }
+.login-copyright { text-align: center; font-size: 11px; color: var(--ink-3); margin-top: 4px; letter-spacing: 0.01em; }
+.legal-foot { width: 100%; padding: 24px 20px; border-top: 1px solid var(--line-soft); text-align: center; }
+.legal-foot .foot-mit { color: var(--ink-3); font-size: 12px; }
 
 /* ─── Mobile-first base behaviours ─────────────────────────────────────────────
    These used to live inside `@media (max-width: 640px)`. They're now UNCONDITIONAL: wrapping rows,
@@ -3380,7 +3383,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .show-more-btn { margin-top: var(--space-2); width: 100%; justify-content: center; }
 
 /* ─── Repositioned Landing Page Styling ────────────────────────────────────── */
-.landing { width: 100%; max-width: 900px; margin: 0 auto; padding: 0 24px 80px; }
+.landing { width: 100%; margin: 0 auto; }
 .landing-nav { display: flex; align-items: center; justify-content: space-between; height: 72px; }
 .nav-acts { display: flex; gap: 10px; }
 .hero { text-align: center; padding: 60px 0 40px; display: flex; flex-direction: column; align-items: center; gap: var(--space-4); }
@@ -3676,8 +3679,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 
 .start-task-info h2 {
+  font-family: var(--display);
   font-size: var(--text-xl);
   font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
   color: var(--ink);
   margin-bottom: 8px;
 }
@@ -5402,8 +5407,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   gap: var(--space-4);
 }
 .sm-setup-section h2 {
+  font-family: var(--display);
   margin-bottom: var(--space-1);
   font-size: var(--text-lg);
+  letter-spacing: var(--tracking-tight);
 }
 .sm-setup-link-row {
   display: grid;
@@ -5468,6 +5475,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
      below in favor of a real interruptible spring. */
 }
 .sm-modal h2 {
+  font-family: var(--display);
   margin-top: var(--space-2);
   font-size: var(--text-xl);
   line-height: 1.25;
