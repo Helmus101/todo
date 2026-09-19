@@ -96,6 +96,8 @@ const CSP = [
   // Study Mode's opt-in focus check) — connect-src below already allowed jsdelivr for the wasm binary fetch,
   // but the loader's own <script> tag was still being blocked since script-src didn't independently list it.
   "script-src 'self' 'wasm-unsafe-eval' https://cdn.plaid.com https://cdn.jsdelivr.net",
+  "script-src-elem 'self' https://cdn.plaid.com https://cdn.jsdelivr.net",
+  "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
   // blob: URL (StudySetup's/StudyMode's upload flow, same origin as the PDF blob: already allowed under
@@ -2279,7 +2281,7 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't record that — it won't affect your session." }); }
 }));
 
-// Generic, flexible metrics ingestion — deliberately an open `name` string (not a fixed enum route per
+// Generic, flexible metrics ingestion ��� deliberately an open `name` string (not a fixed enum route per
 // signal) so a new data point (task lateness, flashcard struggle, study exit-early, journal consistency,
 // whatever comes up next) is "call this with a name" from wherever it happens, never a new endpoint. Nothing
 // reads these back automatically yet beyond what's wired below — this is the flexible collection point the
