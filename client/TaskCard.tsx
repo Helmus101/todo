@@ -803,16 +803,8 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
         ) : null}
       </div>
       <p className="hero-step">{withInlineLinks(s.text)}</p>
-      {s.doneWhen ? (
-        <div className="step-done-when">
-          <span className="step-done-when-tag">{L("Critère de fin", "Done when")}:</span> {s.doneWhen}
-        </div>
-      ) : null}
-      {s.checkpoint ? (
-        <div className="step-checkpoint">
-          <span className="step-checkpoint-tag">{L("Point de contrôle", "Checkpoint")}:</span> {s.checkpoint}
-        </div>
-      ) : null}
+      {/* NOTE: doneWhen is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
+      {/* NOTE: checkpoint is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
       {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
       {s.minutes ? <SessionTimer key={currentIdx} minutes={s.minutes} /> : null}
       {s.result ? <span className="step-result note">{s.result}</span> : null}
@@ -997,22 +989,10 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
               <div className="step-body">
                 <div className="step-text-row">
                   <span className="step-text">{withInlineLinks(s.text)}</span>
-                  {s.difficulty ? (
-                    <span className={`step-diff step-diff-${s.difficulty}`}>
-                      {s.difficulty === "easy" ? L("Facile", "Easy") : s.difficulty === "hard" ? L("Difficile", "Hard") : L("Moyen", "Medium")}
-                    </span>
-                  ) : null}
+                  {/* NOTE: difficulty no longer displayed on individual steps */}
                 </div>
-                {s.doneWhen && !s.done ? (
-                  <div className="step-done-when-inline">
-                    <span className="step-done-when-tag">{L("Critère", "Done when")}:</span> {s.doneWhen}
-                  </div>
-                ) : null}
-                {s.checkpoint && !s.done ? (
-                  <div className="step-checkpoint-inline">
-                    {s.checkpoint}
-                  </div>
-                ) : null}
+                {/* NOTE: doneWhen no longer displayed on individual steps */}
+                {/* NOTE: checkpoint no longer displayed on individual steps */}
                 {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
                 {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
                 {/* 2-minute rule: a step this short shouldn't just sit in the checklist waiting its turn —

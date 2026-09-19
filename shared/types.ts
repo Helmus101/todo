@@ -771,16 +771,12 @@ export interface TaskStep {
    *  timer or a deadline, just lets the UI answer "what can I fit in 15 minutes right now". Clamped in
    *  server/claude.ts's sanitizeStepExtras. */
   minutes?: number;
-  /** Concrete completion condition (definition of done for this specific step).
-   *  e.g. "≥8/10 correct on retrieval", "Can explain each figure's effect without looking". */
+  /** NOTE: doneWhen, difficulty, checkpoint, and checkpointPassed are kept for type compatibility with
+   * existing persisted data, but the AI no longer generates them for individual steps. These fields belong
+   * on the main task's Definition of Done (task.goal), not on subtasks. The UI should NOT display these on subtasks. */
   doneWhen?: string;
-  /** Adaptive checkpoint evaluation rule after this step.
-   *  e.g. "≥80% → continue to mixed practice; <80% → review definitions before continuing". */
   checkpoint?: string;
-  /** Estimated step difficulty: easy, medium, hard. */
   difficulty?: "easy" | "medium" | "hard";
-  /** Stage 13: checkpoint evaluation result — whether this step's "doneWhen" condition was actually met.
-   *  Drives stage 14 (adaptive replanning): if false and multiple steps fail, trigger step regeneration. */
   checkpointPassed?: boolean;
 }
 

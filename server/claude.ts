@@ -33,22 +33,17 @@ function truncateStepText(text: string, max = 220): string {
   return (lastSpace > 30 ? cut.slice(0, lastSpace) : cut).trim();
 }
 
-/** Validate a raw step's url/question/options/doneWhen/checkpoint/minutes/difficulty exactly the same way
- *  regardless of which pass produced it — `finalize`'s normal submit path and `writeStepsFromContext`'s
- *  refinement pass both call this, so the two can't drift. */
-export function sanitizeStepExtras(s: any): Pick<TaskStep, "url" | "question" | "options" | "needsPermission" | "minutes" | "doneWhen" | "checkpoint" | "difficulty"> {
+/** Validate a raw step's url/question/options/minutes exactly the same way regardless of which pass produced it.
+ * NOTE: doneWhen, difficulty, checkpoint are NOT included here — the AI no longer generates them for steps.
+ * They belong on the main task's Definition of Done (task.goal), not on individual subtasks. */
+export function sanitizeStepExtras(s: any): Pick<TaskStep, "url" | "question" | "options" | "needsPermission" | "minutes"> {
   const minutes = Number(s?.minutes);
-  const diff = s?.difficulty;
-  const validDiff = diff === "easy" || diff === "medium" || diff === "hard" ? diff : undefined;
   return {
     url: s?.url && /^https?:\/\//i.test(String(s.url)) ? String(s.url) : undefined,
     question: s?.question ? String(s.question).trim().slice(0, 200) : undefined,
     options: Array.isArray(s?.options) ? s.options.map((o: any) => String(o).trim()).filter(Boolean).slice(0, 4) : undefined,
     needsPermission: !!s?.needsPermission,
     minutes: Number.isInteger(minutes) && minutes >= 1 && minutes <= 240 ? minutes : undefined,
-    doneWhen: s?.doneWhen ? String(s.doneWhen).trim().slice(0, 250) : undefined,
-    checkpoint: s?.checkpoint ? String(s.checkpoint).trim().slice(0, 250) : undefined,
-    difficulty: validDiff,
   };
 }
 
@@ -4283,7 +4278,7 @@ export async function runTask(
       `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
       `- Match the plan's size to the task's real complexity — 3 steps for a simple task, more for a complex one. Never pad to look thorough.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
-      `Return JSON: {"steps": [{"text": "...", "automatable": false, "minutes": 15, "doneWhen": "...", "difficulty": "easy|medium|hard"}], "definitionOfDone": "refined if needed"}`,
+      `Return JSON: {"steps": [{"text": "...", "automatable": false}], "definitionOfDone": "refined if needed"}`,
       // 800 was verified live to truncate mid-JSON on an ordinary task (DeepSeek v4's hidden reasoning
       // tokens count against max_tokens — see ask()'s own comment) — up to 10 step objects, each with 5
       // fields, needs real headroom. ask() now also retries once with a bumped budget on truncation, but
@@ -4649,9 +4644,7 @@ export async function writeStepsFromContext(
           text: truncateStepText(String(s?.text || "")),
           automatable: bigProject ? false : !!s?.automatable,
           minutes: own.minutes ?? matched?.minutes,
-          doneWhen: own.doneWhen ?? matched?.doneWhen,
-          checkpoint: own.checkpoint ?? matched?.checkpoint,
-          difficulty: own.difficulty ?? matched?.difficulty,
+          // NOTE: doneWhen, checkpoint, difficulty are no longer included - they belong on the main task's Definition of Done
           ...(bigProject && dateRe.test(String(s?.targetDate || "")) ? { targetDate: s!.targetDate } : {}),
           ...(!bigProject && Number.isInteger(s?.dependsOn) && s!.dependsOn! >= 0 && s!.dependsOn! < rawSteps.length && s!.dependsOn !== idx
             ? { dependsOn: s!.dependsOn }
