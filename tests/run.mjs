@@ -549,19 +549,19 @@ check("forced YESTERDAY → due again today", forcedDueToday({ ...utcProfile, la
 // Timezone: 2026-07-20T02:00Z is still Jul 19 in NY, so a force the next NY day is due — the gate is per LOCAL day.
 check("force gate respects the user's timezone", forcedDueToday({ ...nyProfile, lastForcedAt: "2026-07-20T02:00:00Z" }, new Date("2026-07-20T13:00:00Z")));
 
-// ── Daily auto-run spend cap (sweep + kick loop share one budget) — 7/day ─────
-section("autoRunBudgetLeft / recordAutoRuns — daily cap on passive AI spend (7/day)");
+// ── No daily auto-run spend cap (removed per direct instruction — sweep + kick loop auto-run everything) ──
+section("autoRunBudgetLeft / recordAutoRuns — no daily cap on passive AI spend");
 {
   const p = { ...utcProfile };
-  check("fresh day → full budget (7)", autoRunBudgetLeft(p, new Date("2026-07-20T08:00:00Z")) === 7);
+  check("always unlimited, fresh day", autoRunBudgetLeft(p, new Date("2026-07-20T08:00:00Z")) === Infinity);
   recordAutoRuns(p, 3, new Date("2026-07-20T08:00:00Z"));
-  check("after spending 3 → 4 left", autoRunBudgetLeft(p, new Date("2026-07-20T09:00:00Z")) === 4);
-  recordAutoRuns(p, 4, new Date("2026-07-20T16:00:00Z"));
-  check("after spending 7 total → 0 left, same day", autoRunBudgetLeft(p, new Date("2026-07-20T20:00:00Z")) === 0);
-  recordAutoRuns(p, 5, new Date("2026-07-20T21:00:00Z")); // overspend attempt (bug elsewhere) never goes negative
-  check("budget floors at 0, never negative", autoRunBudgetLeft(p, new Date("2026-07-20T22:00:00Z")) === 0);
-  check("next local day → resets to full 7, ignoring yesterday's count", autoRunBudgetLeft(p, new Date("2026-07-21T08:00:00Z")) === 7);
+  check("still unlimited after spending", autoRunBudgetLeft(p, new Date("2026-07-20T09:00:00Z")) === Infinity);
+  recordAutoRuns(p, 400, new Date("2026-07-20T20:00:00Z")); // no amount of spend ever caps it
+  check("unlimited regardless of how much was spent today", autoRunBudgetLeft(p, new Date("2026-07-20T22:00:00Z")) === Infinity);
   check("recordAutoRuns(0) is a no-op", (() => { const q = { ...utcProfile, autoRunDay: "2026-07-20", autoRunCount: 1 }; recordAutoRuns(q, 0, new Date("2026-07-20T10:00:00Z")); return q.autoRunCount === 1; })());
+  // autoRunDay/autoRunCount are still tracked (recordAutoRuns unchanged) even though the cap itself is gone —
+  // in case a real ceiling is ever wanted again, the accounting is already there to gate against.
+  check("autoRunCount still accumulates for potential future use", (() => { const q = { ...utcProfile }; recordAutoRuns(q, 3, new Date("2026-07-20T08:00:00Z")); recordAutoRuns(q, 4, new Date("2026-07-20T16:00:00Z")); return q.autoRunCount === 7 && q.autoRunDay === "2026-07-20"; })());
 }
 
 // ── Sweep cadence: once a day, fixed at 16:00 local ───────────────────────────

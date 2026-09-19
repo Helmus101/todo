@@ -823,20 +823,14 @@ export function supplementarySweepDue(profile: Profile, now: Date = new Date()):
   return elapsedMs >= SUPPLEMENTARY_SWEEP_INTERVAL_DAYS * 86_400_000;
 }
 
-// A real ceiling on PASSIVE AI spend — tasks that start themselves with zero user click (the sweep's own
-// auto-run-top-N, and the kick loop's catch-up for anything the sweep didn't get to). Was 3/day, briefly
-// removed entirely per direct instruction ("it shouldn't have limit on tasks it can execute"), then raised
-// back to a real but much higher ceiling (7/day) per direct instruction again right after — a backlog-heavy
-// day no longer gets stuck behind a low count, but there's still SOME bound on unattended spend independent
-// of the monthly $ budget (which only catches runaway spend after a whole month, not the day it happens).
-const AUTO_RUN_DAILY_CAP = 7;
-/** How many more tasks may auto-start today, across every trigger (sweep + kick) combined. 0 once the cap
- *  is hit; resets to the full cap at local midnight. */
-export function autoRunBudgetLeft(profile: Profile, now: Date = new Date()): number {
-  const tz = tzOf(profile);
-  const today = localDayOf(now.toISOString(), tz);
-  if (profile.autoRunDay !== today) return AUTO_RUN_DAILY_CAP;
-  return Math.max(0, AUTO_RUN_DAILY_CAP - (profile.autoRunCount || 0));
+// No daily ceiling on PASSIVE AI spend (tasks that start themselves with zero user click — the sweep's own
+// auto-run picks, and the kick loop's catch-up for anything the sweep didn't get to) — removed per direct
+// instruction ("remove daily check limit auto run everything"). This has flip-flopped before (3/day → briefly
+// removed → 7/day → removed again here) — if a real ceiling is ever wanted again, autoRunDay/autoRunCount
+// below are still tracked and ready to gate against; only the CAP itself (this function's return value) was
+// dropped. The monthly $ budget (overMonthlyBudget) remains the real backstop against runaway spend.
+export function autoRunBudgetLeft(_profile: Profile, _now: Date = new Date()): number {
+  return Infinity;
 }
 /** Record that `n` more tasks were just auto-started today — mutates `profile` in place (same pattern as
  *  applyRememberFact/applyProfileUpdate), so the caller's own commit/saveState persists it. */
