@@ -16,7 +16,12 @@ import {
   Settings as SettingsIcon,
   Menu,
   X,
-  Wallet
+  Wallet,
+  Lock,
+  Zap,
+  ShieldCheck,
+  Compass,
+  BarChart3
 } from "lucide-react";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
@@ -3402,7 +3407,7 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
   };
   return (
     <div className="login-page">
-      <header className="landing-nav">
+      <header className="landing-nav glass-nav">
         <a className="brand" href="/"><Logo size={20} /> Otto</a>
         <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
       </header>
@@ -3455,6 +3460,7 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
           )}
           <a className="login-back" href="/">{L("← Retour à l'accueil", "← Back to home")}</a>
           <div className="login-legal">{L("En continuant, tu acceptes nos ", "By continuing you agree to our ")}<a href="/terms">{L("conditions", "Terms")}</a> {L("et notre", "&")} <a href="/privacy">{L("politique de confidentialité", "Privacy Policy")}</a>.</div>
+          <div className="login-copyright">© 2026 Otto</div>
         </div>
       </main>
     </div>
@@ -3597,10 +3603,10 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
 
         {/* Apple-grade Trust Badges */}
         <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.36s" }}>
-          <li><span className="trust-icon">🔒</span> {L("Chiffrement de bout en bout (AES-256)", "End-to-end encrypted credentials")}</li>
-          <li><span className="trust-icon">🎓</span> {L("Spécialisé Baccalauréat & Bac International", "Built for French Bac & IB")}</li>
-          <li><span className="trust-icon">⚡</span> {L("Plafond d'usage transparent", "Capped & visible AI cost")}</li>
-          <li><span className="trust-icon">🛡️</span> {L("Intégrité académique garantie", "Guaranteed academic integrity")}</li>
+          <li><span className="trust-icon"><Lock size={13} strokeWidth={1.5} /></span> {L("Chiffrement de bout en bout (AES-256)", "End-to-end encrypted credentials")}</li>
+          <li><span className="trust-icon"><GraduationCap size={13} strokeWidth={1.5} /></span> {L("Spécialisé Baccalauréat & Bac International", "Built for French Bac & IB")}</li>
+          <li><span className="trust-icon"><Zap size={13} strokeWidth={1.5} /></span> {L("Plafond d'usage transparent", "Capped & visible AI cost")}</li>
+          <li><span className="trust-icon"><ShieldCheck size={13} strokeWidth={1.5} /></span> {L("Intégrité académique garantie", "Guaranteed academic integrity")}</li>
         </ul>
 
         {/* Live Animated Simulation Window */}
@@ -3754,21 +3760,21 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
         </div>
         <div className="features">
           <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.0s" }}>
-            <span className="feature-icon">🧭</span>
+            <span className="feature-icon"><Compass size={22} strokeWidth={1.5} /></span>
             <div>
               <h3>{L("Intégrité académique absolue", "Strict academic integrity")}</h3>
               <p>{L("Otto refuse de générer des dissertations complètes ou de résoudre des exercices à ta place. Il t'apprend la méthode.", "Otto refuses to write full essays or solve graded problems. It teaches you the methodology.")}</p>
             </div>
           </div>
           <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.1s" }}>
-            <span className="feature-icon">🔐</span>
+            <span className="feature-icon"><Lock size={22} strokeWidth={1.5} /></span>
             <div>
               <h3>{L("Données protégées et jamais vendues", "Data private, secure & never sold")}</h3>
               <p>{L("Identifiants chiffrés avec AES-256-GCM. Tes devoirs et notes ne servent jamais à entraîner des modèles d'IA publics.", "Encrypted with AES-256-GCM. Your school data is never used to train public AI models.")}</p>
             </div>
           </div>
           <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.2s" }}>
-            <span className="feature-icon">📊</span>
+            <span className="feature-icon"><BarChart3 size={22} strokeWidth={1.5} /></span>
             <div>
               <h3>{L("Transparence totale et maîtrise des coûts", "Transparent usage & clear control")}</h3>
               <p>{L("Suis en temps réel ton quota d'IA dans les Réglages. Aucun abonnement caché, aucun piège.", "Track your AI quota in real-time in Settings. No hidden recurring fees, no dark patterns.")}</p>
@@ -3881,7 +3887,7 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
           </nav>
         </div>
         <div className="foot-bottom">
-          <span className="foot-mit">{L("Otto · Conçu avec les principes Apple Design", "Otto · Crafted with Apple Design Principles")}</span>
+          <span className="foot-mit">© 2026 Otto · {L("Conçu avec les principes Apple Design", "Crafted with Apple Design Principles")}</span>
           <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
         </div>
       </footer>
@@ -3907,7 +3913,7 @@ function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: (
   };
   return (
     <div className="landing legal-page">
-      <header className="landing-nav">
+      <header className="landing-nav glass-nav">
         <a className="brand" href="/"><Logo size={22} /> Otto</a>
       </header>
       <main className="legal unlimited-page">
@@ -3927,6 +3933,9 @@ function UnlimitedPage({ status, onDone }: { status: ConnectionStatus; onDone: (
         )}
         <a className="legal-back" href="/">← {en ? "Back to Otto" : "Retour à Otto"}</a>
       </main>
+      <footer className="legal-foot">
+        <span className="foot-mit">© 2026 Otto · {en ? "Crafted with Apple Design Principles" : "Conçu avec les principes Apple Design"}</span>
+      </footer>
     </div>
   );
 }
@@ -3942,7 +3951,7 @@ function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
   const L = useLang();
   return (
     <div className="landing legal-page">
-      <header className="landing-nav">
+      <header className="landing-nav glass-nav">
         <a className="brand" href="/"><Logo size={22} /> Otto</a>
         <nav className="landing-navlinks">
           <a className="btn ghost" href="/privacy">{L("Confidentialité", "Privacy")}</a>
@@ -3954,6 +3963,9 @@ function LegalPageBody({ kind }: { kind: "privacy" | "terms" }) {
         <p className="legal-meta">{L(`Dernière mise à jour : ${LEGAL_UPDATED} · Géré par ${LEGAL_ENTITY} · Contact : ${LEGAL_EMAIL}`, `Last updated: ${LEGAL_UPDATED} · Operated by ${LEGAL_ENTITY} · Contact: ${LEGAL_EMAIL}`)}</p>
         <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
       </main>
+      <footer className="legal-foot">
+        <span className="foot-mit">© 2026 Otto · {L("Conçu avec les principes Apple Design", "Crafted with Apple Design Principles")}</span>
+      </footer>
     </div>
   );
 }

@@ -542,7 +542,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
               knock it out right now rather than something to schedule. */}
           {task.firstAction.minutes ? (
             task.firstAction.minutes <= 2
-              ? <span className="first-action-minutes quick-win">⚡ {L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
+              ? <span className="first-action-minutes quick-win">{L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
               : <span className="first-action-minutes">~{task.firstAction.minutes} {L("min", "min")}</span>
           ) : null}
         </p>
@@ -810,7 +810,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       ) : null}
       {s.checkpoint ? (
         <div className="step-checkpoint">
-          <span className="step-checkpoint-tag">🎯 {L("Point de contrôle", "Checkpoint")}:</span> {s.checkpoint}
+          <span className="step-checkpoint-tag">{L("Point de contrôle", "Checkpoint")}:</span> {s.checkpoint}
         </div>
       ) : null}
       {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
@@ -1010,7 +1010,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 ) : null}
                 {s.checkpoint && !s.done ? (
                   <div className="step-checkpoint-inline">
-                    🎯 {s.checkpoint}
+                    {s.checkpoint}
                   </div>
                 ) : null}
                 {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
@@ -1019,7 +1019,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                     flag it so it's obviously worth knocking out right now instead of scheduling for later. */}
                 {!s.done && s.minutes ? (
                   s.minutes <= 2
-                    ? <span className="step-minutes quick-win">⚡ {L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
+                    ? <span className="step-minutes quick-win">{L("2 min — fais-le maintenant", "2 min — just do it now")}</span>
                     : <span className="step-minutes">~{s.minutes} {L("min", "min")}</span>
                 ) : null}
                 {s.result ? <span className={`step-result ${s.done ? "" : "note"}`}>{s.result}</span> : null}

@@ -93,7 +93,7 @@ const CSP = [
   "default-src 'self'",
   // https://cdn.plaid.com: Plaid Link's own hosted JS (client/App.tsx's FinancePage loads it directly) — the
   // ONLY external script this app loads; everything else stays self-only.
-  "script-src 'self' https://cdn.plaid.com",
+  "script-src 'self' 'wasm-unsafe-eval' https://cdn.plaid.com",
   "style-src 'self' 'unsafe-inline'",
   // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
   // blob: URL (StudySetup's/StudyMode's upload flow, same origin as the PDF blob: already allowed under
@@ -108,7 +108,7 @@ const CSP = [
   // https://*.ingest.*.sentry.io: client-side Sentry (main.tsx) reports errors straight from the browser —
   // this was missing here while vercel.json's copy of this CSP (the one actually served on Vercel) already
   // had it, so client error reporting was silently CSP-blocked on the self-hosted/Docker path only.
-  "connect-src 'self' https://freedictionaryapi.com https://*.plaid.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io",
+  "connect-src 'self' https://freedictionaryapi.com https://*.plaid.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://cdn.jsdelivr.net https://storage.googleapis.com",
   // Study Mode embeds several things in iframes: a Spotify playlist/album/track widget (client/study/
   // spotify.ts, no OAuth needed), a Google Doc, a YouTube video, and — critically — the student's own
   // uploaded PDFs, which load from a same-page blob: URL (StudySetup's upload flow). Once frame-src is set
