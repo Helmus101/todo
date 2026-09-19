@@ -5575,12 +5575,19 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .studylog-tabs { margin: var(--space-3) 0; }
 .studylog-weeknav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-2); }
 .studylog-weeklabel { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-2); }
-.studylog-days { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+/* 7 columns (Mon..Sun) — the Journal covers the full week now, not just weekdays. Tighter gap/padding than
+   the old 5-column layout so a week still fits one row on a normal phone width without wrapping. */
+.studylog-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
 .studylog-day-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 6px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 3px;
   border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer;
-  font-size: 12.5px; font-weight: var(--weight-medium); color: var(--ink-2);
+  font-size: 11.5px; font-weight: var(--weight-medium); color: var(--ink-2);
   transition: border-color var(--duration-fast) var(--ease), background var(--duration-fast) var(--ease);
+}
+@media (max-width: 380px) {
+  .studylog-days { gap: 3px; }
+  .studylog-day-btn { padding: 6px 2px; font-size: 10px; }
+  .studylog-day-date { font-size: 9.5px; }
 }
 .studylog-day-btn:hover { border-color: var(--ink-3); }
 .studylog-day-btn.active { border-color: var(--accent); color: var(--ink); background: var(--accent-soft); }

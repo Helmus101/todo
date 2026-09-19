@@ -2102,10 +2102,12 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
   // not one more thing in the sidebar to remember. Journal is the default view; Flashcards is a click away.
   const [tab, setTab] = useState<"journal" | "flashcards">("journal");
   const [monday, setMonday] = useState(() => mondayOf(todayIso()));
-  const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(mondayOf(todayIso()))?.days || [null, null, null, null, null]);
+  const [days, setDays] = useState<(WebTask | null)[]>(() => loadWeekCache(mondayOf(todayIso()))?.days || [null, null, null, null, null, null, null]);
   const [summary, setSummary] = useState<WebTask | null>(() => loadWeekCache(mondayOf(todayIso()))?.summary || null);
   const [loaded, setLoaded] = useState(false);
-  const todayIdx = (() => { const d = new Date(`${todayIso()}T00:00:00Z`).getUTCDay(); return d >= 1 && d <= 5 ? d - 1 : 0; })();
+  // Mon=0..Sun=6 (the week now covers all 7 days, not just weekdays) — getUTCDay() is Sun=0..Sat=6, so
+  // shifting by +6 mod 7 maps Mon(1)->0 ... Sat(6)->5, Sun(0)->6.
+  const todayIdx = (() => { const d = new Date(`${todayIso()}T00:00:00Z`).getUTCDay(); return (d + 6) % 7; })();
   const [selected, setSelected] = useState(mondayOf(todayIso()) === monday ? todayIdx : 0);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
@@ -2197,8 +2199,8 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
     }).catch(() => {});
   }, [month]);
 
-  const dates = Array.from({ length: 5 }, (_, i) => addDays(monday, i));
-  const dayLabels = en ? ["Mon", "Tue", "Wed", "Thu", "Fri"] : ["Lun", "Mar", "Mer", "Jeu", "Ven"];
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const dayLabels = en ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] : ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 
   const save = async () => {
     setSaving(true);

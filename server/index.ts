@@ -1737,7 +1737,8 @@ function mondayOf(dateStr: string): string {
 }
 function weekdayDates(monday: string): string[] {
   const d = new Date(`${monday}T00:00:00Z`);
-  return Array.from({ length: 5 }, (_, i) => new Date(d.getTime() + i * 86_400_000).toISOString().slice(0, 10));
+  // 7 days (Mon..Sun) — the Journal now covers the full week, not just weekdays, per direct instruction.
+  return Array.from({ length: 7 }, (_, i) => new Date(d.getTime() + i * 86_400_000).toISOString().slice(0, 10));
 }
 app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
   const date = String(req.body?.date || "");
