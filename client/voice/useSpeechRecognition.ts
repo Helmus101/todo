@@ -162,5 +162,22 @@ export function useSpeechRecognition({ lang, onResult }: UseSpeechRecognitionOpt
 
   useEffect(() => () => abort(), [abort]);
 
+  // Switching languages mid-session (e.g. the account's FR/EN preference changes while voice mode is
+  // already on) previously had no effect on an ALREADY-RUNNING recognizer — `rec.lang` is only ever read
+  // once, at construction (see createAndStart above), so the old language kept being recognized silently
+  // until the student manually toggled voice mode off and back on. Restart transparently whenever `lang`
+  // changes while actively listening; the stale-instance guard on onend (see its own comment) already makes
+  // this abort-then-immediately-restart sequence safe — the old instance's delayed onend is a no-op once
+  // recRef.current has moved on to the new one. Skipped on the very first render (isFirstRef) — the initial
+  // start() call already picks up whatever `lang` is current, nothing to restart yet.
+  const isFirstLangRef = useRef(true);
+  useEffect(() => {
+    if (isFirstLangRef.current) { isFirstLangRef.current = false; return; }
+    if (!keepAliveRef.current) return; // not currently listening — the next start() will just use the new lang
+    recRef.current?.abort();
+    createAndStartRef.current?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang]);
+
   return { supported, listening, interimTranscript, start, stop, abort };
 }
