@@ -130,9 +130,10 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
       setBreakMinutes(s.breakMinutes);
       suggestionRef.current = { enabled: s.enabled, workMinutes: s.workMinutes, breakMinutes: s.breakMinutes };
     }).catch(() => {}); // best-effort — the picker's own hardcoded defaults (25/5, off) already cover this
-    void api.audioSuggestion().then((s) => {
-      setAudioChoice({ audioType: s.audioType, armId: s.audioType });
-    }).catch(() => {}); // best-effort — the desk's own hardcoded default (silence) already covers this
+  // Audio is intentionally silent by default. Do not apply a server suggestion
+  // automatically: starting sound without an explicit choice is surprising and
+  // can be especially disruptive for students.
+  void api.audioSuggestion().catch(() => {});
   }, [existingEnv]);
   // Whatever arm this session ACTUALLY runs under, whether that's the suggestion left untouched or
   // something the student changed by hand — matches server/bandit.ts's POMODORO_ARMS id scheme when it
