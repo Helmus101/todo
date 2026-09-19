@@ -106,8 +106,25 @@ export function useSpeechRecognition({ lang, onResult }: UseSpeechRecognitionOpt
       }
     };
     recRef.current = rec;
-    setListening(true);
-    rec.start();
+    // start() is synchronous and can THROW (InvalidStateError) if the browser's native recognizer is still
+    // mid-teardown from a just-prior session — a real, known Web Speech API quirk, and a likely cause of
+    // "sometimes pressing the mic button doesn't work": this component starts/stops recognition rapidly
+    // around TTS playback (pause the mic while Otto is talking, resume right after — see the effect a few
+    // hundred lines down in TaskCard.tsx), so back-to-back start() calls landing before the previous
+    // session has actually finished tearing down is not an edge case here, it's routine. Uncaught, this left
+    // `listening` stuck at true (set below, optimistically, before this call) while the mic was actually
+    // dead — the UI claiming to listen while capturing nothing, with no way to recover except toggling voice
+    // mode off and on again. Catch it, revert the optimistic state, and retry once after a short delay
+    // (long enough for the browser's teardown to actually finish) before giving up for real.
+    try {
+      setListening(true);
+      rec.start();
+    } catch {
+      setListening(false);
+      if (keepAliveRef.current) {
+        setTimeout(() => { if (keepAliveRef.current) createAndStartRef.current?.(); }, 150);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Ctor, lang]);
   // createAndStart recreates itself via a stable ref so onend's restart-on-drop can always call the LATEST
