@@ -95,12 +95,22 @@ export function useSpeechRecognition({ lang, onResult }: UseSpeechRecognitionOpt
       }
     };
     rec.onend = () => {
+      // STALE-INSTANCE GUARD: onend fires ASYNCHRONOUSLY (per spec), so it can land well after this exact
+      // `rec` has already been superseded — e.g. the user toggles voice mode off then back on again quickly
+      // ("clicking it a second time"): off calls abort() on this instance, which schedules onend for later;
+      // on immediately creates a NEW rec and sets keepAliveRef back to true before that old onend ever
+      // fires. Without this check, the OLD instance's onend sees keepAliveRef===true (set by the NEW
+      // session, not this one) and "helpfully" restarts AGAIN — a second createAndStart() racing the one
+      // the user's second click already triggered, fighting over the mic/producing a session that "doesn't
+      // open normally". Only the CURRENT instance (recRef.current still === this rec) is allowed to act;
+      // a superseded one's onend is a no-op.
+      if (recRef.current !== rec) return;
       setInterimTranscript("");
       if (keepAliveRef.current) {
         // The recognizer stopped on its own (session cap / blip) but the app still wants to be listening —
         // restart transparently. A brief microtask delay avoids some browsers' "already started" race when
         // onend and a fresh start() land in the same tick.
-        setTimeout(() => { if (keepAliveRef.current) createAndStartRef.current?.(); }, 50);
+        setTimeout(() => { if (keepAliveRef.current && recRef.current === rec) createAndStartRef.current?.(); }, 50);
       } else {
         setListening(false);
       }
