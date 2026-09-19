@@ -105,7 +105,21 @@ export const isTrivialStep = (text: string, url?: string): boolean =>
 function taskKeywords(title: string): string[] {
   return title.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
-    .filter((word) => word.length > 3 && !/^(the|this|that|with|from|your|into|for|and|task|prepare|review|complete|create|make|write|study|learn|practice)$/i.test(word));
+    // Excludes both generic filler AND generic artifact-production vocabulary (build/flashcards/quiz/deck/
+    // notes/...) \u2014 a title like "Build figures de style flashcards and identification quiz" describes the
+    // DELIVERABLE Otto produces, not the study topic, so genuine on-topic steps ("Memorise the outil de
+    // comparaison list cold") legitimately share none of those words. Anchoring on them made nearly every
+    // real step look "off-topic" and get the whole title glued onto its text as a `Title: ` prefix \u2014 see
+    // anchorStepsToTask below, and the bug report this stopword list expansion fixes.
+    .filter((word) => word.length > 3 && !/^(the|this|that|with|from|your|into|for|and|task|prepare|review|complete|create|make|build|write|study|learn|practice|flashcards?|quizz?es?|decks?|notes?|identification)$/i.test(word));
+}
+
+/** Loose singular/plural match: "flashcard" should anchor against a keyword "flashcards" (and vice versa)
+ *  instead of failing a strict substring check purely over a trailing "s". */
+function looseWordMatch(text: string, word: string): boolean {
+  if (text.includes(word)) return true;
+  const stem = word.replace(/s$/, "");
+  return stem.length > 3 && text.includes(stem);
 }
 
 /** Make the task boundary explicit for every producer, including manual tasks. A model may use a
@@ -116,10 +130,22 @@ function taskKeywords(title: string): string[] {
 export function anchorStepsToTask(steps: TaskStep[], title: string, maxCount: number): TaskStep[] {
   const keywords = taskKeywords(title);
   const taskLabel = title.trim().slice(0, 120);
-  const anchored = steps.map((step) => {
-    const text = truncateStepText(String(step.text || ""));
-    const matches = !keywords.length || keywords.some((word) => text.toLowerCase().includes(word));
-    return matches || text.toLowerCase().includes(taskLabel.toLowerCase())
+  const texts = steps.map((step) => truncateStepText(String(step.text || "")));
+  const matchesOf = (text: string) =>
+    !keywords.length || keywords.some((word) => looseWordMatch(text.toLowerCase(), word)) ||
+    text.toLowerCase().includes(taskLabel.toLowerCase());
+  // If almost NO step matches the title's remaining keywords, that's not N separate steps drifting
+  // off-topic — it's the keyword set itself being a poor anchor for this title's phrasing (e.g. a title
+  // phrased as an artifact-production instruction, "Build X flashcards and Y quiz", whose own vocabulary
+  // legitimately doesn't recur in genuine per-step study instructions). Prefixing nearly every step with
+  // the full title in that case just glues confusing noise onto otherwise-fine text. Only apply the
+  // prefix when a MINORITY of steps fail to match — the signal this heuristic actually exists to catch
+  // (one or two steps genuinely drifted onto an unrelated topic), not a systemic vocabulary mismatch.
+  const matchCount = texts.filter(matchesOf).length;
+  const mostlyMismatched = steps.length > 0 && matchCount / steps.length < 0.5;
+  const anchored = steps.map((step, i) => {
+    const text = texts[i];
+    return mostlyMismatched || matchesOf(text)
       ? { ...step, text }
       : { ...step, text: truncateStepText(`${taskLabel}: ${text}`) };
   });

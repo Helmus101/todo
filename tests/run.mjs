@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1419,6 +1419,37 @@ section("weakCardFronts — the study-journal week summary's 'what did I get wro
   check("excludes never-reviewed cards (no review field at all)", !fronts.includes("No review yet"));
   check("empty input yields empty output", weakCardFronts([]).length === 0);
   check("a day with no flashcards at all is handled without throwing", weakCardFronts([{ ...dayA, id: "c", flashcards: undefined }]).length === 0);
+}
+
+section("anchorStepsToTask — title-prefix glue-on false positives");
+{
+  // The reported bug: a title phrased as an artifact-production instruction ("Build figures de style
+  // flashcards and identification quiz") legitimately shares almost no vocabulary with genuine per-step
+  // study instructions, since the title describes what OTTO builds, not the study topic itself. Nearly
+  // every step failed the old keyword-match check and got the whole title glued on as "Title: step text".
+  const buildTitle = "Build figures de style flashcards and identification quiz";
+  const genuineSteps = [
+    { text: "Read the five-step identification routine aloud once.", done: false },
+    { text: "Memorise the outil de comparaison list cold.", done: false },
+    { text: "Work the ready-made flashcard deck front to back, naming aloud.", done: false },
+    { text: "Recite each close-pair discriminator aloud from memory.", done: false },
+    { text: "Take the mixed identification quiz closed-book and timed.", done: false },
+  ];
+  const anchored = anchorStepsToTask(genuineSteps, buildTitle, 12);
+  check("on-topic steps under an artifact-production title are NOT prefixed with the title", anchored.every((s) => !s.text.startsWith(buildTitle)));
+  check("step text otherwise passes through unchanged", anchored[0].text === "Read the five-step identification routine aloud once.");
+
+  // Genuine drift — most steps ARE on-topic, but one clearly names an unrelated task's subject — should
+  // still get flagged, so the heuristic isn't disabled outright.
+  const mixedTitle = "Finish the algebra worksheet";
+  const mixedSteps = [
+    { text: "Solve every algebra problem on the worksheet.", done: false },
+    { text: "Check each algebra answer against the key.", done: false },
+    { text: "Reply to the club president about the bake sale schedule.", done: false },
+  ];
+  const anchoredMixed = anchorStepsToTask(mixedSteps, mixedTitle, 12);
+  check("a genuinely off-topic step among mostly-on-topic ones still gets flagged", anchoredMixed.some((s) => s.text.startsWith(mixedTitle)));
+  check("the on-topic steps in that same batch stay unprefixed", anchoredMixed.filter((s) => !s.text.startsWith(mixedTitle)).length === 2);
 }
 
 section("needsAutoBreakdown — only auto-expand a step when it's genuinely complicated");
