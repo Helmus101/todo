@@ -4177,14 +4177,15 @@ export async function runTask(
       `Based on all this information:\n${context || "(no external context was needed — plan from the task itself)"}\n\n` +
       `Create small, minimal, actionable steps to help the user achieve this.\n` +
       `RULES:\n` +
-      `- 2-6 steps, each a short concrete one-liner (≤12 words).\n` +
-      `- Only steps the STUDENT must do (decisions, physical actions, logins, review, practice).\n` +
+      `- 3-10 steps, each a SHORT concrete one-liner (≤10 words). Each step is ONE single action, not a broad category.\n` +
+      `- Break the work into INDIVIDUAL steps — never one big step with sub-steps. If you're tempted to write a step like "Review chapter 5" that's really several things, write each thing as its own step instead.\n` +
+      `- Only steps the STUDENT must do (decisions, physical actions, logins, review, practice, solving).\n` +
       `- Never include research/search steps (that's already done above).\n` +
       `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
-      `- Match the plan's size to the task's real complexity — one step is fine for a simple task.\n` +
+      `- Match the plan's size to the task's real complexity — 3 steps for a simple task, more for a complex one. Never pad to look thorough.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
       `Return JSON: {"steps": [{"text": "...", "automatable": false, "minutes": 15, "doneWhen": "...", "difficulty": "easy|medium|hard"}], "definitionOfDone": "refined if needed"}`,
-      600,
+      800,
     );
 
     let steps: TaskStep[] = (stepsOut.steps || []).map((s: any) => ({
@@ -4193,33 +4194,56 @@ export async function runTask(
       ...sanitizeStepExtras(s),
     }));
     // Apply the same quality gates every step list passes through.
-    steps = anchorStepsToTask(steps, task.title, 8);
+    steps = anchorStepsToTask(steps, task.title, 12);
     steps = dropTrivialSteps(steps);
+    // If all steps were filtered out, keep at least the raw model output rather than falling back to a
+    // single generic "Continue working on" step that then gets auto-broken into substeps (the exact
+    // failure mode reported live: one step with 8 sub-steps instead of 8 real steps).
+    if (!steps.length && stepsOut.steps?.length) {
+      steps = (stepsOut.steps || []).map((s: any) => ({
+        text: truncateStepText(String(s.text || "")),
+        automatable: !!s.automatable,
+        ...sanitizeStepExtras(s),
+      })).filter((s: TaskStep) => s.text).slice(0, 12);
+    }
     if (stepsOut.definitionOfDone && String(stepsOut.definitionOfDone).trim()) {
       // The model may refine the definition of done during step planning — keep it.
     }
 
-    // ── STEP 5: Is an artifact necessary? → ONLY if the AI says yes ──────────
-    // This is a deliberate gate: artifacts are NEVER auto-generated. The AI must
-    // explicitly say yes, and specify which type. No defaulting, no guessing.
+    // ── STEP 5: Is an artifact necessary? → create artifacts for academic tasks ──
+    // For academic revision/prep tasks, artifacts (flashcards, quizzes, notes) are genuinely useful
+    // and should be created proactively. For logistics/admin tasks, skip them.
+    const isAcademic = /revision|revis|prep|study|exam|test|control|contr[ôo]le|assessment|memoris|memoriz|drill|practice|pratique|exercis|exercic|chapter|chapitre|notion|formula|formule|definition|d[ée]finition|vocab|vocabulary|vocabulaire|grammar|grammaire|history|histoire|dates|biology|biologie|chemistry|chimie|physics|physique|maths|math[ée]mat|geography|g[ée]o|econom|[ée]conom|philosophy|philo|french|fran[çc]ais|english|anglais|spanish|espagnol|german|allemand|literature|litt[ée]rature/i.test(`${task.title} ${task.why} ${definitionOfDone}`);
     const artifactOut = await ask(
       `There is this task: "${task.title}".\n` +
       `The user wants to have this definition of done: ${definitionOfDone}\n\n` +
       `Context:\n${context || "(no external context)"}\n\n` +
-      `For this task, is any artifact (specifically a brief quiz or flashcard deck) necessary?\n` +
-      `A flashcard deck is for drilling discrete facts (vocab, definitions, formulas, dates).\n` +
-      `A quiz is for checking understanding before a test (new questions, not the student's own exercise).\n` +
-      `If the task is logistics/admin (booking, paying, scheduling), the answer is almost always no.\n` +
-      `If the task is academic revision/prep, a flashcard deck or quiz may genuinely help.\n` +
-      `NEVER auto-generate — only say yes if it would genuinely help the student achieve the definition of done.\n` +
-      `Return JSON: {"needsArtifact": false, "type": "none", "reason": "brief why or why not"}`,
-      200,
+      `For this task, what artifact(s) would genuinely help the student achieve the definition of done?\n` +
+      `Available types:\n` +
+      `- "flashcards": a drillable deck for discrete facts (vocab, definitions, formulas, dates, equations).\n` +
+      `- "quiz": multiple-choice self-check with NEW questions (for checking understanding before a test).\n` +
+      `- "note": a short in-app reference sheet (formulas, key concepts, a study checklist, a worked example structure).\n` +
+      `- "none": no artifact needed.\n` +
+      `For ACADEMIC revision/prep/study tasks, flashcards or a note are almost always useful — say yes.\n` +
+      `For logistics/admin tasks (booking, paying, scheduling), the answer is almost always none.\n` +
+      `You can request MULTIPLE artifacts if the task genuinely calls for it (e.g. flashcards AND a note).\n` +
+      `Return JSON: {"artifacts": [{"type": "flashcards", "reason": "..."}], "needsArtifact": true/false}\n` +
+      `Set needsArtifact to true if any artifacts are requested. Use an empty array with needsArtifact=false if none.`,
+      250,
     );
 
-    // The gate: needsArtifact must be EXPLICITLY true AND type must be flashcard or quiz.
-    // Never default to generating — if the AI didn't clearly say yes, skip it.
-    if (artifactOut.needsArtifact === true && (artifactOut.type === "flashcard" || artifactOut.type === "quiz")) {
-      if (artifactOut.type === "flashcard") {
+    // Process artifact requests — support flashcards, quizzes, AND notes.
+    const requestedArtifacts: { type: string; reason?: string }[] = Array.isArray(artifactOut.artifacts)
+      ? artifactOut.artifacts.filter((a: any) => a && a.type && a.type !== "none")
+      : (artifactOut.needsArtifact === true && artifactOut.type && artifactOut.type !== "none" ? [{ type: artifactOut.type, reason: artifactOut.reason }] : []);
+    // For academic tasks where the AI didn't explicitly request artifacts, nudge it to create flashcards
+    // if the content is naturally discrete facts (formulas, definitions, vocab, dates).
+    if (!requestedArtifacts.length && isAcademic && /formula|formule|equation|[ée]quation|definition|d[ée]finition|vocab|vocabulary|vocabulaire|dates|grammar|grammaire|conjug|tense|temps|verb|verbe|noun|adjective|adverb|adjectif|adverbe|element|[ée]l[ée]ment|compound|compos[ée]|reaction|r[ée]action|law|loi|theorem|th[ée]or[èe]me|principle|principe|method|m[ée]thode|rule|r[èe]gle/i.test(`${task.title} ${task.why} ${context}`)) {
+      requestedArtifacts.push({ type: "flashcards", reason: "Academic task with discrete facts to memorize" });
+    }
+
+    for (const artReq of requestedArtifacts) {
+      if (artReq.type === "flashcards" || artReq.type === "flashcard") {
         const deckOut = await ask(
           `Create a flashcard deck for this task.\n` +
           `TASK: "${task.title}"\n` +
@@ -4236,7 +4260,7 @@ export async function runTask(
           did.push(fr ? `Créé un jeu de flashcards : ${deck.deck.title}` : `Created flashcard deck: ${deck.deck.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `flashcards: ${deck.deck.title}` });
         }
-      } else if (artifactOut.type === "quiz") {
+      } else if (artReq.type === "quiz") {
         const quizOut = await ask(
           `Create a quiz for this task.\n` +
           `TASK: "${task.title}"\n` +
@@ -4253,15 +4277,35 @@ export async function runTask(
           did.push(fr ? `Créé un quiz : ${quiz.quiz.title}` : `Created quiz: ${quiz.quiz.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `quiz: ${quiz.quiz.title}` });
         }
+      } else if (artReq.type === "note") {
+        const noteOut = await ask(
+          `Create a short in-app reference note for this task.\n` +
+          `TASK: "${task.title}"\n` +
+          `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+          `Context:\n${context}\n\n` +
+          `Create a concise reference sheet with REAL content from the context above — key formulas, definitions, ` +
+          `concepts, a worked example structure, or a study checklist. Use markdown (headings, **bold**, bullet lists, ` +
+          `GFM pipe tables when tabular). Every cell in a table must be filled with real content — never leave blanks. ` +
+          `This is a GUIDE to help the student do the work, never a completed assignment.\n` +
+          `Return JSON: {"title": "note title", "body": "markdown content"}`,
+          2000,
+        );
+        const note = makeNote(noteOut);
+        if ("note" in note) {
+          notes.push(note.note);
+          did.push(fr ? `Créé une fiche : ${note.note.title}` : `Created note: ${note.note.title}`);
+          audit.push({ at: new Date().toISOString(), kind: "artifact", label: `note: ${note.note.title}` });
+        }
       }
-    } else {
-      // Explicitly did NOT generate an artifact — this is the correct default.
-      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: skipped (${artifactOut.reason || "not needed"})` });
+    }
+    if (!requestedArtifacts.length) {
+      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: skipped (not needed)` });
     }
 
     // Build the synthesis line.
     const didLines: string[] = [];
     if (allSearchResults.length) didLines.push(fr ? `Recherche web effectuée (${allSearchResults.length} requêtes)` : `Web research done (${allSearchResults.length} queries)`);
+    if (notes.length) didLines.push(fr ? `Fiche(s) créée(s)` : `Note(s) created`);
     if (flashcards.length) didLines.push(fr ? `Flashcards créées` : `Flashcards created`);
     if (quizzes.length) didLines.push(fr ? `Quiz créé` : `Quiz created`);
     const synthesis = didLines.length
