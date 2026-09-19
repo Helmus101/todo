@@ -23,6 +23,7 @@
   "dependencies": {
     "@blockshub/pawnote-lts": "^1.6.4",
     "@composio/core": "^0.17.0",
+    "@mediapipe/tasks-vision": "^0.10.18",
     "@sentry/node": "^10.73.0",
     "@sentry/react": "^10.73.0",
     "@supabase/supabase-js": "^2.43.2",

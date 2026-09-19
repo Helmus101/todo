@@ -4937,16 +4937,46 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   letter-spacing: 0.08em;
 }
   .sm-bg-row { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
-  .sm-camera-artifact { height: 100%; min-height: 0; display: grid; place-items: center; padding: var(--space-4); background: var(--bg-2); }
-  .sm-camera-consent { max-width: 330px; text-align: center; color: var(--ink-2); }
+  .sm-camera-artifact { height: 100%; min-height: 0; display: flex; flex-direction: column; padding: var(--space-3); background: var(--bg-2); gap: var(--space-2); }
+  .sm-camera-consent { max-width: 330px; margin: auto; text-align: center; color: var(--ink-2); }
   .sm-camera-consent h3 { margin: 0 0 var(--space-2); color: var(--ink); font-size: var(--text-lg); }
   .sm-camera-consent p { margin: 0 0 var(--space-4); line-height: 1.5; font-size: var(--text-sm); }
-  .sm-camera-icon { width: 48px; height: 48px; margin: 0 auto var(--space-3); display: grid; place-items: center; border-radius: 50%; color: var(--ink); background: var(--surface); border: 1px solid var(--line-soft); font-size: 24px; }
-  .sm-camera-live { width: 100%; height: 100%; display: flex; flex-direction: column; gap: var(--space-3); align-items: center; justify-content: center; }
-  .sm-camera-live video { width: 100%; max-height: calc(100% - 68px); object-fit: cover; border-radius: var(--radius-md); background: #111; transform: scaleX(-1); }
-  .sm-camera-live-note { color: var(--ink-3); font-size: var(--text-xs); text-align: center; }
+  .sm-camera-icon { width: 48px; height: 48px; margin: 0 auto var(--space-3); display: grid; place-items: center; border-radius: 50%; color: var(--ink); background: var(--surface); border: 1px solid var(--line-soft); }
+  .sm-camera-live { width: 100%; height: 100%; display: flex; flex-direction: column; gap: var(--space-2); min-height: 0; }
+  .sm-camera-stage { position: relative; flex: 1; min-height: 0; border-radius: var(--radius-md); overflow: hidden; background: #111; }
+  .sm-camera-stage video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  .sm-camera-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; transform: scaleX(-1); }
+  .sm-camera-live-note { color: var(--ink-3); font-size: var(--text-xs); text-align: center; flex-shrink: 0; }
   .sm-camera-error { color: var(--danger, #c0392b) !important; margin-top: var(--space-3) !important; }
-  @media (max-width: 600px) { .sm-camera-artifact { padding: var(--space-3); } }
+  .sm-camera-live .sm-btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+  /* ML loading / error overlays */
+  .sm-camera-ml-loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: rgba(0,0,0,0.5); color: #fff; font-size: var(--text-xs); }
+  .sm-camera-ml-error { position: absolute; bottom: 8px; left: 8px; right: 8px; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--radius-sm); background: rgba(0,0,0,0.6); color: #ff9f0a; font-size: var(--text-xs); }
+  .sm-spin { animation: sm-spin 0.8s linear infinite; }
+  @keyframes sm-spin { to { transform: rotate(360deg); } }
+
+  /* Face detected badge */
+  .sm-camera-badge { position: absolute; top: 8px; left: 8px; display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 100px; font-size: 11px; font-weight: 600; backdrop-filter: blur(8px); }
+  .sm-camera-badge.is-on { background: rgba(52,199,89,0.25); color: #34c759; }
+  .sm-camera-badge.is-off { background: rgba(255,59,48,0.25); color: #ff3b30; }
+  .sm-camera-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; }
+
+  /* Metrics panel */
+  .sm-camera-metrics { flex-shrink: 0; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius-md); }
+  .sm-metric-ring { position: relative; width: 64px; height: 64px; flex-shrink: 0; }
+  .sm-metric-ring-label { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+  .sm-metric-ring-val { font-size: 18px; font-weight: 700; color: var(--ink); }
+  .sm-metric-ring-unit { font-size: 8px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+  .sm-metric-chips { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+  .sm-metric-chip { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-3); }
+  .sm-metric-chip svg { color: var(--ink-3); flex-shrink: 0; }
+  .sm-metric-chip-label { color: var(--ink-3); }
+  .sm-metric-chip-val { color: var(--ink); font-weight: 600; margin-left: auto; }
+  .sm-metric-chip-pose { grid-column: 1 / -1; }
+
+  @media (max-width: 600px) { .sm-camera-artifact { padding: var(--space-2); } }
 .sm-link-input {
   flex: 1;
   min-width: 0;
