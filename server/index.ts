@@ -12,10 +12,10 @@ const DUMMY_PASS_HASH = bcrypt.hashSync("otto-dummy-password-for-timing-safety",
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes } from "node:crypto";
-import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
-import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome } from "./claude.ts";
+import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, peekTaskChat } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
@@ -2695,6 +2695,246 @@ app.post("/api/profile/exam", requireAuth, ah(async (req, res) => {
   await commit(req);
   res.json(p);
 }));
+// ── Focus Tracking ─────────────────────────────────────────────────────────────
+// Save a focus session from the camera artifact
+app.post("/api/focus/session", requireAuth, async (req, res) => {
+  try {
+    const p = (req.session.profile ||= emptyProfile());
+    const session: FocusSession = req.body;
+    
+    // Validate required fields
+    if (!session.id || !session.startTime || !session.endTime || session.duration === undefined) {
+      res.status(400).json({ error: "Missing required session fields" });
+      return;
+    }
+    
+    // Add to profile
+    const sessions = (p.focusSessions ||= []);
+    sessions.push(session);
+    
+    // Keep only last 100 sessions to prevent unbounded growth
+    if (sessions.length > 100) {
+      p.focusSessions = sessions.slice(-100);
+    }
+    
+    // Recalculate aggregated stats
+    recalculateFocusStats(p);
+    
+    await commit(req);
+    res.json({ success: true, stats: p.focusStats });
+  } catch (e: any) {
+    console.error("Failed to save focus session:", e);
+    res.status(500).json({ error: e?.message || "Couldn't save session — try again." });
+  }
+});
+
+// Get focus statistics
+app.get("/api/focus/stats", requireAuth, async (req, res) => {
+  try {
+    const p = req.session.profile;
+    if (!p) {
+      res.json({ stats: null });
+      return;
+    }
+    recalculateFocusStats(p);
+    res.json({ stats: p.focusStats });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Couldn't load stats — try again." });
+  }
+});
+
+// Get focus session history
+app.get("/api/focus/sessions", requireAuth, async (req, res) => {
+  try {
+    const p = req.session.profile;
+    if (!p) {
+      res.json({ sessions: [] });
+      return;
+    }
+    const limit = Math.min(50, Number(req.query?.limit) || 20);
+    const sessions = (p.focusSessions || []).slice(-limit).reverse();
+    res.json({ sessions });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Couldn't load sessions — try again." });
+  }
+});
+
+// Get scheduling suggestion for a task
+app.get("/api/focus/schedule-suggestion", requireAuth, async (req, res) => {
+  try {
+    const subject = String(req.query?.subject || "");
+    const difficulty = String(req.query?.difficulty || "");
+    const p = req.session.profile;
+    const suggestion = generateSchedulingSuggestion({ sourceSubject: subject || undefined, difficulty: difficulty || undefined }, p);
+    res.json({ suggestion });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Couldn't generate suggestion — try again." });
+  }
+});
+
+// Get artifact type recommendation for a subject
+app.get("/api/focus/artifact-recommendation", requireAuth, async (req, res) => {
+  try {
+    const subject = String(req.query?.subject || "");
+    const p = req.session.profile;
+    const recommendation = recommendArtifactType(subject, p);
+    res.json({ recommendation });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Couldn't generate recommendation — try again." });
+  }
+});
+
+// Calculate aggregated focus statistics from session history
+function recalculateFocusStats(p: Profile) {
+  const sessions = p.focusSessions || [];
+  if (sessions.length === 0) {
+    p.focusStats = undefined;
+    return;
+  }
+  
+  // Overall averages
+  const avgConcentration = sessions.reduce((sum, s) => sum + s.avgConcentration, 0) / sessions.length;
+  const avgGazeOnScreenPct = sessions.reduce((sum, s) => sum + s.gazeOnScreenPct, 0) / sessions.length;
+  const avgBlinkRate = sessions.reduce((sum, s) => sum + s.avgBlinkRate, 0) / sessions.length;
+  const restlessPct = sessions.filter(s => s.avgMovement > 30).length / sessions.length * 100;
+  
+  // Subject-specific averages
+  const subjectFocus: Record<string, number> = {};
+  const subjectSessions: Record<string, FocusSession[]> = {};
+  for (const s of sessions) {
+    if (s.subject) {
+      if (!subjectSessions[s.subject]) subjectSessions[s.subject] = [];
+      subjectSessions[s.subject].push(s);
+    }
+  }
+  for (const [subject, subjSessions] of Object.entries(subjectSessions)) {
+    subjectFocus[subject] = subjSessions.reduce((sum, s) => sum + s.avgConcentration, 0) / subjSessions.length;
+  }
+  
+  // Hourly focus patterns
+  const hourlyFocus: Record<number, number> = {};
+  const hourlyCounts: Record<number, number> = {};
+  for (const s of sessions) {
+    const hour = new Date(s.startTime).getHours();
+    if (!hourlyFocus[hour]) hourlyFocus[hour] = 0;
+    if (!hourlyCounts[hour]) hourlyCounts[hour] = 0;
+    hourlyFocus[hour] += s.avgConcentration;
+    hourlyCounts[hour]++;
+  }
+  for (const hour of Object.keys(hourlyFocus)) {
+    hourlyFocus[Number(hour)] /= hourlyCounts[Number(hour)];
+  }
+  
+  // Find peak focus hour
+  let peakFocusHour = 10; // default 10am
+  let maxAvg = 0;
+  for (const [hour, avg] of Object.entries(hourlyFocus)) {
+    if (avg > maxAvg) {
+      maxAvg = avg;
+      peakFocusHour = Number(hour);
+    }
+  }
+  
+  // Calculate focus stability
+  const variance = sessions.reduce((sum, s) => sum + s.concentrationVariance, 0) / sessions.length;
+  let focusStability: "stable" | "unstable" | "highly_variable";
+  if (variance < 15) focusStability = "stable";
+  else if (variance < 30) focusStability = "unstable";
+  else focusStability = "highly_variable";
+  
+  // Calculate weekly trend (compare last 7 days to previous 7 days)
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  
+  const recentSessions = sessions.filter(s => new Date(s.startTime) >= weekAgo);
+  const olderSessions = sessions.filter(s => new Date(s.startTime) >= twoWeeksAgo && new Date(s.startTime) < weekAgo);
+  
+  let weeklyTrend: "improving" | "stable" | "declining";
+  if (recentSessions.length === 0 || olderSessions.length === 0) {
+    weeklyTrend = "stable";
+  } else {
+    const recentAvg = recentSessions.reduce((sum, s) => sum + s.avgConcentration, 0) / recentSessions.length;
+    const olderAvg = olderSessions.reduce((sum, s) => sum + s.avgConcentration, 0) / olderSessions.length;
+    if (recentAvg > olderAvg + 5) weeklyTrend = "improving";
+    else if (recentAvg < olderAvg - 5) weeklyTrend = "declining";
+    else weeklyTrend = "stable";
+  }
+  
+  // Find best day
+  const dayAvg: Record<string, { sum: number; count: number }> = {};
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  for (const s of sessions) {
+    const day = days[new Date(s.startTime).getDay()];
+    if (!dayAvg[day]) dayAvg[day] = { sum: 0, count: 0 };
+    dayAvg[day].sum += s.avgConcentration;
+    dayAvg[day].count++;
+  }
+  let bestDay = "Monday";
+  let bestAvg = 0;
+  for (const [day, data] of Object.entries(dayAvg)) {
+    const avg = data.sum / data.count;
+    if (avg > bestAvg) {
+      bestAvg = avg;
+      bestDay = day;
+    }
+  }
+  
+  // Generate insights and recommendations
+  const insights: string[] = [];
+  const recommendations: string[] = [];
+  
+  if (avgConcentration >= 75) {
+    insights.push("Your average focus is excellent");
+  } else if (avgConcentration >= 60) {
+    insights.push("Your average focus is good");
+  } else if (avgConcentration >= 45) {
+    insights.push("Your average focus is fair");
+  } else {
+    insights.push("Your average focus could be improved");
+  }
+  
+  if (focusStability === "stable") {
+    insights.push("Your focus is very consistent");
+  } else if (focusStability === "unstable") {
+    insights.push("Your focus fluctuates moderately");
+    recommendations.push("Try taking more frequent breaks to maintain consistency");
+  } else {
+    insights.push("Your focus varies significantly");
+    recommendations.push("Consider shorter study sessions to reduce variability");
+  }
+  
+  if (peakFocusHour >= 9 && peakFocusHour <= 11) {
+    recommendations.push("Schedule your hardest tasks in the morning for best results");
+  } else if (peakFocusHour >= 14 && peakFocusHour <= 16) {
+    recommendations.push("Your peak focus is in the afternoon - plan accordingly");
+  }
+  
+  if (avgBlinkRate > 30) {
+    recommendations.push("Consider taking breaks to reduce eye strain");
+  }
+  
+  if (restlessPct > 50) {
+    recommendations.push("Try incorporating more movement into your study sessions");
+  }
+  
+  p.focusStats = {
+    totalTrackedSessions: sessions.length,
+    avgConcentration: Math.round(avgConcentration),
+    avgGazeOnScreenPct: Math.round(avgGazeOnScreenPct),
+    avgBlinkRate: Math.round(avgBlinkRate),
+    restlessPct: Math.round(restlessPct),
+    subjectFocus: Object.keys(subjectFocus).length > 0 ? subjectFocus : undefined,
+    hourlyFocus: Object.keys(hourlyFocus).length > 0 ? hourlyFocus : undefined,
+    focusStability,
+    peakFocusHour,
+    weeklyTrend,
+    bestDay,
+    insights,
+    recommendations,
+  };
+}
+
 app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());

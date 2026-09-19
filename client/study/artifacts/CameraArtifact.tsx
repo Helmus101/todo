@@ -4,9 +4,13 @@ import { useFaceTracking, type FaceTrackingState } from "../useFaceTracking.ts";
 
 interface CameraArtifactProps {
   onMetricsUpdate?: (metrics: FaceTrackingState) => void;
+  onBreakSuggestion?: (message: string) => void;
+  taskId?: string;
+  taskTitle?: string;
+  subject?: string;
 }
 
-export function CameraArtifact({ onMetricsUpdate }: CameraArtifactProps) {
+export function CameraArtifact({ onMetricsUpdate, onBreakSuggestion, taskId, taskTitle, subject }: CameraArtifactProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -16,11 +20,129 @@ export function CameraArtifact({ onMetricsUpdate }: CameraArtifactProps) {
 
   const tracking = useFaceTracking(videoRef, canvasRef, enabled);
 
+  // Session tracking
+  const sessionStartTimeRef = useRef<number | null>(null);
+  const metricsHistoryRef = useRef<FaceTrackingState[]>([]);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastBreakSuggestionRef = useRef<number>(0);
+  const lastConcentrationRef = useRef<number>(100);
+
+  const saveSession = async () => {
+    const metrics = metricsHistoryRef.current;
+    if (metrics.length < 10) return; // Need at least 10 data points
+    
+    const startTime = sessionStartTimeRef.current;
+    if (!startTime) return;
+    
+    const endTime = Date.now();
+    const duration = Math.round((endTime - startTime) / 60000); // minutes
+    
+    // Calculate aggregated metrics
+    const avgConcentration = metrics.reduce((sum, m) => sum + m.concentration, 0) / metrics.length;
+    const avgMovement = metrics.reduce((sum, m) => sum + m.movement, 0) / metrics.length;
+    const avgBlinkRate = metrics.reduce((sum, m) => sum + m.blinkRate, 0) / metrics.length;
+    const gazeOnScreenPct = metrics.filter(m => m.gazeStatus === "On screen").length / metrics.length * 100;
+    const avgHeadYaw = metrics.reduce((sum, m) => sum + m.headYaw, 0) / metrics.length;
+    const avgHeadPitch = metrics.reduce((sum, m) => sum + m.headPitch, 0) / metrics.length;
+    const avgHeadRoll = metrics.reduce((sum, m) => sum + m.headRoll, 0) / metrics.length;
+    
+    // Calculate concentration variance (stability)
+    const variance = metrics.reduce((sum, m) => sum + Math.pow(m.concentration - avgConcentration, 2), 0) / metrics.length;
+    const concentrationVariance = Math.sqrt(variance);
+    
+    // Determine focus stability
+    let focusStability: "stable" | "unstable" | "highly_variable";
+    if (concentrationVariance < 15) focusStability = "stable";
+    else if (concentrationVariance < 30) focusStability = "unstable";
+    else focusStability = "highly_variable";
+    
+    // Determine session quality
+    let quality: "excellent" | "good" | "fair" | "poor";
+    if (avgConcentration >= 80 && gazeOnScreenPct >= 90) quality = "excellent";
+    else if (avgConcentration >= 65 && gazeOnScreenPct >= 75) quality = "good";
+    else if (avgConcentration >= 50 && gazeOnScreenPct >= 60) quality = "fair";
+    else quality = "poor";
+    
+    const session = {
+      id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" 
+        ? crypto.randomUUID() 
+        : Math.random().toString(36).slice(2) + Date.now().toString(36),
+      taskId,
+      taskTitle,
+      subject,
+      startTime: new Date(startTime).toISOString(),
+      endTime: new Date(endTime).toISOString(),
+      duration,
+      avgConcentration: Math.round(avgConcentration),
+      avgMovement: Math.round(avgMovement),
+      avgBlinkRate: Math.round(avgBlinkRate),
+      gazeOnScreenPct: Math.round(gazeOnScreenPct),
+      avgHeadYaw: Math.round(avgHeadYaw),
+      avgHeadPitch: Math.round(avgHeadPitch),
+      avgHeadRoll: Math.round(avgHeadRoll),
+      concentrationVariance: Math.round(concentrationVariance),
+      focusStability,
+      taskCompleted: false, // TODO: Determine from task state
+      quality,
+    };
+    
+    try {
+      await fetch("/api/focus/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(session),
+      });
+    } catch (err) {
+      console.error("Failed to save focus session:", err);
+    }
+    
+    // Reset for next session
+    sessionStartTimeRef.current = null;
+    metricsHistoryRef.current = [];
+  };
+
   useEffect(() => {
     if (enabled && tracking.status === "ready" && onMetricsUpdate) {
       onMetricsUpdate(tracking);
+      
+      // Track metrics for session aggregation
+      if (!sessionStartTimeRef.current) {
+        sessionStartTimeRef.current = Date.now();
+      }
+      metricsHistoryRef.current.push({ ...tracking });
+      
+      // Detect focus decay for break suggestions
+      const now = Date.now();
+      const concentration = tracking.concentration;
+      const lastConc = lastConcentrationRef.current;
+      
+      // If concentration has been below 40 for 2+ minutes, suggest a break
+      if (concentration < 40 && lastConc < 40) {
+        const lowFocusDuration = now - lastBreakSuggestionRef.current;
+        if (lowFocusDuration > 120000 && onBreakSuggestion) { // 2 minutes
+          onBreakSuggestion("Focus has been low for a while — consider taking a 5-minute break to refresh");
+          lastBreakSuggestionRef.current = now;
+        }
+      }
+      
+      // If concentration dropped sharply (>20 points) in last 30 seconds
+      if (lastConc - concentration > 20 && onBreakSuggestion) {
+        const timeSinceLastSuggestion = now - lastBreakSuggestionRef.current;
+        if (timeSinceLastSuggestion > 180000) { // 3 minutes between suggestions
+          onBreakSuggestion("Focus dropped sharply — a short break might help");
+          lastBreakSuggestionRef.current = now;
+        }
+      }
+      
+      lastConcentrationRef.current = concentration;
+      
+      // Debounce session save (save 1 second after metrics stop updating)
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = setTimeout(() => {
+        saveSession();
+      }, 1000);
     }
-  }, [enabled, tracking, onMetricsUpdate]);
+  }, [enabled, tracking, onMetricsUpdate, onBreakSuggestion]);
 
   useEffect(
     () => () => {
@@ -31,6 +153,11 @@ export function CameraArtifact({ onMetricsUpdate }: CameraArtifactProps) {
   );
 
   const stopCamera = () => {
+    // Save session when camera is stopped
+    if (sessionStartTimeRef.current && metricsHistoryRef.current.length >= 10) {
+      saveSession();
+    }
+    
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) {

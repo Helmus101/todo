@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
-import type { WebTask, ConnectionStatus, Profile, TaskFlashcards } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
@@ -2471,6 +2471,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [showUsage, setShowUsage] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
   const [showPersonalization, setShowPersonalization] = useState(false);
+  const [showFocusAnalytics, setShowFocusAnalytics] = useState(false);
+  const [focusStats, setFocusStats] = useState<Profile["focusStats"] | null>(null);
+  const [focusSessions, setFocusSessions] = useState<FocusSession[] | null>(null);
   useEffect(() => { void api.recordMetric("settings_opened", 1); }, []);
   const [themeBusy, setThemeBusy] = useState(false);
   const [patterns, setPatterns] = useState<{
@@ -2482,6 +2485,25 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   } | null>(null);
   useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
   const [errorLog, setErrorLog] = useState(() => getErrors());
+  
+  // Load focus analytics when section is opened
+  const loadFocusAnalytics = async () => {
+    try {
+      const [statsData, sessionsData] = await Promise.all([
+        api.getFocusStats(),
+        api.getFocusSessions(20),
+      ]);
+      setFocusStats(statsData.stats);
+      setFocusSessions(sessionsData.sessions);
+    } catch (e) {
+      console.error("Failed to load focus analytics:", e);
+    }
+  };
+  
+  useEffect(() => {
+    if (showFocusAnalytics) void loadFocusAnalytics();
+  }, [showFocusAnalytics]);
+  
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
   const [deletingAccount, setDeletingAccount] = useState(false);
@@ -3009,6 +3031,103 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                 }}>{L("Réinitialiser", "Reset")}</button>
               </>
             ) : <p className="settings-hint">{L("Pas encore assez d'activité pour ça.", "Not enough activity yet.")}</p>}
+          </div>
+        )}
+      </section>
+
+      {/* Focus Analytics — concentration tracking from camera sessions */}
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.21s" }}>
+        <button className="sec-toggle" aria-expanded={showFocusAnalytics} onClick={() => setShowFocusAnalytics((v) => !v)}>
+          <h3>{L("Analyse de concentration", "Focus Analytics")}</h3>
+          <span className={`caret ${showFocusAnalytics ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showFocusAnalytics && (
+          <div className="settings-reveal">
+            <p className="settings-hint">{L(
+              "Données de suivi de concentration de tes sessions d'étude avec caméra. Traitées localement, jamais partagées.",
+              "Concentration tracking data from your camera-enabled study sessions. Processed locally, never shared."
+            )}</p>
+            {focusStats ? (
+              <>
+                <div className="focus-stats-grid">
+                  <div className="focus-stat-card">
+                    <span className="focus-stat-label">{L("Concentration moyenne", "Avg concentration")}</span>
+                    <span className="focus-stat-value">{focusStats.avgConcentration}%</span>
+                  </div>
+                  <div className="focus-stat-card">
+                    <span className="focus-stat-label">{L("Sessions suivies", "Tracked sessions")}</span>
+                    <span className="focus-stat-value">{focusStats.totalTrackedSessions}</span>
+                  </div>
+                  <div className="focus-stat-card">
+                    <span className="focus-stat-label">{L("Pic d'attention", "Peak focus hour")}</span>
+                    <span className="focus-stat-value">{focusStats.peakFocusHour}:00</span>
+                  </div>
+                  <div className="focus-stat-card">
+                    <span className="focus-stat-label">{L("Stabilité", "Stability")}</span>
+                    <span className="focus-stat-value">{L(focusStats.focusStability || "—", focusStats.focusStability || "—")}</span>
+                  </div>
+                </div>
+                
+                {focusStats.insights && focusStats.insights.length > 0 && (
+                  <div className="focus-insights">
+                    <h4>{L("Observations", "Insights")}</h4>
+                    <ul>
+                      {focusStats.insights.map((insight, i) => (
+                        <li key={i}>{insight}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {focusStats.recommendations && focusStats.recommendations.length > 0 && (
+                  <div className="focus-recommendations">
+                    <h4>{L("Recommandations", "Recommendations")}</h4>
+                    <ul>
+                      {focusStats.recommendations.map((rec, i) => (
+                        <li key={i}>{rec}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                {focusStats.subjectFocus && Object.keys(focusStats.subjectFocus).length > 0 && (
+                  <div className="focus-subject-breakdown">
+                    <h4>{L("Focus par matière", "Focus by subject")}</h4>
+                    {Object.entries(focusStats.subjectFocus).map(([subject, avg]) => (
+                      <div key={subject} className="focus-subject-row">
+                        <span className="focus-subject-name">{subject}</span>
+                        <span className="focus-subject-bar">
+                          <div className="focus-subject-fill" style={{ width: `${avg}%` }} />
+                          <span className="focus-subject-value">{Math.round(avg)}%</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {focusSessions && focusSessions.length > 0 && (
+                  <div className="focus-sessions-list">
+                    <h4>{L("Sessions récentes", "Recent sessions")}</h4>
+                    {focusSessions.slice(0, 10).map((session) => (
+                      <div key={session.id} className="focus-session-item">
+                        <div className="focus-session-main">
+                          <span className="focus-session-subject">{session.subject || L("Général", "General")}</span>
+                          <span className="focus-session-duration">{session.duration} min</span>
+                        </div>
+                        <div className="focus-session-metrics">
+                          <span className="focus-session-concentration" style={{ color: session.avgConcentration >= 70 ? "#34c759" : session.avgConcentration >= 50 ? "#ff9f0a" : "#ff3b30" }}>
+                            {session.avgConcentration}%
+                          </span>
+                          <span className="focus-session-quality">{L(session.quality, session.quality)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="settings-hint">{L("Pas encore de sessions suivies.", "No tracked sessions yet.")}</p>
+            )}
           </div>
         )}
       </section>

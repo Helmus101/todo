@@ -253,6 +253,14 @@ export const api = {
     studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number } | null;
   }> =>
     req("/api/patterns/summary").then(j),
+  // Focus tracking API methods
+  saveFocusSession: (session: any): Promise<{ success: boolean; stats: any }> => post("/api/focus/session", session),
+  getFocusStats: (): Promise<{ stats: any }> => req("/api/focus/stats").then(j),
+  getFocusSessions: (limit?: number): Promise<{ sessions: any[] }> => req(`/api/focus/sessions${limit ? `?limit=${limit}` : ""}`).then(j),
+  getScheduleSuggestion: (subject?: string, difficulty?: string): Promise<{ suggestion: string | null }> => 
+    req(`/api/focus/schedule-suggestion${subject ? `?subject=${encodeURIComponent(subject)}` : ""}${difficulty ? `&difficulty=${encodeURIComponent(difficulty)}` : ""}`).then(j),
+  getArtifactRecommendation: (subject: string): Promise<{ recommendation: "flashcards" | "quiz" | "note" | "mixed" | null }> => 
+    req(`/api/focus/artifact-recommendation?subject=${encodeURIComponent(subject)}`).then(j),
   submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number, audioArmId?: string, densityArmId?: string): Promise<{ ok: boolean }> =>
     post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta, audioArmId, densityArmId }),
   // Flexible, open-ended metric logging (server/store.ts's recordMetric) — `name` is any short label the

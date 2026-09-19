@@ -213,7 +213,47 @@ export interface Profile {
     avgBlinkRate: number;
     restlessPct: number;
     subjectFocus?: Record<string, number>;
+    hourlyFocus?: Record<number, number>; // 0-23, avg concentration per hour
+    focusStability?: "stable" | "unstable" | "highly_variable";
+    peakFocusHour?: number;
+    weeklyTrend?: "improving" | "stable" | "declining";
+    bestDay?: string; // "Monday", "Tuesday", etc.
+    insights?: string[];
+    recommendations?: string[];
   };
+  /** Individual face tracking sessions for detailed analytics. */
+  focusSessions?: FocusSession[];
+}
+
+/** A single face tracking session with aggregated metrics. */
+export interface FocusSession {
+  id: string;
+  taskId?: string;
+  taskTitle?: string;
+  subject?: string;
+  startTime: string; // ISO timestamp
+  endTime: string; // ISO timestamp
+  duration: number; // minutes
+  
+  // Aggregated metrics
+  avgConcentration: number; // 0-100
+  avgMovement: number; // 0-100
+  avgBlinkRate: number; // blinks per minute
+  gazeOnScreenPct: number; // percentage of time looking at screen
+  avgHeadYaw: number; // degrees
+  avgHeadPitch: number; // degrees
+  avgHeadRoll: number; // degrees
+  
+  // Focus stability (how much it fluctuated)
+  concentrationVariance: number;
+  focusStability: "stable" | "unstable" | "highly_variable";
+  
+  // Task correlation
+  taskCompleted: boolean;
+  taskDifficulty?: "easy" | "medium" | "hard";
+  
+  // Session quality
+  quality: "excellent" | "good" | "fair" | "poor";
 }
 // Shared client+server id generator (used for grade entries) — Web Crypto's randomUUID is available in
 // both a modern browser and Node, so this needs no server-only import to stay isomorphic.

@@ -10,10 +10,10 @@
  * already met inside this app, so there's nothing new to learn.
  */
 import { useEffect, useState, useRef, useContext, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
-import type { WebTask, TaskStep } from "../shared/types.ts";
+import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
 import { api } from "./api.ts";
-import { BookOpen } from "lucide-react";
+import { BookOpen, Activity } from "lucide-react";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
@@ -171,6 +171,23 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
   const { leaving, leaveKind, leave } = useTaskLeave(task.id, { onChange, onTask, onConfirmed });
   const cStatus = canonStatus(task.status);
   const isDone = isHandled(task.status);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  
+  // Load profile to get focus stats
+  useEffect(() => {
+    void api.profile().then(setProfile).catch(() => {});
+  }, []);
+  
+  // Get subject-specific focus score
+  const subjectFocus = task.sourceSubject && profile?.focusStats?.subjectFocus?.[task.sourceSubject];
+  const focusScore = subjectFocus ?? profile?.focusStats?.avgConcentration;
+  const showFocusScore = focusScore !== undefined && focusScore < 100 && !isDone;
+  
+  // Check if current time is peak focus time
+  const peakHour = profile?.focusStats?.peakFocusHour;
+  const currentHour = new Date().getHours();
+  const isPeakTime = peakHour !== undefined && Math.abs(currentHour - peakHour) <= 1;
+  const showPeakBadge = isPeakTime && !isDone;
 
   // Auto-open documents Otto created (Doc/Sheet/Slides) once the task is done — capped per task + per
   // session, once per URL EVER (persisted), so the same doc never reopens. Stays on the ROW (not the focus
@@ -243,6 +260,17 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           {(task.sourceSubject || w || secondary) ? (
             <span className="card-sub">
               {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
+              {showFocusScore ? (
+                <span className="card-focus-score" title={L(`Focus historique sur cette matière : ${Math.round(focusScore)}%`, `Historical focus on this subject: ${Math.round(focusScore)}%`)}>
+                  <Activity size={12} aria-hidden="true" />
+                  <span>{Math.round(focusScore)}%</span>
+                </span>
+              ) : null}
+              {showPeakBadge ? (
+                <span className="card-peak-badge" title={L(`Heure de pic d'attention : ${peakHour}:00`, `Peak focus hour: ${peakHour}:00`)}>
+                  {L("Meilleur moment", "Best time")}
+                </span>
+              ) : null}
               {w ? <span className={`when ${soon ? "when-soon" : ""}`}>{w}</span> : secondary}
             </span>
           ) : null}

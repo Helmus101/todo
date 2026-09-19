@@ -1127,6 +1127,84 @@ export function dropSiblingBleedTitles<T extends { title: string }>(
 // names forward so an existing deployment's DEEPSEEK_MODEL=deepseek-chat env var doesn't start hard-failing
 // every AI call the moment the old names stop working; new deployments should just set the new names directly.
 const LEGACY_DEEPSEEK_MODEL_MAP: Record<string, string> = { "deepseek-chat": "deepseek-v4-flash", "deepseek-reasoner": "deepseek-v4-pro" };
+
+/** Calculate the best time to schedule a task based on focus patterns. Returns the recommended hour (0-23). */
+export function calculateOptimalScheduleTime(task: { sourceSubject?: string; difficulty?: string }, profile?: Profile): number {
+  if (!profile?.focusStats) return 10; // default 10am
+  
+  // Prefer subject-specific peak hour if available
+  if (task.sourceSubject && profile.focusStats.subjectFocus) {
+    const subjectData = profile.focusStats.subjectFocus[task.sourceSubject];
+    if (subjectData && subjectData >= 70) {
+      // If this subject has good focus, use the general peak hour
+      return profile.focusStats.peakFocusHour || 10;
+    }
+  }
+  
+  // Use general peak focus hour
+  return profile.focusStats.peakFocusHour || 10;
+}
+
+/** Generate a scheduling suggestion based on focus patterns. */
+export function generateSchedulingSuggestion(task: { sourceSubject?: string; difficulty?: string }, profile?: Profile): string | null {
+  if (!profile?.focusStats) return null;
+  
+  const optimalHour = calculateOptimalScheduleTime(task, profile);
+  const currentHour = new Date().getHours();
+  const isOptimalNow = Math.abs(currentHour - optimalHour) <= 1;
+  
+  if (isOptimalNow) {
+    return null; // Already at optimal time
+  }
+  
+  const en = profile.language === "en";
+  const hourStr = optimalHour === 0 ? "12am" : optimalHour < 12 ? `${optimalHour}am` : optimalHour === 12 ? "12pm" : `${optimalHour - 12}pm`;
+  
+  if (task.sourceSubject && profile.focusStats.subjectFocus?.[task.sourceSubject]) {
+    const subjectFocus = profile.focusStats.subjectFocus[task.sourceSubject];
+    if (subjectFocus < 50) {
+      return en
+        ? `This subject typically shows lower focus. Consider scheduling for ${hourStr} when your overall focus is at its peak.`
+        : `Cette matière montre généralement une concentration plus faible. Envisagez de la programmer pour ${hourStr} quand votre concentration est à son pic.`;
+    }
+  }
+  
+  return en
+    ? `This task might be easier at ${hourStr} (your peak focus hour).`
+    : `Cette tâche pourrait être plus facile à ${hourStr} (votre heure de pic d'attention).`;
+}
+
+/** Recommend artifact types based on focus patterns for a subject. */
+export function recommendArtifactType(subject: string, profile?: Profile): "flashcards" | "quiz" | "note" | "mixed" | null {
+  if (!profile?.focusStats) return null;
+  
+  const subjectFocus = profile.focusStats.subjectFocus?.[subject];
+  const avgBlinkRate = profile.focusStats.avgBlinkRate;
+  const restlessPct = profile.focusStats.restlessPct;
+  
+  // High blink rate -> visual fatigue -> recommend audio or quizzes (less reading)
+  if (avgBlinkRate > 30) {
+    return "quiz"; // Interactive, less sustained reading
+  }
+  
+  // High movement -> active learner -> recommend interactive formats
+  if (restlessPct > 50) {
+    return "quiz"; // More engaging than flashcards
+  }
+  
+  // Low focus on this subject -> recommend simpler formats
+  if (subjectFocus && subjectFocus < 50) {
+    return "flashcards"; // Bite-sized, quick wins
+  }
+  
+  // High focus on this subject -> can handle deeper formats
+  if (subjectFocus && subjectFocus >= 75) {
+    return "note"; // More comprehensive reference material
+  }
+  
+  // Default to mixed approach
+  return "mixed";
+}
 // Provider switch — AI_PROVIDER=nvidia routes every AI call (deepseekClient()/DEEPSEEK_MODEL, kept named as-
 // is deliberately: both are referenced 25+ times across this file, and renaming them for a still-optional
 // provider swap would be a large, purely-cosmetic diff for no behavior change) through NVIDIA's OpenAI-
@@ -4269,6 +4347,26 @@ export async function runTask(
     const subjFocus = (task.sourceSubject && focusStats?.subjectFocus) ? focusStats.subjectFocus[task.sourceSubject] : undefined;
     const focusLevel = subjFocus ?? focusStats?.avgConcentration ?? 100;
     const isLowFocus = focusLevel < 50;
+    const isUnstableFocus = focusStats?.focusStability === "unstable" || focusStats?.focusStability === "highly_variable";
+    const peakHour = focusStats?.peakFocusHour;
+    const currentHour = new Date().getHours();
+    const isPeakTime = peakHour !== undefined && Math.abs(currentHour - peakHour) <= 1;
+    const subjectRestless = (task.sourceSubject && focusStats?.subjectFocus) ? 
+      (focusStats.subjectFocus[task.sourceSubject] < 50) : false;
+
+    let adaptiveInstructions = "";
+    if (isLowFocus) {
+      adaptiveInstructions += `\nADAPTIVE PACING (Low Focus Baseline ${Math.round(focusLevel)}%): Keep steps very short (5-15 mins max per step), low initial difficulty, with explicit checkpoint criteria to sustain momentum.\n`;
+    }
+    if (isUnstableFocus) {
+      adaptiveInstructions += `FOCUS STABILITY: Focus fluctuates frequently - include more frequent checkpoints and break steps into smaller chunks to maintain momentum.\n`;
+    }
+    if (!isPeakTime && peakHour !== undefined) {
+      adaptiveInstructions += `TIMING: Current time (${currentHour}:00) is not peak focus hour (${peakHour}:00) - consider scheduling this task for ${peakHour}:00 for best results.\n`;
+    }
+    if (subjectRestless) {
+      adaptiveInstructions += `SUBJECT PATTERN: This subject typically shows lower focus - include more engaging, interactive steps and consider shorter duration.\n`;
+    }
 
     const stepsOut = await ask(
       `There is this task: "${task.title}".\n` +
@@ -4283,7 +4381,7 @@ export async function runTask(
       `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
       `- Match the plan's size to the task's real complexity — 3 steps for a simple task, more for a complex one. Never pad to look thorough.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
-      (isLowFocus ? `- ADAPTIVE PACING (Low Focus Baseline ${Math.round(focusLevel)}%): Keep steps very short (5-15 mins max per step), low initial difficulty, with explicit checkpoint criteria to sustain momentum.\n` : "") +
+      adaptiveInstructions +
       `Return JSON: {"steps": [{"text": "...", "automatable": false}], "definitionOfDone": "refined if needed"}`,
       // 800 was verified live to truncate mid-JSON on an ordinary task (DeepSeek v4's hidden reasoning
       // tokens count against max_tokens — see ask()'s own comment) — up to 10 step objects, each with 5
@@ -4326,6 +4424,13 @@ export async function runTask(
     // and should be created proactively. For logistics/admin tasks, skip them.
     console.log(`${new Date().toISOString()} [ai] step 5: checking if artifacts needed`);
     const isAcademic = /revision|revis|prep|study|exam|test|control|contr[ôo]le|assessment|memoris|memoriz|drill|practice|pratique|exercis|exercic|chapter|chapitre|notion|formula|formule|definition|d[ée]finition|vocab|vocabulary|vocabulaire|grammar|grammaire|history|histoire|dates|biology|biologie|chemistry|chimie|physics|physique|maths|math[ée]mat|geography|g[ée]o|econom|[ée]conom|philosophy|philo|french|fran[çc]ais|english|anglais|spanish|espagnol|german|allemand|literature|litt[ée]rature/i.test(`${task.title} ${task.why} ${definitionOfDone}`);
+    
+    // Get focus-based artifact recommendation
+    const artifactRecommendation = task.sourceSubject ? recommendArtifactType(task.sourceSubject, profile) : null;
+    if (artifactRecommendation) {
+      console.log(`${new Date().toISOString()} [ai] step 5: focus-based artifact recommendation: ${artifactRecommendation}`);
+    }
+    
     const artifactOut = await ask(
       `There is this task: "${task.title}".\n` +
       `The user wants to have this definition of done: ${definitionOfDone}\n\n` +
@@ -4336,6 +4441,7 @@ export async function runTask(
       `- "quiz": multiple-choice self-check with NEW questions (for checking understanding before a test).\n` +
       `- "note": a short in-app reference sheet (formulas, key concepts, a study checklist, a worked example structure).\n` +
       `- "none": no artifact needed.\n` +
+      (artifactRecommendation ? `FOCUS-BASED RECOMMENDATION: Based on the student's historical focus patterns, consider prioritizing "${artifactRecommendation}" for this task/subject.\n` : "") +
       `For ACADEMIC revision/prep/study tasks, flashcards or a note are almost always useful — say yes.\n` +
       `For logistics/admin tasks (booking, paying, scheduling), the answer is almost always none.\n` +
       `You can request MULTIPLE artifacts if the task genuinely calls for it (e.g. flashcards AND a note).\n` +
