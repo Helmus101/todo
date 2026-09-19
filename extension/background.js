@@ -62,29 +62,45 @@ async function applyBlockRule(allowedOrigin) {
   let allowedHost;
   try { allowedHost = new URL(allowedOrigin).hostname; } catch { return; }
   const allowedHosts = [allowedHost, ...ALWAYS_ALLOWED_HOSTS];
-  // requestDomains would ALSO need excludedRequestDomains kept in sync forever as ALWAYS_ALLOWED_HOSTS
-  // grows — a urlFilter regex expressing "anything NOT these hosts" is simpler to keep correct: one
-  // negative-lookahead pattern, no second list to maintain.
-  const excludePattern = allowedHosts.map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [RULE_ID],
-    addRules: [{
-      id: RULE_ID,
-      priority: 1,
-      action: { type: "redirect", redirect: { extensionPath: "/blocked.html" } },
-      condition: {
-        // Match any http(s) URL whose host is NOT in the allowlist. resourceTypes scoped to main_frame only
-        // — blocking sub-resources (images, XHR, fonts a legitimately-open site needs) would just break
-        // pages randomly instead of cleanly redirecting the TAB itself.
-        regexFilter: `^https?://(?!(${excludePattern}))`,
-        resourceTypes: ["main_frame"],
-      },
-    }],
-  });
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [RULE_ID],
+      addRules: [{
+        id: RULE_ID,
+        priority: 1,
+        action: { type: "redirect", redirect: { extensionPath: "/blocked.html" } },
+        condition: {
+          // "Block everything EXCEPT these hosts" via excludedRequestDomains — NOT a negative-lookahead
+          // regexFilter (an EARLIER version tried `^https?://(?!(host1|host2))`): declarativeNetRequest's
+          // regexFilter runs on Chrome's RE2 engine, which does not support lookahead/lookbehind AT ALL —
+          // that rule was silently REJECTED by updateDynamicRules on every attempt (a rejected promise with
+          // no visible error anywhere short of the service worker's own devtools console), so blocking never
+          // actually activated despite every other piece of the feature working correctly. No urlFilter/
+          // regexFilter here at all — omitting both means "match every URL", which combined with
+          // excludedRequestDomains below gives exactly "block all except this allowlist" using fields
+          // declarativeNetRequest actually supports.
+          excludedRequestDomains: allowedHosts,
+          // resourceTypes scoped to main_frame only — blocking sub-resources (images, XHR, fonts a
+          // legitimately-open site needs) would just break pages randomly instead of cleanly redirecting
+          // the TAB itself.
+          resourceTypes: ["main_frame"],
+        },
+      }],
+    });
+  } catch (e) {
+    // Was previously a silently-rejected promise with NO catch anywhere — the exact "blocking doesn't
+    // work, no error, no clue why" symptom. Logged so the service worker's own console (chrome://extensions
+    // → Otto Tabs → "service worker" link) actually shows a reason if this ever fails again for some other cause.
+    console.error("[otto-tabs] applyBlockRule failed:", e);
+  }
 }
 
 async function clearBlockRule() {
-  await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [RULE_ID] });
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [RULE_ID] });
+  } catch (e) {
+    console.error("[otto-tabs] clearBlockRule failed:", e);
+  }
 }
 
 async function startStudyBlocking(originUrl) {
