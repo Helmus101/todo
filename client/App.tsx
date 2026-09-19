@@ -3755,8 +3755,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       {/* Hero Section */}
       <main className="hero">
         <div className="hero-kicker-pill hero-in" style={{ ["--d" as any]: "0.02s" }}>
-          <span className="kicker-dot" />
-          <span>{L("Nouveau · Conçu pour le Bac et l'IB", "New · Crafted for the Bac & IB")}</span>
+          {L("Nouveau · Conçu pour le Bac et l'IB", "New · Crafted for the Bac & IB")}
         </div>
 
         <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.08s" }}>
