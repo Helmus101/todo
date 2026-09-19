@@ -8,6 +8,7 @@ export function CameraArtifact() {
   const streamRef = useRef<MediaStream | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [videoReady, setVideoReady] = useState(false);
 
   const tracking = useFaceTracking(videoRef, canvasRef, enabled);
 
@@ -22,7 +23,11 @@ export function CameraArtifact() {
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
+    if (videoRef.current) {
+      videoRef.current.pause();
+      videoRef.current.srcObject = null;
+    }
+    setVideoReady(false);
     setEnabled(false);
   };
 
@@ -38,11 +43,33 @@ export function CameraArtifact() {
         audio: false,
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      const video = videoRef.current;
+      if (!video) {
+        stream.getTracks().forEach((track) => track.stop());
+        setError("The camera preview could not be mounted. Please try again.");
+        return;
       }
+
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = stream;
       setEnabled(true);
+
+      // Play after the stream is attached and metadata is available. This avoids
+      // a black preview when the browser resolves getUserMedia before dimensions.
+      try {
+        await video.play();
+      } catch {
+        await new Promise<void>((resolve) => {
+          const onMetadata = () => {
+            video.removeEventListener("loadedmetadata", onMetadata);
+            resolve();
+          };
+          video.addEventListener("loadedmetadata", onMetadata, { once: true });
+        });
+        await video.play();
+      }
+      setVideoReady(true);
     } catch {
       setError("Camera access was not granted. Nothing was recorded or uploaded.");
       stopCamera();
@@ -84,7 +111,20 @@ export function CameraArtifact() {
         <div className="sm-camera-live">
           {/* Video + overlay */}
           <div className="sm-camera-stage">
-            <video ref={videoRef} muted playsInline aria-label="Live camera preview" />
+            <video
+              ref={videoRef}
+              muted
+              autoPlay
+              playsInline
+              onLoadedMetadata={() => setVideoReady(true)}
+              aria-label="Live camera preview"
+            />
+            {!videoReady && (
+              <div className="sm-camera-video-loading" role="status">
+                <Loader2 size={18} className="sm-spin" />
+                <span>Starting camera preview…</span>
+              </div>
+            )}
             <canvas ref={canvasRef} className="sm-camera-overlay" />
             {tracking.status === "loading" && (
               <div className="sm-camera-ml-loading">
