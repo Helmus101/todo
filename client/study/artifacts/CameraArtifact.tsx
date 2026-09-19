@@ -31,6 +31,30 @@ export function CameraArtifact() {
     setEnabled(false);
   };
 
+  const attachStream = async () => {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    try {
+      await video.play();
+      setVideoReady(true);
+    } catch {
+      setError("The camera preview could not be started. Check browser camera permission and try again.");
+      stopCamera();
+    }
+  };
+
+  // The video element only exists after consent changes the view from the
+  // consent screen to the live screen. Attach the already-approved stream on
+  // the next render instead of trying to mount it against a null ref.
+  useEffect(() => {
+    if (enabled) void attachStream();
+  }, [enabled]);
+
   const startCamera = async () => {
     setError(null);
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -38,38 +62,12 @@ export function CameraArtifact() {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      streamRef.current = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
         audio: false,
       });
-      streamRef.current = stream;
-      const video = videoRef.current;
-      if (!video) {
-        stream.getTracks().forEach((track) => track.stop());
-        setError("The camera preview could not be mounted. Please try again.");
-        return;
-      }
-
-      video.muted = true;
-      video.playsInline = true;
-      video.srcObject = stream;
+      setVideoReady(false);
       setEnabled(true);
-
-      // Play after the stream is attached and metadata is available. This avoids
-      // a black preview when the browser resolves getUserMedia before dimensions.
-      try {
-        await video.play();
-      } catch {
-        await new Promise<void>((resolve) => {
-          const onMetadata = () => {
-            video.removeEventListener("loadedmetadata", onMetadata);
-            resolve();
-          };
-          video.addEventListener("loadedmetadata", onMetadata, { once: true });
-        });
-        await video.play();
-      }
-      setVideoReady(true);
     } catch {
       setError("Camera access was not granted. Nothing was recorded or uploaded.");
       stopCamera();
