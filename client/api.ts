@@ -220,6 +220,12 @@ export const api = {
     req(`/api/studylog/month?start=${encodeURIComponent(start)}`).then(j),
   studyLogMonthSummary: (monthStart: string): Promise<WebTask[]> => post("/api/studylog/month-summary", { monthStart }),
   studyFreeSession: (): Promise<WebTask[]> => post("/api/study/free", {}),
+  // Server-side text extraction for a document material's URL (a Google Doc, a Padlet board, a generic
+  // webpage) — so Ask Otto can reference what's actually IN it, same as it already can for uploaded PDFs
+  // (client-side, pdfText.ts). Best-effort: "" is a normal, valid result (a login-walled page, a non-text
+  // response), never surfaced as an error to the student — the material is already usable without this,
+  // it's a pure enhancement.
+  studyExtractText: (url: string): Promise<{ text: string }> => post("/api/study/extract-text", { url }).catch(() => ({ text: "" })),
   // Personalization bandit (see server/bandit.ts) — v1 target: Pomodoro length. Both best-effort from the
   // caller's side too: a failure here should never block starting or ending a study session.
   pomodoroSuggestion: (): Promise<{ enabled: boolean; workMinutes: number; breakMinutes: number; coldStart: boolean }> =>

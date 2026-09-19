@@ -858,6 +858,33 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [env?.id]);
 
+  // Same catch-up pattern as the PDF effect just above, for "document"/"link" materials (a Google Doc, a
+  // Padlet board, a linked course page) — these have a URL but no local blob, so extraction happens
+  // server-side (see /api/study/extract-text's own comment for why: CSP blocks the browser from fetching a
+  // third-party URL directly). Runs once per material per session (re-checks only ones still missing text),
+  // same best-effort "never blocks the material being usable" posture.
+  useEffect(() => {
+    if (!env) return;
+    const pending = env.materials.filter((m) => (m.type === "document" || m.type === "link") && !m.text?.trim() && m.url);
+    if (!pending.length) return;
+    let cancelled = false;
+    void (async () => {
+      let running = env.materials;
+      let changed = false;
+      for (const m of pending) {
+        try {
+          const { text } = await api.studyExtractText(m.url!);
+          if (cancelled || !text.trim()) continue;
+          running = running.map((x) => (x.id === m.id ? { ...x, text } : x));
+          changed = true;
+        } catch { /* best-effort */ }
+      }
+      if (!cancelled && changed) updateEnv({ materials: running });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [env?.id, env?.materials.length]);
+
   // ── Ask Otto ──────────────────────────────────────────────────────────────
   // `override` lets a caller (voice input) send a just-transcribed message directly, instead of relying on
   // `chatInput` state having already caught up — setChatInput(transcript) then immediately calling sendChat()
@@ -866,8 +893,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     const message = (override ?? chatInput).trim();
     if (!message || chatSending || !env) return;
     const stepIndex = env.currentSubtaskIndex;
-    // Only materials that actually have extracted text (currently: uploaded PDFs, see pdfText.ts) are worth
-    // sending — a material with no `text` contributes nothing and would just be dead weight in the request.
+    // Only materials that actually have extracted text are worth sending — a material with no `text`
+    // contributes nothing and would just be dead weight in the request. Populated by two catch-up effects
+    // above: pdfText.ts (client-side, uploaded PDFs) and /api/study/extract-text (server-side, document/
+    // link materials — a Google Doc, a Padlet board, a linked page) — same field either way, so this stays
+    // one uniform, type-agnostic filter regardless of which path actually filled it in.
     const materials = env.materials.filter((m) => m.text?.trim()).map((m) => ({ label: m.label, text: m.text! }));
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try {

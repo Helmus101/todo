@@ -2092,6 +2092,63 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   res.json(req.session.tasks || []);
 }));
 
+// Server-side text extraction for a document material's URL — so the "Ask Otto" chat can reference what's
+// actually IN a doc/webpage material, not just its title/filename, the same way pdfText.ts already does for
+// UPLOADED PDFs. Uploaded-PDF extraction runs client-side (the file never leaves the browser as a Blob); a
+// URL-based material has no local bytes to read from, and the app's own CSP (connect-src 'self') blocks the
+// browser from fetching a THIRD-PARTY url directly — this has to happen server-side instead, where there's
+// no such restriction. Two strategies:
+//  1. docs.google.com: read via the properly-authenticated GOOGLEDOCS_GET_DOCUMENT_BY_ID tool (works for a
+//     student's own PRIVATE doc, which a raw fetch() never could — Google's real access control applies).
+//  2. anything else: a plain fetch() + strip HTML tags. Only ever sees what's PUBLICLY reachable (same
+//     honest limit a logged-out visitor would hit), which is the right, unavoidable scope for a generic URL.
+// Best-effort throughout, same posture as pdfText.ts's own extractPdfText: never throws, "" on any failure
+// (a login wall, a network blip, a page that's mostly non-text) rather than surfacing an error over what's
+// explicitly an enhancement, not something the material's own viewer depends on to already be usable.
+const GDOC_URL_RE = /^https:\/\/docs\.google\.com\/document\/d\/([^/]+)/;
+const MAX_EXTRACTED_CHARS = 6000;
+function stripHtmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n\n")
+    .trim();
+}
+app.post("/api/study/extract-text", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
+  const url = String(req.body?.url || "").trim();
+  if (!/^https?:\/\//i.test(url)) { res.status(400).json({ error: "Invalid URL." }); return; }
+  try {
+    const gdoc = url.match(GDOC_URL_RE);
+    if (gdoc) {
+      try {
+        const rawExtras = await toolsFor(req);
+        if (rawExtras) {
+          const ro = integrations.readOnly(rawExtras);
+          const raw = await ro.call("GOOGLEDOCS_GET_DOCUMENT_BY_ID", { id: gdoc[1] });
+          // Pragmatic extraction, not a full Docs-API structural walk: every real paragraph of text in the
+          // response lands in a `"content":"..."` field (Google's textRun.content) — collecting all matches
+          // of that key is good-enough plain text without needing to model the whole nested document tree.
+          if (raw) {
+            const matches = [...raw.matchAll(/"content"\s*:\s*"((?:[^"\\]|\\.)*)"/g)];
+            const text = matches.map((m) => m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\")).join("").trim();
+            if (text) { res.json({ text: text.slice(0, MAX_EXTRACTED_CHARS) }); return; }
+          }
+        }
+      } catch { /* fall through to the generic fetch below */ }
+    }
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { "user-agent": "Mozilla/5.0 (compatible; OttoStudyBot/1.0)" } });
+    const ct = r.headers.get("content-type") || "";
+    if (!r.ok || !/text\/html|text\/plain/i.test(ct)) { res.json({ text: "" }); return; }
+    const html = await r.text();
+    res.json({ text: stripHtmlToText(html).slice(0, MAX_EXTRACTED_CHARS) });
+  } catch {
+    res.json({ text: "" }); // best-effort — never a hard error over an enhancement, matches pdfText.ts's own posture
+  }
+}));
+
 // ── Personalization bandit (see server/bandit.ts + the approved plan) ──────────────────────────────────
 // v1 target: Pomodoro work/break length. Best-effort in both directions — a bandit hiccup must never block
 // starting or ending a study session, so both routes degrade to a safe default/no-op on any failure rather
