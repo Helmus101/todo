@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, Eye, Activity, Move, EyeOff, Loader2, X } from "lucide-react";
-import { useFaceTracking } from "../useFaceTracking.ts";
+import { useFaceTracking, type FaceTrackingState } from "../useFaceTracking.ts";
 
-export function CameraArtifact() {
+interface CameraArtifactProps {
+  onMetricsUpdate?: (metrics: FaceTrackingState) => void;
+}
+
+export function CameraArtifact({ onMetricsUpdate }: CameraArtifactProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -11,6 +15,12 @@ export function CameraArtifact() {
   const [videoReady, setVideoReady] = useState(false);
 
   const tracking = useFaceTracking(videoRef, canvasRef, enabled);
+
+  useEffect(() => {
+    if (enabled && tracking.status === "ready" && onMetricsUpdate) {
+      onMetricsUpdate(tracking);
+    }
+  }, [enabled, tracking, onMetricsUpdate]);
 
   useEffect(
     () => () => {

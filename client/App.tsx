@@ -2643,6 +2643,62 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
         </div>}
       </section>
 
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.048s" }}>
+        <button className="sec-toggle" aria-expanded={showPersonalization} onClick={() => setShowPersonalization((v) => !v)}>
+          <h3>{L("Télémétrie et focus", "Focus & telemetry metrics")}</h3>
+          <span className={`caret ${showPersonalization ? "open" : ""}`} aria-hidden="true">›</span>
+        </button>
+        {showPersonalization && <div className="settings-reveal">
+          <p className="settings-hint">
+            {L("Analyse 100 % locale du regard, de la posture et des clignements pour adapter le rythme des sessions et la taille des tâches.", "100% on-device gaze, posture, and blink tracking used to adapt session pacing and task difficulty.")}
+          </p>
+          {profile?.focusStats && profile.focusStats.totalTrackedSessions > 0 ? (
+            <div className="set-list" style={{ marginTop: 8 }}>
+              <div className="modal-row">
+                <span className="lbl">{L("Concentration moyenne", "Average concentration")}</span>
+                <span className="val" style={{ fontWeight: 600, color: profile.focusStats.avgConcentration >= 70 ? "var(--color-success, #34c759)" : "var(--color-warning, #ff9f0a)" }}>
+                  {profile.focusStats.avgConcentration}% ({profile.focusStats.totalTrackedSessions} {L("sessions suivies", "tracked sessions")})
+                </span>
+              </div>
+              <div className="modal-row">
+                <span className="lbl">{L("Temps regard écran", "Gaze on-screen time")}</span>
+                <span className="val">{profile.focusStats.avgGazeOnScreenPct}%</span>
+              </div>
+              <div className="modal-row">
+                <span className="lbl">{L("Rythme de clignement", "Blink rate")}</span>
+                <span className="val">{profile.focusStats.avgBlinkRate} / min</span>
+              </div>
+              <div className="modal-row">
+                <span className="lbl">{L("Niveau d'agitation", "Restlessness level")}</span>
+                <span className="val">{profile.focusStats.restlessPct}%</span>
+              </div>
+              {profile.focusStats.subjectFocus && Object.keys(profile.focusStats.subjectFocus).length > 0 && (
+                <div className="modal-row" style={{ alignItems: "flex-start" }}>
+                  <span className="lbl">{L("Focus par matière", "Focus by subject")}</span>
+                  <span className="val">
+                    <ul className="usage-breakdown-list">
+                      {Object.entries(profile.focusStats.subjectFocus).map(([subj, score]) => (
+                        <li key={subj}>
+                          <span className="usage-breakdown-label">{subj}</span>
+                          <span className="usage-breakdown-bar-track">
+                            <span className="usage-breakdown-bar" style={{ width: `${score}%`, backgroundColor: score >= 70 ? "var(--color-success, #34c759)" : "var(--color-warning, #ff9f0a)" }} />
+                          </span>
+                          <span className="usage-breakdown-amount">{score}%</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="settings-hint" style={{ marginTop: 8 }}>
+              {L("Aucune donnée de télémétrie enregistrée pour l'instant. Active la caméra privée pendant une session d'étude pour commencer le suivi.", "No telemetry data recorded yet. Enable the private camera artifact during a study session to begin tracking.")}
+            </p>
+          )}
+        </div>}
+      </section>
+
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.05s" }}>
         <button className="sec-toggle" aria-expanded={showAppearance} onClick={() => setShowAppearance((v) => !v)}>
           <h3>{L("Apparence", "Appearance")}</h3>

@@ -205,6 +205,15 @@ export interface Profile {
    *  is strong). It may only select the FORM an explanation takes — e.g. diagram-first vs. a worked example
    *  vs. reading-first — never the substance or the level. No consumer reads this yet (groundwork). */
   learningStyle?: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed";
+  /** Aggregated face tracking concentration and focus telemetry statistics over past study sessions. */
+  focusStats?: {
+    totalTrackedSessions: number;
+    avgConcentration: number;
+    avgGazeOnScreenPct: number;
+    avgBlinkRate: number;
+    restlessPct: number;
+    subjectFocus?: Record<string, number>;
+  };
 }
 // Shared client+server id generator (used for grade entries) — Web Crypto's randomUUID is available in
 // both a modern browser and Node, so this needs no server-only import to stay isomorphic.
@@ -325,6 +334,16 @@ export function normalizeProfile(p: any): Profile {
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
     learningStyle: ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(p?.learningStyle) ? p.learningStyle : undefined,
+    focusStats: p?.focusStats && typeof p.focusStats === "object" ? {
+      totalTrackedSessions: Number(p.focusStats.totalTrackedSessions) || 0,
+      avgConcentration: Math.min(100, Math.max(0, Number(p.focusStats.avgConcentration) || 0)),
+      avgGazeOnScreenPct: Math.min(100, Math.max(0, Number(p.focusStats.avgGazeOnScreenPct) || 0)),
+      avgBlinkRate: Math.max(0, Number(p.focusStats.avgBlinkRate) || 0),
+      restlessPct: Math.min(100, Math.max(0, Number(p.focusStats.restlessPct) || 0)),
+      subjectFocus: p.focusStats.subjectFocus && typeof p.focusStats.subjectFocus === "object"
+        ? (Object.fromEntries(Object.entries(p.focusStats.subjectFocus).filter(([, v]) => typeof v === "number")) as Record<string, number>)
+        : undefined,
+    } : undefined,
   };
 }
 

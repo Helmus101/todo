@@ -131,6 +131,15 @@ export interface SessionLog {
    *  future "what should I do next" screen or the tutor's pattern detection actually use this session
    *  instead of just its raw time/step numbers. */
   review?: { finished?: string; confusing?: string; nextStep?: string };
+  /** Face-tracking telemetry & concentration metrics accumulated during session. */
+  focusMetrics?: {
+    avgConcentration: number;
+    gazeOnScreenPct: number;
+    avgBlinkRate: number;
+    restlessPct: number;
+    headPoseStability: number;
+    samplesCount: number;
+  };
 }
 
 export type SessionStatus = "idle" | "active" | "paused" | "break" | "completed" | "ended";

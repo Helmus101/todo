@@ -52,12 +52,13 @@ interface ArtifactCanvasProps {
     onOpenDeck: (id: string, title: string) => void;
     onOpenQuiz: (id: string, title: string) => void;
   };
+  onFaceMetricsUpdate?: (metrics: any) => void;
 }
 
 export function ArtifactCanvas({
   artifacts, notes, scratchpad, task, taskId, environmentId,
   onUpdateArtifact, onAddArtifact, onRemoveArtifact,
-  onNotesChange, onScratchpadChange, onToggleStep, onToggleSubstep, onCompleteTask, language = "en", backgroundImageUrl, chat,
+  onNotesChange, onScratchpadChange, onToggleStep, onToggleSubstep, onCompleteTask, language = "en", backgroundImageUrl, chat, onFaceMetricsUpdate,
 }: ArtifactCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
@@ -196,7 +197,7 @@ export function ArtifactCanvas({
       case "task":
         return <TaskInfoArtifact task={task} onToggleStep={onToggleStep} onToggleSubstep={onToggleSubstep} onComplete={onCompleteTask} />;
       case "camera":
-        return <CameraArtifact />;
+        return <CameraArtifact onMetricsUpdate={onFaceMetricsUpdate} />;
       default:
         return null;
     }

@@ -4265,6 +4265,11 @@ export async function runTask(
 
     // ── STEP 4: Create small, minimal, actionable steps ─────────────────────
     console.log(`${new Date().toISOString()} [ai] step 4: creating steps`);
+    const focusStats = profile?.focusStats;
+    const subjFocus = (task.sourceSubject && focusStats?.subjectFocus) ? focusStats.subjectFocus[task.sourceSubject] : undefined;
+    const focusLevel = subjFocus ?? focusStats?.avgConcentration ?? 100;
+    const isLowFocus = focusLevel < 50;
+
     const stepsOut = await ask(
       `There is this task: "${task.title}".\n` +
       `The user wants to have this definition of done: ${definitionOfDone}\n\n` +
@@ -4278,6 +4283,7 @@ export async function runTask(
       `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
       `- Match the plan's size to the task's real complexity — 3 steps for a simple task, more for a complex one. Never pad to look thorough.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
+      (isLowFocus ? `- ADAPTIVE PACING (Low Focus Baseline ${Math.round(focusLevel)}%): Keep steps very short (5-15 mins max per step), low initial difficulty, with explicit checkpoint criteria to sustain momentum.\n` : "") +
       `Return JSON: {"steps": [{"text": "...", "automatable": false}], "definitionOfDone": "refined if needed"}`,
       // 800 was verified live to truncate mid-JSON on an ordinary task (DeepSeek v4's hidden reasoning
       // tokens count against max_tokens — see ask()'s own comment) — up to 10 step objects, each with 5

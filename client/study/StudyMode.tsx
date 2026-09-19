@@ -287,6 +287,28 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     return () => clearInterval(id);
   }, [chromeIdle, sessionStatus]);
 
+  // Face tracking focus metrics accumulator
+  const faceMetricsAccumulatorRef = useRef<{
+    concSum: number;
+    gazeOnScreenSum: number;
+    blinkRateSum: number;
+    restlessSum: number;
+    headPoseStabilitySum: number;
+    count: number;
+  }>({ concSum: 0, gazeOnScreenSum: 0, blinkRateSum: 0, restlessSum: 0, headPoseStabilitySum: 0, count: 0 });
+
+  const handleFaceMetricsUpdate = useCallback((metrics: any) => {
+    if (!metrics || metrics.status !== "ready") return;
+    const acc = faceMetricsAccumulatorRef.current;
+    acc.concSum += metrics.concentration || 0;
+    acc.gazeOnScreenSum += (metrics.gazeStatus === "On screen" ? 100 : 0);
+    acc.blinkRateSum += metrics.blinkRate || 0;
+    acc.restlessSum += (metrics.movementStatus === "Restless" || metrics.movementStatus === "Active" ? 100 : 0);
+    const poseStab = Math.max(0, 100 - (Math.abs(metrics.headYaw || 0) + Math.abs(metrics.headPitch || 0) + Math.abs(metrics.headRoll || 0)));
+    acc.headPoseStabilitySum += poseStab;
+    acc.count += 1;
+  }, []);
+
   const doneSteps = task.steps?.filter(s => s.done).length ?? 0;
   const totalSteps = task.steps?.length ?? 0;
 
@@ -655,13 +677,23 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     // deliberate action that's SUPPOSED to unblock. No-op if the extension isn't installed.
     stopStudyBlocking();
     if (env) {
-      updateEnv({ sessionStatus: "ended", timerElapsed: elapsedSeconds });
+      const acc = faceMetricsAccumulatorRef.current;
+      const focusMetrics = acc.count > 0 ? {
+        avgConcentration: Math.round(acc.concSum / acc.count),
+        gazeOnScreenPct: Math.round(acc.gazeOnScreenSum / acc.count),
+        avgBlinkRate: Math.round(acc.blinkRateSum / acc.count),
+        restlessPct: Math.round(acc.restlessSum / acc.count),
+        headPoseStability: Math.round(acc.headPoseStabilitySum / acc.count),
+        samplesCount: acc.count,
+      } : undefined;
+
       const finalLog: SessionLog = {
         ...sessionLog,
         endedAt: new Date().toISOString(),
         elapsedSeconds,
         breakSeconds,
         review,
+        focusMetrics,
       };
       await saveSession(finalLog);
       // Report this session's outcome to the personalization bandit (see server/bandit.ts) — best-effort,
@@ -1040,6 +1072,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
             onOpenDeck: (id, title) => openArtifactByKind("deck", id, title),
             onOpenQuiz: (id, title) => openArtifactByKind("quiz", id, title),
           }}
+          onFaceMetricsUpdate={handleFaceMetricsUpdate}
         />
 
         {/* ── Panels (Layer 2) ── */}
