@@ -4050,18 +4050,32 @@ export async function runTask(
 
   /** Helper: one JSON chat call, accumulates tokens. */
   async function ask(prompt: string, maxTokens: number): Promise<any> {
-    const res = await retryRequest(() => client.chat.completions.create({
-      model, max_tokens: maxTokens, temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: prompt + langLine + nowLine }],
-    }));
-    tokIn += res.usage?.prompt_tokens || 0;
-    tokOut += res.usage?.completion_tokens || 0;
-    return firstJson<any>(String(res.choices?.[0]?.message?.content || "")) || {};
+    try {
+      const res = await retryRequest(() => client.chat.completions.create({
+        model, max_tokens: maxTokens, temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: prompt + langLine + nowLine }],
+      }));
+      tokIn += res.usage?.prompt_tokens || 0;
+      tokOut += res.usage?.completion_tokens || 0;
+      const content = String(res.choices?.[0]?.message?.content || "");
+      const parsed = firstJson<any>(content);
+      if (!parsed) {
+        console.error(`${new Date().toISOString()} [ai] ask failed to parse JSON: ${content.slice(0, 200)}`);
+        return {};
+      }
+      return parsed;
+    } catch (err: any) {
+      console.error(`${new Date().toISOString()} [ai] ask error: ${err?.message || err}`);
+      throw err;
+    }
   }
 
   try {
+    console.log(`${new Date().toISOString()} [ai] runTask starting: "${task.title}"`);
+    
     // ── STEP 1: Which tools are most useful? ────────────────────────────────
+    console.log(`${new Date().toISOString()} [ai] step 1: asking for useful tools`);
     const availableToolNames = extras?.tools?.map((t) => t.name).filter(Boolean) || [];
     const allTools = [...new Set([...availableToolNames, "web_search"])]; // web_search is always available
     const toolsOut = await ask(
@@ -4077,10 +4091,12 @@ export async function runTask(
       250,
     );
     const usefulTools: string[] = toolsOut.usefulTools || [];
+    console.log(`${new Date().toISOString()} [ai] step 1 result: usefulTools=${usefulTools.join(",")}`);
     if (usefulTools.length) audit.push({ at: new Date().toISOString(), kind: "tool", label: `tools: ${usefulTools.join(", ")}` });
 
     // ── STEP 2: What searches to run? → run → look at results → follow-up ────
     // First round: ask the AI what searches to do.
+    console.log(`${new Date().toISOString()} [ai] step 2: asking for searches`);
     const searchesOut = await ask(
       `You are helping a student with this task.\n` +
       `TASK: "${task.title}"\n` +
@@ -4096,6 +4112,7 @@ export async function runTask(
       300,
     );
     let searches: string[] = searchesOut.searches || [];
+    console.log(`${new Date().toISOString()} [ai] step 2 result: ${searches.length} searches`);
 
     // Run the first round of searches and gather results.
     const allSearchResults: { query: string; results: { title: string; url: string; snippet?: string }[] }[] = [];
@@ -4153,6 +4170,7 @@ export async function runTask(
     }
 
     // ── STEP 3: What information could be useful? ───────────────────────────
+    console.log(`${new Date().toISOString()} [ai] step 3: asking for useful information`);
     const infoOut = await ask(
       `You are helping a student with this task.\n` +
       `TASK: "${task.title}"\n` +
@@ -4166,11 +4184,13 @@ export async function runTask(
       400,
     );
     const usefulInfo: string[] = infoOut.info || [];
+    console.log(`${new Date().toISOString()} [ai] step 3 result: ${usefulInfo.length} info items`);
     if (usefulInfo.length) {
       context += `${context ? "\n\n" : ""}Useful information to have:\n${usefulInfo.map((i) => `- ${i}`).join("\n")}`;
     }
 
     // ── STEP 4: Create small, minimal, actionable steps ─────────────────────
+    console.log(`${new Date().toISOString()} [ai] step 4: creating steps`);
     const stepsOut = await ask(
       `There is this task: "${task.title}".\n` +
       `The user wants to have this definition of done: ${definitionOfDone}\n\n` +
@@ -4193,9 +4213,11 @@ export async function runTask(
       automatable: !!s.automatable,
       ...sanitizeStepExtras(s),
     }));
+    console.log(`${new Date().toISOString()} [ai] step 4 result: ${steps.length} steps before filtering`);
     // Apply the same quality gates every step list passes through.
     steps = anchorStepsToTask(steps, task.title, 12);
     steps = dropTrivialSteps(steps);
+    console.log(`${new Date().toISOString()} [ai] step 4 result: ${steps.length} steps after filtering`);
     // If all steps were filtered out, keep at least the raw model output rather than falling back to a
     // single generic "Continue working on" step that then gets auto-broken into substeps (the exact
     // failure mode reported live: one step with 8 sub-steps instead of 8 real steps).
@@ -4213,6 +4235,7 @@ export async function runTask(
     // ── STEP 5: Is an artifact necessary? → create artifacts for academic tasks ──
     // For academic revision/prep tasks, artifacts (flashcards, quizzes, notes) are genuinely useful
     // and should be created proactively. For logistics/admin tasks, skip them.
+    console.log(`${new Date().toISOString()} [ai] step 5: checking if artifacts needed`);
     const isAcademic = /revision|revis|prep|study|exam|test|control|contr[ôo]le|assessment|memoris|memoriz|drill|practice|pratique|exercis|exercic|chapter|chapitre|notion|formula|formule|definition|d[ée]finition|vocab|vocabulary|vocabulaire|grammar|grammaire|history|histoire|dates|biology|biologie|chemistry|chimie|physics|physique|maths|math[ée]mat|geography|g[ée]o|econom|[ée]conom|philosophy|philo|french|fran[çc]ais|english|anglais|spanish|espagnol|german|allemand|literature|litt[ée]rature/i.test(`${task.title} ${task.why} ${definitionOfDone}`);
     const artifactOut = await ask(
       `There is this task: "${task.title}".\n` +
@@ -4236,13 +4259,16 @@ export async function runTask(
     const requestedArtifacts: { type: string; reason?: string }[] = Array.isArray(artifactOut.artifacts)
       ? artifactOut.artifacts.filter((a: any) => a && a.type && a.type !== "none")
       : (artifactOut.needsArtifact === true && artifactOut.type && artifactOut.type !== "none" ? [{ type: artifactOut.type, reason: artifactOut.reason }] : []);
+    console.log(`${new Date().toISOString()} [ai] step 5 result: ${requestedArtifacts.length} artifacts requested, isAcademic=${isAcademic}`);
     // For academic tasks where the AI didn't explicitly request artifacts, nudge it to create flashcards
     // if the content is naturally discrete facts (formulas, definitions, vocab, dates).
     if (!requestedArtifacts.length && isAcademic && /formula|formule|equation|[ée]quation|definition|d[ée]finition|vocab|vocabulary|vocabulaire|dates|grammar|grammaire|conjug|tense|temps|verb|verbe|noun|adjective|adverb|adjectif|adverbe|element|[ée]l[ée]ment|compound|compos[ée]|reaction|r[ée]action|law|loi|theorem|th[ée]or[èe]me|principle|principe|method|m[ée]thode|rule|r[èe]gle/i.test(`${task.title} ${task.why} ${context}`)) {
       requestedArtifacts.push({ type: "flashcards", reason: "Academic task with discrete facts to memorize" });
+      console.log(`${new Date().toISOString()} [ai] step 5: auto-adding flashcards for academic task`);
     }
 
     for (const artReq of requestedArtifacts) {
+      console.log(`${new Date().toISOString()} [ai] step 5: creating artifact of type ${artReq.type}`);
       if (artReq.type === "flashcards" || artReq.type === "flashcard") {
         const deckOut = await ask(
           `Create a flashcard deck for this task.\n` +
@@ -4259,6 +4285,9 @@ export async function runTask(
           flashcards.push(deck.deck);
           did.push(fr ? `Créé un jeu de flashcards : ${deck.deck.title}` : `Created flashcard deck: ${deck.deck.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `flashcards: ${deck.deck.title}` });
+          console.log(`${new Date().toISOString()} [ai] step 5: created flashcard deck with ${deck.deck.cards.length} cards`);
+        } else {
+          console.error(`${new Date().toISOString()} [ai] step 5: failed to create flashcard deck`);
         }
       } else if (artReq.type === "quiz") {
         const quizOut = await ask(
@@ -4276,6 +4305,9 @@ export async function runTask(
           quizzes.push(quiz.quiz);
           did.push(fr ? `Créé un quiz : ${quiz.quiz.title}` : `Created quiz: ${quiz.quiz.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `quiz: ${quiz.quiz.title}` });
+          console.log(`${new Date().toISOString()} [ai] step 5: created quiz with ${quiz.quiz.questions.length} questions`);
+        } else {
+          console.error(`${new Date().toISOString()} [ai] step 5: failed to create quiz`);
         }
       } else if (artReq.type === "note") {
         const noteOut = await ask(
@@ -4295,6 +4327,9 @@ export async function runTask(
           notes.push(note.note);
           did.push(fr ? `Créé une fiche : ${note.note.title}` : `Created note: ${note.note.title}`);
           audit.push({ at: new Date().toISOString(), kind: "artifact", label: `note: ${note.note.title}` });
+          console.log(`${new Date().toISOString()} [ai] step 5: created note`);
+        } else {
+          console.error(`${new Date().toISOString()} [ai] step 5: failed to create note`);
         }
       }
     }
