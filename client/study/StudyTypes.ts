@@ -19,7 +19,8 @@ export type ArtifactType =
   | "quiz"
   | "citation"
   | "chat"
-  | "task";
+  | "task"
+  | "camera";
 
 export type DockSide = "none" | "left" | "right" | "fullscreen";
 

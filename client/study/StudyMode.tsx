@@ -1127,10 +1127,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
               const newArtifact: ArtifactState = {
                 id: crypto.randomUUID(),
                 type,
-                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : type === "citation" ? "Citation" : type === "task" ? task.title : "Notes",
+                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : type === "citation" ? "Citation" : type === "camera" ? "Private camera" : type === "task" ? task.title : "Notes",
                 x: 20, y: 15,
-                width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : type === "citation" ? 40 : type === "task" ? 45 : 40,
-                height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : type === "citation" ? 65 : type === "task" ? 70 : 50,
+width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : type === "citation" ? 40 : type === "camera" ? 38 : type === "task" ? 45 : 40,
+  height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : type === "citation" ? 65 : type === "camera" ? 58 : type === "task" ? 70 : 50,
                 zIndex: 100,
                 minimized: false,
                 maximized: false,
