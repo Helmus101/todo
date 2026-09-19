@@ -16,7 +16,12 @@ import {
   Settings as SettingsIcon,
   Menu,
   X,
-  Wallet
+  Wallet,
+  Lock,
+  Zap,
+  ShieldCheck,
+  Compass,
+  BarChart3
 } from "lucide-react";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
@@ -3598,10 +3603,10 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
 
         {/* Apple-grade Trust Badges */}
         <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.36s" }}>
-          <li><span className="trust-icon">🔒</span> {L("Chiffrement de bout en bout (AES-256)", "End-to-end encrypted credentials")}</li>
-          <li><span className="trust-icon">🎓</span> {L("Spécialisé Baccalauréat & Bac International", "Built for French Bac & IB")}</li>
-          <li><span className="trust-icon">⚡</span> {L("Plafond d'usage transparent", "Capped & visible AI cost")}</li>
-          <li><span className="trust-icon">🛡️</span> {L("Intégrité académique garantie", "Guaranteed academic integrity")}</li>
+          <li><span className="trust-icon"><Lock size={13} strokeWidth={1.5} /></span> {L("Chiffrement de bout en bout (AES-256)", "End-to-end encrypted credentials")}</li>
+          <li><span className="trust-icon"><GraduationCap size={13} strokeWidth={1.5} /></span> {L("Spécialisé Baccalauréat & Bac International", "Built for French Bac & IB")}</li>
+          <li><span className="trust-icon"><Zap size={13} strokeWidth={1.5} /></span> {L("Plafond d'usage transparent", "Capped & visible AI cost")}</li>
+          <li><span className="trust-icon"><ShieldCheck size={13} strokeWidth={1.5} /></span> {L("Intégrité académique garantie", "Guaranteed academic integrity")}</li>
         </ul>
 
         {/* Live Animated Simulation Window */}
@@ -3755,21 +3760,21 @@ function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChange: (v: 
         </div>
         <div className="features">
           <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.0s" }}>
-            <span className="feature-icon">🧭</span>
+            <span className="feature-icon"><Compass size={22} strokeWidth={1.5} /></span>
             <div>
               <h3>{L("Intégrité académique absolue", "Strict academic integrity")}</h3>
               <p>{L("Otto refuse de générer des dissertations complètes ou de résoudre des exercices à ta place. Il t'apprend la méthode.", "Otto refuses to write full essays or solve graded problems. It teaches you the methodology.")}</p>
             </div>
           </div>
           <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.1s" }}>
-            <span className="feature-icon">🔐</span>
+            <span className="feature-icon"><Lock size={22} strokeWidth={1.5} /></span>
             <div>
               <h3>{L("Données protégées et jamais vendues", "Data private, secure & never sold")}</h3>
               <p>{L("Identifiants chiffrés avec AES-256-GCM. Tes devoirs et notes ne servent jamais à entraîner des modèles d'IA publics.", "Encrypted with AES-256-GCM. Your school data is never used to train public AI models.")}</p>
             </div>
           </div>
           <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.2s" }}>
-            <span className="feature-icon">📊</span>
+            <span className="feature-icon"><BarChart3 size={22} strokeWidth={1.5} /></span>
             <div>
               <h3>{L("Transparence totale et maîtrise des coûts", "Transparent usage & clear control")}</h3>
               <p>{L("Suis en temps réel ton quota d'IA dans les Réglages. Aucun abonnement caché, aucun piège.", "Track your AI quota in real-time in Settings. No hidden recurring fees, no dark patterns.")}</p>

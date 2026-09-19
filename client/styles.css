@@ -2480,6 +2480,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 .trust-icon {
   font-size: 13px;
+  display: inline-flex;
+  align-items: center;
 }
 
 /* Live Interactive Simulation Window */
@@ -2901,6 +2903,9 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   line-height: 1;
   flex: none;
   margin-top: 2px;
+  display: flex;
+  align-items: center;
+  color: var(--accent);
 }
 .glass-row h3 {
   font-family: var(--display);
