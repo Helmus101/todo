@@ -635,7 +635,17 @@ input:focus, textarea:focus {
 .week-fab-popover-body { display: flex; flex-direction: column; gap: var(--space-5); }
 .week-fab-popover-body > * + * { padding-top: 20px; border-top: 1px solid var(--line-soft); }
 .exam-strip-wrap, .due-reviews { margin: 0; }
-.due-review-chip { text-decoration: none; }
+/* Now a <button> (opens the deck's review player directly, see DueReviews' own comment) rather than an
+   <a href="/task/..."> — reset the button chrome .exam-chip's other, non-interactive usages don't need. */
+.due-review-chip {
+  text-decoration: none;
+  background: none;
+  border-top: none; border-right: none; border-bottom: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
 .exam-strip-label { font-size: var(--text-xs); font-weight: var(--weight-medium); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--space-2); opacity: 0.85; }
 /* One row per exam, same treatment as .week-load-strip/.week-day right below it in the same panel —
    this used to be a horizontal swipe-strip while WeekLoad was a vertical list, an inconsistent mobile

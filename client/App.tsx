@@ -1052,7 +1052,7 @@ export function App() {
               )}
             </div>
 
-            <WeekRailFab lang={status.language} pronoteConnected={!!status.pronoteConnected} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} />
+            <WeekRailFab lang={status.language} pronoteConnected={!!status.pronoteConnected} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} tasks={tasks} />
 
             <div className="dash-more">
               {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
@@ -1273,7 +1273,7 @@ function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
  *  list (splitting it in two), then as a full-screen modal (too heavy for what's basically a glance-and-
  *  close panel) — this is a small floating button, fixed to the same spot at every scroll position, that
  *  opens a compact anchored popover instead of taking over the whole screen. */
-function WeekRailFab({ lang, pronoteConnected, onTask }: { lang?: "fr" | "en"; pronoteConnected: boolean; onTask: (t: WebTask) => void }) {
+function WeekRailFab({ lang, pronoteConnected, onTask, tasks }: { lang?: "fr" | "en"; pronoteConnected: boolean; onTask: (t: WebTask) => void; tasks: WebTask[] }) {
   const en = lang === "en";
   const [open, setOpen] = useState(false);
 
@@ -1292,7 +1292,7 @@ function WeekRailFab({ lang, pronoteConnected, onTask }: { lang?: "fr" | "en"; p
           <div className="week-fab-popover-body">
             {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
                 (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
-            <DueReviews lang={lang} />
+            <DueReviews lang={lang} tasks={tasks} />
             {pronoteConnected && <ExamCountdown lang={lang} />}
             <WeekLoad lang={lang} onTask={onTask} />
           </div>
@@ -1305,33 +1305,50 @@ function WeekRailFab({ lang, pronoteConnected, onTask }: { lang?: "fr" | "en"; p
 /** Cards due for spaced-repetition review, across EVERY task — the one genuinely new cross-task view the
  *  spaced-repetition work needed (see nextLeitnerReview in shared/types.ts): a deck's own player only ever
  *  shows what's due for THAT task's deck, but the whole point of spacing is seeing everything due at a
- *  glance without reopening every task to check. Links into the task itself (where the deck opens from) —
- *  no separate deep-link into a specific deck yet, that's a reasonable follow-on, not required for this to
- *  already be useful. */
-function DueReviews({ lang }: { lang?: "fr" | "en" }) {
+ *  glance without reopening every task to check. Opens the deck's review player DIRECTLY in a modal —
+ *  reported live that linking to `/task/<id>` instead (the original version) meant clicking a due-review
+ *  chip opened the whole task, and the student still had to go find the flashcard deck inside it. `tasks`
+ *  is already loaded by the parent (App.tsx's main dashboard state), so the deck itself can be looked up
+ *  locally — no extra fetch needed, same pattern as the Journal page's day/month deck review modals
+ *  (StudyLogPage's onDayReview/onSummaryReview). */
+function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   const en = lang === "en";
-  const [due, setDue] = useState<{ taskId: string; taskTitle: string; deckTitle: string }[] | null>(null);
+  const [due, setDue] = useState<{ taskId: string; taskTitle: string; deckId: string; deckTitle: string }[] | null>(null);
   const [error, setError] = useState(false);
+  const [openDeck, setOpenDeck] = useState<{ taskId: string; deckId: string } | null>(null);
   useEffect(() => { void api.reviewsDue().then((r) => setDue(r.due)).catch(() => { setDue([]); setError(true); }); }, []);
   if (error) return <p className="rewrite-error small">{en ? "Couldn't load reviews due." : "Impossible de charger les révisions dues."}</p>;
   if (!due?.length) return null;
-  // Group by task — several due cards from the same deck shouldn't repeat the task title once each.
-  const byTask = new Map<string, { taskTitle: string; deckTitle: string; count: number }>();
+  // Group by DECK (not task) — a task with two decks should show two chips, not one merged count.
+  const byDeck = new Map<string, { taskId: string; deckTitle: string; count: number }>();
   for (const d of due) {
-    const cur = byTask.get(d.taskId);
-    if (cur) cur.count++; else byTask.set(d.taskId, { taskTitle: d.taskTitle, deckTitle: d.deckTitle, count: 1 });
+    const cur = byDeck.get(d.deckId);
+    if (cur) cur.count++; else byDeck.set(d.deckId, { taskId: d.taskId, deckTitle: d.deckTitle, count: 1 });
   }
+  const openTask = openDeck ? tasks.find((t) => t.id === openDeck.taskId) : undefined;
+  const openDeckObj = openTask?.flashcards?.find((f) => f.id === openDeck?.deckId);
   return (
     <div className="due-reviews">
       <div className="exam-strip-label">{en ? "Due for review" : "À réviser"}</div>
       <div className="exam-strip">
-        {[...byTask.entries()].map(([taskId, t]) => (
-          <a key={taskId} className="exam-chip due-review-chip" href={`/task/${taskId}`}>
+        {[...byDeck.entries()].map(([deckId, t]) => (
+          <button key={deckId} type="button" className="exam-chip due-review-chip" onClick={() => setOpenDeck({ taskId: t.taskId, deckId })}>
             <span className="exam-days">{t.count}</span>
             <span className="exam-subject">{t.deckTitle}</span>
-          </a>
+          </button>
         ))}
       </div>
+      {openTask && openDeckObj && (
+        <TaskModal onClose={() => setOpenDeck(null)} title={openDeckObj.title} nested>
+          <FlashcardDeck
+            deck={openDeckObj}
+            taskId={openTask.id}
+            onReview={(cardIndex, correct) => {
+              void api.reviewFlashcard(openTask.id, openDeckObj.id, cardIndex, correct).catch(() => {});
+            }}
+          />
+        </TaskModal>
+      )}
     </div>
   );
 }
@@ -2160,7 +2177,7 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
           for review," reported live as "i never see this." The cross-task /api/reviews/due signal already
           existed but was buried in the dashboard's "This week" popover, nowhere near the Journal tab where
           these decks actually live. */}
-      <DueReviews lang={lang} />
+      <DueReviews lang={lang} tasks={tasks} />
 
       {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded /> : (
       <>
