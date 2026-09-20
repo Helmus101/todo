@@ -1597,6 +1597,10 @@ input:focus, textarea:focus {
 .chat-assistant .inline-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .chat-step-tag { display: block; font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,0.8); margin-bottom: 4px; letter-spacing: 0.02em; }
 .chat-guardrail-tag { display: block; font-size: 10.5px; font-weight: 600; color: var(--ink-3); margin-top: 6px; letter-spacing: 0.02em; }
+.chat-sources { margin-top: 8px; color: var(--ink-3); font-size: var(--text-xs); }
+.chat-sources summary { cursor: pointer; color: var(--accent); }
+.chat-sources ul { margin: 6px 0 0; padding-left: 18px; }
+.chat-sources a { color: var(--accent); }
 .chat-artifact-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--space-2); }
 .chat-assistant .note-chip { background: var(--surface); }
 .chat-pending { opacity: 0.6; }

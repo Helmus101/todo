@@ -956,6 +956,8 @@ export interface WebTask {
      *  storage, two entry points: the thread and "Ce qu'Otto a préparé"). A chip whose id has since been
      *  evicted by ARTIFACT_CAP renders as nothing rather than crashing — see the client lookup. */
     artifacts?: { kind: "note" | "deck" | "quiz"; id: string; title: string }[];
+    /** Sources Otto used or was given for this assistant turn. */
+    sources?: { label: string; url?: string; detail?: string }[];
     /** Which step (by index at send-time) a USER message was about — set by the "Aide" button on a step.
      *  `stepText` is the step's own wording at that moment, stored alongside because steps are regenerated
      *  on every rerun: a bare index could later point at a different step, or none. */

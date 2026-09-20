@@ -1255,6 +1255,18 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
             {/* Assistant replies get light markdown; a student's own message stays literal — pasting "**"
                 from their notes shouldn't get eaten. */}
             {m.role === "assistant" ? renderChatText(m.text) : <CondensedUserMessage text={m.text} />}
+            {m.role === "assistant" && m.sources?.length ? (
+              <details className="chat-sources">
+                <summary>{L("Sources utilisées", "Sources used")} ({m.sources.length})</summary>
+                <ul>
+                  {m.sources.map((source, sourceIndex) => (
+                    <li key={`${source.label}-${sourceIndex}`}>
+                      {source.url ? <a href={source.url} target="_blank" rel="noreferrer">{source.label} ↗</a> : <span>{source.label}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             {m.artifacts?.length ? (
               <div className="chat-artifact-chips">
                 {m.artifacts.map((a) => {
