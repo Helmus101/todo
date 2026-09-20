@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFaceTracking, type FaceTrackingState } from "./useFaceTracking.ts";
+import { api } from "../api.ts";
 
 export interface FocusCamera {
   enabled: boolean;
@@ -113,11 +114,15 @@ export function useFocusCamera({
     };
 
     try {
-      await fetch("/api/focus/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(session),
-      });
+      // A raw fetch() here (the original code) sends no x-csrf-token header. In production, once a
+      // session has minted a token — true for essentially every request past the account's very first —
+      // requireAuth (server/index.ts) 403s any non-GET request missing or mismatching it. fetch() doesn't
+      // reject on a non-2xx status and nothing here checked res.ok, so that 403 was completely silent: no
+      // console error, no thrown exception, just a session that looked saved client-side and never actually
+      // reached the server. api.saveFocusSession (client/api.ts) goes through the shared req() wrapper that
+      // already knows how to attach/refresh this token — same fix in spirit as routing any other mutating
+      // call through api.ts instead of a bespoke fetch.
+      await api.saveFocusSession(session);
     } catch (err) {
       console.error("Failed to save focus session:", err);
     }
@@ -200,9 +205,29 @@ export function useFocusCamera({
     setEnabled(false);
   }, [saveSession]);
 
+  // Kept current every render so the unmount cleanup below (a stable [] effect, since re-running it on
+  // every saveSession identity change would mean firing it on every metrics update) always calls the
+  // LATEST saveSession — same stale-closure-avoidance pattern as useSpeechRecognition.ts's createAndStartRef.
+  const saveSessionRef = useRef(saveSession);
+  saveSessionRef.current = saveSession;
+
   // Only stop the camera when the whole Study Mode session unmounts (StudyMode.tsx owns this hook's call
   // site) — NOT on any per-widget unmount, since there is no per-widget unmount here anymore.
+  //
+  // MUST also save here, not just stop tracks: reported live as "Focus Analytics always shows no tracked
+  // sessions" — stopCamera() (the only other place saveSession fires) is called from exactly two places,
+  // the Camera widget's own "Turn camera off" button and EndSessionModal's long-press-gated official End
+  // flow, but Study Mode's ALWAYS-VISIBLE header back arrow (SessionHeader.tsx's onBack, most students'
+  // actual way of leaving mid-session) calls onExit() directly — a plain navigation callback with zero
+  // awareness of the camera — which unmounts this hook without ever calling stopCamera. Every minute of
+  // tracked concentration data for that exit path was silently discarded: gathered, never sent, never
+  // persisted, so the analytics panel's "no sessions yet" was technically accurate — sessions were being
+  // thrown away before they ever reached the server. A fetch() started here keeps running after unmount
+  // (only a full page navigation/reload would actually cancel it, not an SPA route change), so firing the
+  // save from the cleanup itself catches every exit path there is, not just the two that happened to call
+  // stopCamera explicitly.
   useEffect(() => () => {
+    if (sessionStartTimeRef.current && metricsHistoryRef.current.length >= 10) void saveSessionRef.current();
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
   }, []);
