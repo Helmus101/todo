@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
@@ -1589,6 +1589,20 @@ const CREATE_QUIZ_TOOL = {
   }, required: ["title", "questions"] },
 };
 
+const CREATE_PROBLEM_TOOL = {
+  name: "CREATE_PROBLEM",
+  description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint.",
+  input_schema: { type: "object", properties: {
+    question: { type: "string", description: "the question/prompt — one clear sentence or a short problem statement. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track above), not generic trivia." },
+    options: { type: "array", description: "MCQ mode: 2-4 answer options. EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode.", items: { type: "string" } },
+    correct: { type: "number", description: "MCQ mode only: 0-based index into options of the CORRECT one" },
+    answer: { type: "string", description: "Free-response mode only: the expected answer. Checked loosely (trimmed, case-insensitive). Omit for MCQ mode." },
+    why: { type: "string", description: "one line on why the answer is right — this is what makes the problem teach instead of just score" },
+    hint: { type: "string", description: "an optional hint the student can reveal before answering" },
+    format: { type: "string", description: "free-response mode only: guidance on expected format/units/notation (e.g. 'two decimal places, in m/s')" },
+  }, required: ["question"] },
+};
+
 // ── Shared in-app artifact factories ──────────────────────────────────────────
 // Pure, no I/O. Used by BOTH runTask's tool loop and the tutor chat's tool loop, so validation can't drift
 // between "the artifact Otto made during a run" and "the artifact Otto made when you asked in chat".
@@ -1666,6 +1680,37 @@ export function makeQuiz(input: any): { quiz: TaskQuiz } | { error: string } {
     .slice(0, 50) as TaskQuiz["questions"];
   if (!questions.length) return { error: "ERROR: no valid questions (each needs a question, 2-4 distinct options, and a `correct` index pointing at one of them)." };
   return { quiz: { id: randomUUID(), title, questions, createdAt: new Date().toISOString() } };
+}
+
+/** A single standalone problem for inline chat display — validated the same defensive way as makeQuiz.
+ *  Can be MCQ (options + correct index) or free-response (answer string). At least one of the two modes
+ *  must be valid; a `why` explanation is strongly encouraged (it's what makes the problem teach). */
+export function makeProblem(input: any): { problem: TaskProblem } | { error: string } {
+  const question = String(input?.question || "").trim().slice(0, 600);
+  if (!question) return { error: "ERROR: a problem needs a non-empty question." };
+  const why = input?.why ? String(input.why).trim().slice(0, 300) : undefined;
+  const hint = input?.hint ? String(input.hint).trim().slice(0, 300) : undefined;
+  const format = input?.format ? String(input.format).trim().slice(0, 200) : undefined;
+  // MCQ mode: options + correct index
+  const rawOptions = Array.isArray(input?.options) ? input.options : [];
+  const options = rawOptions.map((o: any) => String(o || "").trim().slice(0, 300)).filter(Boolean);
+  const correctIdx = Number(input?.correct);
+  const hasMCQ = options.length >= 2 && Number.isInteger(correctIdx) && correctIdx >= 0 && correctIdx < options.length;
+  // Free-response mode: answer string
+  const answer = input?.answer ? String(input.answer).trim().slice(0, 200) : undefined;
+  if (!hasMCQ && !answer) return { error: "ERROR: a problem needs either MCQ (2+ options + correct index) or a free-response answer." };
+  return {
+    problem: {
+      id: randomUUID(),
+      question,
+      ...(hasMCQ ? { options, correct: correctIdx } : {}),
+      ...(answer && !hasMCQ ? { answer } : {}),
+      ...(why ? { why } : {}),
+      ...(hint ? { hint } : {}),
+      ...(format ? { format } : {}),
+      createdAt: new Date().toISOString(),
+    },
+  };
 }
 
 /** ONE free-response practice problem — validated the same defensive way as makeDeck/makeQuiz. Both
@@ -5472,6 +5517,7 @@ export interface ChatResult {
   notes: TaskNote[];
   flashcards: TaskFlashcards[];
   quizzes: TaskQuiz[];
+  problems: TaskProblem[];
   audit: AuditEvent[];
   tokens: { in: number; out: number; cachedIn?: number };
   /** Set when CHAT_DOES_WORK tripped this turn (reply text or a note body) — lets the client tag the
@@ -5797,28 +5843,28 @@ export async function chatAboutTask(
     `generous under repetition would make the boundary meaningless — hold it exactly as firmly on the fifth ` +
     `ask as the first.\n\n` +
 
-    `PRACTICE PROBLEMS — ALWAYS CREATE_QUIZ, NEVER PLAIN CHAT TEXT. Even a single one-off problem ("give me ` +
-    `a practice problem", "quiz me on this one thing", right after walking through a method) goes through ` +
-    `CREATE_QUIZ — a 1-question quiz is completely valid, don't wait for "a whole chapter's worth" to justify ` +
-    `using the tool. A practice problem typed as plain prose in the chat bubble is a formatting bug now, not ` +
-    `an acceptable shortcut — it renders as an unstructured wall of text and can't be scored/reviewed the way ` +
-    `an artifact can. This applies to MULTIPLE problems in one go too: never number a list of practice ` +
-    `questions in a chat message (with or without answers below them) — that's exactly what CREATE_QUIZ is ` +
-    `for, and it comes with instant feedback the plain-text version can't give. Make it real: match the ` +
-    `phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see ` +
-    `VOCABULARY/track above), not a generic trivia-style question — and calibrate difficulty to what you ` +
-    `know about them (a subject grade in their profile, how they've been doing in THIS conversation) rather ` +
-    `than defaulting to easy.\n\n` +
-    `OTHER THINGS YOU CAN MAKE, RIGHT HERE IN THE CHAT: a fiche (CREATE_NOTE) or a flashcard deck ` +
-    `(CREATE_FLASHCARDS) — and you can web_search first if you need real subject content to make either ` +
-    `specific. Same line as everywhere else: a fiche is method, structure, prompts and real course content — ` +
-    `NEVER their essay, their solved exercise, or their translated passage. A quiz/practice problem is NEW ` +
-    `content on the notion, never their own exercise reformatted or reworded. Don't announce a tool-made ` +
-    `artifact before you make it and don't describe it at length after — make it, then say ONE short line ` +
-    `("je t'ai fait 10 cartes sur les dérivées"). Default is still: no artifact, most turns are just talking. ` +
-    `You get at most ${CHAT_MAX_ARTIFACTS} tool-made artifacts per message — pick the ONE thing that actually ` +
-    `helps right now (a practice problem is always CREATE_QUIZ per the rule above, so it DOES count toward ` +
-    `this cap — don't spend both slots on quizzes if a fiche or deck would also help this turn).\n\n` +
+    `PRACTICE PROBLEMS — TWO TOOLS, PICK BY SCOPE. A SINGLE one-off problem ("give me a practice problem", ` +
+    `"quiz me on this one thing", right after walking through a method) goes through CREATE_PROBLEM — it ` +
+    `renders INLINE in the chat itself so the student answers right there in the thread and you help them ` +
+    `through it. MULTIPLE problems or a full set ("quiz me on this chapter", "give me 10 practice questions") ` +
+    `goes through CREATE_QUIZ — it opens on the canvas as a scored quiz with instant feedback. A practice ` +
+    `problem typed as plain prose in the chat bubble is a formatting bug now, not an acceptable shortcut. ` +
+    `Make it real: match the phrasing, format, and rigor of an actual exam/contrôle question for this subject ` +
+    `and level (see VOCABULARY/track above), not a generic trivia-style question — and calibrate difficulty ` +
+    `to what you know about them (a subject grade in their profile, how they've been doing in THIS ` +
+    `conversation) rather than defaulting to easy. Default is still: no artifact, most turns are just ` +
+    `talking — only make a problem when a focused exercise is genuinely the best way to help right now.\n\n` +
+    `OTHER THINGS YOU CAN MAKE, RIGHT HERE IN THE CHAT: a fiche (CREATE_NOTE), a flashcard deck ` +
+    `(CREATE_FLASHCARDS), or a single inline practice problem (CREATE_PROBLEM) — and you can web_search first ` +
+    `if you need real subject content to make either specific. Same line as everywhere else: a fiche is ` +
+    `method, structure, prompts and real course content — NEVER their essay, their solved exercise, or their ` +
+    `translated passage. A quiz/practice problem is NEW content on the notion, never their own exercise ` +
+    `reformatted or reworded. Don't announce a tool-made artifact before you make it and don't describe it at ` +
+    `length after — make it, then say ONE short line ("je t'ai fait 10 cartes sur les dérivées"). Default is ` +
+    `still: no artifact, most turns are just talking. You get at most ${CHAT_MAX_ARTIFACTS} tool-made artifacts ` +
+    `per message — pick the ONE thing that actually helps right now (a single problem via CREATE_PROBLEM or a ` +
+    `set via CREATE_QUIZ both count toward this cap — don't spend both slots if a fiche or deck would also ` +
+    `help this turn).\n\n` +
 
     `KEEP GETTING SMARTER ABOUT THEM: use "remember" whenever they mention something durable, worth knowing ` +
     `next time — a recurring struggle with a specific topic, a professor's grading quirk or class pattern ` +
@@ -5903,8 +5949,8 @@ export async function chatAboutTask(
   // before passing it here) — e.g. GMAIL_FETCH_EMAILS, so the tutor can check "did my teacher already
   // reply?" without ever being able to send/draft/delete anything through it.
   const readOnlyExtras = opts?.extras;
-  const tools = [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
-  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
+  const tools = [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
+  const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
   const finish = (reply: string): ChatResult => {
@@ -5912,7 +5958,7 @@ export async function chatAboutTask(
     // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
     // discard them too rather than hand over a chip whose text just got rejected.
     if (CHAT_DOES_WORK.test(reply) || CHAT_STATES_ANSWER.test(reply)) {
-      result.notes = []; result.flashcards = []; result.quizzes = [];
+      result.notes = []; result.flashcards = []; result.quizzes = []; result.problems = [];
       result.guardrailTripped = true;
       logAudit("guardrail", fr
         ? "Tu as demandé quelque chose qui ressemblait à faire le travail à ta place — Otto a dit non et a fait un guide à la place."
@@ -6028,7 +6074,7 @@ export async function chatAboutTask(
         const name = tc.function?.name;
         const input = parseToolArgs(tc.function?.arguments);
         let content: string;
-        const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length >= CHAT_MAX_ARTIFACTS;
+        const madeEnough = result.notes.length + result.flashcards.length + result.quizzes.length + result.problems.length >= CHAT_MAX_ARTIFACTS;
         if (name === "web_search") {
           content = await runWebSearch(input);
           logAudit("tool", fr ? `Recherche web : "${String((input as any)?.query || "").slice(0, 140)}"` : `Web search: "${String((input as any)?.query || "").slice(0, 140)}"`);
@@ -6055,6 +6101,9 @@ export async function chatAboutTask(
         } else if (name === "CREATE_QUIZ") {
           if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
           else { const r = makeQuiz(input); if ("error" in r) content = r.error; else { result.quizzes.push(r.quiz); content = JSON.stringify({ ok: true, id: r.quiz.id, count: r.quiz.questions.length }); logAudit("artifact", fr ? `Quiz créé : « ${r.quiz.title} » (${r.quiz.questions.length} questions)` : `Quiz created: "${r.quiz.title}" (${r.quiz.questions.length} questions)`); } }
+        } else if (name === "CREATE_PROBLEM") {
+          if (madeEnough) content = "LIMIT: you've already made enough this message — talk to them about what you made instead of making more.";
+          else { const r = makeProblem(input); if ("error" in r) content = r.error; else { result.problems.push(r.problem); content = JSON.stringify({ ok: true, id: r.problem.id }); logAudit("artifact", fr ? `Problème créé : « ${r.problem.question.slice(0, 60)} »` : `Problem created: "${r.problem.question.slice(0, 60)}"`); } }
         } else if (name === "remember") {
           const category = String((input as any)?.category || "preference");
           const fact = String((input as any)?.fact || "").trim();
