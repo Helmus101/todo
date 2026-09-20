@@ -16,7 +16,6 @@ import {
   Settings as SettingsIcon,
   Menu,
   X,
-  Wallet,
   Lock,
   Zap,
   ShieldCheck,
@@ -878,14 +877,6 @@ export function App() {
             {status?.language === "en" ? "Error log" : "Erreurs"}
           </a>
           <a
-            className={`sidebar-item ${route === "finance" ? "active" : ""}`}
-            href="/finance"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <Wallet />
-            {status?.language === "en" ? "Finance" : "Finances"}
-          </a>
-          <a
             className={`sidebar-item ${route === "settings" ? "active" : ""}`}
             href="/settings"
             onClick={() => setSidebarOpen(false)}
@@ -934,8 +925,6 @@ export function App() {
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
         <MistakeLogPage lang={status?.language} />
-      ) : route === "finance" ? (
-        <FinancePage lang={status?.language} notify={notify} />
       ) : !status.googleConnected && !status.pronoteConnected ? (
         <main className="list-wrap"><ConnectCard status={status} /></main>
       ) : (
@@ -1868,166 +1857,6 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
   );
 }
 
-// Loads Plaid's own hosted Link script once (idempotent — a second call is a no-op if it's already there).
-// Link is Plaid's modal that handles the actual bank login entirely on Plaid's own side — this app never
-// sees a password or account number, only the public_token Link hands back on success.
-let plaidScriptPromise: Promise<void> | null = null;
-function loadPlaidScript(): Promise<void> {
-  if ((window as any).Plaid) return Promise.resolve();
-  if (plaidScriptPromise) return plaidScriptPromise;
-  plaidScriptPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error("Couldn't load Plaid."));
-    document.head.appendChild(s);
-  });
-  return plaidScriptPromise;
-}
-
-/** /finance — connect a bank via Plaid (SANDBOX ONLY right now, see server/plaid.ts's own comment on why:
- *  no production approval, no confirmed French-bank coverage yet) as an ADDITIONAL proactive source
- *  alongside Pronote/Gmail. Recurring bills detected from real transaction history surface as ordinary
- *  reminder tasks — see server/tasks.ts's plaidBillsToTasks for the (deliberately AI-free) mechanism.
- *  Financial data never reaches an AI call anywhere in this app; this page is a plain, honest data view. */
-function FinancePage({ lang, notify }: { lang?: "fr" | "en"; notify: (msg: string, kind?: "error" | "info") => void }) {
-  const L = useLang();
-  const [status, setStatus] = useState<{ connected: boolean; institutionName?: string; configured: boolean } | null>(null);
-  const [snapshot, setSnapshot] = useState<{ accounts: { id: string; name: string; type: string; balance: number | null }[]; transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[] } | null>(null);
-  // A failed snapshot fetch used to leave `snapshot` at null forever with the .catch swallowing the error —
-  // indistinguishable from "connected, genuinely no transactions yet". Track the failure explicitly so a
-  // real outage shows something instead of a silent, misleadingly-empty account view.
-  const [snapshotError, setSnapshotError] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const en = lang === "en";
-  // The connect/connected sections below use the same "settings-sec reveal" fade-in class Settings uses —
-  // but that class starts at opacity:0 and only becomes visible once useReveal()'s IntersectionObserver adds
-  // "in" to it (see styles.css's .reveal/.reveal.in). This page never called it, so the button/content was
-  // permanently invisible (present in the DOM, opacity 0) — reported live as "no button on Finance at all".
-  useReveal([status]);
-
-  const load = () => {
-    void api.plaidStatus().then((s) => {
-      setStatus(s);
-      if (s.connected) {
-        setSnapshotError(false);
-        void api.financeSnapshot().then(setSnapshot).catch(() => setSnapshotError(true));
-      }
-    // A failed status load used to leave `status` at null forever — `!status ? null : ...` below then
-    // rendered NOTHING but the page header, with no button and no error, indistinguishable from "still
-    // loading". Fall back to an honest "not configured" shape instead, so there's always something to act
-    // on (or at least see) instead of a page that looks broken.
-    }).catch(() => setStatus({ connected: false, configured: false }));
-  };
-  useEffect(load, []);
-
-  const connect = async () => {
-    setConnecting(true);
-    try {
-      await loadPlaidScript();
-      const { linkToken } = await api.plaidLinkToken();
-      const handler = (window as any).Plaid.create({
-        token: linkToken,
-        onSuccess: async (publicToken: string) => {
-          try { await api.plaidExchange(publicToken); load(); }
-          catch (e: any) { notify(e?.message || L("Connexion impossible.", "Couldn't connect."), "error"); }
-          finally { setConnecting(false); }
-        },
-        onExit: () => setConnecting(false),
-      });
-      handler.open();
-    } catch (e: any) {
-      notify(e?.message || L("Connexion impossible.", "Couldn't connect."), "error");
-      setConnecting(false);
-    }
-  };
-  const connectMock = async () => {
-    setConnecting(true);
-    try { await api.plaidConnectMock(); load(); }
-    catch (e: any) { notify(e?.message || L("Mode démo indisponible sur ce serveur.", "Demo mode isn't available on this server."), "error"); }
-    finally { setConnecting(false); }
-  };
-  const disconnect = async () => {
-    try { await api.plaidDisconnect(); setSnapshot(null); load(); }
-    catch (e: any) { notify(e?.message || L("Déconnexion impossible.", "Couldn't disconnect."), "error"); }
-  };
-
-  return (
-    <main className="list-wrap">
-      <div className="dash-head">
-        <h2>{L("Finances", "Finance")}</h2>
-        <p className="dash-line">
-          {L(
-            "Connecte un compte bancaire (mode test) pour qu'Otto repère les factures récurrentes et te les rappelle — comme une tâche de plus, pas un chat. Otto n'utilise jamais l'IA sur tes données bancaires.",
-            "Connect a bank account (sandbox/test mode) so Otto can spot recurring bills and remind you — just another task, never a chat topic. Otto never uses AI on your financial data.",
-          )}
-        </p>
-      </div>
-      {!status ? null : (
-        <div className="int-group reveal">
-          <div className="int-grid">
-            <div className={`int-tile ${status.connected ? "on" : ""}`}>
-              <span className="int-logo"><Wallet /></span>
-              <div className="int-info">
-                <div className="int-name">{L("Banque", "Bank")}{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-                <div className="int-blurb">
-                  {status.connected
-                    ? (status.institutionName || L("Compte bancaire", "Bank account"))
-                    : !status.configured
-                    ? L("Plaid n'est pas configuré sur ce serveur.", "Plaid isn't configured on this server.")
-                    : L("Repère les factures récurrentes et les charges inhabituelles.", "Spots recurring bills and unusual charges.")}
-                </div>
-              </div>
-              {status.connected
-                ? <button className="btn xs" onClick={() => void disconnect()}>{L("Déconnecter", "Disconnect")}</button>
-                : <button className="btn xs" disabled={connecting || !status.configured} onClick={() => void connect()}>
-                    {connecting ? "…" : L("Connecter", "Connect")}
-                  </button>}
-            </div>
-          </div>
-          {!status.connected && !status.configured ? (
-            <p className="settings-hint" style={{ marginTop: 8 }}>
-              <button className="btn ghost sm-btn-sm" onClick={() => void connectMock()}>{L("Essayer avec des données de démo", "Try with demo data")}</button>
-            </p>
-          ) : null}
-        </div>
-      )}
-      {status?.connected ? (
-        <div className="settings-sec reveal">
-          {snapshotError ? (
-            <p className="settings-hint">
-              {L("Impossible de charger tes comptes — réessaie.", "Couldn't load your accounts — try again.")}{" "}
-              <button className="btn xs ghost" onClick={load}>{L("Réessayer", "Retry")}</button>
-            </p>
-          ) : null}
-          {snapshot?.accounts.length ? (
-            <div className="modal-row">
-              <span className="lbl">{L("Comptes", "Accounts")}</span>
-              <span className="val settings-hint">
-                {snapshot.accounts.map((a) => `${a.name}${a.balance !== null ? ` — ${a.balance.toFixed(2)}` : ""}`).join(" · ")}
-              </span>
-            </div>
-          ) : null}
-          {snapshot?.transactions.length ? (
-            <div className="modal-row" style={{ alignItems: "flex-start" }}>
-              <span className="lbl">{L("Transactions récentes", "Recent transactions")}</span>
-              <span className="val">
-                <ul className="usage-breakdown-list">
-                  {snapshot.transactions.slice(0, 15).map((t) => (
-                    <li key={t.id}><span className="usage-breakdown-label">{t.name} — {t.date}</span><span className="usage-breakdown-amount">{t.amount.toFixed(2)}</span></li>
-                  ))}
-                </ul>
-              </span>
-            </div>
-          ) : null}
-          <p className="settings-hint" style={{ marginTop: 8 }}>
-            {L("Otto crée un rappel automatiquement quand une charge récurrente approche — regarde tes tâches.", "Otto creates a reminder automatically when a recurring charge is coming up — check your tasks.")}
-          </p>
-        </div>
-      ) : null}
-    </main>
-  );
-}
 
 function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
   tasks: WebTask[]; setTasks: Dispatch<SetStateAction<WebTask[]>>; status: ConnectionStatus; notify: (msg: string, kind?: "error" | "info") => void; navigate: (r: string) => void;
@@ -2790,6 +2619,34 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
         <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
       </section>
 
+      {/* The Otto Tabs extension (extension/) is built and packaged (see scripts/zip-extension.sh, which
+          runs before every dev/build so this download is always current) but had NO discoverable install
+          path anywhere in the app — the zip existed at /otto-tabs-extension.zip with nothing linking to it,
+          so in practice nobody could ever find or install it, making its two real features (grouping tabs
+          Otto opens, and blocking other sites during an active Study Mode session) dead for every user.
+          Not published to the Chrome Web Store (no listing exists) — Chrome still allows a manually
+          unpacked extension via chrome://extensions' developer-mode "Load unpacked", which is what these
+          steps walk through. */}
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.075s" }}>
+        <h3>{L("Extension Chrome Otto Tabs", "Otto Tabs Chrome extension")}</h3>
+        <p className="settings-hint">
+          {L(
+            "Optionnel. Regroupe les onglets qu'Otto ouvre pour toi, et bloque les autres sites pendant une session Study Mode active.",
+            "Optional. Groups the tabs Otto opens for you, and blocks other sites during an active Study Mode session.",
+          )}
+        </p>
+        <div className="modal-row">
+          <span className="lbl">{L("Télécharger", "Download")}</span>
+          <span className="val"><a href="/otto-tabs-extension.zip" download>{L("otto-tabs-extension.zip", "otto-tabs-extension.zip")}</a></span>
+        </div>
+        <p className="settings-hint">
+          {L(
+            "Pas encore sur le Chrome Web Store : dézippe le fichier, ouvre chrome://extensions, active le mode développeur, puis « Charger l'extension non empaquetée » et choisis le dossier dézippé.",
+            "Not on the Chrome Web Store yet: unzip the file, open chrome://extensions, turn on Developer mode, then \"Load unpacked\" and pick the unzipped folder.",
+          )}
+        </p>
+      </section>
+
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
         <h3>{L("Préférences", "Preferences")}</h3>
         <div className="set-list">
@@ -3499,7 +3356,6 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Note ce que tu as appris chaque jour — Otto en fait des fiches et un résumé de semaine.", "Log what you learned each day — Otto turns it into flashcards and a week summary.")}</span></div>
               <div className="ob-tour-row"><b>{L("Étudier", "Study")}</b><span>{L("Un espace de concentration : minuteur, musique, notes, et Otto pour t'aider en direct.", "A focus workspace: timer, music, notes, and Otto to help live.")}</span></div>
               <div className="ob-tour-row"><b>{L("Journal d'erreurs", "Error log")}</b><span>{L("Ce que tu rates le plus souvent en contrôle, pour réviser ce qui compte vraiment.", "What you get wrong most on tests, so you review what actually matters.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Finances", "Finance")}</b><span>{L("Optionnel : relie ta banque pour qu'Otto te rappelle tes factures.", "Optional: link your bank so Otto reminds you about bills.")}</span></div>
               <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Connexions (Pronote, Gmail…), langue, et tout ce qu'Otto sait sur toi.", "Connections (Pronote, Gmail…), language, and everything Otto knows about you.")}</span></div>
             </div>
             <div className="onboard-actions onboard-actions-split">

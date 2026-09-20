@@ -327,6 +327,16 @@ export function mergePronoteHomeworkAndTests(homework: SourceItem[], tests: Sour
   return [...survivingHomework, ...mergedTests];
 }
 
+// Temporary: Finance/Plaid is pulled from the product for now — client/App.tsx's FinancePage (the only
+// place a student could ever connect a bank or manage the connection) has been removed, Plaid is hardcoded
+// to sandbox with no production approval or confirmed EU bank coverage (see server/plaid.ts), and it's a
+// second, unrelated product surface (personal finance) bolted onto a study app. Gating it here (rather than
+// deleting plaidToItems/plaidSuspiciousToItems/plaidBillsToTasks) means a stale already-connected sandbox
+// account from before this flag can't keep generating bill/duplicate-charge tasks with no page left to
+// manage them from, while the whole mechanism stays intact and cheap to re-enable — flip back to true once
+// Finance is ready to ship for real. Nothing finance-related is deleted.
+const FINANCE_ENABLED = false;
+
 /**
  * Pull candidates from the fixed Google sources. Per-source failures are tolerated (one bad call must
  * not kill the sweep); `attempted` reports whether ANY source responded, so the caller can fall back
@@ -343,7 +353,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
     try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
   };
-  const [gmailAccounts, calAccounts, pronoteOn, plaidOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), plaidConnected(userEmail)]);
+  const [gmailAccounts, calAccounts, pronoteOn, plaidOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), FINANCE_ENABLED ? plaidConnected(userEmail) : Promise.resolve({ connected: false })]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
