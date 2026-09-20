@@ -429,24 +429,74 @@ function withInlineLinksAndBold(text: string): ReactNode {
  *  conversation, not a document). User messages are never run through this — a student pasting `**` from
  *  their own notes shouldn't get it silently eaten. */
 export function renderChatText(text: string): ReactNode {
-  const lines = formatMath(text).replace(/\r\n/g, "\n").split("\n");
+  const md = formatMath(text).replace(/\r\n/g, "\n");
+  // Split out triple-backtick code blocks first — these render as <pre> for ASCII diagrams/timelines.
+  // Everything outside a code block goes through the line-by-line pass below (tables, bold, links, lists).
+  const segments: { code: boolean; content: string }[] = [];
+  let pos = 0;
+  const fenceRe = /```[a-zA-Z]*\n([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(md)) !== null) {
+    if (m.index > pos) segments.push({ code: false, content: md.slice(pos, m.index) });
+    segments.push({ code: true, content: m[1].replace(/\n$/, "") });
+    pos = m.index + m[0].length;
+  }
+  if (pos < md.length) segments.push({ code: false, content: md.slice(pos) });
+
   const blocks: ReactNode[] = [];
-  let list: string[] | null = null;
-  const flushList = () => {
-    if (list) { blocks.push(<ul key={blocks.length} className="note-list">{list.map((t, i) => <li key={i}>{withInlineLinksAndBold(t)}</li>)}</ul>); list = null; }
-  };
-  lines.forEach((raw, i) => {
-    const line = raw.trim();
-    if (!line) { flushList(); return; }
-    // A stray "#" heading is rendered as a plain bold line, not promoted to an <h3> — chat stays flat.
-    const h = /^#{1,3}\s+(.*)/.exec(line);
-    if (h) { flushList(); blocks.push(<p key={i}><b>{withInlineLinksAndBold(h[1])}</b></p>); return; }
-    const li = /^[-*]\s+(.*)/.exec(line);
-    if (li) { (list ||= []).push(li[1]); return; }
+  let bk = 0;
+
+  for (const seg of segments) {
+    if (seg.code) {
+      blocks.push(
+        <pre key={bk++} className="chat-code-block" style={{
+          background: "rgba(0,0,0,0.25)", borderRadius: "8px", padding: "10px 12px",
+          overflowX: "auto", fontSize: "13px", lineHeight: "1.5", fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace",
+          margin: "6px 0", whiteSpace: "pre",
+        }}>{seg.content}</pre>
+      );
+      continue;
+    }
+    // Non-code segment — same line-by-line pass as before (tables, bold, links, lists, headings).
+    const lines = seg.content.split("\n");
+    let list: string[] | null = null;
+    const flushList = () => {
+      if (list) { blocks.push(<ul key={bk++} className="note-list">{list.map((t, i) => <li key={i}>{withInlineLinksAndBold(t)}</li>)}</ul>); list = null; }
+    };
+    lines.forEach((raw, i) => {
+      const line = raw.trim();
+      if (!line) { flushList(); return; }
+      // Markdown pipe table in chat (same isTableSep/splitRow as renderNoteBody)
+      if (line.includes("|") && lines[i + 1] && isTableSep(lines[i + 1].trim())) {
+        flushList();
+        const header = splitRow(line);
+        let j = i + 2;
+        const rows: string[][] = [];
+        while (j < lines.length && lines[j].trim().includes("|") && !isTableSep(lines[j].trim())) {
+          rows.push(splitRow(lines[j].trim())); j++;
+        }
+        blocks.push(
+          <div key={bk++} className="note-table-wrap" style={{ margin: "6px 0" }}>
+            <table className="note-table">
+              <thead><tr>{header.map((c, ci) => <th key={ci}>{boldify(c)}</th>)}</tr></thead>
+              <tbody>{rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci}>{boldify(c)}</td>)}</tr>)}</tbody>
+            </table>
+          </div>
+        );
+        // Skip consumed lines — the forEach index can't be modified, so mark them empty.
+        for (let k = i + 1; k < j; k++) lines[k] = "";
+        return;
+      }
+      // A stray "#" heading is rendered as a plain bold line, not promoted to an <h3> — chat stays flat.
+      const h = /^#{1,3}\s+(.*)/.exec(line);
+      if (h) { flushList(); blocks.push(<p key={bk++}><b>{withInlineLinksAndBold(h[1])}</b></p>); return; }
+      const li = /^[-*]\s+(.*)/.exec(line);
+      if (li) { (list ||= []).push(li[1]); return; }
+      flushList();
+      blocks.push(<p key={bk++}>{withInlineLinksAndBold(line)}</p>);
+    });
     flushList();
-    blocks.push(<p key={i}>{withInlineLinksAndBold(line)}</p>);
-  });
-  flushList();
+  }
   return blocks;
 }
 

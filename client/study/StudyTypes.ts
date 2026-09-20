@@ -143,3 +143,14 @@ export interface SessionLog {
 }
 
 export type SessionStatus = "idle" | "active" | "paused" | "break" | "completed" | "ended";
+
+/** Real-time focus metrics captured by the webcam-based FocusTracker during a study session.
+ *  Aggregated at session end and reported via recordMetric for the Settings summary. */
+export interface FocusSessionMetrics {
+  avgFocusScore: number;       // 0-100, session average
+  gazeOnScreenPct: number;     // 0-100, % of samples with face detected and facing screen
+  avgMovementActive: number;   // 0-1, average frame-difference ratio
+  avgBlinksPerMin: number;     // rolling blink rate at session end
+  avgHeadPose: { yaw: number; pitch: number; roll: number };
+  sampleCount: number;
+}
