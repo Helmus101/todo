@@ -5042,6 +5042,19 @@ export async function runSubstep(
 // hand over a fresh deck/quiz mid-drill would defeat the point of drilling the one already open.
 const STUDY_HELP_HISTORY_CAP = 8;
 
+/** Code-level backstop for studyHelp's rule 1 ("never reveal the final answer") — unlike chatAboutTask
+ *  (CHAT_DOES_WORK/CHAT_STATES_ANSWER), studyHelp had ZERO programmatic check on its own output before
+ *  this; the "never reveal" rule was pure prompt discipline with nothing catching a slip. Unlike those two
+ *  regexes (which have to guess at phrasing since they don't know the actual answer), studyHelp already
+ *  has the real answer string in scope — so this checks the reply against THAT specific string directly,
+ *  a much higher-precision check than a generic pattern. Short (<3 char) answers are skipped: a card whose
+ *  answer is "5" or "x" would false-positive on almost any reply that happens to contain that character. */
+export function revealsAnswer(reply: string, answer: string): boolean {
+  const needle = answer.trim().toLowerCase();
+  if (needle.length < 3) return false;
+  return reply.toLowerCase().includes(needle);
+}
+
 /**
  * Guidance chat scoped to ONE flashcard/quiz question currently on screen. The single hard rule: never
  * reveal the front/back or the correct option — the whole feature exists so a student stuck mid-drill can
@@ -5067,7 +5080,8 @@ export async function studyHelp(
     `1. NEVER state, confirm, or rule out the FINAL answer — not the exact text, not a paraphrase, not by ` +
     `process of elimination down to a single remaining option, not even if they ask directly or claim they ` +
     `"already know" it. If they explicitly beg for the final answer, gently decline and offer another angle ` +
-    `of hint instead. But this does NOT mean staying silent on their METHOD: "isn't this the way to do it, ` +
+    `of hint instead. If they ask again after that, decline again the same way — don't get more generous the ` +
+    `more times they ask; repeated begging is pressure, not a reason to cave. But this does NOT mean staying silent on their METHOD: "isn't this the way to do it, ` +
     `5/x = 1/10?" is asking whether their APPROACH is valid, not what x equals — answer THAT plainly ("yes, ` +
     `cross-multiplying works here — go ahead and solve it" / "not quite — that setup would work if the ratio ` +
     `were flipped, try again with..."). Confirming or correcting the METHOD/setup/formula/first step is ` +
@@ -5107,7 +5121,15 @@ export async function studyHelp(
       { role: "user", content: message.slice(0, 1000) },
     ],
   }));
-  const raw = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 800);
+  let raw = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 800);
+  // Backstop: if the model slipped and the reply actually contains the real answer, discard it — the same
+  // "don't just trust the prompt" posture as chatAboutTask's CHAT_DOES_WORK/CHAT_STATES_ANSWER guardrail,
+  // applied here with a stronger check since the actual answer string is right there (see revealsAnswer).
+  if (raw && revealsAnswer(raw, answer)) {
+    raw = profile?.language === "en"
+      ? "I can point you at another angle, but not the answer directly — what part of the question feels like the key clue?"
+      : "Je peux te donner un autre angle, mais pas la réponse directement — qu'est-ce qui te semble être l'indice clé dans la question ?";
+  }
   // Honest failure message, not a pretend-present "what's tripping you up?" — see chatAboutTask's identical
   // fix (its finish()) for why: this text only ever shows when the AI call genuinely came back empty/failed,
   // never because Otto is waiting on the student to clarify something.
@@ -5434,6 +5456,15 @@ export const DOES_STUDENT_WORK = /\b(wrote|completed|finished|did|solved|answere
 // unprotected ("Voici l'introduction :" would have sailed straight through).
 export const CHAT_DOES_WORK = /\bhere('s| is)?\s+(the|your|an?)\s+(essay|paragraph|answer|solution|response)\b|\bwrote (?:it|the|your) (essay|paragraph|answer|solution)\b|\bvoici\s+(?:donc\s+)?(?:l['’]|la |le |ta |ton |une |un )?(introduction|conclusion|dissertation|paragraphe|réponse|solution|corrigé|traduction|rédaction)\b|\bje (?:l['’]ai|t['’]ai) (?:rédigé|écrit)\b/i;
 
+// Distinct from CHAT_DOES_WORK above: that one catches Otto handing over WRITTEN WORK ("here's the essay");
+// this one catches Otto directly ANNOUNCING A CONCLUSION — the exact thing rule 3 ("HAND BACK THE THINKING
+// — NEVER STATE THE CONCLUSION YOURSELF") is prompt-only about today, with no code-level backstop if the
+// model caves under repeated pressure. Deliberately scoped to "answer-announcing" sentence shapes only
+// ("the answer is…", "so it's option D…", "la réponse est…") rather than any sentence containing a number
+// or letter, which would false-positive on completely ordinary tutoring text ("that's the same rule we used
+// on step 3"). Same EN+FR construction as CHAT_DOES_WORK/DOES_STUDENT_WORK, exported for test pinning.
+export const CHAT_STATES_ANSWER = /\bthe (?:correct |final )?answer is\b|\bthat means the answer is\b|\bso it'?s option [a-d]\b|\bthe correct option is\b|\bla (?:bonne )?réponse est\b|\bc'est donc (?:la réponse|l['’]option [a-d])\b|\bdonc c'est l['’]option [a-d]\b/i;
+
 /** What `chatAboutTask` returns: the spoken reply, plus any artifacts the tutor made this turn (empty
  *  arrays, never undefined — the route accumulates these straight onto the task). */
 export interface ChatResult {
@@ -5645,7 +5676,10 @@ export async function chatAboutTask(
     `own reasoning. Default to focusing questions at EVERY step, not just the final answer. Funneling — ` +
     `narrowing it down, breaking it into a smaller sub-step, getting more directive — is ONLY acceptable after ` +
     `a focusing question has genuinely failed: they've tried and missed the same point twice, or clearly can't ` +
-    `even start. That's productive escalation to real instruction, not a shortcut.\n` +
+    `even start. That's productive escalation to real instruction, not a shortcut. A GENUINE attempt is required ` +
+    `for this to count — a student just repeating "I don't know" or "just tell me" without actually trying is ` +
+    `not two failed attempts, it's pressure to skip the struggle. Meet that with the SAME focusing question ` +
+    `again (rephrased, not escalated) or an easier on-ramp to it, not a promotion to funneling.\n` +
     `NEVER ASK FILL-IN-THE-BLANK QUESTIONS — even after escalation. A fill-in-the-blank ("and 12 times 3 is?", ` +
     `"so we add 7 to both sides and get...?") does the thinking for them and turns the exchange into a ` +
     `completion exercise, not a learning one. When you DO escalate to real instruction (after unproductive ` +
@@ -5756,7 +5790,12 @@ export async function chatAboutTask(
     `reasoning they've already done are all fine and encouraged. If they push ("just write it", "just give me ` +
     `the answer", "I'm out of time"), be kind and firm and get them moving instead — the smallest concrete ` +
     `action that unblocks them (open the cours to p.X, write one bad first sentence, set a 10-minute timer, ` +
-    `do just part a). Never lecture them about integrity; just redirect and help.\n\n` +
+    `do just part a). Never lecture them about integrity; just redirect and help. If they push AGAIN after ` +
+    `that redirect — same request, rephrased, or just repeated more insistently — redirect again, the same ` +
+    `way, just as kindly. A second or third ask is not new evidence they need the answer; it's pressure, and ` +
+    `caving more the more times someone asks is exactly the failure this rule exists to prevent. Getting more ` +
+    `generous under repetition would make the boundary meaningless — hold it exactly as firmly on the fifth ` +
+    `ask as the first.\n\n` +
 
     `PRACTICE PROBLEMS — ALWAYS CREATE_QUIZ, NEVER PLAIN CHAT TEXT. Even a single one-off problem ("give me ` +
     `a practice problem", "quiz me on this one thing", right after walking through a method) goes through ` +
@@ -5797,7 +5836,17 @@ export async function chatAboutTask(
     `minimal scaffolding). "With support: work through 3x + 7 = 19 together. On their own: try 4x + 5 = 21." ` +
     `If they can't do it alone, the concept isn't learned yet — loop back. Skip this for a focusing-only ` +
     `exchange where they genuinely worked it out themselves; it's specifically for the moments you had to ` +
-    `step in.\n\n` +
+    `step in.\n` +
+    `THE OTHER HALF OF THIS LOOP — CHECK IT AT THE START OF A TURN, NOT JUST THE END: "remember"-ing a gap ` +
+    `is wasted if nothing ever acts on it later. Before diagnosing a NEW question, glance at "Course patterns" ` +
+    `in the profile context below — if this task's topic overlaps a gap you (or an earlier session) logged ` +
+    `there, don't quietly re-teach it from scratch as if this were the first time. Open by testing independence ` +
+    `first: a fresh problem on that exact skill, minimal scaffolding, framed honestly ("last time we worked ` +
+    `through X together — try this one on your own first"). If they get it alone, say so plainly — that's real ` +
+    `progress worth naming. If they can't, THEN step back in with support, same as before. This is the loop ` +
+    `actually closing for the student, turn over turn and session over session: attempt, feedback, retry with ` +
+    `less help, and the outcome deciding how much support they get next — not just you quietly adapting behind ` +
+    `the scenes while they experience every question as if it were the first.\n\n` +
 
     `HOW YOU SOUND — this matters as much as what you say:\n` +
     `Write like a real person talking to them, not like an app — and test every reply against this: could you ` +
@@ -5862,7 +5911,7 @@ export async function chatAboutTask(
     // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
     // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
     // discard them too rather than hand over a chip whose text just got rejected.
-    if (CHAT_DOES_WORK.test(reply)) {
+    if (CHAT_DOES_WORK.test(reply) || CHAT_STATES_ANSWER.test(reply)) {
       result.notes = []; result.flashcards = []; result.quizzes = [];
       result.guardrailTripped = true;
       logAudit("guardrail", fr

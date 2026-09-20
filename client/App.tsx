@@ -2477,11 +2477,11 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   useEffect(() => { void api.recordMetric("settings_opened", 1); }, []);
   const [themeBusy, setThemeBusy] = useState(false);
   const [patterns, setPatterns] = useState<{
-    predictedEngagement: { weekday: number; hour: number } | null; weakSubjects: string[];
+    predictedEngagement: { weekday: number; hour: number; confidence: number } | null; weakSubjects: string[];
     subjectMastery: { subject: string; correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }[];
     subjectFocus: { subject: string; peak: { hour: number; confidence: number } }[];
     bandits: Record<string, { armId: string; confidence: number } | null>;
-    studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number } | null;
+    studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number; avgFocusScore: number | null; avgGazeOnScreenPct: number | null; focusSessionCount: number } | null;
   } | null>(null);
   useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
   const [errorLog, setErrorLog] = useState(() => getErrors());

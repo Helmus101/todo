@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1140,6 +1140,22 @@ check("DOES_STUDENT_WORK catches a FR claim of having written the dissertation",
 check("DOES_STUDENT_WORK catches a FR claim of having finished the homework", DOES_STUDENT_WORK.test("J'ai terminé le devoir de maths"));
 check("DOES_STUDENT_WORK does NOT flag preparing a fiche FOR a contrôle", !DOES_STUDENT_WORK.test("Fiche de révision préparée pour le contrôle"));
 check("DOES_STUDENT_WORK does NOT flag a plan to help them write", !DOES_STUDENT_WORK.test("Plan pour rédiger ta dissertation"));
+
+section("CHAT_STATES_ANSWER — catches Otto announcing a conclusion, not just handing over prose");
+check("catches a direct EN answer announcement", CHAT_STATES_ANSWER.test("The answer is 42."));
+check("catches an EN MCQ conclusion", CHAT_STATES_ANSWER.test("So it's option D."));
+check("catches a FR answer announcement", CHAT_STATES_ANSWER.test("La réponse est 42."));
+check("catches a FR MCQ conclusion", CHAT_STATES_ANSWER.test("C'est donc l'option B."));
+check("does NOT flag ordinary tutoring text with a number in it", !CHAT_STATES_ANSWER.test("That's the same rule we used on step 3 — try applying it here."));
+check("does NOT flag a focusing question", !CHAT_STATES_ANSWER.test("What do you think happens if you substitute that back in?"));
+
+section("revealsAnswer — studyHelp's code-level backstop against leaking the real answer");
+{
+  check("flags a reply containing the flashcard's actual back text", revealsAnswer("I think it's photosynthesis, right?", "Photosynthesis"));
+  check("flags a reply containing the quiz's correct option text, case-insensitive", revealsAnswer("Yeah it's definitely MITOCHONDRIA", "Mitochondria"));
+  check("does NOT flag a reply discussing method without stating the answer", !revealsAnswer("Look at what part of the cell makes energy — what's that structure called?", "Mitochondria"));
+  check("skips very short answers to avoid trivial false positives (e.g. answer is 'x' or a single digit)", !revealsAnswer("x is what we're solving for here", "x"));
+}
 
 section("forceWeekCoverage — everything due this week gets a task, no matter what the classifier decided");
 {
