@@ -3052,6 +3052,16 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 @media (max-width: 640px) {
   .research-row { grid-template-columns: 1fr; gap: 4px; }
 }
+.research-more {
+  display: block;
+  margin: var(--space-5) auto 0;
+  max-width: 720px;
+  text-align: right;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--accent);
+}
+.research-more:hover { text-decoration: underline; }
 
 /* ─── Comparison Table ─────────────────────────────────────────────────────── */
 .compare-wrap {

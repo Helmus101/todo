@@ -711,6 +711,7 @@ export function App() {
   // browser), which is exactly how these ended up 100% English-hardcoded with no L() calls at all.
   if (route === "privacy") return <LegalPage kind="privacy" lang={status?.loggedIn ? status.language : preLoginLang} />;
   if (route === "terms") return <LegalPage kind="terms" lang={status?.loggedIn ? status.language : preLoginLang} />;
+  if (route === "research") return <ResearchPage lang={status?.loggedIn ? status.language : preLoginLang} />;
 
   if (!status) {
     if (loadError) {
@@ -3866,6 +3867,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
             <dd>{L("Tes tâches sont classées par urgent/important réel, pas par ordre d'arrivée.", "Your tasks are ranked by real urgency/importance, not by whatever arrived last.")}</dd>
           </div>
         </dl>
+        <a className="research-more" href="/research">{L("Lire l'article complet →", "Read the full article →")}</a>
       </section>
 
       {/* Comparison Matrix */}
@@ -4155,6 +4157,101 @@ function TermsBody() {
   );
 }
 
+/** /research — the long-form version of the landing page's compact "Research" list (see the `landing-sec`
+ *  with `sec-kicker`="Recherche"/"Research" in Landing()). That section stays a 4-line citation on purpose
+ *  (a methodology reference, not a pitch); this page is where someone who actually wants the detail can
+ *  read it. Grounded in the REAL implementation, not generic claims — cites actual function/file names
+ *  the same way DOES_STUDENT_WORK is cited elsewhere in this app's own public-facing copy, so every claim
+ *  here is checkable against the code, not marketing. Same LegalPage wrapper pattern (own LangContext,
+ *  reachable logged-out) since it's public and has nothing to do with an authenticated session. */
+function ResearchPage({ lang }: { lang?: string }) {
+  return (
+    <LangContext.Provider value={lang === "en" ? "en" : "fr"}>
+      <ResearchPageBody />
+    </LangContext.Provider>
+  );
+}
+function ResearchPageBody() {
+  const L = useLang();
+  return (
+    <div className="landing legal-page">
+      <header className="landing-nav glass-nav">
+        <a className="brand" href="/"><Logo size={22} /> Otto</a>
+        <nav className="landing-navlinks">
+          <a className="btn ghost" href="/">{L("Accueil", "Home")}</a>
+        </nav>
+      </header>
+      <main className="legal">
+        <h1>{L("Ce sur quoi Otto est construit", "What Otto is actually built on")}</h1>
+        <p>
+          {L(
+            "La plupart des « tuteurs IA » sont un chatbot générique avec un prompt système qui dit « sois pédagogique ». Ça tient rarement : sous la pression (« allez, donne-moi juste la réponse »), le modèle finit par céder. Otto est construit différemment — sur quatre méthodes pédagogiques précises, chacune avec un mécanisme concret dans le code, pas juste une instruction qu'on espère suivie.",
+            "Most \"AI tutors\" are a generic chatbot with a system prompt that says \"be pedagogical.\" That rarely holds up — under real pressure (\"come on, just give me the answer\"), the model eventually caves. Otto is built differently: on four specific pedagogical methods, each backed by an actual mechanism in the code, not just an instruction it's hoped will be followed.",
+          )}
+        </p>
+
+        <h2>{L("1. Questionnement socratique", "1. Socratic questioning")}</h2>
+        <p>
+          {L(
+            "La règle centrale du tuteur d'Otto s'appelle en interne « HAND BACK THE THINKING » : une fois le raisonnement construit avec l'élève, c'est TOUJOURS à lui de prononcer la conclusion — jamais à Otto. Concrètement, le prompt du tuteur (`chatAboutTask` dans `server/claude.ts`) impose un cycle en 6 étapes à chaque échange : fixer l'objectif, obtenir une tentative de l'élève, diagnostiquer où ça coince (pas juste QUE ça coince — identifier l'erreur précise et le raisonnement erroné derrière), donner UN seul indice à la fois, exiger que l'élève reformule avec ses propres mots, puis ajuster l'échange suivant. Un « focalisateur » (une question qui pousse l'élève à choisir lui-même la piste) est toujours préféré à un « entonnoir » (une question qui ne laisse qu'un seul mot à compléter) — la nuance est appliquée dans le prompt avec des exemples concrets des deux, précisément parce qu'un modèle de langage a naturellement tendance à entonner : ça paraît utile, mais ça empêche l'élève de vraiment réfléchir.",
+            "The core rule of Otto's tutor is internally called \"HAND BACK THE THINKING\": once the reasoning has been built together with the student, it's ALWAYS the student who states the conclusion — never Otto. Concretely, the tutor prompt (`chatAboutTask` in `server/claude.ts`) enforces a 6-step loop on every exchange: set the goal, elicit an attempt, diagnose where it's actually breaking down (not just THAT it's wrong — the specific error and the flawed reasoning underneath it), give exactly one hint at a time, require the student to explain it back in their own words, then adjust the next exchange. A \"focusing\" question (one that makes the student choose their own next move) is always preferred over a \"funneling\" one (one that leaves only a single word to fill in) — the distinction is spelled out in the prompt with concrete examples of both, precisely because a language model naturally drifts toward funneling: it feels helpful, but it does the thinking for the student instead of letting them do it.",
+          )}
+        </p>
+        <p>
+          {L(
+            "Ce n'est pas qu'une instruction dans un prompt : c'est aussi vérifié après coup. Si Otto écrit malgré tout une conclusion à la place de l'élève (« la réponse est D », « c'est donc Paris »), un filtre programmatique (`CHAT_STATES_ANSWER`) détecte la phrase, jette la réponse, et la remplace par une redirection. Et si l'élève insiste après un refus (« allez, donne-moi juste la réponse »), le prompt interdit explicitement de céder davantage à la répétition qu'à la première demande — la pression n'est jamais traitée comme une nouvelle preuve qu'il faut craquer.",
+            "This isn't just a prompt instruction — it's also checked after the fact. If Otto still writes a conclusion for the student (\"the answer is D,\" \"so it's Paris\"), a programmatic filter (`CHAT_STATES_ANSWER`) catches the phrasing, discards the reply, and substitutes a redirect. And if the student pushes again after being turned down (\"come on, just tell me\"), the prompt explicitly forbids getting any more lenient with repetition than on the first ask — pressure is never treated as new evidence that it's time to give in.",
+          )}
+        </p>
+
+        <h2>{L("2. Répétition espacée (système Leitner)", "2. Spaced repetition (the Leitner system)")}</h2>
+        <p>
+          {L(
+            "Chaque carte de révision qu'Otto crée vit dans une des cases d'un système Leitner : une carte que tu rates reste en case 1 et revient vite ; une carte que tu réussis avance d'une case et revient plus tard. Le but n'est pas de te faire revoir tout, tout le temps — c'est de faire réapparaître chaque carte juste avant le moment où tu l'aurais oubliée, ni trop tôt (perte de temps sur ce que tu sais déjà) ni trop tard (la carte a eu le temps de s'effacer). Le résumé hebdomadaire du Journal d'apprentissage utilise le même mécanisme : il pondère automatiquement vers ce que tu as le plus raté cette semaine, pas vers un mélange aléatoire.",
+            "Every flashcard Otto creates lives in one of several Leitner boxes: a card you get wrong stays in box 1 and comes back soon; a card you get right moves up a box and comes back later. The point isn't to make you review everything constantly — it's to resurface each card right before you would have forgotten it: not so early it wastes time on something you already know, not so late the card has already faded. The weekly Study Journal summary uses the exact same mechanism: it automatically weights toward whatever you got wrong most that week, not a random mix.",
+          )}
+        </p>
+
+        <h2>{L("3. Hiérarchie d'engagement (ICAP)", "3. The engagement hierarchy (ICAP)")}</h2>
+        <p>
+          {L(
+            "Le modèle ICAP (Chi & Wylie) classe l'apprentissage en quatre niveaux d'engagement croissants — Passif, Actif, Constructif, Interactif — et montre que plus l'élève est engagé activement, plus l'apprentissage est profond. Taper une question et lire la réponse est passif : c'est le niveau le plus superficiel, même si la réponse est juste. Expliquer son raisonnement à voix haute à un tuteur qui réagit vraiment est interactif — le niveau le plus profond. Le prompt du tuteur d'Otto applique cette hiérarchie explicitement : chaque réponse doit pousser l'élève UN cran plus haut sur cette échelle, jamais plus bas. Une réponse qui donne la solution et s'arrête là est classée « passive » dans le prompt — même si la solution est correcte — précisément parce que ICAP prédit qu'elle n'apprend presque rien.",
+            "The ICAP framework (Chi & Wylie) ranks learning across four increasing levels of engagement — Passive, Active, Constructive, Interactive — and shows that deeper engagement produces deeper learning. Typing a question and reading the answer is passive: the shallowest level, even when the answer is correct. Explaining your reasoning out loud to a tutor that actually responds to it is interactive — the deepest level. Otto's tutor prompt applies this hierarchy explicitly: every reply must push the student ONE rung up that ladder, never down. A reply that just hands over the answer and stops is explicitly classified as \"passive\" in the prompt — even when the answer is right — precisely because ICAP predicts it teaches almost nothing.",
+          )}
+        </p>
+
+        <h2>{L("4. Matrice d'Eisenhower", "4. The Eisenhower matrix")}</h2>
+        <p>
+          {L(
+            "Ta liste « Aujourd'hui » n'est pas triée par date d'arrivée ni par date limite brute — chaque tâche reçoit un score d'urgence et un score d'importance, et la matrice d'Eisenhower (urgent/important) détermine dans quel quadrant elle tombe : Faire maintenant, Planifier, Déléguer, ou Peut attendre. Un devoir dû demain mais mineur ne prend pas le pas sur une révision de contrôle majeur dû dans 3 jours si ce contrôle compte plus — le score combine les deux axes, pas juste l'échéance. Et l'urgence n'est pas figée au moment où la tâche apparaît : elle grimpe mécaniquement à mesure que l'échéance approche (`applyDeadlineUrgency`), pour que rien ne s'endorme tranquillement en bas de la liste jusqu'à la veille.",
+            "Your \"Today\" list isn't sorted by arrival order or by raw deadline — every task gets an urgency score and an importance score, and the Eisenhower matrix (urgent/important) determines which quadrant it lands in: Do now, Schedule, Delegate, or Can wait. A minor assignment due tomorrow doesn't automatically outrank a major test review due in 3 days if that test actually matters more — the score combines both axes, not just the deadline. And urgency isn't frozen at the moment a task first appears: it climbs mechanically as the deadline nears (`applyDeadlineUrgency`), so nothing quietly sits at the bottom of the list until the night before.",
+          )}
+        </p>
+
+        <h2>{L("En plus : la personnalisation apprend, elle ne devine pas", "On top of that: personalization that learns, not guesses")}</h2>
+        <p>
+          {L(
+            "Otto fait tourner sept petits systèmes d'apprentissage par renforcement (bandits contextuels, échantillonnage de Thompson) qui ajustent en continu des détails concrets pour CHAQUE élève : la longueur de session Pomodoro qui lui convient, le niveau de détail de ses fiches, le découpage plus ou moins fin de ses étapes, jusqu'au style de réponse du tuteur (plus de questions vs. plus d'exemples travaillés). Chaque système apprend d'un signal réel — a-t-il fini sa session, est-il resté engagé, ses cartes ont-elles progressé — et, quand la caméra de concentration (optionnelle, traitement 100% local) est activée, du niveau de concentration réel mesuré pendant la session. Rien n'est deviné une fois pour toutes : ça s'ajuste au fil des sessions, pour cet élève précis.",
+            "Otto runs seven small reinforcement-learning systems (contextual bandits, Thompson sampling) that continuously tune concrete details for EACH student: the Pomodoro length that actually works for them, how detailed their flashcards should be, how finely their steps get broken down, even the tutor's reply style (more questions vs. more worked examples). Each one learns from a real signal — did they finish the session, did they stay engaged, did their cards actually improve — and, when the optional focus camera (100% local processing) is on, from the actual measured concentration during that session. Nothing is guessed once and left alone — it adjusts session over session, for that specific student.",
+          )}
+        </p>
+
+        <h2>{L("Ce que ça ne veut pas dire", "What this doesn't mean")}</h2>
+        <p>
+          {L(
+            "Ces méthodes réduisent le risque qu'Otto fasse le travail à ta place ou explique mal — elles ne l'éliminent pas. Un modèle de langage reste un modèle de langage : il peut se tromper, mal diagnostiquer, ou (rarement) laisser passer une réponse qu'il n'aurait pas dû donner malgré les filtres. C'est pour ça qu'Otto affiche un badge visible sur chaque échange où un garde-fou s'est déclenché, plutôt que de prétendre que le système est infaillible.",
+            "These methods reduce the risk of Otto doing the work for you or explaining something badly — they don't eliminate it. A language model is still a language model: it can be wrong, misdiagnose something, or (rarely) let through a reply it shouldn't have despite the filters. That's why Otto shows a visible badge on any exchange where a guardrail actually tripped, rather than claiming the system is infallible.",
+          )}
+        </p>
+
+        <a className="legal-back" href="/">{L("← Retour à Otto", "← Back to Otto")}</a>
+      </main>
+      <footer className="legal-foot">
+        <span className="foot-mit">© 2026 Otto · {L("Conçu avec les principes Apple Design", "Crafted with Apple Design Principles")}</span>
+      </footer>
+    </div>
+  );
+}
 
 /** The person-profile editor (lives in the Settings page): about + preferences + people + projects.
  *  Otto fills it in as it works; it's injected into how tasks are chosen + done. Always expanded here. */
