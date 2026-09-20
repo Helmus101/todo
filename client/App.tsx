@@ -2645,6 +2645,18 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             "Not on the Chrome Web Store yet: unzip the file, open chrome://extensions, turn on Developer mode, then \"Load unpacked\" and pick the unzipped folder.",
           )}
         </p>
+        {/* The single most common "I installed it but it still doesn't work" cause: Chrome's own "Reload"
+            button on an already-loaded unpacked extension reloads from the SAME folder path it was
+            originally pointed at — re-downloading a newer zip to a different location (or even the same
+            Downloads folder with " (1)" appended) silently leaves the OLD files running. Called out
+            explicitly rather than assumed obvious, since it's invisible from the chrome://extensions list
+            (it just shows "Otto Tabs, enabled" either way). */}
+        <p className="settings-hint">
+          {L(
+            "Déjà installée et ça ne bloque toujours rien ? Retire-la complètement dans chrome://extensions puis recharge-la depuis le dossier fraîchement dézippé — cliquer sur « Actualiser » seule recharge parfois encore les anciens fichiers si le dossier a changé. Le popup de l'extension (clique sur son icône) affiche l'état réel du blocage.",
+            "Already installed and still not blocking anything? Remove it completely in chrome://extensions, then load it again from the freshly-unzipped folder — clicking \"Reload\" alone can still reuse the old files if the folder location changed. The extension's popup (click its icon) shows the real blocking status.",
+          )}
+        </p>
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>

@@ -6,12 +6,13 @@
       :root {
         --ink: #1d1d1f; --ink-2: #6e6e73; --ink-3: #aeaeb2;
         --accent: #2563eb; --accent-soft: rgba(37, 99, 235, 0.10);
+        --ok: #16a34a; --ok-soft: rgba(22, 163, 74, 0.10);
         --line: rgba(0, 0, 0, 0.08);
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
         font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-        width: 260px; padding: 18px; color: var(--ink); background: #fff;
+        width: 280px; padding: 18px; color: var(--ink); background: #fff;
         -webkit-font-smoothing: antialiased;
       }
       .head { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; }
@@ -22,9 +23,37 @@
         display: flex; align-items: center; gap: 9px; padding: 11px 12px;
         background: var(--accent-soft); border-radius: 10px;
       }
+      .status.blocking { background: var(--ok-soft); }
       .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
-      .status span { font-size: 13px; font-weight: 600; color: var(--accent); }
+      .status.blocking .dot { background: var(--ok); }
+      .status span.label { font-size: 13px; font-weight: 600; color: var(--accent); }
+      .status.blocking span.label { color: var(--ok); }
       .hint { font-size: 11.5px; color: var(--ink-3); margin-top: 12px; line-height: 1.5; }
+      .allowlist { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+      .allowlist h2 { font-size: 12px; font-weight: 650; margin-bottom: 4px; }
+      .allowlist p { font-size: 11.5px; color: var(--ink-3); margin-bottom: 10px; line-height: 1.4; }
+      .allow-row { display: flex; gap: 6px; margin-bottom: 8px; }
+      .allow-row input {
+        flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+        font-size: 12px; color: var(--ink);
+      }
+      .allow-row input:focus { outline: none; border-color: var(--accent); }
+      .allow-row button {
+        flex: none; padding: 7px 11px; border: none; border-radius: 7px; background: var(--accent);
+        color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+      }
+      .allow-row button:disabled { opacity: 0.5; cursor: default; }
+      .allow-list { display: flex; flex-direction: column; gap: 5px; max-height: 120px; overflow-y: auto; }
+      .allow-item {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 6px 9px; background: #f5f5f7; border-radius: 6px; font-size: 12px;
+      }
+      .allow-item button {
+        flex: none; border: none; background: none; color: var(--ink-3); font-size: 15px; line-height: 1;
+        cursor: pointer; padding: 0 2px;
+      }
+      .allow-item button:hover { color: var(--ink); }
+      .allow-empty { font-size: 11.5px; color: var(--ink-3); padding: 4px 2px; }
     </style>
   </head>
   <body>
@@ -42,8 +71,19 @@
       </span>
       <h1>Otto Tabs</h1>
     </div>
-    <div class="status"><span class="dot"></span><span id="status">Active</span></div>
-    <div class="hint">Otto opens drafts, docs and pages for you — grouped into one “Otto” tab group, so it can work while you're away.</div>
+    <div class="status" id="statusBox"><span class="dot"></span><span class="label" id="status">Active</span></div>
+    <p class="hint" id="hint">Otto opens drafts, docs and pages for you — grouped into one "Otto" tab group, so it can work while you're away.</p>
+
+    <div class="allowlist">
+      <h2>Always-allowed sites</h2>
+      <p>These stay reachable even while Study Mode is blocking other sites — on top of the app itself.</p>
+      <div class="allow-row">
+        <input type="text" id="allowInput" placeholder="e.g. quizlet.com" />
+        <button type="button" id="allowAdd">Add</button>
+      </div>
+      <div class="allow-list" id="allowList"></div>
+    </div>
+
     <script src="popup.js"></script>
   </body>
 </html>

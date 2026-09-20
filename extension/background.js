@@ -58,10 +58,20 @@ const ALWAYS_ALLOWED_HOSTS = [
   "chrome.google.com",   // the extension's own store page / chrome:// surfaces some flows touch
 ];
 
+// Student-managed additions to the allowlist (e.g. "quizlet.com", "desmos.com") — set from the extension
+// popup (popup.js), persisted here so it survives a service-worker restart same as studyModeOrigin. Kept
+// as plain hostnames (no scheme/path), same shape as ALWAYS_ALLOWED_HOSTS, so both merge into
+// excludedRequestDomains identically.
+async function getCustomAllowlist() {
+  const { customAllowlist } = await chrome.storage.local.get(["customAllowlist"]);
+  return Array.isArray(customAllowlist) ? customAllowlist : [];
+}
+
 async function applyBlockRule(allowedOrigin) {
   let allowedHost;
   try { allowedHost = new URL(allowedOrigin).hostname; } catch { return; }
-  const allowedHosts = [allowedHost, ...ALWAYS_ALLOWED_HOSTS];
+  const customAllowlist = await getCustomAllowlist();
+  const allowedHosts = [allowedHost, ...ALWAYS_ALLOWED_HOSTS, ...customAllowlist];
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: [RULE_ID],
@@ -87,6 +97,14 @@ async function applyBlockRule(allowedOrigin) {
         },
       }],
     });
+    // Read the rule back rather than trusting the call didn't throw — updateDynamicRules can resolve
+    // successfully while still not installing what was asked (a malformed condition Chrome silently drops,
+    // for instance). This is the actual ground truth for "is blocking really active right now," logged so
+    // chrome://extensions → Otto Tabs → "service worker" shows it directly instead of the student having to
+    // guess whether the earlier call even ran.
+    const installed = await chrome.declarativeNetRequest.getDynamicRules();
+    const live = installed.find((r) => r.id === RULE_ID);
+    console.log("[otto-tabs] block rule applied — allowed hosts:", allowedHosts, "rule installed:", !!live);
   } catch (e) {
     // Was previously a silently-rejected promise with NO catch anywhere — the exact "blocking doesn't
     // work, no error, no clue why" symptom. Logged so the service worker's own console (chrome://extensions
@@ -113,6 +131,17 @@ async function stopStudyBlocking() {
   await clearBlockRule();
 }
 
+// Called from the popup (popup.js) whenever the student edits their custom allowlist. If a block is
+// currently active, re-applies it IMMEDIATELY with the new list — a student adding "quizlet.com" mid-
+// session shouldn't have to end and restart the session for it to take effect.
+async function updateAllowlist(hosts) {
+  const cleaned = Array.from(new Set(hosts.map((h) => String(h).trim().toLowerCase()).filter(Boolean)));
+  await chrome.storage.local.set({ customAllowlist: cleaned });
+  const { studyModeActive, studyModeOrigin } = await chrome.storage.local.get(["studyModeActive", "studyModeOrigin"]);
+  if (studyModeActive && studyModeOrigin) await applyBlockRule(studyModeOrigin);
+  return cleaned;
+}
+
 // Re-apply blocking on every service-worker wake if a session was left active — covers the worker-restart
 // case described above (Chrome can respawn this file at any time; the dynamic rule does NOT survive that on
 // its own, only what's re-applied here from persisted storage does).
@@ -125,10 +154,29 @@ chrome.runtime.onStartup?.addListener(async () => {
   if (studyModeActive && studyModeOrigin) await applyBlockRule(studyModeOrigin);
 })();
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (!msg) return;
   if (msg.type === "open-tab" && typeof msg.url === "string") openInGroup([msg.url], msg.group);
   else if (msg.type === "open-tabs" && Array.isArray(msg.urls)) openInGroup(msg.urls, msg.group);
   else if (msg.type === "study-mode-start" && typeof msg.origin === "string") void startStudyBlocking(msg.origin);
   else if (msg.type === "study-mode-end") void stopStudyBlocking();
+  // The two below are the popup's own messages — they need a reply (sendResponse), so they return `true`
+  // to keep the message channel open for the async work, per Chrome's own messaging API contract (returning
+  // nothing/false closes the channel before the promise below resolves, and the popup's await hangs forever).
+  else if (msg.type === "get-status") {
+    void (async () => {
+      const { studyModeActive, studyModeOrigin, customAllowlist } = await chrome.storage.local.get(["studyModeActive", "studyModeOrigin", "customAllowlist"]);
+      const rules = await chrome.declarativeNetRequest.getDynamicRules().catch(() => []);
+      sendResponse({
+        studyModeActive: !!studyModeActive,
+        studyModeOrigin: studyModeOrigin || null,
+        ruleActuallyInstalled: rules.some((r) => r.id === RULE_ID),
+        customAllowlist: Array.isArray(customAllowlist) ? customAllowlist : [],
+      });
+    })();
+    return true;
+  } else if (msg.type === "update-allowlist" && Array.isArray(msg.hosts)) {
+    void updateAllowlist(msg.hosts).then((cleaned) => sendResponse({ customAllowlist: cleaned }));
+    return true;
+  }
 });
