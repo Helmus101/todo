@@ -8,7 +8,9 @@ import type {
   ArtifactState,
   ArtifactType,
   SessionStatus,
+  FocusSessionMetrics,
 } from "./StudyTypes.ts";
+import { FocusTracker, type FocusMetrics } from "./FocusTracker.tsx";
 import { getEnvironmentByTask, saveEnvironment, saveSession, saveFile, getFile, deleteFile } from "./StudyDB.ts";
 import { StudySetup, type PomodoroChoice, type AudioChoice } from "./StudySetup.tsx";
 import { SessionHeader } from "./SessionHeader.tsx";
@@ -227,6 +229,13 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   // on any movement/keypress. Never fades while a panel is open (nothing to hide behind, and it'd be
   // jarring for the toolbar to dim right under an open drawer) or during a break/setup screen.
   const [chromeIdle, setChromeIdle] = useState(false);
+  // Webcam-based focus tracking — optional, student grants camera permission. Metrics are accumulated
+  // during the session and reported via recordMetric at session end (same channel as idleRatio/etc.).
+  const [focusTrackingEnabled, setFocusTrackingEnabled] = useState(false);
+  const focusMetricsRef = useRef<FocusMetrics | null>(null);
+  const focusAvgRef = useRef<number>(0);
+  const focusGazeSamplesRef = useRef<number[]>([]);
+  const focusSampleCountRef = useRef<number>(0);
   // Desk background image — resolved from IndexedDB into a fresh object URL each load (see the effect
   // below); revoked on replace/unmount same as the custom-audio object URL.
   const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
@@ -679,10 +688,16 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
       // optional subject filter (server/store.ts).
       const subjectCtx = task.sourceSubject || "";
       void api.recordMetric("study_idle_ratio", idleRatioAtEnd, env.template, subjectCtx);
-      // How often a session ends WITHOUT ever completing the planned length — a coarse distraction/focus
-      // proxy (see the personalization ask's "how often you exit study mode, to measure focus and
-      // concentration") independent of which Pomodoro arm was running, so it's collected even for a
-      // resumed/older environment with no recorded arm at all.
+      // Webcam-based focus metrics (FocusTracker.tsx) — only when the student enabled camera tracking.
+      // Reported through the same recordMetric channel so Settings can aggregate them alongside the
+      // existing study/concentration metrics.
+      if (focusSampleCountRef.current > 0) {
+        void api.recordMetric("study_focus_score", focusAvgRef.current, env.template, subjectCtx);
+        const avgGaze = focusGazeSamplesRef.current.length
+          ? Math.round(focusGazeSamplesRef.current.reduce((a, b) => a + b, 0) / focusGazeSamplesRef.current.length * 100)
+          : 0;
+        void api.recordMetric("study_gaze_on_screen_pct", avgGaze, env.template, subjectCtx);
+      }
       void api.recordMetric("study_exit_early", (env.pomodoroEnabled ? (env.pomodoroCycles || 0) >= 1 : elapsedSeconds >= 600) ? 0 : 1, task.source, subjectCtx);
       void api.recordMetric("study_session_duration_seconds", elapsedSeconds, env.template, subjectCtx);
       void api.recordMetric("study_session_break_seconds", breakSeconds, env.template, subjectCtx);
@@ -978,6 +993,39 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         pomodoroPhaseTotal={env.pomodoroEnabled ? (env.pomodoroWorkMinutes || 25) * 60 : undefined}
         pomodoroCycle={env.pomodoroCycles}
       />
+
+      {/* ── Focus tracking (webcam) ── */}
+      {/* Floating toggle + live score overlay — positioned top-right, fades with chrome idle. */}
+      <div className={`sm-focus-overlay ${chromeIdle ? "sm-chrome-idle" : ""}`} style={{
+        position: "absolute", top: "52px", right: "12px", display: "flex", alignItems: "center", gap: "8px",
+        zIndex: 50, transition: "opacity 0.4s ease",
+      }}>
+        <FocusTracker
+          enabled={focusTrackingEnabled && sessionStatus === "active"}
+          onMetrics={(m) => {
+            focusMetricsRef.current = m;
+            focusSampleCountRef.current++;
+            focusGazeSamplesRef.current.push(m.gazeOnScreen ? 1 : 0);
+            if (focusGazeSamplesRef.current.length > 500) focusGazeSamplesRef.current.shift();
+            focusAvgRef.current = Math.round(
+              (focusAvgRef.current * (focusSampleCountRef.current - 1) + m.focusScore) / focusSampleCountRef.current
+            );
+          }}
+          onSessionEnd={(avgFocus) => { focusAvgRef.current = avgFocus; }}
+        />
+        <button
+          onClick={() => setFocusTrackingEnabled((v) => !v)}
+          style={{
+            padding: "4px 10px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.15)",
+            background: focusTrackingEnabled ? "rgba(80,200,120,0.2)" : "rgba(0,0,0,0.5)",
+            backdropFilter: "blur(8px)", fontSize: "12px", color: "#e0e0e0", cursor: "pointer",
+          }}
+          title={language === "en" ? "Toggle focus tracking (webcam)" : "Suivi de concentration (caméra)"}
+        >
+          {focusTrackingEnabled ? (language === "en" ? "◉ Focus on" : "◉ Focus on")
+            : (language === "en" ? "○ Focus off" : "○ Focus off")}
+        </button>
+      </div>
 
       {/* ── Main middle section ── */}
       <div className="sm-main-container" style={{ position: "relative", gridRow: 2, minHeight: 0 }}>

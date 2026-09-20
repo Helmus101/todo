@@ -2854,6 +2854,18 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
                     `${Math.round(patterns.studyMetrics.totalBreakSeconds / 60)} min of breaks total.`,
                   )}</li>
                 ) : null}
+                {patterns.studyMetrics.avgFocusScore !== null ? (
+                  <li>{L(
+                    `Score de concentration moyen (caméra) : ${patterns.studyMetrics.avgFocusScore}/100 sur ${patterns.studyMetrics.focusSessionCount} séance${patterns.studyMetrics.focusSessionCount > 1 ? "s" : ""}.`,
+                    `Average focus score (webcam): ${patterns.studyMetrics.avgFocusScore}/100 across ${patterns.studyMetrics.focusSessionCount} session${patterns.studyMetrics.focusSessionCount > 1 ? "s" : ""}.`,
+                  )}</li>
+                ) : null}
+                {patterns.studyMetrics.avgGazeOnScreenPct !== null ? (
+                  <li>{L(
+                    `Regard sur l'écran : ${patterns.studyMetrics.avgGazeOnScreenPct}% du temps en moyenne.`,
+                    `Gaze on screen: ${patterns.studyMetrics.avgGazeOnScreenPct}% of the time on average.`,
+                  )}</li>
+                ) : null}
               </ul>
             </span>
           </div>

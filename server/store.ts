@@ -458,11 +458,17 @@ export interface StudyMetricsSummary {
   earlyExitRate: number | null;     // 0-1 share of sessions ended before the planned length
   pomodoroCyclesCompleted: number;
   windowDays: number;
+  /** Webcam-based focus tracking (FocusTracker.tsx) — aggregated from per-session focus score samples.
+   *  null when no focus-tracked sessions exist yet (webcam not enabled or denied). */
+  avgFocusScore: number | null;     // 0-100, session average
+  avgGazeOnScreenPct: number | null; // 0-100, % of samples face was detected and facing screen
+  focusSessionCount: number;        // how many sessions had focus tracking enabled
 }
 
 const STUDY_METRIC_NAMES = [
   "study_session_duration_seconds", "study_session_break_seconds", "study_idle_ratio",
   "study_exit_early", "study_pomodoro_cycles_completed",
+  "study_focus_score", "study_gaze_on_screen_pct",
 ] as const;
 
 /** Aggregate the study/concentration metrics `recordMetric` already collects (server/index.ts's
@@ -496,6 +502,8 @@ export async function getStudyMetricsSummary(email: string, windowDays = 30, sub
   const idleRatios = byName("study_idle_ratio");
   const earlyExits = byName("study_exit_early");
   const cycles = byName("study_pomodoro_cycles_completed");
+  const focusScores = byName("study_focus_score");
+  const gazePcts = byName("study_gaze_on_screen_pct");
   const sum = (xs: SessionOutcome[]) => xs.reduce((s, x) => s + (Number(x.reward) || 0), 0);
   return {
     totalSessions: durations.length,
@@ -505,6 +513,9 @@ export async function getStudyMetricsSummary(email: string, windowDays = 30, sub
     earlyExitRate: earlyExits.length ? sum(earlyExits) / earlyExits.length : null,
     pomodoroCyclesCompleted: Math.round(sum(cycles)),
     windowDays,
+    avgFocusScore: focusScores.length ? Math.round(sum(focusScores) / focusScores.length) : null,
+    avgGazeOnScreenPct: gazePcts.length ? Math.round(sum(gazePcts) / gazePcts.length) : null,
+    focusSessionCount: focusScores.length,
   };
 }
 
