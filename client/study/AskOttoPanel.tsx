@@ -5,6 +5,7 @@ import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
+import { InlineProblem } from "./InlineProblem.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -117,9 +118,14 @@ export function AskOttoPanel({
             {/* renderChatText returns its own <p>/<ul> blocks — must NOT be wrapped in another <p> (invalid
                 nesting silently breaks paragraph spacing, browsers auto-close the outer tag). */}
             {m.role === "assistant" ? renderChatText(m.text) : <p><CondensedUserMessage text={m.text} /></p>}
-            {m.artifacts?.length ? (
+            {m.artifacts?.filter((a) => a.kind === "problem").map((a) => {
+              const problem = task.problems?.find((p) => p.id === a.id);
+              if (!problem) return null;
+              return <InlineProblem key={a.id} problem={problem} />;
+            })}
+            {m.artifacts?.filter((a) => a.kind !== "problem")?.length ? (
               <div className="sm-ai-artifact-chips">
-                {m.artifacts.map((a) => {
+                {m.artifacts.filter((a) => a.kind !== "problem").map((a) => {
                   const exists = a.kind === "note" ? task.notes?.some((n) => n.id === a.id)
                     : a.kind === "deck" ? task.flashcards?.some((f) => f.id === a.id)
                     : task.quizzes?.some((q) => q.id === a.id);

@@ -955,7 +955,7 @@ export interface WebTask {
      *  Ids point into task.notes/flashcards/quizzes, which is where the content actually lives (one
      *  storage, two entry points: the thread and "Ce qu'Otto a préparé"). A chip whose id has since been
      *  evicted by ARTIFACT_CAP renders as nothing rather than crashing — see the client lookup. */
-    artifacts?: { kind: "note" | "deck" | "quiz"; id: string; title: string }[];
+    artifacts?: { kind: "note" | "deck" | "quiz" | "problem"; id: string; title: string }[];
     /** Sources Otto used or was given for this assistant turn. */
     sources?: { label: string; url?: string; detail?: string }[];
     /** Which step (by index at send-time) a USER message was about — set by the "Aide" button on a step.
@@ -978,6 +978,12 @@ export interface WebTask {
   /** In-app multiple-choice quizzes — for CHECKING UNDERSTANDING before a contrôle (flashcards drill raw
    *  recall; a quiz surfaces which part of a chapter isn't solid). Same no-account/no-approval model. */
   quizzes?: TaskQuiz[];
+  /** In-app standalone practice problems created by the tutor mid-conversation — a SINGLE problem
+   *  (MCQ or free-response) rendered INLINE in the chat bubble itself (not a chip), so the student
+   *  answers right there in the thread and Otto helps them through it. Distinct from quizzes (a set of
+   *  MCQs opened on the canvas) and from the daily journal's `practiceProblem` (one free-response per
+   *  day): these are conversational, one-off, and live in the chat thread. */
+  problems?: TaskProblem[];
   /** ONE free-response practice problem for the day's math/physics/science themes (Study Journal daily
    *  entries only — see generateDailyStudyCards in server/claude.ts) — deliberately NOT multiple choice:
    *  the student types their own answer and it's checked against `answer` (see practiceAnswerMatches
@@ -1104,6 +1110,33 @@ export interface DailyPracticeProblem {
   /** Set once the student checks their answer — persisted so re-opening the day shows the outcome instead
    *  of re-asking, same spirit as a flashcard's review state. */
   attempt?: { answer: string; correct: boolean; at: string };
+}
+
+/** A single standalone practice problem created by the tutor mid-conversation — rendered INLINE in the
+ *  chat bubble (not a chip that opens elsewhere). Can be multiple-choice (the student picks an option
+ *  and gets immediate feedback) or free-response (the student types an answer and it's checked). Either
+ *  way, Otto stays in the thread to help them work through it — this is a conversational exercise, not a
+ *  scored quiz. Distinct from `TaskQuiz` (a set of MCQs opened on the canvas) and from the daily journal's
+ *  `DailyPracticeProblem` (one free-response per day). */
+export interface TaskProblem {
+  id: string;
+  /** The question/prompt itself — one clear sentence or a short problem statement. */
+  question: string;
+  /** MCQ mode: 2-4 options. When present, the student picks one and gets immediate feedback.
+   *  When absent, it's free-response (the student types an answer and it's checked against `answer`). */
+  options?: string[];
+  /** MCQ mode: 0-based index into `options` of the correct one. */
+  correct?: number;
+  /** Free-response mode: the expected answer (checked loosely — trimmed, case-insensitive). */
+  answer?: string;
+  /** One-line explanation of why the answer is right — shown after the student answers, same teaching
+   *  role as a quiz question's `why`. */
+  why?: string;
+  /** An optional hint shown on demand (a button the student can click before answering). */
+  hint?: string;
+  /** Guidance on expected format/units/notation for free-response mode (e.g. "two decimal places, in m/s"). */
+  format?: string;
+  createdAt: string;
 }
 
 // ── AI-personalized theme token validation ──────────────────────────────────────────────────���──────────

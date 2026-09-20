@@ -5212,6 +5212,20 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-ai-msg p { margin: 0; white-space: pre-wrap; }
 .sm-ai-msg p + p { margin-top: 10px; }
 .sm-ai-artifact-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.sm-inline-problem { margin-top: var(--space-2); padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-2); }
+.sm-inline-problem-q { font-weight: var(--weight-bold); line-height: 1.4; margin-bottom: 8px; }
+.sm-inline-problem-format { font-size: var(--text-xs); color: var(--ink-3); margin-bottom: 8px; font-style: italic; }
+.sm-inline-problem-hint-row { margin-bottom: 8px; }
+.sm-inline-problem-hint { font-size: var(--text-sm); color: var(--ink-3); padding: 6px 10px; background: var(--bg); border-radius: var(--radius-xs); border: 1px solid var(--border); }
+.sm-inline-problem-opts { display: flex; flex-direction: column; gap: var(--space-2); }
+.sm-inline-problem-free { margin-top: 4px; }
+.sm-inline-problem-input-row { display: flex; gap: var(--space-2); align-items: center; }
+.sm-inline-problem-input { flex: 1; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-xs); font-size: var(--text-sm); background: var(--bg); color: var(--ink); }
+.sm-inline-problem-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.sm-inline-problem-result { padding: 8px 10px; border-radius: var(--radius-xs); font-size: var(--text-sm); font-weight: var(--weight-bold); }
+.sm-inline-problem-result.correct { color: var(--accent); background: var(--accent-soft); }
+.sm-inline-problem-result.wrong { color: var(--ink-3); background: var(--bg); }
+.sm-inline-problem-why { margin-top: 8px; padding: 8px 10px; font-size: var(--text-sm); color: var(--ink-3); background: var(--bg); border-radius: var(--radius-xs); border: 1px solid var(--border); line-height: 1.4; }
 .sm-ai-guardrail-tag { display: block; font-size: 10.5px; font-weight: 600; color: var(--ink-3); margin-top: 6px; letter-spacing: 0.02em; }
 .sm-ai-msg-pending { opacity: 0.6; }
 .sm-ai-typing { display: flex; align-items: center; gap: var(--space-2); padding: 11px 12px; }

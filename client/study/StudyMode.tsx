@@ -968,6 +968,26 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     try {
       const { task: updated } = await api.chat(task.id, message, stepIndex, materials.length ? materials : undefined, voiceMode);
       onTaskUpdate({ ...task, ...updated });
+      // Auto-open new quizzes on the canvas — when the tutor creates a quiz mid-conversation, pop it open
+      // on the desk immediately (the student doesn't have to find and click the chip). Also opens a
+      // scratchpad alongside so they can work through problems by hand, like a real exam desk.
+      const oldQuizIds = new Set((task.quizzes || []).map((q) => q.id));
+      const newQuizzes = (updated.quizzes || []).filter((q) => !oldQuizIds.has(q.id));
+      if (newQuizzes.length && env) {
+        // Open a scratchpad first (if none exists) so the student has a writable area alongside the quiz
+        const hasScratchpad = env.artifacts.some((a) => a.type === "scratchpad");
+        if (!hasScratchpad) {
+          addArtifact({
+            id: crypto.randomUUID(), type: "scratchpad", title: "Brouillon",
+            x: 5, y: 10, width: 40, height: 60, zIndex: 90,
+            minimized: false, maximized: false, dockSide: "left", contentState: {},
+            taskId: task.id, environmentId: env.id,
+          });
+        }
+        for (const q of newQuizzes) {
+          openArtifactByKind("quiz", q.id, q.title);
+        }
+      }
     } catch (e: any) {
       setChatError(e?.message || "Couldn't send that — try again.");
       setChatInput(message);
@@ -975,7 +995,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
       setChatSending(false);
       setPendingMsg(null);
     }
-  }, [chatInput, chatSending, env, task, onTaskUpdate]);
+  }, [chatInput, chatSending, env, task, onTaskUpdate, openArtifactByKind, addArtifact]);
 
   // ── Task checklist, right from the desk ─────────────────────────────────────
   // Previously Study Mode could only READ steps (TaskDetailDrawer/TaskInfoArtifact were plain text) — ticking

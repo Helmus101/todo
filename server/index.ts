@@ -1352,6 +1352,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     for (const n of out.notes) void recordMetric(req.session.user!, "chat_artifact_created", 1, "note");
     for (const f of out.flashcards) void recordMetric(req.session.user!, "chat_artifact_created", 1, "deck");
     for (const q of out.quizzes) void recordMetric(req.session.user!, "chat_artifact_created", 1, "quiz");
+    for (const p of out.problems) void recordMetric(req.session.user!, "chat_artifact_created", 1, "problem");
     if (stepIndex != null) void recordMetric(req.session.user!, "chat_help_requested_on_step", 1);
     const now = new Date().toISOString();
     // Accumulate this turn's artifacts onto the task exactly like a run does (same ARTIFACT_CAP), and
@@ -1361,10 +1362,12 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       ...out.notes.map((n) => ({ kind: "note" as const, id: n.id, title: n.title })),
       ...out.flashcards.map((f) => ({ kind: "deck" as const, id: f.id, title: f.title })),
       ...out.quizzes.map((q) => ({ kind: "quiz" as const, id: q.id, title: q.title })),
+      ...out.problems.map((p) => ({ kind: "problem" as const, id: p.id, title: p.question.slice(0, 60) })),
     ];
     if (out.notes.length) t.notes = [...(t.notes || []), ...out.notes].slice(-tasks.ARTIFACT_CAP);
     if (out.flashcards.length) t.flashcards = [...(t.flashcards || []), ...out.flashcards].slice(-tasks.ARTIFACT_CAP);
     if (out.quizzes.length) t.quizzes = [...(t.quizzes || []), ...out.quizzes].slice(-tasks.ARTIFACT_CAP);
+    if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
     if (out.audit.length) t.audit = [...(t.audit || []), ...out.audit].slice(-tasks.AUDIT_CAP);
     // Guard against the cross-instance session-cache staleness race (see store.ts's peekTaskChat comment):
     // `history` above was read from this request's `req.session.tasks`, which can be up to 3min stale on a
