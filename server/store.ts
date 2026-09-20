@@ -18,6 +18,14 @@ export interface StoredGoogle { tokens: Credentials; email?: string; }
  *  actual French-lycée audience, confirmed bank coverage first. */
 export interface StoredPlaid { accessToken: string; itemId: string; institutionName?: string; connectedAt: string; }
 
+/** A persisted Blackbaud (school Education Management / SKY API) connection — MOCK-ONLY for now, see
+ *  server/blackbaud.ts's file-level comment for why: unlike Pronote (a student's own username/password is
+ *  enough for the unofficial client) or Plaid (a self-service developer sandbox), Blackbaud's real SKY API
+ *  needs a registered developer subscription key AND, for most endpoints, the SCHOOL's own admin enabling
+ *  API access for that app — neither exists yet. Same encrypted-at-rest posture as Pronote/Plaid's tokens
+ *  regardless (loadState/saveState below), so the real-credential path is ready the moment access exists. */
+export interface StoredBlackbaud { accessToken: string; schoolName?: string; connectedAt: string; }
+
 /** A persisted Pronote (French school portal) connection. `token` is a rotating credential the pawnote
  *  library issues in place of the password after the first login — NOT the password itself, which is used
  *  once to connect and never stored (see server/pronote.ts). Protected by RLS + the service-role-only
@@ -277,7 +285,7 @@ export async function deleteAuthUser(email: string): Promise<void> {
   } catch (e) { console.warn("[store] deleteAuthUser threw:", (e as any)?.message || e); }
 }
 
-export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; plaid?: StoredPlaid; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
+export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; plaid?: StoredPlaid; blackbaud?: StoredBlackbaud; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
 
 // A transient network drop (undici "terminated"/"fetch failed", a reset socket) is NOT the same as "no
 // data" — but Supabase surfaces it both as a thrown error AND, sometimes, as a returned {error}. Treating
@@ -338,7 +346,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   const cached = opts?.bypassCache ? undefined : stateCache.get(email);
   if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
   const { data, error } = await withRetry("load", async () =>
-    client!.from(TABLE).select("profile,tasks,google,pronote,plaid").eq("email", email).maybeSingle());
+    client!.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud").eq("email", email).maybeSingle());
   if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
@@ -348,7 +356,10 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   const plaid = d?.plaid && d.plaid.accessToken
     ? { ...(d.plaid as StoredPlaid), accessToken: decryptSecret(d.plaid.accessToken) }
     : undefined;
-  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, plaid };
+  const blackbaud = d?.blackbaud && d.blackbaud.accessToken
+    ? { ...(d.blackbaud as StoredBlackbaud), accessToken: decryptSecret(d.blackbaud.accessToken) }
+    : undefined;
+  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, plaid, blackbaud };
   cacheSetState(email, result);
   return result;
 }
@@ -368,6 +379,9 @@ export async function saveState(email: string | undefined, state: AccountState, 
   }
   if ("plaid" in state) {
     row.plaid = state.plaid ? { ...state.plaid, accessToken: encryptSecret(state.plaid.accessToken) } : null;
+  }
+  if ("blackbaud" in state) {
+    row.blackbaud = state.blackbaud ? { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) } : null;
   }
   // Invalidate rather than try to update-in-place: `state` here often omits google/pronote entirely (see
   // comment above), so overwriting the cached entry with it would wrongly blank out fields this save never

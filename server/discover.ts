@@ -12,9 +12,10 @@
 import { readAction, getConnectedAccounts } from "./integrations.ts";
 import { pronoteConnected, pronoteHomework, pronoteTests } from "./pronote.ts";
 import { plaidConnected, plaidSnapshot } from "./plaid.ts";
+import { blackbaudConnected, blackbaudAssignments } from "./blackbaud.ts";
 
 export interface SourceItem {
-  sourceApp: "gmail" | "calendar" | "drive" | "pronote" | "plaid";
+  sourceApp: "gmail" | "calendar" | "drive" | "pronote" | "plaid" | "blackbaud";
   externalId: string;
   anchorKey: string;      // "gmail:<threadId>" / "calendar:<eventId>" / "drive:<fileId>" — the dedupe identity
   url?: string;
@@ -172,6 +173,25 @@ export function pronoteTestsToItems(items: { id: string; subject: string; deadli
     timestamp: t.deadline,
     labels: ["test"],
     subject: t.subject,
+  }));
+}
+
+/** Blackbaud assignments → candidates. Unlike Pronote, these are NOT carved out of the AI classifier pass
+ *  (see generate() in tasks.ts) — Pronote gets that trusted-bypass treatment because it's a proven,
+ *  established source; Blackbaud is brand new and mock-only right now (see server/blackbaud.ts), so
+ *  running it through the same classify/quality-bar path as Gmail/Calendar is the more conservative choice
+ *  until it's had real production mileage. That also means this needs no special wiring in tasks.ts at
+ *  all — it flows through exactly the same `candidates` pool every other classified source does. */
+export function blackbaudToItems(items: { id: string; title: string; subject?: string; dueDate?: string; description?: string }[]): SourceItem[] {
+  return items.map((a): SourceItem => ({
+    sourceApp: "blackbaud",
+    externalId: a.id,
+    anchorKey: `blackbaud:${a.id}`,
+    title: a.title.slice(0, 140),
+    snippet: a.description || (a.dueDate ? `Due ${a.dueDate}` : a.title),
+    timestamp: a.dueDate,
+    labels: ["homework"],
+    subject: a.subject,
   }));
 }
 
@@ -353,7 +373,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
     try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
   };
-  const [gmailAccounts, calAccounts, pronoteOn, plaidOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), FINANCE_ENABLED ? plaidConnected(userEmail) : Promise.resolve({ connected: false })]);
+  const [gmailAccounts, calAccounts, pronoteOn, plaidOn, blackbaudOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), FINANCE_ENABLED ? plaidConnected(userEmail) : Promise.resolve({ connected: false }), blackbaudConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
@@ -412,6 +432,13 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
       // One snapshot fetch, fed to both detectors — recurring bills AND suspicious/duplicate charges are
       // both read off the exact same transaction list, no reason to hit Plaid twice for it.
       grab(async () => { const { transactions } = await plaidSnapshot(userEmail); return [...plaidToItems(transactions), ...plaidSuspiciousToItems(transactions)]; }),
+    ] : []),
+    // Blackbaud (school assignments) — MOCK-ONLY right now, see server/blackbaud.ts's file-level comment.
+    // `connected` can only ever be true for a demo/mock connection today, so this is effectively a no-op
+    // for every real account until real SKY API access exists — left ungated here (unlike Plaid's
+    // FINANCE_ENABLED) since blackbaudConnected() itself already can't return true outside mock mode.
+    ...(blackbaudOn.connected ? [
+      grab(async () => blackbaudToItems(await blackbaudAssignments(userEmail))),
     ] : []),
   ]);
   return { items: dedupeByThread(items), attempted };

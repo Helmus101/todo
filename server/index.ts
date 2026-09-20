@@ -25,6 +25,7 @@ import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
 import * as plaidSvc from "./plaid.ts";
+import * as blackbaudSvc from "./blackbaud.ts";
 
 declare module "express-session" {
   interface SessionData {
@@ -788,6 +789,23 @@ app.post("/api/integrations/plaid/disconnect", requireAuth, async (req, res) => 
 app.get("/api/finance/snapshot", requireAuth, ah(async (req, res) => {
   res.json(await plaidSvc.plaidSnapshot(req.session.user!));
 }));
+// Blackbaud (school Education Management — assignments/grades) — MOCK ONLY, see blackbaud.ts's file-level
+// comment: unlike Pronote/Plaid there's no real credential path yet at all (needs a registered SKY API
+// subscription key AND the school's own admin enabling API access), so there's no link-token/exchange pair
+// like Plaid's — just status/connect-mock/disconnect, and connect-mock only ever does anything when
+// BLACKBAUD_MOCK=1 on the server.
+app.get("/api/integrations/blackbaud/status", requireAuth, ah(async (req, res) => {
+  res.json({ ...(await blackbaudSvc.blackbaudConnected(req.session.user!)), configured: blackbaudSvc.blackbaudConfigured() });
+}));
+app.post("/api/integrations/blackbaud/connect-mock", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
+  const result = await blackbaudSvc.connectMock(req.session.user!);
+  if (!result.ok) { res.status(400).json(result); return; }
+  res.json(result);
+}));
+app.post("/api/integrations/blackbaud/disconnect", requireAuth, async (req, res) => {
+  try { await blackbaudSvc.disconnectBlackbaud(req.session.user!); res.json({ ok: true }); }
+  catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
+});
 // Deterministic "this week" workload view — no AI call, just real Pronote homework/tests + open tasks
 // bucketed by day with a relative effort heuristic (see server/workload.ts). Cheap enough to recompute
 // on every request rather than cache/store.

@@ -194,6 +194,11 @@ export const api = {
   plaidDisconnect: (): Promise<{ ok: boolean }> => post("/api/integrations/plaid/disconnect"),
   financeSnapshot: (): Promise<{ accounts: { id: string; name: string; type: string; balance: number | null }[]; transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[] }> =>
     req("/api/finance/snapshot").then(j),
+  // Blackbaud (school Education Management) — MOCK ONLY for now, see server/blackbaud.ts's own comment:
+  // no real SKY API credential path exists yet, only a demo connection.
+  blackbaudStatus: (): Promise<{ connected: boolean; schoolName?: string; configured: boolean }> => req("/api/integrations/blackbaud/status").then(j),
+  blackbaudConnectMock: (): Promise<{ ok: boolean; error?: string }> => post("/api/integrations/blackbaud/connect-mock"),
+  blackbaudDisconnect: (): Promise<{ ok: boolean }> => post("/api/integrations/blackbaud/disconnect"),
   pronoteTests: (): Promise<{ tests: { subject: string; deadline: string }[] }> => req("/api/pronote/tests").then(j),
   workload: (): Promise<{ days: { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number }[] }> =>
     req("/api/workload").then(j),

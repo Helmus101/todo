@@ -2646,6 +2646,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
         <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
         <PronoteTile />
+        <BlackbaudTile />
         <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
       </section>
 
@@ -3131,6 +3132,64 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
           {err && <div className="autherr">{err}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Blackbaud (school Education Management — assignments/grades) — MOCK ONLY right now, see
+ *  server/blackbaud.ts's own comment: unlike Pronote, a student can't just type their own credentials —
+ *  it needs a registered SKY API subscription key AND the school's own admin enabling API access, neither
+ *  of which exists yet. No credential form here at all (there's nothing to fill in); just a demo-connect
+ *  button when the server has BLACKBAUD_MOCK=1 set, and an honest explanation otherwise. */
+function BlackbaudTile({ onChanged }: { onChanged?: () => void } = {}) {
+  const L = useLang();
+  const notify = useNotify();
+  const [status, setStatus] = useState<{ connected: boolean; schoolName?: string; configured: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => { try { setStatus(await api.blackbaudStatus()); } catch { setStatus({ connected: false, configured: false }); } }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const connect = async () => {
+    setBusy(true);
+    try {
+      const r = await api.blackbaudConnectMock();
+      if (!r.ok) { notify(r.error || L("Connexion impossible.", "Couldn't connect."), "error"); return; }
+      await load(); onChanged?.();
+    } finally { setBusy(false); }
+  };
+  const disconnect = async () => {
+    setBusy(true);
+    try { await api.blackbaudDisconnect(); await load(); onChanged?.(); }
+    catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
+    finally { setBusy(false); }
+  };
+
+  if (!status) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /></div></div>;
+  return (
+    <div className="int-group">
+      <div className="int-grid">
+        <div className={`int-tile ${status.connected ? "on" : ""}`}>
+          <span className="int-logo" aria-hidden="true" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 11 }}>BB</span>
+          <div className="int-info">
+            <div className="int-name">Blackbaud{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
+            <div className="int-blurb">
+              {status.configured
+                ? L(
+                    "Devoirs et notes depuis le portail Blackbaud de ton établissement. Mode démo — données factices, aucune vraie connexion à une école pour l'instant.",
+                    "Assignments and grades from your school's Blackbaud portal. Demo mode — fake data, no real school connection yet.",
+                  )
+                : L(
+                    "Pas encore disponible : nécessite une clé d'API Blackbaud (SKY API) et que ton établissement active l'accès — aucun des deux n'existe pour l'instant.",
+                    "Not available yet — needs a Blackbaud SKY API subscription key and your school enabling access, neither of which exists yet.",
+                  )}
+            </div>
+          </div>
+          {status.connected
+            ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
+            : <button className="btn xs" disabled={busy || !status.configured} title={!status.configured ? L("Pas encore configuré sur ce serveur", "Not configured on this server yet") : undefined} onClick={() => void connect()}>{busy ? "…" : L("Essayer en démo", "Try demo mode")}</button>}
+        </div>
+      </div>
+      {status.connected && status.schoolName && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.schoolName}</span></div></div>}
     </div>
   );
 }
