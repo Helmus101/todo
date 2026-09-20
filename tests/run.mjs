@@ -157,6 +157,18 @@ const mergedChat = mergeTaskLists([c1], [c2])[0].chat;
 check("chat turns union across devices instead of the winner's copy replacing the loser's", mergedChat.length === 4);
 check("unioned chat stays chronologically ordered", mergedChat[0].text === "how do I start?" && mergedChat[3].text === "Tie it back to the thesis.");
 
+// The fast path (skip the per-task merge + dedupeTasks entirely when nothing actually changed — the
+// common case on a routine poll, e.g. every 4s while a job is in flight) must be a pure optimization: same
+// list in both directions returns the SAME reference (not just an equal one), and a real change anywhere
+// still falls through to the genuine merge exactly as before.
+const identicalA = { ...base, id: "id1", title: "A", why: "x", source: "gmail", status: "ready", updatedAt: older };
+const identicalB = { ...base, id: "id2", title: "B", why: "y", source: "gmail", status: "executing", updatedAt: newer };
+const unchangedList = [identicalA, identicalB];
+check("identical lists take the fast path (returns the exact same array reference)", mergeTaskLists(unchangedList, unchangedList) === unchangedList);
+check("identical-by-value (not just by reference) lists also take the fast path", mergeTaskLists(unchangedList, [{ ...identicalA }, { ...identicalB }]) === unchangedList);
+const changedB = { ...identicalB, status: "done" };
+check("a real status change still falls through to the genuine merge, not the fast path", mergeTaskLists(unchangedList, [identicalA, changedB])[1].status === "done");
+
 // ── Profile ───────────────────────────────────────────────────────────────────
 section("profile merge + updates");
 const p = emptyProfile();

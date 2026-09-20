@@ -446,6 +446,24 @@ export function dedupeTasks(list: WebTask[]): WebTask[] {
  *  more-PROGRESSED copy wins (done never regresses); equal progress → most recently UPDATED wins; step
  *  done-state is unioned. Then entity-dedupe, since two sessions can mint different ids for one item. */
 export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTask[] {
+  // Fast path: when neither side has actually changed since the last merge (the overwhelmingly common case
+  // on a routine poll — e.g. POST /api/jobs/kick's 4-second tick while a job is in flight, most ticks land
+  // between the job's own start and finish with nothing new to report), skip straight past the per-task
+  // union loop AND dedupeTasks below — a real, measured O(n²) cost (pairwise title/token-overlap comparison
+  // across the WHOLE list, re-run on every single call) that was previously paid unconditionally even when
+  // `existing`/`incoming` were byte-for-byte the same list. A cheap O(n) id+updatedAt signature comparison
+  // catches "nothing changed" without needing to actually diff the objects; anything that doesn't match
+  // falls through to the real merge below exactly as before — this only ever SKIPS work, never changes the
+  // result for a genuinely-changed pair of lists.
+  if (existing.length === incoming.length) {
+    const incomingById = new Map(incoming.map((t) => [t.id, t]));
+    let identical = true;
+    for (const a of existing) {
+      const b = incomingById.get(a.id);
+      if (!b || a.updatedAt !== b.updatedAt || a.status !== b.status) { identical = false; break; }
+    }
+    if (identical) return existing;
+  }
   const rank = (s: WebTask["status"]) => rankStatus({ status: s } as WebTask);
   const when = (t: WebTask) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
   const map = new Map<string, WebTask>();
