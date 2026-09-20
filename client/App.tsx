@@ -3160,9 +3160,9 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
 function BlackbaudTile({ onChanged }: { onChanged?: () => void } = {}) {
   const L = useLang();
   const notify = useNotify();
-  const [status, setStatus] = useState<{ connected: boolean; schoolName?: string; configured: boolean } | null>(null);
+  const [status, setStatus] = useState<{ connected: boolean; schoolName?: string; configured: boolean; realAuthAvailable: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { try { setStatus(await api.blackbaudStatus()); } catch { setStatus({ connected: false, configured: false }); } }, []);
+  const load = useCallback(async () => { try { setStatus(await api.blackbaudStatus()); } catch { setStatus({ connected: false, configured: false, realAuthAvailable: false }); } }, []);
   useEffect(() => { void load(); }, [load]);
 
   const connect = async () => {
@@ -3189,7 +3189,12 @@ function BlackbaudTile({ onChanged }: { onChanged?: () => void } = {}) {
           <div className="int-info">
             <div className="int-name">Blackbaud{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
             <div className="int-blurb">
-              {status.configured
+              {status.realAuthAvailable
+                ? L(
+                    "Devoirs et notes depuis le portail Blackbaud de ton établissement.",
+                    "Assignments and grades from your school's Blackbaud portal.",
+                  )
+                : status.configured
                 ? L(
                     "Devoirs et notes depuis le portail Blackbaud de ton établissement. Mode démo — données factices, aucune vraie connexion à une école pour l'instant.",
                     "Assignments and grades from your school's Blackbaud portal. Demo mode — fake data, no real school connection yet.",
@@ -3202,6 +3207,8 @@ function BlackbaudTile({ onChanged }: { onChanged?: () => void } = {}) {
           </div>
           {status.connected
             ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
+            : status.realAuthAvailable
+            ? <a className="btn xs" href="/api/integrations/blackbaud/connect">{L("Connecter", "Connect")}</a>
             : <button className="btn xs" disabled={busy || !status.configured} title={!status.configured ? L("Pas encore configuré sur ce serveur", "Not configured on this server yet") : undefined} onClick={() => void connect()}>{busy ? "…" : L("Essayer en démo", "Try demo mode")}</button>}
         </div>
       </div>

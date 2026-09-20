@@ -24,7 +24,17 @@ export interface StoredPlaid { accessToken: string; itemId: string; institutionN
  *  needs a registered developer subscription key AND, for most endpoints, the SCHOOL's own admin enabling
  *  API access for that app — neither exists yet. Same encrypted-at-rest posture as Pronote/Plaid's tokens
  *  regardless (loadState/saveState below), so the real-credential path is ready the moment access exists. */
-export interface StoredBlackbaud { accessToken: string; schoolName?: string; connectedAt: string; }
+export interface StoredBlackbaud {
+  accessToken: string;
+  /** Real OAuth connections only (absent for the mock connection) — SKY API access tokens expire after
+   *  ~60 minutes; this is what lets blackbaud.ts silently refresh instead of the connection going stale. */
+  refreshToken?: string;
+  /** Epoch ms the access token expires at — checked before every real API call (see blackbaud.ts's
+   *  ensureFreshToken) with a safety margin, not relied on to be exact. */
+  expiresAt?: number;
+  schoolName?: string;
+  connectedAt: string;
+}
 
 /** A persisted Pronote (French school portal) connection. `token` is a rotating credential the pawnote
  *  library issues in place of the password after the first login — NOT the password itself, which is used

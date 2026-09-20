@@ -45,6 +45,7 @@ declare module "express-session" {
     // random. Cached per `key` (bandit.ts's contextKey — time-of-day/weekend/track bucket) so the arm stays
     // fixed for as long as that bucket does, only re-drawn when it actually changes (e.g. morning → afternoon).
     orderingArmCache?: { key: string; armId: string };
+    blackbaudOAuthState?: string; // CSRF nonce for the Blackbaud OAuth authorization-code flow — see server/blackbaud.ts
   }
 }
 
@@ -789,13 +790,37 @@ app.post("/api/integrations/plaid/disconnect", requireAuth, async (req, res) => 
 app.get("/api/finance/snapshot", requireAuth, ah(async (req, res) => {
   res.json(await plaidSvc.plaidSnapshot(req.session.user!));
 }));
-// Blackbaud (school Education Management — assignments/grades) — MOCK ONLY, see blackbaud.ts's file-level
-// comment: unlike Pronote/Plaid there's no real credential path yet at all (needs a registered SKY API
-// subscription key AND the school's own admin enabling API access), so there's no link-token/exchange pair
-// like Plaid's — just status/connect-mock/disconnect, and connect-mock only ever does anything when
-// BLACKBAUD_MOCK=1 on the server.
+// Blackbaud (school Education Management — assignments/grades) — see blackbaud.ts's file-level comment.
+// Real OAuth flow (auth-url → redirect → callback) needs BLACKBAUD_CLIENT_ID/SECRET on top of the
+// subscription key; connect-mock is the always-available fallback (BLACKBAUD_MOCK=1) with no credentials.
 app.get("/api/integrations/blackbaud/status", requireAuth, ah(async (req, res) => {
-  res.json({ ...(await blackbaudSvc.blackbaudConnected(req.session.user!)), configured: blackbaudSvc.blackbaudConfigured() });
+  res.json({
+    ...(await blackbaudSvc.blackbaudConnected(req.session.user!)),
+    configured: blackbaudSvc.blackbaudConfigured(),
+    realAuthAvailable: blackbaudSvc.blackbaudRealAuthAvailable(),
+  });
+}));
+// GET so a plain <a href> can carry the student through the redirect, same as /integrations/:app/connect.
+app.get("/api/integrations/blackbaud/connect", requireAuth, (req, res) => {
+  if (!blackbaudSvc.blackbaudRealAuthAvailable()) { res.status(503).send("Blackbaud isn't configured for real connections on this server yet."); return; }
+  const state = randomBytes(24).toString("hex");
+  req.session.blackbaudOAuthState = state;
+  req.session.save(() => {
+    try { res.redirect(blackbaudSvc.getAuthUrl(state)); }
+    catch (e: any) { res.status(500).send("Couldn't start the connection: " + (e?.message || e)); }
+  });
+});
+app.get("/api/integrations/blackbaud/callback", requireAuth, ah(async (req, res) => {
+  const expected = req.session.blackbaudOAuthState;
+  req.session.blackbaudOAuthState = undefined;
+  const state = String(req.query.state || "");
+  const code = String(req.query.code || "");
+  // Same CSRF-nonce verification every OAuth callback needs — without it, a forged callback (an attacker
+  // tricking a student into visiting a crafted callback URL) could link the ATTACKER's Blackbaud account to
+  // the VICTIM's Otto session, not just fail harmlessly.
+  if (!expected || state !== expected || !code) { res.redirect("/settings?blackbaud_error=1"); return; }
+  const result = await blackbaudSvc.exchangeCode(req.session.user!, code);
+  res.redirect(result.ok ? "/settings" : "/settings?blackbaud_error=1");
 }));
 app.post("/api/integrations/blackbaud/connect-mock", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
   const result = await blackbaudSvc.connectMock(req.session.user!);
