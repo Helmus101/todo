@@ -278,6 +278,14 @@ export function App() {
   // still wins because it sets signedOutRef before calling the server.
   const lastAuthenticatedStatusRef = useRef<ConnectionStatus | null>(CACHED_STATUS?.loggedIn ? CACHED_STATUS : null);
   const [route] = usePathRoute();
+  // Explicit escape hatch off ConnectCard's connect-wall (see its own comment + the gating condition
+  // further down) — a student with nothing connected can choose to use Otto with manually-added tasks and
+  // tutoring only, instead of being hard-blocked behind "connect Pronote first." Per-device, not per-
+  // account: deliberately not synced to the profile, since connecting later should still work seamlessly
+  // and this is just a local "stop showing me that wall" preference, not a real account setting.
+  const [skippedConnect, setSkippedConnect] = useState(() => {
+    try { return localStorage.getItem("otto-skip-connect") === "1"; } catch { return false; }
+  });
   const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
   // Every flashcard deck Otto has ever generated gets mirrored to this browser's localStorage (see
   // client/localDecks.ts) — a real DB write already happens server-side, but this is a local backup so a
@@ -928,8 +936,11 @@ export function App() {
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
         <MistakeLogPage lang={status?.language} />
-      ) : !status.googleConnected && !status.pronoteConnected ? (
-        <main className="list-wrap"><ConnectCard status={status} /></main>
+      ) : !status.googleConnected && !status.pronoteConnected && !skippedConnect ? (
+        <main className="list-wrap"><ConnectCard status={status} onSkip={() => {
+          setSkippedConnect(true);
+          try { localStorage.setItem("otto-skip-connect", "1"); } catch { /* best-effort */ }
+        }} /></main>
       ) : (
         <main className="list-wrap" key="dash">
           <div className="dash-head">
@@ -1525,7 +1536,7 @@ function TaskSkeleton() {
 }
 
 /** A connect-Gmail call to action — shown on the dashboard until Gmail is linked (via Composio, in Settings). */
-function ConnectCard({ status }: { status: ConnectionStatus }) {
+function ConnectCard({ status, onSkip }: { status: ConnectionStatus; onSkip: () => void }) {
   const who = status.name || firstName(status.user);
   const en = status.language === "en";
   return (
@@ -1538,6 +1549,11 @@ function ConnectCard({ status }: { status: ConnectionStatus }) {
       {/* A raw env-var name means nothing to a student — say what's actually broken instead. */}
       {!status.aiReady && <div className="warn">{en ? "Otto's AI isn't set up on this server yet — task generation is off for now." : "L'IA d'Otto n'est pas encore configurée sur ce serveur — la génération de tâches est désactivée pour l'instant."}</div>}
       <a className="btn primary big" href="/settings">{en ? "Connect my Pronote" : "Connecter mon Pronote"}</a>
+      {/* Escape hatch — reported live: no Pronote/school with Pronote, no Google account, just wants to add
+          tasks by hand and use the tutor. Connecting nothing is a legitimate way to use Otto (manual tasks
+          + chat/Study Mode still work fully; the only thing missing is AUTOMATIC detection), so this isn't
+          hidden behind Settings or worded as a dead end — it's a real, first-class choice right here. */}
+      <button type="button" className="btn ghost" onClick={onSkip}>{en ? "Skip — I'll add tasks myself" : "Passer — j'ajouterai mes tâches moi-même"}</button>
       <p className="fineprint">{en ? "Disconnect Pronote, or pause Otto, any time in Settings. " : "Déconnecte Pronote, ou mets Otto en pause, à tout moment dans les Réglages. "}<a href="/privacy">{en ? "What Otto reads and why →" : "Ce qu'Otto lit et pourquoi →"}</a></p>
     </div>
   );
