@@ -123,16 +123,18 @@ const EXECUTION_ENABLED = false;
 
 
 
-/** The Otto mark — a ring cut by the consent line. The LEFT half is solid (work Otto already did, done); the
- *  RIGHT half is an open stroke (work still waiting on you); the vertical cobalt line between them is the
- *  threshold — on this side Otto acted, on that side it stopped and left the decision to you. The ring
- *  inherits currentColor (ink, inverts in dark mode); the line is always cobalt. */
+/** The Otto mark — an "O" (for Otto) with a checkmark inside it, not a separate badge bolted onto a
+ *  generic shape: the letter and the "done" meaning read as ONE mark, not two ideas glued together. The
+ *  ring inherits currentColor (ink, inverts in dark mode); the checkmark is always cobalt, the one fixed
+ *  accent color across the whole app — it's the one thing that never changes regardless of theme, same as
+ *  every other accent-blue use elsewhere. Deliberately legible at favicon size: a checkmark stays readable
+ *  at 16px in a way finer geometric detail doesn't, which the previous half-moon-cut-by-a-line mark wasn't
+ *  reliably (it read as a blank shape at tab-icon scale, per direct feedback). */
 function Logo({ size = 22 }: { size?: number }) {
   return (
     <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <path d="M24 4 A20 20 0 0 0 24 44 Z" fill="currentColor" />
-      <path d="M24 6 A18 18 0 0 1 24 42" stroke="currentColor" strokeWidth="4" fill="none" />
-      <rect x="23" y="0" width="2" height="48" fill="#2F4DE0" />
+      <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="4" fill="none" />
+      <path d="M15 25 L21 31 L33 17" stroke="#2F4DE0" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
 }
