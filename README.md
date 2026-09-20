@@ -90,10 +90,12 @@ npm run dev          # ouvre http://localhost:5273
 | `CRON_SECRET` | Protège `/api/cron/drain` (requis sur Vercel) |
 | `DEEPSEEK_MODEL` | Défaut `deepseek-v4-flash` (ou `deepseek-v4-pro` pour plus de raisonnement) |
 | `PORT` | Défaut `8788` |
-| `PLAID_CLIENT_ID` + `PLAID_SECRET` | Optionnel — active `/finance` (liaison bancaire). Clés **sandbox** gratuites sur https://dashboard.plaid.com/signup, aucune approbation business requise. Toujours forcé en sandbox côté serveur (jamais un vrai compte bancaire). |
-| `PLAID_MOCK` | `1` = active le mode démo entièrement hors-ligne de `/finance` (aucune clé requise, données factices) |
+| `PLAID_CLIENT_ID` + `PLAID_SECRET` | **Désactivé pour le moment** — voir la note Finance ci-dessous. Ces clés restent lues côté serveur mais rien dans l'interface n'y mène plus. |
+| `PLAID_MOCK` | Idem — sans effet tant que Finance reste désactivé côté produit. |
 
 Voir [`.env.example`](.env.example) pour la liste annotée complète.
+
+> **Finance (Plaid) — désactivé pour le moment.** Otto a un pipeline complet de détection de factures récurrentes/charges suspectes via liaison bancaire (Plaid), mais il est retiré de l'interface : Plaid reste forcé en sandbox côté serveur (aucune approbation business, aucune couverture bancaire EU confirmée), donc inutilisable pour un vrai compte en production. Le code n'est pas supprimé — juste désactivé par un flag (`FINANCE_ENABLED` dans `server/discover.ts`) — le temps que ce soit prêt à sortir pour de vrai.
 
 ## Persistance cloud (recommandé)
 
@@ -133,7 +135,9 @@ Marche sur n'importe quel hébergeur Node (Render, Railway, Fly, une VM, ou Dock
 
 ## Extension Chrome Otto Tabs (optionnelle)
 
-Les étapes du type "ouvrir une page" peuvent ouvrir des onglets automatiquement, groupés dans un groupe "Otto". L'extension non empaquetée est dans [`extension/`](extension/) : `chrome://extensions` → Mode développeur → Charger l'extension non empaquetée → sélectionne le dossier.
+Deux choses : les étapes du type "ouvrir une page" ouvrent des onglets automatiquement, groupés dans un groupe "Otto" ; et pendant une session Mode Étude active, elle bloque la navigation vers tout site en dehors de l'app (avec une liste blanche perso configurable depuis le popup de l'extension, en plus de l'app elle-même et de la connexion Google). Aucune des deux n'est requise pour utiliser Otto — sans l'extension, l'app se rabat simplement sur `window.open` et ne bloque rien.
+
+Pas encore sur le Chrome Web Store. Depuis **Réglages** dans l'app, télécharge `otto-tabs-extension.zip`, dézippe-le, puis `chrome://extensions` → active le Mode développeur → **Charger l'extension non empaquetée** → sélectionne le dossier dézippé. (Le code source vit dans [`extension/`](extension/) si tu préfères charger directement depuis le repo.)
 
 ## Structure du projet
 
