@@ -16,6 +16,7 @@ import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
+import { useFirstTime } from "./useFirstTime.ts";
 
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
 // Profile). `L(fr, en)` picks the right string for whichever language is active — used everywhere instead of
@@ -24,6 +25,30 @@ export const LangContext = createContext<"fr" | "en">("fr");
 export function useLang(): (fr: string, en: string) => string {
   const lang = useContext(LangContext);
   return (fr: string, en: string) => (lang === "en" ? en : fr);
+}
+
+/** A small dismissible callout shown the FIRST time a student encounters a specific feature — Study Mode's
+ *  desk, the tutor Board, canvas mode, a flashcard review, Journal, etc. Distinct from the one-time signup
+ *  Onboarding() flow (App.tsx): that's a single linear tour covering the app's top-level sections up front,
+ *  which is exactly the wrong moment to explain something like "how canvas mode works" — a student hasn't
+ *  reached that screen yet, won't remember a line from a tour days ago, and the tour would either skip
+ *  depth entirely or overload day one with detail for things not even in view yet. This shows the
+ *  explanation exactly when and where it's actually relevant, once, ever (localStorage — see
+ *  useFirstTime.ts), then gets out of the way for good.
+ *  `id` must be unique per feature and stable across releases (it's the persistence key). Renders nothing
+ *  once dismissed or already seen — cheap to leave mounted unconditionally at a feature's entry point. */
+export function FirstTimeHint({ id, title, body, className }: { id: string; title: string; body: string; className?: string }) {
+  const [isFirst, dismiss] = useFirstTime(id);
+  if (!isFirst) return null;
+  return (
+    <div className={`first-time-hint ${className || ""}`} role="note">
+      <div className="first-time-hint-body">
+        <div className="first-time-hint-title">{title}</div>
+        <p>{body}</p>
+      </div>
+      <button type="button" className="first-time-hint-close" aria-label="Dismiss" onClick={dismiss}>×</button>
+    </div>
+  );
 }
 
 // App-wide error/info toast. Was previously threaded as an `onNotify` prop through ~6 components on the

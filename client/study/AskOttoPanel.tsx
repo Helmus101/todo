@@ -1,7 +1,7 @@
 import { useRef, useEffect, useContext } from "react";
 import { Grid2x2 } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage } from "../ui.tsx";
+import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
@@ -133,6 +133,16 @@ export function AskOttoPanel({
         </button>
       </div>
 
+      {canvasModeOn && (
+        <FirstTimeHint
+          id="canvas-mode"
+          title={L("Mode canevas", "Canvas mode")}
+          body={L(
+            "Otto travaille un problème à la fois avec toi, sans jamais créer de fiche, deck ou quiz complet — le problème reste épinglé au-dessus du chat pendant que tu le résous.",
+            "Otto works one problem at a time with you, without ever creating a whole note, deck, or quiz — the problem stays pinned above the chat while you work through it.",
+          )}
+        />
+      )}
       {canvasModeOn && activeProblem ? (
         <CanvasProblem problem={activeProblem} />
       ) : canvasModeOn ? (

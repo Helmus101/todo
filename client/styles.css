@@ -5191,6 +5191,35 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-ai-mode-row { display: flex; justify-content: flex-end; padding: var(--space-2) var(--space-3) 0; flex: none; }
 .sm-canvas-toggle { display: inline-flex; align-items: center; gap: 6px; }
 .sm-canvas-toggle.is-on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+/* First-time feature hints — see FirstTimeHint in ui.tsx. Deliberately plain: an accent-tinted note, not
+   a modal or a spotlight overlay — it should read as a quiet aside, not interrupt getting into the feature. */
+.first-time-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+}
+.first-time-hint-body { flex: 1; min-width: 0; }
+.first-time-hint-title { font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+.first-time-hint-body p { margin: 0; color: var(--ink); line-height: 1.5; }
+.first-time-hint-close {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px;
+  opacity: 0.7;
+}
+.first-time-hint-close:hover { opacity: 1; }
+
 .sm-canvas-empty {
   flex: none;
   margin: var(--space-3) var(--space-3) 0;
