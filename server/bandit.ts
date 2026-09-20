@@ -137,10 +137,17 @@ export function computeReward(input: {
    *  when no flashcards were reviewed this session, in which case that term is simply omitted, not zeroed
    *  (a session with no review activity shouldn't be penalized for a signal that doesn't apply to it). */
   netBoxDelta?: number;
+  /** Average concentration score from on-device eye/face tracking (0–100), when the student enabled the
+   *  focus camera. Undefined when camera tracking wasn't on — omitted rather than zeroed, same posture as
+   *  netBoxDelta, so a session without the camera isn't penalized for a signal that doesn't apply to it. */
+  avgConcentration?: number;
 }): number {
   const terms: number[] = [input.completedPlanned ? 1 : 0, 1 - Math.max(0, Math.min(1, input.idleRatio))];
   if (input.netBoxDelta !== undefined) {
     terms.push(normalizeBoxDelta(input.netBoxDelta));
+  }
+  if (input.avgConcentration !== undefined) {
+    terms.push(Math.max(0, Math.min(1, input.avgConcentration / 100)));
   }
   const reward = terms.reduce((s, t) => s + t, 0) / terms.length;
   return Math.max(0, Math.min(1, reward));

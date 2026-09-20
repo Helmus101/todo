@@ -2259,8 +2259,9 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
     const completedPlanned = !!req.body?.completedPlanned;
     const idleRatio = Number(req.body?.idleRatio);
     const netBoxDelta = req.body?.netBoxDelta !== undefined ? Number(req.body.netBoxDelta) : undefined;
+    const avgConcentration = req.body?.avgConcentration !== undefined ? Number(req.body.avgConcentration) : undefined;
     if (!Number.isFinite(idleRatio)) { res.status(400).json({ error: "Invalid idleRatio." }); return; }
-    const reward = computeReward({ completedPlanned, idleRatio, netBoxDelta: Number.isFinite(netBoxDelta) ? netBoxDelta : undefined });
+    const reward = computeReward({ completedPlanned, idleRatio, netBoxDelta: Number.isFinite(netBoxDelta) ? netBoxDelta : undefined, avgConcentration: Number.isFinite(avgConcentration) ? avgConcentration : undefined });
     const key = banditContextKey(new Date(), req.session.profile);
     const email = req.session.user!;
     const state = await loadBanditState(email, "pomodoro");
