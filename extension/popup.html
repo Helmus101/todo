@@ -54,6 +54,13 @@
       }
       .allow-item button:hover { color: var(--ink); }
       .allow-empty { font-size: 11.5px; color: var(--ink-3); padding: 4px 2px; }
+      .unblock-row { margin-top: 12px; }
+      .unblock-btn {
+        width: 100%; padding: 9px 11px; border: 1px solid rgba(220, 38, 38, 0.35); border-radius: 8px;
+        background: rgba(220, 38, 38, 0.08); color: #dc2626; font-size: 12.5px; font-weight: 600; cursor: pointer;
+      }
+      .unblock-btn:hover { background: rgba(220, 38, 38, 0.14); }
+      .unblock-note { font-size: 11px; color: var(--ink-3); margin-top: 6px; line-height: 1.4; }
     </style>
   </head>
   <body>
@@ -82,6 +89,11 @@
         <button type="button" id="allowAdd">Add</button>
       </div>
       <div class="allow-list" id="allowList"></div>
+    </div>
+
+    <div class="unblock-row" id="unblockRow" hidden>
+      <button type="button" class="unblock-btn" id="unblockBtn">Stop blocking sites now</button>
+      <p class="unblock-note">Overrides Study Mode's block from here directly — normally you'd end the session in the app instead. Use this if you're locked out and the app itself isn't reachable.</p>
     </div>
 
     <script src="popup.js"></script>

@@ -11,6 +11,23 @@ const hint = document.getElementById("hint");
 const allowInput = document.getElementById("allowInput");
 const allowAdd = document.getElementById("allowAdd");
 const allowListEl = document.getElementById("allowList");
+const unblockRow = document.getElementById("unblockRow");
+const unblockBtn = document.getElementById("unblockBtn");
+
+// Direct escape hatch — sends the SAME "study-mode-end" message the web app's own deliberate long-press
+// End button sends (extensionBridge.ts's stopStudyBlocking, relayed by content.js), just triggered from
+// here instead. Explicitly requested: the app-side flow requires holding a button in the app itself, which
+// doesn't help if the app tab is closed, the student is on a different device, or something's gone wrong
+// with the connection between the two — this works regardless, straight from the extension.
+unblockBtn.addEventListener("click", () => {
+  if (!confirm("Stop blocking sites for this Study Mode session?")) return;
+  chrome.runtime.sendMessage({ type: "study-mode-end" }, () => {
+    unblockRow.hidden = true;
+    statusBox.classList.remove("blocking");
+    statusLabel.textContent = "Active";
+    hint.textContent = "Blocking stopped. Otto opens drafts, docs and pages for you — grouped into one \"Otto\" tab group, so it can work while you're away.";
+  });
+});
 
 let currentAllowlist = [];
 
@@ -67,6 +84,10 @@ chrome.runtime.sendMessage({ type: "get-status" }, (res) => {
   if (!res) return; // background.js unreachable — leave the default "Active" (installed) state showing
   currentAllowlist = res.customAllowlist || [];
   renderAllowlist();
+  // Shown whenever a session is active at all — including the "didn't start" failure state below, since
+  // studyModeActive can still be true (stuck) there even with no rule actually installed, and clearing it
+  // from here is exactly the recovery path for that case too.
+  unblockRow.hidden = !res.studyModeActive;
   if (res.studyModeActive && res.ruleActuallyInstalled) {
     statusBox.classList.add("blocking");
     statusLabel.textContent = "Blocking other sites";

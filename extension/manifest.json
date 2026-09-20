@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Otto Tabs",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Lets the Otto web app open created docs and pages for you, grouped into one tab group, so tasks can finish while you're away. Can also block other sites during an active Study Mode session.",
   "permissions": ["tabs", "tabGroups", "declarativeNetRequest", "storage"],
   "host_permissions": ["<all_urls>"],
