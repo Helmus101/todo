@@ -793,7 +793,7 @@ export function assignmentBlock(t: { source?: string; sourceSubject?: string; so
 /** This task's own due date, ALWAYS shown when known — unlike assignmentBlock above (which only renders at
  *  all when the full énoncé text exists), a deadline is worth surfacing even on a bare Pronote test or a
  *  calendar event with no assignment text attached. The days-until is computed HERE, server-side, rather
- *  than left for the model to work out from two raw dates — asking an LLM to do its own date arithmetic
+ *  than left for the model to work out from two raw dates �� asking an LLM to do its own date arithmetic
  *  ("today is Tuesday the 9th, due the 18th, so...") is exactly the kind of simple calculation it gets
  *  wrong often enough to not trust blind; handing it the literal number closes that gap outright. */
 export function dueLine(sourceDue?: string): string {
@@ -5071,16 +5071,22 @@ export async function studyHelp(
     `5/x = 1/10?" is asking whether their APPROACH is valid, not what x equals — answer THAT plainly ("yes, ` +
     `cross-multiplying works here — go ahead and solve it" / "not quite — that setup would work if the ratio ` +
     `were flipped, try again with..."). Confirming or correcting the METHOD/setup/formula/first step is ` +
-    `always fair game; only the final value/text is off-limits. When in doubt about which one they're asking, ` +
-    `answer the method question directly rather than defaulting to a vague non-answer.\n` +
-    `1a. FOCUS, DON'T FUNNEL — prefer a focusing question ("what do you notice about...?", "which part of ` +
+  `always fair game; only the final value/text is off-limits. However, if the student's message contains an ` +
+  `attempt, equation, calculation, or proposed correction, do NOT fix it for them or point out the sign/error ` +
+  `immediately. Treat it as evidence that they are thinking: ask one precise question that makes them inspect ` +
+  `the relevant relationship, direction, unit, or assumption themselves. Only discuss whether the method is valid ` +
+  `when they explicitly ask whether their method/setup is valid. Never turn "check my work" into the corrected ` +
+  `working or final result.\n` +
+  `1a. FOCUS, DON'T FUNNEL — prefer a focusing question ("what do you notice about...?", "which part of ` +
     `the question is the key clue?") over a fill-in-the-blank ("so the answer starts with..."). Never give a ` +
     `hint that decomposes the reasoning FOR them — make them do the noticing. Let them struggle productively ` +
     `before narrowing down; only narrow after they've genuinely tried and missed.\n` +
     `2. Guide with questions, a relevant fact, an analogy, or by pointing at what part of the question actually ` +
     `matters — the same first-principles style as Otto's regular tutoring, just compressed to 1-3 short ` +
-    `sentences (this is a sidebar next to a drill, not a lecture). ONE nudge, then stop — never a multi-step ` +
-    `walkthrough of the whole method in one reply, even if you could.\n` +
+  `sentences (this is a sidebar next to a drill, not a lecture). ONE nudge, then stop — never a multi-step ` +
+  `walkthrough of the whole method in one reply, even if you could. If the student has not shown any attempt, ` +
+  `start with a question instead of an explanation. Keep the reply short enough that the student has to do ` +
+  `the next move, rather than giving them a mini-solution.\n` +
     `3. If they seem to genuinely understand it now, encourage them to flip the card / pick an option ` +
     `themselves rather than telling them they're right.\n` +
     `4. Stay on this one card. If they ask something unrelated to it, answer briefly but steer back.\n` +

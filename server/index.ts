@@ -1055,8 +1055,12 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     // Pronote is read outside the Composio toolset entirely (server/discover.ts calls it directly), so a
     // Pronote-only lycéen with no Gmail connected must still be able to sweep — gating on Composio tools
     // alone used to hard-block them here even though the deterministic pipeline already supports this.
-    const pronoteOn = (await pronoteSvc.pronoteConnected(user)).connected;
-    if (!extras?.tools?.length && !pronoteOn) { res.status(400).json({ error: "Connecte ton Pronote dans les Réglages pour qu'Otto ait quelque chose à lire." }); return; }
+  const pronoteOn = (await pronoteSvc.pronoteConnected(user)).connected;
+  const bankingOn = (await plaidSvc.plaidConnected(user)).connected;
+  if (!extras?.tools?.length && !pronoteOn && !bankingOn) {
+    res.status(400).json({ error: "Connecte Gmail, Google Calendar, Pronote ou ta banque dans les Réglages pour qu'Otto ait quelque chose à lire." });
+    return;
+  }
     const job = await jobs.enqueueAndDrain(user, "sweep");
     if (job.status === "succeeded") req.session.lastGenTime = new Date().toISOString();
     // The job committed to the CLOUD copy — fold it into this session so the response reflects it.

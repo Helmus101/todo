@@ -221,8 +221,8 @@ export function plaidToItems(transactions: { id: string; name: string; amount: n
       sourceApp: "plaid",
       externalId: key,
       anchorKey: `plaid:${key}`,
-      title: `Pay ${g.name}`.slice(0, 140),
-      snippet: `Recurring charge of ~${g.amount.toFixed(2)} seen ${g.dates.length} times, roughly every ${Math.round(avgGapDays)} days — next one due around ${nextDue.toISOString().slice(0, 10)}.`,
+    title: `Review recurring payment: ${g.name}`.slice(0, 140),
+    snippet: `Recurring charge of ~${g.amount.toFixed(2)} seen ${g.dates.length} times, roughly every ${Math.round(avgGapDays)} days — review it before the next expected charge around ${nextDue.toISOString().slice(0, 10)}. Otto never initiates payments.`,
       timestamp: nextDue.toISOString(),
       labels: ["bill"],
     });
@@ -260,8 +260,8 @@ export function plaidSuspiciousToItems(transactions: { id: string; name: string;
       sourceApp: "plaid",
       externalId: t.id,
       anchorKey: `plaid-alert:${t.id}`,
-      title: `Check ${t.name}`.slice(0, 140),
-      snippet: `Unusually large charge — ${t.amount.toFixed(2)}, well above your typical ${median.toFixed(2)} — worth a quick check that this was really you.`,
+    title: `Review bank charge: ${t.name}`.slice(0, 140),
+    snippet: `Unusually large charge — ${t.amount.toFixed(2)}, well above your typical ${median.toFixed(2)} — review whether this was expected. Otto never disputes or reverses charges.`,
       timestamp: t.date,
       labels: ["suspicious"],
     });

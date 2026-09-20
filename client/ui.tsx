@@ -12,6 +12,10 @@ import { motion, useReducedMotion } from "motion/react";
 import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
 import { canonStatus, practiceAnswerMatches, LEITNER_BOX_LABEL } from "../shared/types.ts";
 import { api } from "./api.ts";
+import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
+import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
+import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
+import { VoiceControls } from "./voice/VoiceControls.tsx";
 
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
 // Profile). `L(fr, en)` picks the right string for whichever language is active — used everywhere instead of
@@ -550,20 +554,45 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
   const [history, setHistory] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
   const cardKey = card.kind === "flashcard" ? card.front : card.question;
-  useEffect(() => { setHistory([]); setInput(""); setOpen(false); }, [cardKey]);
-  const send = () => {
-    const message = input.trim();
+  const lang = useContext(LangContext);
+  const en = lang === "en";
+  const speechLang = en ? "en-US" : "fr-FR";
+  const synth = useSpeechSynthesis(speechLang);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const send = (override?: string) => {
+    const message = (override ?? input).trim();
     if (!message || busy || !taskId) return;
     setInput("");
     setBusy(true);
     const prior = history;
     setHistory((h) => [...h, { role: "user", text: message }]);
     api.studyHelp(taskId, card, prior, message)
-      .then((r) => setHistory((h) => [...h, { role: "assistant", text: r.reply }]))
+      .then((r) => {
+        setHistory((h) => [...h, { role: "assistant", text: r.reply }]);
+        if (voiceModeOn) synth.speak(r.reply);
+      })
       .catch((e: any) => setHistory((h) => [...h, { role: "assistant", text: e?.message || L("Erreur — réessaie.", "Error — try again.") }]))
       .finally(() => setBusy(false));
   };
+  const recog = useSpeechRecognition({
+    lang: speechLang,
+    onResult: (text) => { if (!busyRef.current) send(text); },
+  });
+  useEffect(() => {
+    if (voiceModeOn) recog.start();
+    else { recog.abort(); synth.cancel(); }
+    return () => { recog.abort(); synth.cancel(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceModeOn]);
+  useEffect(() => {
+    if (voiceModeOn && !busy && !synth.speaking && !recog.listening) recog.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceModeOn, busy, synth.speaking]);
+  useEffect(() => { setHistory([]); setInput(""); setOpen(false); }, [cardKey]);
+
   if (!taskId) return null;
   return (
     <div className="study-help">
@@ -598,11 +627,20 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") send(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) send(); }}
               placeholder={L("Demande un indice…", "Ask for a hint…")}
               disabled={busy}
             />
-            <button type="button" className="btn xs primary" onClick={send} disabled={busy || !input.trim()}>{L("Envoyer", "Send")}</button>
+            <VoiceControls
+              supported={recog.supported}
+              voiceModeOn={voiceModeOn}
+              listening={recog.listening}
+              speaking={synth.speaking}
+              interimTranscript={recog.interimTranscript}
+              onToggle={toggleVoiceMode}
+              en={en}
+            />
+            <button type="button" className="btn xs primary" onClick={() => send()} disabled={busy || !input.trim()}>{L("Envoyer", "Send")}</button>
           </div>
         </div>
       )}
