@@ -2260,8 +2260,20 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
     const idleRatio = Number(req.body?.idleRatio);
     const netBoxDelta = req.body?.netBoxDelta !== undefined ? Number(req.body.netBoxDelta) : undefined;
     const avgConcentration = req.body?.avgConcentration !== undefined ? Number(req.body.avgConcentration) : undefined;
+    const gazeOnScreenPct = req.body?.gazeOnScreenPct !== undefined ? Number(req.body.gazeOnScreenPct) : undefined;
+    const avgBlinkRate = req.body?.avgBlinkRate !== undefined ? Number(req.body.avgBlinkRate) : undefined;
+    const restlessPct = req.body?.restlessPct !== undefined ? Number(req.body.restlessPct) : undefined;
+    const headPoseStability = req.body?.headPoseStability !== undefined ? Number(req.body.headPoseStability) : undefined;
     if (!Number.isFinite(idleRatio)) { res.status(400).json({ error: "Invalid idleRatio." }); return; }
-    const reward = computeReward({ completedPlanned, idleRatio, netBoxDelta: Number.isFinite(netBoxDelta) ? netBoxDelta : undefined, avgConcentration: Number.isFinite(avgConcentration) ? avgConcentration : undefined });
+    const reward = computeReward({
+      completedPlanned, idleRatio,
+      netBoxDelta: Number.isFinite(netBoxDelta) ? netBoxDelta : undefined,
+      avgConcentration: Number.isFinite(avgConcentration) ? avgConcentration : undefined,
+      gazeOnScreenPct: Number.isFinite(gazeOnScreenPct) ? gazeOnScreenPct : undefined,
+      avgBlinkRate: Number.isFinite(avgBlinkRate) ? avgBlinkRate : undefined,
+      restlessPct: Number.isFinite(restlessPct) ? restlessPct : undefined,
+      headPoseStability: Number.isFinite(headPoseStability) ? headPoseStability : undefined,
+    });
     const key = banditContextKey(new Date(), req.session.profile);
     const email = req.session.user!;
     const state = await loadBanditState(email, "pomodoro");

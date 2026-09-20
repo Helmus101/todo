@@ -732,8 +732,14 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         // lengths, audio presets, and density variants actually keep THIS student focused — not just which
         // ones they didn't bail on. Only when the camera was on (acc.count > 0); otherwise omitted, same
         // posture as netBoxDelta (a session without the camera shouldn't be scored on a signal it lacks).
-        const avgConc = acc.count > 0 ? Math.round(acc.concSum / acc.count) : undefined;
-        void api.submitSessionOutcome(env.pomodoroArmId, completedPlanned, idleRatioAtEnd, undefined, env.audioArmId, densityArmId, avgConc).catch(() => {});
+        const focusMetricsForBandit = acc.count > 0 ? {
+          avgConcentration: Math.round(acc.concSum / acc.count),
+          gazeOnScreenPct: Math.round(acc.gazeOnScreenSum / acc.count),
+          avgBlinkRate: Math.round(acc.blinkRateSum / acc.count),
+          restlessPct: Math.round(acc.restlessSum / acc.count),
+          headPoseStability: Math.round(acc.headPoseStabilitySum / acc.count),
+        } : undefined;
+        void api.submitSessionOutcome(env.pomodoroArmId, completedPlanned, idleRatioAtEnd, undefined, env.audioArmId, densityArmId, focusMetricsForBandit).catch(() => {});
       }
       // `context` carries the task's own subject (when known) so Settings can later break "study &
       // concentration" down per subject, not just the global 30-day average — see getStudyMetricsSummary's

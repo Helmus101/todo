@@ -261,8 +261,10 @@ export const api = {
     req(`/api/focus/schedule-suggestion${subject ? `?subject=${encodeURIComponent(subject)}` : ""}${difficulty ? `&difficulty=${encodeURIComponent(difficulty)}` : ""}`).then(j),
   getArtifactRecommendation: (subject: string): Promise<{ recommendation: "flashcards" | "quiz" | "note" | "mixed" | null }> => 
     req(`/api/focus/artifact-recommendation?subject=${encodeURIComponent(subject)}`).then(j),
-  submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta?: number, audioArmId?: string, densityArmId?: string, avgConcentration?: number): Promise<{ ok: boolean }> =>
-    post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta, audioArmId, densityArmId, avgConcentration }),
+  submitSessionOutcome: (armId: string, completedPlanned: boolean, idleRatio: number, netBoxDelta: number | undefined, audioArmId: string | undefined, densityArmId: string | undefined, focusMetrics?: {
+    avgConcentration?: number; gazeOnScreenPct?: number; avgBlinkRate?: number; restlessPct?: number; headPoseStability?: number;
+  }): Promise<{ ok: boolean }> =>
+    post("/api/study/session-outcome", { armId, completedPlanned, idleRatio, netBoxDelta, audioArmId, densityArmId, ...focusMetrics }),
   // Flexible, open-ended metric logging (server/store.ts's recordMetric) — `name` is any short label the
   // caller invents; nothing here needs a new endpoint or schema change to add a new signal later.
   recordMetric: (name: string, value: number, bucket?: string, context?: string): Promise<{ ok: boolean }> =>

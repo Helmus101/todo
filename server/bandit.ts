@@ -141,6 +141,16 @@ export function computeReward(input: {
    *  focus camera. Undefined when camera tracking wasn't on — omitted rather than zeroed, same posture as
    *  netBoxDelta, so a session without the camera isn't penalized for a signal that doesn't apply to it. */
   avgConcentration?: number;
+  /** Percentage of frames where the student's gaze was on-screen (0–100), from face tracking. Same
+   *  undefined-when-camera-off posture as avgConcentration. */
+  gazeOnScreenPct?: number;
+  /** Average blink rate (blinks/min) across the session. Normal resting rate is ~15–20; above 25 tends to
+   *  indicate stress/distraction. Undefined when the camera was off. */
+  avgBlinkRate?: number;
+  /** Percentage of frames classified as "Active" or "Restless" movement (0–100). Lower is calmer. */
+  restlessPct?: number;
+  /** Head-pose stability score (0–100) — higher means the head stayed steadier. */
+  headPoseStability?: number;
 }): number {
   const terms: number[] = [input.completedPlanned ? 1 : 0, 1 - Math.max(0, Math.min(1, input.idleRatio))];
   if (input.netBoxDelta !== undefined) {
@@ -148,6 +158,21 @@ export function computeReward(input: {
   }
   if (input.avgConcentration !== undefined) {
     terms.push(Math.max(0, Math.min(1, input.avgConcentration / 100)));
+  }
+  if (input.gazeOnScreenPct !== undefined) {
+    terms.push(Math.max(0, Math.min(1, input.gazeOnScreenPct / 100)));
+  }
+  if (input.avgBlinkRate !== undefined) {
+    // Normal resting rate ~15–20 blinks/min; above 25 trends toward distraction. Full score at ≤20,
+    // linearly decaying to 0 by 45 blinks/min.
+    const blinkScore = input.avgBlinkRate <= 20 ? 1 : Math.max(0, 1 - (input.avgBlinkRate - 20) / 25);
+    terms.push(blinkScore);
+  }
+  if (input.restlessPct !== undefined) {
+    terms.push(1 - Math.max(0, Math.min(1, input.restlessPct / 100)));
+  }
+  if (input.headPoseStability !== undefined) {
+    terms.push(Math.max(0, Math.min(1, input.headPoseStability / 100)));
   }
   const reward = terms.reduce((s, t) => s + t, 0) / terms.length;
   return Math.max(0, Math.min(1, reward));
