@@ -1591,7 +1591,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
         </div>
       </div>
       <div className="set-row">
-        <span className="set-text"><b>{L("Ton parcours", "Your track")}</b><span className="settings-hint">{L("Vocabulaire et intégrations proposées.", "Vocabulary and integrations offered.")}</span></span>
+        <span className="set-text"><b>{L("Ton parcours", "Your track")}</b><span className="settings-hint">{L("Vocabulaire et intégrations proposées. Pas en Bac ou IB (collège, etc.) ? Choisis « Autre ».", "Vocabulary and integrations offered. Not doing Bac or IB (middle school, etc.)? Pick \"Other\".")}</span></span>
         <div className="lang-toggle">
           <button type="button" className={`btn xs ${track === "bac" ? "" : "ghost"}`} aria-pressed={track === "bac"} onClick={() => void saveTrack("bac")}>{L("Bac", "Bac")}</button>
           <button type="button" className={`btn xs ${track === "ib" ? "" : "ghost"}`} aria-pressed={track === "ib"} onClick={() => void saveTrack("ib")}>IB</button>
@@ -1601,7 +1601,7 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
       <label className="set-row">
         <span className="set-text"><b>{L("Ta classe / ton année", "Your year/grade")}</b><span className="settings-hint">{L("Aide Otto à caler la difficulté des fiches et exercices sur ton niveau exact.", "Helps Otto match revision sheets and exercises to your exact level.")}</span></span>
         <input className="addinput" style={{ maxWidth: 160 }} maxLength={40}
-          placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : L("ex. Terminale", "e.g. Terminale")}
+          placeholder={track === "ib" ? L("ex. DP1", "e.g. DP1") : track === "other" ? L("ex. 5ème", "e.g. Grade 7") : L("ex. Terminale", "e.g. Terminale")}
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
@@ -3368,14 +3368,17 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             <div className="onboard-apps">
               <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{L("Bac français (lycée)", "French Bac (lycée)")}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>{L("IB", "IB")}</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre", "Other")}</button>
+              <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
             </div>
-            {/* Same topic name can mean a different depth at a different year ("quadratics" in Seconde vs.
-                Terminale) — without this, Otto has to guess the level and either bores or loses the student. */}
+            {/* "Other" is a deliberately broad catch-all, not just "a different high school system" —
+                covers collège/middle school, a national curriculum that's neither Bac nor IB, or anyone who
+                just doesn't fit the first two. Nothing downstream (claude.ts's prompts, subject vocabulary)
+                special-cases "other" further by age/level today — it's a flexible bucket, not a distinct
+                third syllabus — so no separate "middle school" track value is needed for this to work. */}
             <label className="field onboard-name">
               <span>{L("Ta classe / ton année (facultatif)", "Your year/grade (optional)")}</span>
               <input className="addinput" maxLength={40}
-                placeholder={track === "ib" ? L("ex. DP1, Year 12", "e.g. DP1, Year 12") : track === "other" ? L("ex. Grade 10, Year 11", "e.g. Grade 10, Year 11") : L("ex. Terminale, Première", "e.g. Terminale, Première")}
+                placeholder={track === "ib" ? L("ex. DP1, Year 12", "e.g. DP1, Year 12") : track === "other" ? L("ex. 5ème, Grade 7", "e.g. 5ème, Grade 7") : L("ex. Terminale, Première", "e.g. Terminale, Première")}
                 value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
                 onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") void saveYearLevel(); }} />
             </label>
