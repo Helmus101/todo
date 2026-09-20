@@ -3657,12 +3657,10 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
           <a className="btn ghost big hero-btn-secondary" href="/login">{L("Se connecter", "Log in")}</a>
         </div>
 
-        <div className="fineprint hero-in" style={{ ["--d" as any]: "0.30s" }}>
-          {L("Un guide, jamais un exécutant · Otto ne fait jamais le travail noté à ta place.", "A guide, never a shortcut · Otto never does your graded work for you.")}
-        </div>
-
-        {/* Apple-grade Trust Badges */}
-        <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.36s" }}>
+        {/* Trust badges — the standalone "fineprint" line that used to sit here ("Un guide, jamais un
+            exécutant...") said the same thing as the 4th badge below AND the whole Ethics section further
+            down the page; three places making the identical claim was noise, not reinforcement. */}
+        <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.30s" }}>
           <li><span className="trust-icon"><Lock size={13} strokeWidth={1.5} /></span> {L("Chiffrement de bout en bout (AES-256)", "End-to-end encrypted credentials")}</li>
           <li><span className="trust-icon"><GraduationCap size={13} strokeWidth={1.5} /></span> {L("Spécialisé Baccalauréat & Bac International", "Built for French Bac & IB")}</li>
           <li><span className="trust-icon"><Zap size={13} strokeWidth={1.5} /></span> {L("Plafond d'usage transparent", "Capped & visible AI cost")}</li>
@@ -3841,6 +3839,33 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
             </div>
           </div>
         </div>
+      </section>
+
+      {/* Research — deliberately plain text, no icons/cards, unlike the sections above: this is a
+          methodology citation, not another feature pitch, and looking like one would undercut the point. */}
+      <section className="landing-sec">
+        <div className="sec-header">
+          <span className="sec-kicker">{L("Recherche", "Research")}</span>
+          <h2 className="reveal">{L("Construit sur des méthodes qui marchent, pas sur des vibes.", "Built on methods that work, not vibes.")}</h2>
+        </div>
+        <dl className="research-list reveal">
+          <div className="research-row">
+            <dt>{L("Questionnement socratique", "Socratic questioning")}</dt>
+            <dd>{L("Otto guide par des questions qui te font trouver la réponse — il ne la donne pas à ta place.", "Otto guides with questions that lead you to the answer — it doesn't hand it over.")}</dd>
+          </div>
+          <div className="research-row">
+            <dt>{L("Répétition espacée (Leitner)", "Spaced repetition (Leitner)")}</dt>
+            <dd>{L("Chaque carte revient juste avant que tu ne l'oublies, pas au hasard.", "Each card resurfaces right before you'd forget it, not at random.")}</dd>
+          </div>
+          <div className="research-row">
+            <dt>{L("Hiérarchie d'engagement (ICAP)", "Engagement hierarchy (ICAP)")}</dt>
+            <dd>{L("Réciter à voix haute ou expliquer avec ses mots ancre mieux qu'un simple relis — Otto pousse vers l'actif, pas le passif.", "Explaining something in your own words sticks better than re-reading it — Otto pushes toward active recall, not passive review.")}</dd>
+          </div>
+          <div className="research-row">
+            <dt>{L("Matrice d'Eisenhower", "Eisenhower matrix")}</dt>
+            <dd>{L("Tes tâches sont classées par urgent/important réel, pas par ordre d'arrivée.", "Your tasks are ranked by real urgency/importance, not by whatever arrived last.")}</dd>
+          </div>
+        </dl>
       </section>
 
       {/* Comparison Matrix */}
