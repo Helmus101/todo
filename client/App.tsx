@@ -1313,10 +1313,15 @@ function WeekRailFab({ lang, pronoteConnected, onTask, tasks }: { lang?: "fr" | 
  *  (StudyLogPage's onDayReview/onSummaryReview). */
 function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   const en = lang === "en";
-  const [due, setDue] = useState<{ taskId: string; taskTitle: string; deckId: string; deckTitle: string }[] | null>(null);
+  const [due, setDue] = useState<{ taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number }[] | null>(null);
   const [error, setError] = useState(false);
   const [openDeck, setOpenDeck] = useState<{ taskId: string; deckId: string } | null>(null);
   useEffect(() => { void api.reviewsDue().then((r) => setDue(r.due)).catch(() => { setDue([]); setError(true); }); }, []);
+  // Once the open deck has nothing left due, close the modal automatically — a clear "you're done" signal
+  // instead of leaving an empty-feeling review screen open with nothing more to click through.
+  useEffect(() => {
+    if (openDeck && due && !due.some((d) => d.deckId === openDeck.deckId)) setOpenDeck(null);
+  }, [due, openDeck]);
   if (error) return <p className="rewrite-error small">{en ? "Couldn't load reviews due." : "Impossible de charger les révisions dues."}</p>;
   if (!due?.length) return null;
   // Group by DECK (not task) — a task with two decks should show two chips, not one merged count.
@@ -1345,6 +1350,11 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
             taskId={openTask.id}
             onReview={(cardIndex, correct) => {
               void api.reviewFlashcard(openTask.id, openDeckObj.id, cardIndex, correct).catch(() => {});
+              // Mark it complete immediately — reported live that a reviewed card stayed showing as "due"
+              // (chip count unchanged) until the next full reload. Reviewing IS what clears "due today,"
+              // regardless of right/wrong (that only changes which Leitner box it moves to next), so drop
+              // it from the local due list the moment the review fires rather than waiting on a refetch.
+              setDue((prev) => prev?.filter((d) => !(d.deckId === openDeckObj.id && d.cardIndex === cardIndex)) ?? prev);
             }}
           />
         </TaskModal>
