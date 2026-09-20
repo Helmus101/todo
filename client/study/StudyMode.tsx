@@ -954,7 +954,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
   // `override` lets a caller (voice input) send a just-transcribed message directly, instead of relying on
   // `chatInput` state having already caught up — setChatInput(transcript) then immediately calling sendChat()
   // would race React's async state update and send the PREVIOUS chatInput value, not the new transcript.
-  const sendChat = useCallback(async (override?: string, voiceMode?: boolean) => {
+  const sendChat = useCallback(async (override?: string, voiceMode?: boolean, canvasMode?: boolean) => {
     const message = (override ?? chatInput).trim();
     if (!message || chatSending || !env) return;
     const stepIndex = env.currentSubtaskIndex;
@@ -966,7 +966,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     const materials = env.materials.filter((m) => m.text?.trim()).map((m) => ({ label: m.label, text: m.text! }));
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try {
-      const { task: updated } = await api.chat(task.id, message, stepIndex, materials.length ? materials : undefined, voiceMode);
+      const { task: updated } = await api.chat(task.id, message, stepIndex, materials.length ? materials : undefined, voiceMode, canvasMode);
       onTaskUpdate({ ...task, ...updated });
       // Auto-open new quizzes on the canvas — when the tutor creates a quiz mid-conversation, pop it open
       // on the desk immediately (the student doesn't have to find and click the chip). Also opens a

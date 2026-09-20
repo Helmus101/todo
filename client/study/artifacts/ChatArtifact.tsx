@@ -9,7 +9,7 @@ interface ChatArtifactProps {
   sending: boolean;
   error: string | null;
   pendingMsg: string | null;
-  onSend: (override?: string, voiceMode?: boolean) => void;
+  onSend: (override?: string, voiceMode?: boolean, canvasMode?: boolean) => void;
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;

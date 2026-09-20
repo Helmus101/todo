@@ -1,11 +1,14 @@
 import { useRef, useEffect, useContext } from "react";
+import { Grid2x2 } from "lucide-react";
 import type { WebTask } from "../../shared/types.ts";
-import { renderChatText, useThinkingWord, LangContext, CondensedUserMessage } from "../ui.tsx";
+import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
 import { InlineProblem } from "./InlineProblem.tsx";
+import { useCanvasModePref } from "./useCanvasModePref.ts";
+import { CanvasProblem } from "./CanvasProblem.tsx";
 
 interface AskOttoPanelProps {
   task: WebTask;
@@ -15,7 +18,7 @@ interface AskOttoPanelProps {
   sending: boolean;
   error: string | null;
   pendingMsg: string | null;
-  onSend: (override?: string, voiceMode?: boolean) => void;
+  onSend: (override?: string, voiceMode?: boolean, canvasMode?: boolean) => void;
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
@@ -38,11 +41,19 @@ export function AskOttoPanel({
   const speechLang = en ? "en-US" : "fr-FR";
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
+  const [canvasModeOn, toggleCanvasMode] = useCanvasModePref();
+  const L = useLang();
   // Fires per detected utterance while listening — ignore a stray recognition result that lands while a
   // previous message is still in flight rather than firing a second send on top of it.
   const sendingRef = useRef(sending);
   sendingRef.current = sending;
-  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => { if (!sendingRef.current) onSend(text, true); } });
+  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => { if (!sendingRef.current) onSend(text, true, canvasModeOn); } });
+  // The problem currently "on the canvas" — the most recently created one (CREATE_PROBLEM appends to
+  // task.problems in order, so the last entry is always the active/most-recent problem; Otto's own prompt
+  // instructions — see chatAboutTask's CANVAS MODE block — keep working THIS one until it's actually solved
+  // before making a new one, so "most recent" and "active" are the same thing in practice). Only shown
+  // pinned above the thread while canvas mode is on; irrelevant otherwise.
+  const activeProblem = canvasModeOn && task.problems?.length ? task.problems[task.problems.length - 1] : undefined;
   // Voice mode is ONE switch: on = always listening (no push-to-talk tap needed between turns) AND
   // auto-speaking replies. Turning it on starts listening immediately; turning it off stops everything.
   useEffect(() => {
@@ -106,10 +117,39 @@ export function AskOttoPanel({
 
   return (
     <div className="sm-ai-embed">
+      <div className="sm-ai-mode-row">
+        <button
+          type="button"
+          className={`sm-btn sm-btn-ghost sm-btn-sm sm-canvas-toggle ${canvasModeOn ? "is-on" : ""}`}
+          onClick={toggleCanvasMode}
+          aria-pressed={canvasModeOn}
+          title={L(
+            "Mode canevas : un problème à la fois, avec les étapes affichées au-dessus du chat",
+            "Canvas mode: one problem at a time, with the steps pinned above the chat",
+          )}
+        >
+          <Grid2x2 size={13} strokeWidth={2} />
+          {L("Mode canevas", "Canvas mode")}
+        </button>
+      </div>
+
+      {canvasModeOn && activeProblem ? (
+        <CanvasProblem problem={activeProblem} />
+      ) : canvasModeOn ? (
+        <div className="sm-canvas-empty">
+          {L(
+            "Envoie un message pour qu'Otto pose le premier problème sur le canevas.",
+            "Send a message and Otto will put the first problem on the canvas.",
+          )}
+        </div>
+      ) : null}
+
       <div className="sm-ai-chat" role="log" aria-live="polite" aria-label="Conversation with Otto">
         {!task.chat?.length && !pendingMsg ? (
           <p className="sm-ai-empty">
-            Ask anything about {currentStep ? `"${currentStep.text}"` : task.title}.
+            {canvasModeOn
+              ? L("Dis à Otto sur quoi tu veux t'entraîner.", "Tell Otto what you want to practice.")
+              : `Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`}
           </p>
         ) : task.chat?.map((m, i) => (
           <div key={i} className={`sm-ai-msg sm-ai-msg-${m.role}`}>
@@ -118,7 +158,9 @@ export function AskOttoPanel({
             {/* renderChatText returns its own <p>/<ul> blocks — must NOT be wrapped in another <p> (invalid
                 nesting silently breaks paragraph spacing, browsers auto-close the outer tag). */}
             {m.role === "assistant" ? renderChatText(m.text) : <p><CondensedUserMessage text={m.text} /></p>}
-            {m.artifacts?.filter((a) => a.kind === "problem").map((a) => {
+            {/* In canvas mode the active problem is already pinned above (CanvasProblem) — rendering it a
+                second time inline here would just duplicate it under every message that mentions it. */}
+            {!canvasModeOn && m.artifacts?.filter((a) => a.kind === "problem").map((a) => {
               const problem = task.problems?.find((p) => p.id === a.id);
               if (!problem) return null;
               return <InlineProblem key={a.id} problem={problem} />;
@@ -157,7 +199,7 @@ export function AskOttoPanel({
       {error ? (
         <div className="sm-ai-error">
           {error}
-          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>Retry</button>
+          <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn, canvasModeOn)} disabled={sending}>Retry</button>
         </div>
       ) : null}
 
@@ -170,7 +212,7 @@ export function AskOttoPanel({
           placeholder="What do you need help with?"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn, canvasModeOn); } }}
           disabled={sending}
           autoFocus
         />
@@ -183,7 +225,7 @@ export function AskOttoPanel({
           onToggle={toggleVoiceMode}
           en={en}
         />
-        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
+        <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn, canvasModeOn)} disabled={sending || !input.trim()}>
           Send
         </button>
       </div>

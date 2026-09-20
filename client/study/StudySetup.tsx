@@ -118,7 +118,18 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
   const [pomodoroEnabled, setPomodoroEnabled] = useState(existingEnv?.pomodoroEnabled ?? false);
   const [workMinutes, setWorkMinutes] = useState(existingEnv?.pomodoroWorkMinutes ?? 25);
   const [breakMinutes, setBreakMinutes] = useState(existingEnv?.pomodoroBreakMinutes ?? 5);
-  const [audioChoice, setAudioChoice] = useState<AudioChoice>({ audioType: "silence" });
+  // armId: "silence" from the start — NOT left unset. Audio is intentionally silent by default (starting
+  // sound without an explicit student choice would be surprising/disruptive) and that policy isn't
+  // changing here, but "silence" is one of AUDIO_ARMS' own real arms (server/bandit.ts), not a null state —
+  // every session genuinely IS an observation of that arm being served. Previously this stayed `armId:
+  // undefined` forever (nothing in this file ever called setAudioChoice with one), which meant
+  // env.audioArmId was always undefined and the session-outcome handler's audio-bandit updatePosterior
+  // call (gated on audioArmId being present) silently never fired — the audio bandit target was fully
+  // wired end-to-end EXCEPT it never actually received a single reward, ever. The old fire-and-forget
+  // `api.audioSuggestion()` call below this comment used to fetch a suggestion and then discard it
+  // entirely (by design — see above), which was really just a wasted network round-trip with no effect;
+  // removed rather than kept as dead weight.
+  const [audioChoice, setAudioChoice] = useState<AudioChoice>({ audioType: "silence", armId: "silence" });
   const suggestionRef = useRef<{ enabled: boolean; workMinutes: number; breakMinutes: number } | null>(null);
   useEffect(() => {
     // Only for a genuinely FRESH session — resuming an existing environment means the student already
@@ -130,10 +141,6 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
       setBreakMinutes(s.breakMinutes);
       suggestionRef.current = { enabled: s.enabled, workMinutes: s.workMinutes, breakMinutes: s.breakMinutes };
     }).catch(() => {}); // best-effort — the picker's own hardcoded defaults (25/5, off) already cover this
-  // Audio is intentionally silent by default. Do not apply a server suggestion
-  // automatically: starting sound without an explicit choice is surprising and
-  // can be especially disruptive for students.
-  void api.audioSuggestion().catch(() => {});
   }, [existingEnv]);
   // Whatever arm this session ACTUALLY runs under, whether that's the suggestion left untouched or
   // something the student changed by hand — matches server/bandit.ts's POMODORO_ARMS id scheme when it
