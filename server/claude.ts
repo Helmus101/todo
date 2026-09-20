@@ -617,11 +617,15 @@ export const PLAN_ONLY_OVERRIDE =
   `Gmail email (GMAIL_CREATE_EMAIL_DRAFT — never sending it; it sits in Drafts until the user clicks Send), ` +
   `CREATE_NOTE for a SHORT in-app brief (a quick checklist, reference sheet, or outline the student opens ` +
   `right on the card — no account, no approval, nothing external), CREATE_FLASHCARDS for a drillable deck ` +
-  `(vocabulary, definitions, formulas, dates — anything that's naturally a list of discrete front→back facts ` +
-  `to memorize, where testing yourself beats reading a written guide), and CREATE_QUIZ for a multiple-choice ` +
+  `(ONLY durable knowledge: vocabulary, definitions, formulas, dates, names, or other discrete front→back facts ` +
+  `the student must memorize. Flashcards are NOT a generic format for homework, exercises, literary analysis, ` +
+  `essay prompts, reading assignments, project deliverables, plans, or questions requiring an original response. ` +
+  `For those, use CREATE_NOTE or CREATE_QUIZ when appropriate, or create nothing), and CREATE_QUIZ for a multiple-choice ` +
   `self-check (NEW questions on the notion, with a one-line explanation each — for CHECKING whether a chapter ` +
   `is actually solid before a contrôle, not for memorizing facts). Pick per subject: a language/vocab/ ` +
-  `definitions/history-dates topic → CREATE_FLASHCARDS; a process/checklist/outline/plan → CREATE_NOTE; ` +
+  `a genuine knowledge/vocab/definitions/history-dates topic → CREATE_FLASHCARDS; a homework/exercise/literary ` +
+  `analysis/essay or other deliverable → NEVER CREATE_FLASHCARDS; use CREATE_NOTE or CREATE_QUIZ only when the ` +
+  `artifact adds real study value; a process/checklist/outline/plan → CREATE_NOTE; ` +
   `revising for an upcoming test/contrôle where the student wants to know what they don't yet understand → ` +
   `CREATE_QUIZ (in addition to or instead of a note); something genuinely long-form or that needs to leave ` +
   `the app → a real Google Doc/Sheet/Slides. CREATE_NOTE/CREATE_FLASHCARDS/CREATE_QUIZ are all the default ` +
@@ -4967,7 +4971,7 @@ export async function expandStep(
           `learning work itself (writing, arguing, solving) as if it were already done or as Otto's job. Stay ` +
           `strictly inside the scope of "${step.text}" — do not re-plan the whole task, only this one step.\n\n` +
           `If one of RESOURCES ALREADY ON THIS TASK above is exactly the page a sub-action needs, give that ` +
-          `sub-action a "url" copied VERBATIM from the list — never invent or guess one, and never a url that ` +
+          `sub-action a "url" copied VERBATIM from the list �� never invent or guess one, and never a url that ` +
           `isn't in that list. Most sub-actions won't have one.\n\n` +
           `Mark "automatable": true ONLY for a sub-action that's a pure lookup/research fact (a schedule, a ` +
           `price, an opening hour, an address, a definition) that needs no login and isn't the student's own ` +
