@@ -4322,6 +4322,13 @@ export async function runTask(
       `Each query should target ONE specific missing fact or piece of context — not a vague topic. ` +
       `For an academic task, search for the NOTION (the topic itself, how it's taught/tested at this level), ` +
       `never the answer to the student's own exercise. ` +
+      `For a task whose definition of done calls for an actual produced list/comparison of real-world ` +
+      `options (activities, places, products, providers, sources) — NOT an academic exercise — the searches ` +
+      `must be specific enough to come back with real, nameable candidates: one query per distinct sub-area ` +
+      `or category, not one broad query for the whole thing. A single vague query ("things to do in Oslo") ` +
+      `returns too little to actually build a curated list from; several targeted ones ("best museums Oslo", ` +
+      `"outdoor winter activities Tromsø") do. Go up to the full 5 when the definition of done genuinely ` +
+      `needs that much real material — don't under-search a task that needs a real list just to stay terse.\n` +
       `Return 1-5 search queries. If no web search is needed, return an empty array.\n` +
       `Return JSON: {"searches": ["query 1", "query 2"]}`,
       600, // same truncation risk as step 1's budget — see that comment
@@ -4440,7 +4447,8 @@ export async function runTask(
       `- 3-10 steps, each a SHORT concrete one-liner (≤10 words). Each step is ONE single action, not a broad category.\n` +
       `- Break the work into INDIVIDUAL steps — never one big step with sub-steps. If you're tempted to write a step like "Review chapter 5" that's really several things, write each thing as its own step instead.\n` +
       `- Only steps the STUDENT must do (decisions, physical actions, logins, review, practice, solving).\n` +
-      `- Never include research/search steps (that's already done above).\n` +
+      `- GROUNDING — DO NOT INVENT: every specific name, place, price, date, or option a step mentions MUST actually appear in the CONTEXT above. If the context doesn't name it, the step can't either — no exceptions, even for something that sounds plausible or that you know to be real from general knowledge. A step about a real-world place/attraction/product you weren't actually handed research on is a fabrication, not a shortcut.\n` +
+      `- Never include research/search steps IF the context above already contains enough concrete, specific material to satisfy the definition of done. But check that first: if the definition of done asks for a produced list/comparison/shortlist of real specific options (activities, sources, products, providers) and the context above is thin, generic, or missing that — a handful of search queries and a paragraph of vague summary is NOT the same as an actual curated list — then the FIRST steps must be genuine research/compilation steps that actually build that list, not steps that assume it already exists. Skipping straight to refinement steps (filtering, tagging, comparing) when there's nothing concrete yet to filter/tag/compare produces a step list that can't reach the definition of done at all.\n` +
       `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
       `- Match the plan's size to the task's real complexity — 3 steps for a simple task, more for a complex one. Never pad to look thorough.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
@@ -4741,10 +4749,17 @@ export async function writeStepsFromContext(
           `4. User steps are ONLY what the user must do — not research, not artifact creation\n` +
           `5. Unrelated tasks become separate tasks, not steps\n` +
           `6. Each user step must directly move toward the Definition of Done\n` +
-          `7. Generate the MINIMUM required user steps — not everything that could be done\n\n` +
+          `7. Generate the MINIMUM required user steps — not everything that could be done\n` +
+          `8. GROUNDING — every specific name/place/price/date a step mentions must actually appear in ` +
+          `CONTEXT above, never invented from general knowledge, even if it's factually real\n` +
+          `9. EXCEPTION to "not research X": if the Definition of Done asks for a produced list/comparison ` +
+          `of real specific options and CONTEXT above is thin or generic (not an actual list of real ` +
+          `candidates), the first user steps must be genuine research/compilation steps that build it — ` +
+          `refinement-style steps (filter, tag, compare) with nothing concrete yet to filter/tag/compare ` +
+          `can't reach the Definition of Done\n\n` +
           `- Directly contribute to the Definition of Done for "${task.title}"\n` +
           `- Be something the student must do (not Otto)\n` +
-          `- Be concrete and actionable (not "research X" or "find Y")\n` +
+          `- Be concrete and actionable (not "research X" or "find Y") UNLESS rule 9 above applies\n` +
           `- Not be about creating Otto's artifacts (Otto creates those)\n` +
           `- Not be internal Otto work (re-search, re-fetch, retry)\n` +
           `- Not be an unrelated task discovered during research\n` +
