@@ -876,6 +876,26 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
     });
   }, [env, task.id, addArtifact, updateArtifact]);
 
+  // Same find-or-focus pattern as openOrFocusChat — the Board is meant to be ONE persistent surface per
+  // task, not a new artifact every time it's opened or every time Otto writes to it. "Always accessible"
+  // (per the feature ask) means: reachable from the tools drawer at any time, AND auto-surfaced (see the
+  // effect below) the moment Otto actually writes something, without the student having to go find it.
+  const openOrFocusBoard = useCallback(() => {
+    if (!env) return;
+    const existing = env.artifacts.find(a => a.type === "board");
+    if (existing) {
+      const nextZ = Math.max(0, ...env.artifacts.map(a => a.zIndex)) + 1;
+      updateArtifact(existing.id, { minimized: false, zIndex: nextZ });
+      return;
+    }
+    addArtifact({
+      id: crypto.randomUUID(), type: "board", title: "Board",
+      x: 8, y: 10, width: 34, height: 70, zIndex: 100,
+      minimized: false, maximized: false, dockSide: "none", contentState: {},
+      taskId: task.id, environmentId: env.id,
+    });
+  }, [env, task.id, addArtifact, updateArtifact]);
+
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
       if (!prev) return prev;
@@ -988,6 +1008,12 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
           openArtifactByKind("quiz", q.id, q.title);
         }
       }
+      // Same idea for the Board — if Otto wrote something new to it this turn, surface it (find-or-focus,
+      // not a new artifact every time) rather than leaving the student to notice it was updated on their
+      // own. This is what makes "always accessible" actually mean something beyond "reachable if you go
+      // looking" — the first time it's genuinely relevant, it comes to them.
+      const oldBoardLen = task.board?.length || 0;
+      if ((updated.board?.length || 0) > oldBoardLen) openOrFocusBoard();
     } catch (e: any) {
       setChatError(e?.message || "Couldn't send that — try again.");
       setChatInput(message);
@@ -995,7 +1021,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
       setChatSending(false);
       setPendingMsg(null);
     }
-  }, [chatInput, chatSending, env, task, onTaskUpdate, openArtifactByKind, addArtifact]);
+  }, [chatInput, chatSending, env, task, onTaskUpdate, openArtifactByKind, addArtifact, openOrFocusBoard]);
 
   // ── Task checklist, right from the desk ─────────────────────────────────────
   // Previously Study Mode could only READ steps (TaskDetailDrawer/TaskInfoArtifact were plain text) — ticking
@@ -1248,6 +1274,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
               setOpenPanel(null);
             }}
             onAddTool={(type) => {
+              // Board is a single persistent surface per task (find-or-focus, see openOrFocusBoard) —
+              // opening it from the tools drawer must not spawn a second one alongside whatever Otto's
+              // already written to.
+              if (type === "board") { openOrFocusBoard(); setOpenPanel(null); return; }
               const newArtifact: ArtifactState = {
                 id: crypto.randomUUID(),
                 type,

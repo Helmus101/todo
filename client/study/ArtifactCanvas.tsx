@@ -19,6 +19,7 @@ import { CitationArtifact } from "./artifacts/CitationArtifact.tsx";
 import { ChatArtifact } from "./artifacts/ChatArtifact.tsx";
 import { TaskInfoArtifact } from "./artifacts/TaskInfoArtifact.tsx";
 import { CameraArtifact } from "./artifacts/CameraArtifact.tsx";
+import { BoardArtifact } from "./artifacts/BoardArtifact.tsx";
 
 interface ArtifactCanvasProps {
   artifacts: ArtifactState[];
@@ -200,6 +201,8 @@ export function ArtifactCanvas({
         return <TaskInfoArtifact task={task} onToggleStep={onToggleStep} onToggleSubstep={onToggleSubstep} onComplete={onCompleteTask} />;
       case "camera":
         return camera ? <CameraArtifact camera={camera} /> : null;
+      case "board":
+        return <BoardArtifact task={task} />;
       default:
         return null;
     }

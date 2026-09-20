@@ -20,7 +20,8 @@ export type ArtifactType =
   | "citation"
   | "chat"
   | "task"
-  | "camera";
+  | "camera"
+  | "board";
 
 export type DockSide = "none" | "left" | "right" | "fullscreen";
 

@@ -984,6 +984,10 @@ export interface WebTask {
    *  MCQs opened on the canvas) and from the daily journal's `practiceProblem` (one free-response per
    *  day): these are conversational, one-off, and live in the chat thread. */
   problems?: TaskProblem[];
+  /** The persistent tutor Board (see BoardEntry) — always accessible from Study Mode's tools drawer, not
+   *  something the student has to be shown a specific artifact chip to find. Append-only from Otto's side
+   *  (WRITE_TO_BOARD tool); grows over the life of the task, across sessions, same as `chat`. */
+  board?: BoardEntry[];
   /** ONE free-response practice problem for the day's math/physics/science themes (Study Journal daily
    *  entries only — see generateDailyStudyCards in server/claude.ts) — deliberately NOT multiple choice:
    *  the student types their own answer and it's checked against `answer` (see practiceAnswerMatches
@@ -1137,6 +1141,23 @@ export interface TaskProblem {
   /** Guidance on expected format/units/notation for free-response mode (e.g. "two decimal places, in m/s"). */
   format?: string;
   createdAt: string;
+}
+
+/** One entry Otto has written onto the persistent tutor Board (WRITE_TO_BOARD tool, server/claude.ts) — a
+ *  general-purpose writable surface, NOT scoped to practice problems the way TaskProblem is. Otto can post
+ *  to it at any point in a conversation (in or out of canvas mode — see chatAboutTask's opts.canvasMode):
+ *  a formula, an instruction ("start working through part a"), a running summary of the student's
+ *  reasoning, or a plain note — whatever's worth writing down rather than only saying in chat. Entries are
+ *  append-only and rendered as a running log (client/study/artifacts/BoardArtifact.tsx), oldest first. */
+export interface BoardEntry {
+  id: string;
+  /** Plain text/markdown-lite (renderChatText already handles this) — not restricted to any one format,
+   *  since a formula, an instruction, and a summary all need different shapes. */
+  text: string;
+  /** Loose styling hint only, not a hard schema — lets the UI render a formula differently from an
+   *  instruction without forcing Otto into a rigid structure for what's meant to be a free-form board. */
+  kind?: "note" | "instruction" | "formula" | "summary";
+  at: string;
 }
 
 // ── AI-personalized theme token validation ──────────────────────────────────────────────────���──────────

@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1119,6 +1119,14 @@ check("an empty/whitespace-only note body is rejected (was silently accepted bef
 check("a real note body is accepted", "note" in makeNote({ title: "x", body: "a real fiche body with plenty of actual content in it, more than forty chars" }));
 check("a deck with at least one valid card is accepted", "deck" in makeDeck({ title: "D", cards: [{ front: "a", back: "b" }] }));
 check("a deck with no valid cards is rejected", "error" in makeDeck({ title: "D", cards: [{ front: "", back: "" }] }));
+
+section("makeBoardEntry validation — the persistent tutor Board (WRITE_TO_BOARD)");
+check("an empty/whitespace-only entry is rejected", "error" in makeBoardEntry({ text: "   " }));
+check("a real entry is accepted", "entry" in makeBoardEntry({ text: "F = ma" }));
+check("a known kind is kept", makeBoardEntry({ text: "Start with part a", kind: "instruction" }).entry.kind === "instruction");
+check("an unrecognized kind is dropped rather than stored as garbage", makeBoardEntry({ text: "hello", kind: "not-a-real-kind" }).entry.kind === undefined);
+check("kind defaults to undefined (renders as 'note') when omitted", makeBoardEntry({ text: "hello" }).entry.kind === undefined);
+check("text over the cap is truncated, not rejected", makeBoardEntry({ text: "x".repeat(1000) }).entry.text.length === 600);
 // Regression: a note linked to a fabricated "otto.ai/note/<uuid>" URL — this app has no such domain/page at
 // all (everything is in-app SPA state) — reported live. Defense-in-depth strip, independent of the prompt
 // instruction: any markdown link whose host contains "otto" gets its href dropped, text kept.

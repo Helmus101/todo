@@ -1353,6 +1353,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     for (const f of out.flashcards) void recordMetric(req.session.user!, "chat_artifact_created", 1, "deck");
     for (const q of out.quizzes) void recordMetric(req.session.user!, "chat_artifact_created", 1, "quiz");
     for (const p of out.problems) void recordMetric(req.session.user!, "chat_artifact_created", 1, "problem");
+    for (const b of out.board) void recordMetric(req.session.user!, "chat_artifact_created", 1, "board");
     if (stepIndex != null) void recordMetric(req.session.user!, "chat_help_requested_on_step", 1);
     const now = new Date().toISOString();
     // Accumulate this turn's artifacts onto the task exactly like a run does (same ARTIFACT_CAP), and
@@ -1368,6 +1369,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.flashcards.length) t.flashcards = [...(t.flashcards || []), ...out.flashcards].slice(-tasks.ARTIFACT_CAP);
     if (out.quizzes.length) t.quizzes = [...(t.quizzes || []), ...out.quizzes].slice(-tasks.ARTIFACT_CAP);
     if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
+    // Not part of `artifacts` above — board entries aren't per-message chips, they're a persistent surface
+    // (see BoardArtifact.tsx) always accessible regardless of which chat message wrote them. A much higher
+    // cap than ARTIFACT_CAP (12): each entry is meant to be short and frequent (a formula, an instruction, a
+    // recap), so a real tutoring session can easily produce more of these than it would whole notes/decks.
+    if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-60);
     if (out.audit.length) t.audit = [...(t.audit || []), ...out.audit].slice(-tasks.AUDIT_CAP);
     // Guard against the cross-instance session-cache staleness race (see store.ts's peekTaskChat comment):
     // `history` above was read from this request's `req.session.tasks`, which can be up to 3min stale on a

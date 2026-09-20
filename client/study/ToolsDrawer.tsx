@@ -14,6 +14,10 @@ interface ToolsDrawerProps {
 
 const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: WorkspaceTemplate[] }[] = [
   { type: "task", label: "Task info", icon: "☰", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  // Recommended everywhere — unlike the other tools, this one isn't something the student reaches for; it's
+  // where Otto writes unprompted (formulas, instructions, summaries), so it should always be one click away
+  // regardless of what kind of task this is.
+  { type: "board", label: "Board", icon: "▦", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "camera", label: "Private camera", icon: "◉", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "notes", label: "Notes", icon: "▤", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   { type: "scratchpad", label: "Scratchpad", icon: "✎", templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },
