@@ -208,7 +208,7 @@ export function useFaceTracking(
       }
 
       const lms = results.faceLandmarks?.[0] as Array<{ x: number; y: number; z: number }> | undefined;
-      const blendshapes = results.faceBlendshapes?.categories as Array<{ categoryName: string; score: number }> | undefined;
+      const blendshapes = results.faceBlendshapes?.[0]?.categories as Array<{ categoryName: string; score: number }> | undefined;
       const matrix = results.facialTransformationMatrixes?.[0]?.data as Float32Array | undefined;
 
       const faceDetected = !!lms && lms.length > 0;
