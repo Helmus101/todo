@@ -1211,8 +1211,23 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   const wasSpeakingRef = useRef(false);
   useEffect(() => {
     if (!voiceModeOn) return;
-    if (synth.speaking && !wasSpeakingRef.current) recog.stop();
-    else if (!synth.speaking && wasSpeakingRef.current) recog.start();
+    // Otto's own TTS output was getting picked up by the still-listening mic and re-sent as if the
+    // student had said it. Two gaps in the old stop()/start() pair let that happen: (1) recog.stop()
+    // waits for the recognizer to finish processing whatever audio it already has buffered instead of
+    // cutting it off — if that buffer included the first fraction of a second of Otto's own voice (the
+    // stop() call and speechSynthesis actually becoming audible aren't perfectly synchronized), it could
+    // still fire as a "final" result. abort() discards the buffer instead of finalizing it. (2) even once
+    // playback ends, speaker output lingers briefly as room echo/reverb (worse without headphones) — the
+    // mic reopening on the same tick as synth.speaking flips false could still catch that tail. A short
+    // settle delay before restarting gives it time to die down; the delay is cancelled if voice mode is
+    // toggled off or speech starts again before it fires.
+    if (synth.speaking && !wasSpeakingRef.current) {
+      recog.abort();
+    } else if (!synth.speaking && wasSpeakingRef.current) {
+      const t = setTimeout(() => { if (voiceModeOn && !synth.speaking) recog.start(); }, 400);
+      wasSpeakingRef.current = synth.speaking;
+      return () => clearTimeout(t);
+    }
     wasSpeakingRef.current = synth.speaking;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [synth.speaking, voiceModeOn]);

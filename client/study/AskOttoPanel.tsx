@@ -67,8 +67,17 @@ export function AskOttoPanel({
   const wasSpeakingRef = useRef(false);
   useEffect(() => {
     if (!voiceModeOn) return;
-    if (synth.speaking && !wasSpeakingRef.current) recog.stop();
-    else if (!synth.speaking && wasSpeakingRef.current) recog.start();
+    // abort() (not stop()) so no buffered audio from the moment TTS starts gets finalized into a result,
+    // and a short settle delay before restarting so speaker echo has time to die down before the mic
+    // reopens — without both, Otto's own voice was occasionally getting transcribed and re-sent as if the
+    // student had said it. See the identical fix in TaskCard.tsx's TaskChat for the full explanation.
+    if (synth.speaking && !wasSpeakingRef.current) {
+      recog.abort();
+    } else if (!synth.speaking && wasSpeakingRef.current) {
+      const t = setTimeout(() => { if (voiceModeOn && !synth.speaking) recog.start(); }, 400);
+      wasSpeakingRef.current = synth.speaking;
+      return () => clearTimeout(t);
+    }
     wasSpeakingRef.current = synth.speaking;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [synth.speaking, voiceModeOn]);
