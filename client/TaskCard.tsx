@@ -1180,7 +1180,11 @@ function PreparedPanel({ task, onOpenNote, onOpenDeck, onOpenQuiz }: {
         </>
       ) : null}
       {task.links?.length ? (
-        <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
+        // A plain <a target="_blank"> here opened a tab the extension's Study Mode site-block then
+        // immediately redirected to blocked.html (see background.js's doOpenInGroup for why) — going
+        // through openTab() instead allowlists this exact host first when the extension is present, same
+        // fix as TaskDetailDrawer.tsx's own source links.
+        <ul className="links artifacts">{task.links.slice(0, 3).map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noreferrer" title={l.url} onClick={(e) => { e.preventDefault(); openTab(l.url, TAB_GROUP); }}>{(l.label && l.label !== "Open" ? l.label : linkKind(l.url, L)) || L("Ouvrir le lien", "Open link")} ↗</a></li>)}</ul>
       ) : null}
     </>
   );

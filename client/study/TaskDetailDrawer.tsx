@@ -1,5 +1,5 @@
 import type { WebTask } from "../../shared/types.ts";
-import { withInlineLinks, stripStrayMarkdown, stripHtml, useSmClose, SmSurface } from "../ui.tsx";
+import { withInlineLinks, stripStrayMarkdown, stripHtml, useSmClose, SmSurface, openTab } from "../ui.tsx";
 
 interface TaskDetailDrawerProps {
   task: WebTask;
@@ -46,7 +46,16 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
           <div className="sm-task-detail-section">
             <h4>Links</h4>
             <ul className="sm-task-detail-links">
-              {task.links.map((l, i) => <li key={i}><a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a></li>)}
+              {task.links.map((l, i) => (
+                // A plain <a target="_blank"> opens a tab the extension's Study Mode site-block then
+                // immediately redirects to blocked.html — the block rule allowlists tabs OPENED THROUGH
+                // Otto (openTab, below) but has no way to distinguish a plain browser-native anchor click
+                // from a student wandering off to some other site. Reported live as "sources and links are
+                // not fully opening and loading in study mode." openTab() posts through the extension when
+                // present (which allowlists this exact host before opening, see background.js's
+                // doOpenInGroup), falling back to a plain window.open when it's not.
+                <li key={i}><a href={l.url} target="_blank" rel="noopener noreferrer" onClick={(e) => { e.preventDefault(); openTab(l.url, task.title); }}>{l.label}</a></li>
+              ))}
             </ul>
           </div>
         ) : null}

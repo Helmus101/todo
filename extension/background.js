@@ -10,6 +10,15 @@ function openInGroup(urls, groupTitle) {
 }
 
 async function doOpenInGroup(urls, groupTitle) {
+  // If a Study Mode block is currently active, a link OTTO ITSELF is opening (a task source, a step's
+  // own link, a search result) is exactly the kind of thing the block shouldn't catch — the feature exists
+  // to stop a student wandering off to some OTHER site, not to block the sources Otto surfaced for the
+  // task at hand. Without this, every task link/source opened a tab that immediately got redirected to
+  // blocked.html by the same dynamic rule, with no error visible anywhere in the app (the redirect happens
+  // at the browser/network layer, invisible to the React/client code) — reported live as "sources and
+  // links are not fully opening and loading in study mode." Allowlist each URL's host for the rest of this
+  // session before opening any tabs, same mechanism as the student's own custom allowlist.
+  await allowHostsForSession(urls);
   const tabIds = [];
   for (const url of urls) {
     if (!/^https?:\/\//i.test(url)) continue;
@@ -67,11 +76,36 @@ async function getCustomAllowlist() {
   return Array.isArray(customAllowlist) ? customAllowlist : [];
 }
 
+// Hosts Otto itself opened a tab to during THIS study session (task sources, step links, search results —
+// see doOpenInGroup's comment). Separate from the student's own customAllowlist (popup-managed, persists
+// across sessions) — this one is session-scoped and populated automatically, never edited by hand.
+async function getSessionOpenedHosts() {
+  const { sessionOpenedHosts } = await chrome.storage.local.get(["sessionOpenedHosts"]);
+  return Array.isArray(sessionOpenedHosts) ? sessionOpenedHosts : [];
+}
+
+async function allowHostsForSession(urls) {
+  const { studyModeActive, studyModeOrigin } = await chrome.storage.local.get(["studyModeActive", "studyModeOrigin"]);
+  if (!studyModeActive) return; // no block active — nothing to allow, and applyBlockRule needs an origin
+  const existing = await getSessionOpenedHosts();
+  const newHosts = [];
+  for (const url of urls) {
+    try {
+      const h = new URL(url).hostname;
+      if (h && !existing.includes(h) && !newHosts.includes(h)) newHosts.push(h);
+    } catch { /* not a valid absolute URL — doOpenInGroup's own filter drops it before opening anyway */ }
+  }
+  if (!newHosts.length) return;
+  await chrome.storage.local.set({ sessionOpenedHosts: [...existing, ...newHosts] });
+  if (studyModeOrigin) await applyBlockRule(studyModeOrigin);
+}
+
 async function applyBlockRule(allowedOrigin) {
   let allowedHost;
   try { allowedHost = new URL(allowedOrigin).hostname; } catch { return; }
   const customAllowlist = await getCustomAllowlist();
-  const allowedHosts = [allowedHost, ...ALWAYS_ALLOWED_HOSTS, ...customAllowlist];
+  const sessionOpenedHosts = await getSessionOpenedHosts();
+  const allowedHosts = [allowedHost, ...ALWAYS_ALLOWED_HOSTS, ...customAllowlist, ...sessionOpenedHosts];
   try {
     await chrome.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: [RULE_ID],
@@ -122,12 +156,13 @@ async function clearBlockRule() {
 }
 
 async function startStudyBlocking(originUrl) {
-  await chrome.storage.local.set({ studyModeActive: true, studyModeOrigin: originUrl });
+  // Fresh session, fresh auto-allowlist — a host Otto opened last session shouldn't stay allowed forever.
+  await chrome.storage.local.set({ studyModeActive: true, studyModeOrigin: originUrl, sessionOpenedHosts: [] });
   await applyBlockRule(originUrl);
 }
 
 async function stopStudyBlocking() {
-  await chrome.storage.local.set({ studyModeActive: false });
+  await chrome.storage.local.set({ studyModeActive: false, sessionOpenedHosts: [] });
   await clearBlockRule();
 }
 
