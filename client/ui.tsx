@@ -329,7 +329,14 @@ const LATEX_SYMBOLS: [RegExp, string][] = [
   [/\\(left|right|,|!|;|:|quad|qquad|displaystyle|textstyle)\b/g, ""],
 ];
 function formatMath(text: string): string {
-  if (!text.includes("\\") && !text.includes("$")) return text; // fast path — the overwhelming majority of turns have no math at all
+  // Reported live: a generated flashcard/quiz/practice-problem written as plain "x^2 + y^2 = z^2" (no LaTeX
+  // escaping at all, just a bare caret — a common way both the model and students themselves write exponents)
+  // rendered as a literal caret instead of a real superscript, because the old fast path only triggered on a
+  // backslash or "$". Widened to also catch a bare "^" — carets essentially never appear in ordinary EN/FR
+  // prose, so this can't misfire on non-math text the way including "_" here would (subscript-style
+  // underscores DO show up in ordinary text — filenames, snake_case, "item_1" — so that stays gated behind
+  // an accompanying caret or backslash, only converted once a "^" or LaTeX escape already marks this as math).
+  if (!text.includes("\\") && !text.includes("$") && !text.includes("^")) return text; // fast path — the overwhelming majority of turns have no math at all
   let s = text
     // Strip the delimiter wrappers — \( \) \[ \] $ $ $$ $$ — the content inside is what actually gets
     // converted; the delimiters themselves are LaTeX plumbing a reader has no use for.

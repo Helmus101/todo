@@ -1275,6 +1275,23 @@ section("renderNoteBody — GFM pipe table support");
   check("plain markdown (no pipes) renders no table", !plain.includes("<table"));
   check("plain markdown still renders the heading/list/paragraph", /<h3/.test(plain) && /<ul/.test(plain) && /Texte\./.test(plain));
 }
+// formatMath (private to ui.tsx) is exercised through renderNoteBody, which calls it on every line. Bug
+// reported live: a flashcard/note written as plain "x^2 + y^2 = z^2" (no LaTeX escaping, just a bare caret —
+// how the model and students both naturally write exponents) rendered a literal caret instead of a real
+// superscript, because formatMath's fast path only ran the conversion pipeline when the text contained a
+// backslash or "$". Pin that a bare caret alone is now enough to trigger real superscript conversion, and
+// that ordinary non-math text (including snake_case-style underscores, which stay gated behind an
+// accompanying caret precisely because they're common in real prose) is untouched.
+section("formatMath — bare-caret exponents (no LaTeX escaping) render as real superscripts");
+{
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const render = (s) => renderToStaticMarkup(React.createElement(React.Fragment, null, uiModule.renderNoteBody(s)));
+  check("bare x^2 renders a real superscript", render("x^2 + y^2 = z^2").includes("x²"));
+  check("bare caret text leaves no literal ^ behind", !render("x^2 + y^2 = z^2").includes("^"));
+  check("plain prose with an underscore (no caret/backslash) is left untouched", render("see item_1 in the file").includes("item_1"));
+  check("LaTeX-delimited math still converts (unaffected by the fast-path change)", render("\\(a^2+b^2\\)").includes("a²"));
+}
 // Source-order pin, not a real interaction test (no DOM test runner exists — see the module-graph check
 // above for why). .card-main is the task row's real "open this task" control. An earlier version used a
 // separate invisible `.card-open` overlay sibling instead — textbook-correct by every CSS stacking rule,
