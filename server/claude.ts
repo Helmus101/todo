@@ -2554,6 +2554,11 @@ export async function regenerateStepsWithScaffolding(
     // to crash tests/run.mjs by zeroing out valid steps.
     const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(steps);
     steps = stepsWithoutArtifacts;
+    // Apply the same definition-of-done gate used by the normal task pipeline. This
+    // prevents a good-looking research/setup checklist from surviving regeneration
+    // when it does not actually describe the user's requested outcome.
+    const alignedSteps = filterStepsByDefinitionOfDone(steps, String(out.definitionOfDone || definitionOfDone), task.title);
+    if (alignedSteps.length) steps = alignedSteps;
     steps = dropTrivialSteps(steps);
 
     console.log(`${new Date().toISOString()} [ai] regenerateStepsWithScaffolding: applied new architecture, ${out.steps.length} raw steps → ${steps.length} final steps`);
@@ -3729,8 +3734,14 @@ const RUN_SYSTEM =
   `3. Otto's steps are INTERNAL — never shown to the user\n` +
   `4. User steps are ONLY what the user must do — not research, not artifact creation\n` +
   `5. Unrelated tasks become separate tasks, not steps\n` +
-  `6. Each user step must directly move toward the Definition of Done\n` +
-  `7. Generate the MINIMUM required user steps — not everything that could be done\n` +
+  `6. Every user step must map to one explicit clause of the Definition of Done. Write that clause in ` +
+  `doneWhen; never invent setup, research hygiene, formatting fixes, or quality checks unless the Definition ` +
+  `of Done explicitly requires them. If a step cannot be answered with “which success criterion does this ` +
+  `complete?”, omit it.\n` +
+  `7. Generate the MINIMUM required user steps — not everything that could be done. Prefer one step per ` +
+  `deliverable or explicit criterion, not one step per source, search, comparison, or internal preparation.\n` +
+  `8. Before returning JSON, audit every step against the Definition of Done and delete any step that is merely ` +
+  `a means to an end Otto can handle or a generic planning suggestion.\n` +
   `8. FOR STUDY TASKS: CREATE ACTUAL ARTIFACTS (notes/flashcards/quizzes) using the tools — do not leave artifact creation as a user step\n\n` +
   `(3) SPLIT THE WORK — for each step decide who owns it: YOU (automatable — anything you can do with your ` +
   `tools or by finding information) vs the USER (only a judgment/approval, a login/credential, a payment, or ` +
