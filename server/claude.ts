@@ -138,72 +138,17 @@ export function dropTrivialSteps(steps: TaskStep[]): TaskStep[] {
   });
 }
 
-/**
- * NEW ARCHITECTURE: Task-boundary validation filter
- * Checks if a step directly contributes to completing the task's Definition of Done.
- */
-export function validateStepAgainstDefinitionOfDone(step: TaskStep, definitionOfDone: string, taskTitle: string): boolean {
-  const stepText = step.text.toLowerCase();
-  const dodLower = definitionOfDone.toLowerCase();
-  const titleLower = taskTitle.toLowerCase();
-
-  // Research operations should never be user steps
-  if (isResearchOperation(stepText)) {
-    console.log(`${new Date().toISOString()} [ai] filtered research operation: "${step.text}"`);
-    return false;
-  }
-
-  // Steps about Otto's internal work should not be user steps
-  if (isInternalOttoWork(stepText)) {
-    console.log(`${new Date().toISOString()} [ai] filtered internal Otto work: "${step.text}"`);
-    return false;
-  }
-
-  // Steps about creating Otto's artifacts should not be user steps
-  if (isArtifactCreationStep(stepText)) {
-    console.log(`${new Date().toISOString()} [ai] filtered artifact creation step: "${step.text}"`);
-    return false;
-  }
-
-  // Check if step relates to the task
-  const relatesToTask = stepText.includes(titleLower.slice(0, 20)) || 
-                        dodLower.split(' ').some(word => word.length > 3 && stepText.includes(word));
-
-  if (!relatesToTask) {
-    console.log(`${new Date().toISOString()} [ai] filtered unrelated step: "${step.text}"`);
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Identifies research/internal operations that should never be user steps.
- */
-function isResearchOperation(stepText: string): boolean {
-  const researchPatterns = [
-    /^(search|research|look up|find|google|re-search|re-run|re-fetch|retry)\b/i,
-    /^(re-|re\s)/i, // Any step starting with "Re-" that describes retry logic
-    /\b(search|research|fetch|read|open|check)\s+(the\s+)?(drive|gmail|calendar|docs|sheets|slides|web|internet)\b/i,
-    /\btry\s+different\s+(search|query|phrasing)\b/i,
-  ];
-  return researchPatterns.some(pattern => pattern.test(stepText));
-}
-
-/**
- * Identifies steps about Otto's internal work that should not be user steps.
- */
-function isInternalOttoWork(stepText: string): boolean {
-  const internalPatterns = [
-    /\breconnect\s+\w+\s+tool\b/i,
-    /\benable\s+(create|write)\s+tools?\b/i,
-    /\bplan[- ]?only\s+mode\b/i,
-    /\bopen\s+settings\b/i,
-    /\bgrant\s+permission\b/i,
-    /\bauthorize\s+otto\b/i,
-  ];
-  return internalPatterns.some(pattern => pattern.test(stepText));
-}
+/** validateStepAgainstDefinitionOfDone/filterStepsByDefinitionOfDone/isResearchOperation/isInternalOttoWork
+ *  used to live here — a keyword-matching gate meant to delete steps that don't relate to the task. Deleted
+ *  (not just left disabled): it was never actually reachable in the live pipeline (every real call site had
+ *  been deliberately disabled, one by one, after each was "verified live to crash tests/run.mjs by zeroing
+ *  out valid steps" — isResearchOperation in particular deleted legitimate research/compile steps that the
+ *  automatable-flip design (see finalize's DOABLE/JUDGMENT pass) exists to convert into Otto's own work,
+ *  not reject outright), and one remaining call site (regenerateStepsWithScaffolding) had drifted out of
+ *  sync with its own neighboring comment and was calling it anyway. Real DoD alignment is now checked a
+ *  fundamentally different way — see runTask's own post-hoc DoD verification pass (a semantic check via
+ *  one small model call, not a keyword-overlap heuristic that can't tell "unrelated" from "phrased
+ *  differently than the title"). isArtifactCreationStep (below) is kept — it has its own real caller. */
 
 /**
  * Identifies steps about creating Otto's artifacts that should not be user steps.
@@ -221,16 +166,6 @@ function isArtifactCreationStep(stepText: string): boolean {
 }
 
 /**
- * Main filter: applies task-boundary validation to all steps.
- */
-export function filterStepsByDefinitionOfDone(
-  steps: TaskStep[], 
-  definitionOfDone: string, 
-  taskTitle: string
-): TaskStep[] {
-  return steps.filter(step => validateStepAgainstDefinitionOfDone(step, definitionOfDone, taskTitle));
-}
-
 /**
  * NEW ARCHITECTURE: Separate artifacts from steps
  * Identifies items that should be artifacts rather than user steps.
@@ -2554,11 +2489,12 @@ export async function regenerateStepsWithScaffolding(
     // to crash tests/run.mjs by zeroing out valid steps.
     const { filteredSteps: stepsWithoutArtifacts } = separateArtifactsFromSteps(steps);
     steps = stepsWithoutArtifacts;
-    // Apply the same definition-of-done gate used by the normal task pipeline. This
-    // prevents a good-looking research/setup checklist from surviving regeneration
-    // when it does not actually describe the user's requested outcome.
-    const alignedSteps = filterStepsByDefinitionOfDone(steps, String(out.definitionOfDone || definitionOfDone), task.title);
-    if (alignedSteps.length) steps = alignedSteps;
+    // filterStepsByDefinitionOfDone was called here until this pass — directly contradicting the comment
+    // two lines above it, which explains in detail why that gate is broken (isResearchOperation deletes
+    // legitimate research/compile steps) and was "verified live to crash tests/run.mjs by zeroing out valid
+    // steps." The call site disagreed with its own neighboring comment; removed, matching what the comment
+    // already concluded. DoD alignment for this path is now covered the same way as the main pipeline —
+    // see runTask's own post-hoc DoD verification pass.
     steps = dropTrivialSteps(steps);
 
     console.log(`${new Date().toISOString()} [ai] regenerateStepsWithScaffolding: applied new architecture, ${out.steps.length} raw steps → ${steps.length} final steps`);
@@ -4612,6 +4548,47 @@ export async function runTask(
     }
     if (!requestedArtifacts.length) {
       audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: skipped (not needed)` });
+    }
+
+    // ── DoD verification — does the finished plan actually GET THERE? ──────────────────────────────────
+    // Every other check in this pipeline (stepsMatchTitle, dropForeignEntitySteps, the DOABLE/JUDGMENT
+    // automatable-flip, etc.) only asks "does the model's own output look internally sane" — none of them
+    // check whether the finished plan actually satisfies definitionOfDone. Reported live: a "curated
+    // shortlist of activities" task's steps were ALL refinement steps ("tag every activity", "cut options
+    // outside the season window") with nothing concrete yet to refine — a plan that could never reach its
+    // own definition of done, and nothing anywhere caught it. The step-writing PROMPT was tightened
+    // separately (grounding + conditional research-allowed rules), but a prompt asking the model to behave
+    // is not the same as verifying it did — same "don't just trust the model" posture as CHAT_DOES_WORK/
+    // CHAT_STATES_ANSWER. This is the actual verification, covering BOTH steps and artifacts together
+    // (nothing else in this file checks artifact content against the DoD at all). Deliberately ONE small,
+    // cheap, best-effort call — never blocks or fails the run; on any failure `ask()` already returns {},
+    // which the check below treats as "assume satisfied" rather than risk false-flagging a genuinely fine
+    // plan just because this one extra call had a hiccup.
+    if (steps.length && definitionOfDone) {
+      const artifactSummary = [
+        ...notes.map((n) => `Note "${n.title}": ${n.body.slice(0, 200)}`),
+        ...flashcards.map((f) => `Flashcard deck "${f.title}" (${f.cards.length} cards)`),
+        ...quizzes.map((q) => `Quiz "${q.title}" (${q.questions.length} questions)`),
+      ].join("\n") || "(none)";
+      const dodCheck = await ask(
+        `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+        `PLANNED STEPS (what the student will do):\n${steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n")}\n\n` +
+        `ARTIFACTS ALREADY CREATED FOR THE STUDENT:\n${artifactSummary}\n\n` +
+        `Would completing every step above, with the artifacts already created, actually satisfy the ` +
+        `definition of done? Be strict about ONE specific failure mode: if the definition of done asks for ` +
+        `a produced list/comparison/set of real specific options (activities, sources, products, providers) ` +
+        `and neither the steps nor the artifacts actually contain or will produce real specific content — ` +
+        `only refinement/filtering/tagging steps with nothing concrete yet to refine — say no. Otherwise, ` +
+        `or if it's a close enough match for a reasonable plan, say yes.\n` +
+        `Return JSON: {"satisfied": true|false, "missingStep": "one short concrete step (≤10 words) to add if not satisfied, else omit"}`,
+        300,
+      );
+      if (dodCheck?.satisfied === false && dodCheck?.missingStep) {
+        const missingText = truncateStepText(String(dodCheck.missingStep));
+        console.log(`${new Date().toISOString()} [ai] DoD check: plan didn't satisfy definition of done — adding step: "${missingText}"`);
+        steps = [{ text: missingText, automatable: false }, ...steps];
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étape ajoutée pour vraiment atteindre l'objectif : ${missingText}` : `Added a step so the plan actually reaches the definition of done: ${missingText}` });
+      }
     }
 
     // Build the synthesis line.
