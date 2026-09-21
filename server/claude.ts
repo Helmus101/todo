@@ -851,6 +851,27 @@ function isFolderHousekeepingDrift(title: string, steps: { text: string }[]): bo
   if (/\b(organi[sz]e|folder|clean ?up|file management|sort (my|the) files)\b/i.test(title)) return false; // legitimately about this
   return steps.every((s) => FOLDER_HOUSEKEEPING_STEP.test(s.text));
 }
+// Defense in depth for runTask's artifact-creation gate (STEP 5): taskType alone (an upstream AI
+// classification, fixable but not infallible — see the taskType enum-sync fix elsewhere in this file)
+// shouldn't be the ONLY thing standing between a misclassified task and an irrelevant flashcard deck.
+// Observed live: "Prepare Oslo trip: confirm purpose, dates, bookings" got tagged taskType
+// "learn_understand" upstream and, on the strength of that alone, got a 13-card flashcard deck — a real-
+// world coordination outcome has nothing drillable in it. This checks the DEFINITION OF DONE's own
+// wording directly: if it reads as a booking/coordination/decision outcome (not memorizable content),
+// veto flashcards/quiz regardless of what taskType or the model's own artifact judgment said.
+const COORDINATION_OUTCOME_DOD = /\b(book(ed|ing)?|confirm(ed|ing)?|decide[ds]?|decision|refund(ed)?|replace(d|ment)?|schedul(ed|ing)?|arrang(ed|ing|ement)?|reserv(ed|ation)?)\b/i;
+const MEMORIZABLE_CONTENT_DOD = /\b(formula|formule|equation|[ée]quation|definition|d[ée]finition|vocab|vocabulary|vocabulaire|grammar|grammaire|conjug|tense|verbe?|noun|adjective|adverb|element|[ée]l[ée]ment|compound|compos[ée]|reaction|r[ée]action|theorem|th[ée]or[èe]me|principle|principe|rule|r[èe]gle|memoris|memoriz|drill|flashcard)\b/i;
+/** Does this DEFINITION OF DONE read as a real-world booking/coordination/decision outcome rather than
+ *  something with actual discrete facts to memorize? Used to veto flashcards/quiz independently of
+ *  taskType — see the comment above. */
+export function dodLooksLikeCoordinationOutcome(definitionOfDone: string): boolean {
+  return COORDINATION_OUTCOME_DOD.test(definitionOfDone) && !MEMORIZABLE_CONTENT_DOD.test(definitionOfDone);
+}
+// Otto-work leak check, module-scope so both runTask's step-4 filtering and finalize() share the same
+// definition: a step starting with a doable verb and carrying no judgment word for the user is Otto's own
+// work ("Research X and compile a list" / "Find options for Y"), not a to-do to dump on the student.
+export const DOABLE_STEP = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make|research|find|look up|look into|gather|collect|identify|explore|investigate|list)\b/i;
+export const JUDGMENT_STEP = /\b(choose|decide|pick|confirm|approve|review|prefer|want|which|verify|check with|sign|pay)\b/i;
 // A step that narrates OTTO'S OWN RUN/TOOL STATE instead of something the STUDENT should do — observed live
 // patterns include: "Enable or reconnect a create/write tool — this run was in plan-only mode",
 // "Rerun the Sheets content reads, which were blocked this run", "Rerun the web search, which was
@@ -1945,7 +1966,9 @@ export async function classifyCandidates(
     `"Follow up on sent email", "Reply to email", "Respond to message", "Handle request". If you can't name ` +
     `the person or subject from the candidate, you don't understand it well enough to include it — omit it.\n` +
     `ALSO CLASSIFY EACH TASK FOR THE 26-STAGE PIPELINE:\n` +
-    `- taskType: "learn_understand"|"review"|"practice"|"homework_problem_set"|"write"|"research"|"create"|"prepare_assessment"|"project"|"administrative"\n` +
+    `- taskType: "learn_understand"|"review"|"practice"|"homework_problem_set"|"write"|"research"|"create"|"prepare_assessment"|"project"|"administrative"|"analyze"|"decide"|"logistics"|"maintain"|"problem_solve"\n` +
+    `  Use "logistics" for coordinating/booking/arranging a real-world event or trip (dates, travellers, tickets, accommodation) — NOT "learn_understand", even though the student has to research/confirm things. ` +
+    `Use "decide" for a task whose whole point is picking between concrete options (a refund method, keep-or-cancel) — NOT "administrative". "learn_understand" is for actually learning a course concept/notion.\n` +
     `- goal: concrete definition of done (1-2 sentences, measurable completion condition)\n` +
     `- infoRequirement: "none"|"useful"|"required" — can this task proceed without external research?\n` +
     `Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words",` +
@@ -2081,7 +2104,8 @@ export async function pickOneTask(
     `profile to choose well.\n` +
     `The title MUST be specific — name the actual person/company AND subject ("Wish Sonya a happy birthday", ` +
     `"Reply to Chloe at BOND about the demo"), NEVER vague ("Follow up on email", "Handle message").\n` +
-    `ALSO CLASSIFY: taskType (learn_understand|review|practice|homework_problem_set|write|research|create|prepare_assessment|project|administrative), ` +
+    `ALSO CLASSIFY: taskType (learn_understand|review|practice|homework_problem_set|write|research|create|prepare_assessment|project|administrative|analyze|decide|logistics|maintain|problem_solve — ` +
+    `use "logistics" for coordinating/booking a trip or event, "decide" for picking between concrete options, never "learn_understand" for those), ` +
     `goal (measurable definition of done), infoRequirement (none|useful|required).\n` +
     `Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative naming who+what, ≤11 words","why":"one clause ` +
     `naming the concrete trigger, ≤12 words","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,` +
@@ -2103,7 +2127,8 @@ export async function pickOneTask(
     const it = items[idx];
     const validTaskTypes: TaskType[] = [
       "learn_understand", "review", "practice", "homework_problem_set",
-      "write", "research", "create", "prepare_assessment", "project", "administrative"
+      "write", "research", "create", "prepare_assessment", "project", "administrative",
+      "analyze", "decide", "logistics", "maintain", "problem_solve"
     ];
     const taskType = validTaskTypes.includes(r.taskType) ? r.taskType : undefined;
     const infoRequirement = ["none", "useful", "required"].includes(r.infoRequirement) ? r.infoRequirement : undefined;
@@ -2641,7 +2666,8 @@ export async function enrichTaskIntentAndGoal(
       messages: [
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
-          "Classify this task: 1) task type (learn_understand, review, practice, homework_problem_set, write, research, create, prepare_assessment, project, administrative); " +
+          "Classify this task: 1) task type (learn_understand, review, practice, homework_problem_set, write, research, create, prepare_assessment, project, administrative, analyze, decide, logistics, maintain, problem_solve — " +
+          "use logistics for coordinating/booking a trip or event, decide for picking between concrete options; never learn_understand for those, that's for actually learning a course concept); " +
           "2) definition of done (concrete, measurable); 3) information requirement (none/useful/required); " +
           "4) extract subject/topic if academic, otherwise leave blank. " +
           "Return strict JSON: {taskType, goal, infoRequirement, subject?, topic?}" },
@@ -2655,7 +2681,8 @@ export async function enrichTaskIntentAndGoal(
 
     const validTaskTypes: TaskType[] = [
       "learn_understand", "review", "practice", "homework_problem_set",
-      "write", "research", "create", "prepare_assessment", "project", "administrative"
+      "write", "research", "create", "prepare_assessment", "project", "administrative",
+      "analyze", "decide", "logistics", "maintain", "problem_solve"
     ];
     const taskType: TaskType = validTaskTypes.includes(out.taskType) ? out.taskType : "administrative";
     const infoRequirement: InfoRequirement = ["none", "useful", "required"].includes(out.infoRequirement)
@@ -2754,7 +2781,8 @@ export async function refineManualTask(text: string, profile?: Profile): Promise
     if (!out || typeof out.title !== "string" || !out.title.trim()) return null;
     const validTaskTypes: TaskType[] = [
       "learn_understand", "review", "practice", "homework_problem_set",
-      "write", "research", "create", "prepare_assessment", "project", "administrative"
+      "write", "research", "create", "prepare_assessment", "project", "administrative",
+      "analyze", "decide", "logistics", "maintain", "problem_solve"
     ];
     const taskType: TaskType = validTaskTypes.includes(out.taskType) ? out.taskType : "learn_understand";
     const infoRequirement: InfoRequirement = ["none", "useful", "required"].includes(out.infoRequirement) ? out.infoRequirement : "useful";
@@ -4285,7 +4313,9 @@ export async function runTask(
 
     // Run the first round of searches and gather results.
     const allSearchResults: { query: string; results: { title: string; url: string; snippet?: string }[] }[] = [];
+    let searchesAttempted = 0;
     for (const query of searches) {
+      searchesAttempted++;
       try {
         const raw = await runWebSearch({ query });
         const parsed = JSON.parse(raw) as { title: string; url: string; snippet?: string }[];
@@ -4314,6 +4344,7 @@ export async function runTask(
       const followUps: string[] = followUpOut.searches || [];
 
       for (const query of followUps.slice(0, 3)) { // cap follow-ups to avoid runaway loops
+        searchesAttempted++;
         try {
           const raw = await runWebSearch({ query });
           const parsed = JSON.parse(raw) as { title: string; url: string; snippet?: string }[];
@@ -4336,6 +4367,15 @@ export async function runTask(
         }
       }
       links = links.slice(0, 5);
+    }
+    // Distinguish "no search needed" from "search attempted and totally failed" — without this, context
+    // stays the exact same "(no external context)" string step 4 sees either way, so its grounding rule
+    // (claude.ts step-4 prompt) has nothing to act on and can't tell a legitimately-skipped search from
+    // one that failed outright, silently letting step 4 invent specifics for a DoD that needed real facts.
+    const totalSearchResults = allSearchResults.reduce((n, r) => n + r.results.length, 0);
+    if (searchesAttempted > 0 && totalSearchResults === 0) {
+      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `web search: ${searchesAttempted} quer${searchesAttempted === 1 ? "y" : "ies"} attempted, 0 results — steps may be under-grounded` });
+      context = `${context ? `${context}\n\n` : ""}NOTE: web search was attempted for this task but returned no results — do not treat this as "no search was needed." If the definition of done requires real gathered facts, say so plainly rather than inventing them.`;
     }
 
     // ── STEP 3: What information could be useful? ───────────────────────────
@@ -4397,6 +4437,7 @@ export async function runTask(
       `- GROUNDING — DO NOT INVENT: every specific name, place, price, date, or option a step mentions MUST actually appear in the CONTEXT above. If the context doesn't name it, the step can't either — no exceptions, even for something that sounds plausible or that you know to be real from general knowledge. A step about a real-world place/attraction/product you weren't actually handed research on is a fabrication, not a shortcut.\n` +
       `- Never include research/search steps IF the context above already contains enough concrete, specific material to satisfy the definition of done. But check that first: if the definition of done asks for a produced list/comparison/shortlist of real specific options (activities, sources, products, providers) and the context above is thin, generic, or missing that — a handful of search queries and a paragraph of vague summary is NOT the same as an actual curated list — then the FIRST steps must be genuine research/compilation steps that actually build that list, not steps that assume it already exists. Skipping straight to refinement steps (filtering, tagging, comparing) when there's nothing concrete yet to filter/tag/compare produces a step list that can't reach the definition of done at all.\n` +
       `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
+      `- COVER THE DEFINITION OF DONE'S OWN PARTS: identify its distinct sub-requirements (usually separated by commas/"and"/semicolons — e.g. "purpose, dates, travellers, transport and accommodation booked, and any required documents identified" is FIVE separate things, not one) and make sure the step list, together, actually addresses every one of them. A step list that looks plausible but silently leaves a named part of the definition of done untouched is incomplete, not just short — go back and add the missing step rather than padding an already-covered part.\n` +
       `- Match the plan's size to the task's real complexity — 3 steps for a simple task, up to 5 for a genuinely complex one. Never pad to look thorough. Fewer is better.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
       adaptiveInstructions +
@@ -4417,6 +4458,30 @@ export async function runTask(
     // Apply the same quality gates every step list passes through.
     steps = anchorStepsToTask(steps, task.title, 6);
     steps = dropTrivialSteps(steps);
+    // The contamination filters below were built (and are still used) in writeStepsFromContext, the
+    // separate pipeline reachable only from the manual /regenerate route — this is the LIVE task-creation
+    // codepath (server/tasks.ts consumes runTask's steps directly) and never called them, despite the
+    // comment above claiming "the same quality gates every step list passes through." Wired in now, same
+    // order writeStepsFromContext already uses.
+    steps = dropProcessComplaintSteps(steps);
+    steps = dropForeignEntitySteps(task, links, steps);
+    steps = dropSiblingBleedSteps(task, siblingTasks || [], steps);
+    steps = dropOffTopicStudySteps(task.taskType, steps);
+    // DOABLE/JUDGMENT automatable-flip — otherwise pulled forward from the dead finalize() (see its own
+    // comment there): a step starting with a doable verb ("research", "compile", "find", "draft"...) and
+    // carrying no judgment word is Otto's own work, not a to-do to dump on the student.
+    for (const s of steps) {
+      if (!s.automatable && DOABLE_STEP.test(s.text) && !JUDGMENT_STEP.test(s.text) && !s.question) s.automatable = true;
+    }
+    // Observational only — never deletes a step. stepsMatchTitle/isFolderHousekeepingDrift are whole-plan
+    // drift signals; this file has repeated scars from keyword-based DELETION filters "verified live to
+    // crash tests by zeroing out valid steps," so these only ever log for debugging, never remove anything.
+    if (!stepsMatchTitle(task.title, steps)) {
+      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `guardrail: most steps don't share a keyword with the task title — possible drift` });
+    }
+    if (isFolderHousekeepingDrift(task.title, steps)) {
+      audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `guardrail: every step is pure Drive folder/file housekeeping — possible drift` });
+    }
     console.log(`${new Date().toISOString()} [ai] step 4 result: ${steps.length} steps after filtering`);
     // If all steps were filtered out, keep at least the raw model output rather than falling back to a
     // single generic "Continue working on" step that then gets auto-broken into substeps (the exact
@@ -4489,6 +4554,19 @@ export async function runTask(
     if (!requestedArtifacts.length && isAcademic && /formula|formule|equation|[ée]quation|definition|d[ée]finition|vocab|vocabulary|vocabulaire|dates|grammar|grammaire|conjug|tense|temps|verb|verbe|noun|adjective|adverb|adjectif|adverbe|element|[ée]l[ée]ment|compound|compos[ée]|reaction|r[ée]action|law|loi|theorem|th[ée]or[èe]me|principle|principe|method|m[ée]thode|rule|r[èe]gle/i.test(`${task.title} ${task.why} ${context}`)) {
       requestedArtifacts.push({ type: "flashcards", reason: "Academic task with discrete facts to memorize" });
       console.log(`${new Date().toISOString()} [ai] step 5: auto-adding flashcards for academic task`);
+    }
+
+    // Defense in depth, independent of taskType/isAcademic (both upstream classifications that can be
+    // wrong — see dodLooksLikeCoordinationOutcome's own comment for the live bug this closes): veto any
+    // flashcards/quiz request whose DEFINITION OF DONE itself reads as a booking/coordination/decision
+    // outcome rather than actual memorizable content, no matter what requested it.
+    if (dodLooksLikeCoordinationOutcome(definitionOfDone)) {
+      const vetoed = requestedArtifacts.filter((a) => a.type === "flashcards" || a.type === "flashcard" || a.type === "quiz");
+      if (vetoed.length) {
+        console.log(`${new Date().toISOString()} [ai] step 5: vetoed ${vetoed.length} flashcards/quiz request(s) — DoD reads as a coordination outcome, not memorizable content`);
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: vetoed flashcards/quiz — DoD is a coordination outcome, not memorizable content` });
+        for (const v of vetoed) requestedArtifacts.splice(requestedArtifacts.indexOf(v), 1);
+      }
     }
 
     for (const artReq of requestedArtifacts) {
@@ -4593,13 +4671,24 @@ export async function runTask(
         `only refinement/filtering/tagging steps with nothing concrete yet to refine — say no. Otherwise, ` +
         `or if it's a close enough match for a reasonable plan, say yes.\n` +
         `Return JSON: {"satisfied": true|false, "missingStep": "one short concrete step (≤10 words) to add if not satisfied, else omit"}`,
-        300,
+        // Was 300 — the smallest budget anywhere in this file, for arguably the most reasoning-heavy
+        // judgment in the pipeline (weighing the full step list + artifact summary against the DoD).
+        // ask()'s truncation-retry helps, but on a second failed parse it returns {}, which this check
+        // silently treats as "satisfied" — biased toward a no-op specifically on the harder/longer cases.
+        // 800 matches step 3's proven-necessary size for a similarly-shaped judgment call.
+        800,
       );
       if (dodCheck?.satisfied === false && dodCheck?.missingStep) {
         const missingText = truncateStepText(String(dodCheck.missingStep));
         console.log(`${new Date().toISOString()} [ai] DoD check: plan didn't satisfy definition of done — adding step: "${missingText}"`);
         steps = [{ text: missingText, automatable: false }, ...steps];
         audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étape ajoutée pour vraiment atteindre l'objectif : ${missingText}` : `Added a step so the plan actually reaches the definition of done: ${missingText}` });
+      } else if (dodCheck?.satisfied === undefined) {
+        // ask() returned {} — the call failed to produce parseable JSON even after its own retry. Silently
+        // treating this as "satisfied" (the `if` above just falls through) is the intended best-effort
+        // behavior, but leaving zero trace that the check didn't actually run makes a bad plan that slips
+        // through indistinguishable from one that was genuinely verified — log it so it's debuggable.
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `DoD check inconclusive — the verification call didn't return a parseable result` });
       }
     }
 
@@ -5452,10 +5541,9 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // "Research X and compile a list" / "Find options for Y" / "Look into Z" are exactly the open-ended
   // research Otto can do itself (web_search + a doc) — missing these verbs was letting the model dodge
   // the FINISH-DON'T-HAND-BACK enforcement below by phrasing real work as a step instead of doing it.
-  const DOABLE = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make|research|find|look up|look into|gather|collect|identify|explore|investigate|list)\b/i;
-  const JUDGMENT = /\b(choose|decide|pick|confirm|approve|review|prefer|want|which|verify|check with|sign|pay)\b/i;
+  // (DOABLE_STEP/JUDGMENT_STEP live at module scope — runTask's own step-4 filtering reuses them too.)
   for (const s of filteredSteps) {
-    if (!s.automatable && DOABLE.test(s.text) && !JUDGMENT.test(s.text) && !s.question) s.automatable = true;
+    if (!s.automatable && DOABLE_STEP.test(s.text) && !JUDGMENT_STEP.test(s.text) && !s.question) s.automatable = true;
   }
   // Triviality gate runs HERE, after automatable is settled — a step already flipped to Otto's own job by
   // the DOABLE check above is fine even if it started with "Research"/"Find"; only a step still left to

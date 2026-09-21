@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1088,6 +1088,49 @@ section("dropSiblingBleedSteps — cross-task bleed backstop #2 (non-entity cont
   check("keeps an on-topic artifact title", dropSiblingBleedTitles(task, siblings, [onTopicNote]).length === 1);
   check("drops an artifact title that matches a sibling task's own vocabulary better", dropSiblingBleedTitles(task, siblings, [bleedingNote]).length === 0);
   check("with no sibling tasks, artifact titles are never dropped", dropSiblingBleedTitles(task, [], [bleedingNote]).length === 1);
+}
+
+// Reported live: "Prepare Oslo trip: confirm purpose, dates, bookings" got a 13-card flashcard deck
+// despite the taskType-based artifact gate, because taskType itself was misclassified upstream. This is
+// the independent, code-level backstop added on top of that: veto flashcards/quiz purely from the
+// definition of done's own wording, regardless of what taskType said.
+section("dodLooksLikeCoordinationOutcome — DoD-wording veto for flashcards/quiz (defense in depth)");
+{
+  const oslo = "A confirmed Oslo plan: purpose, dates, travellers, transport and accommodation booked, and any required documents or event prep identified — with every open question answered by Willem.";
+  check("a real trip-booking DoD reads as a coordination outcome", dodLooksLikeCoordinationOutcome(oslo));
+  const refund = "Yosef confirms whether the €15 top-up is refunded to the card/PayPal or kept as Lovable credits.";
+  check("a refund-decision DoD reads as a coordination outcome", dodLooksLikeCoordinationOutcome(refund));
+  const vocab = "Student can define and correctly use all assigned figures de style vocabulary terms.";
+  check("a genuine vocab/definition DoD is NOT vetoed, even though it doesn't mention booking/deciding", !dodLooksLikeCoordinationOutcome(vocab));
+  const formula = "Student can confirm and apply the quadratic formula and log laws without notes.";
+  check("a DoD that happens to say 'confirm' but is really about formulas/laws is NOT vetoed (memorizable content wins)", !dodLooksLikeCoordinationOutcome(formula));
+  const plain = "Write a 500-word essay analyzing the poem's use of metaphor.";
+  check("a DoD with neither coordination language nor memorizable-content markers is NOT vetoed (nothing to veto)", !dodLooksLikeCoordinationOutcome(plain));
+}
+
+// Source-order pins (server/claude.ts): runTask is a live, multi-call AI pipeline with no dedicated unit
+// test of its own (same reason the DoD-verification pass above has none) — verification here is pinning
+// that the actual wiring exists in the source, so a future edit can't silently drop it again the way it
+// was missing in the first place (writeStepsFromContext had these calls, runTask never did).
+section("runTask wiring — step-quality filters + taskType enum sync (source-order pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const runTaskStart = src.indexOf("export async function runTask(");
+  const runTaskBody = src.slice(runTaskStart, src.indexOf("\nexport async function writeStepsFromContext", runTaskStart));
+  check("runTask's step-4 output is filtered through dropProcessComplaintSteps", /steps = dropProcessComplaintSteps\(steps\);/.test(runTaskBody));
+  check("runTask's step-4 output is filtered through dropForeignEntitySteps", /steps = dropForeignEntitySteps\(task, links, steps\);/.test(runTaskBody));
+  check("runTask's step-4 output is filtered through dropSiblingBleedSteps", /steps = dropSiblingBleedSteps\(task, siblingTasks \|\| \[\], steps\);/.test(runTaskBody));
+  check("runTask's step-4 output is filtered through dropOffTopicStudySteps", /steps = dropOffTopicStudySteps\(task\.taskType, steps\);/.test(runTaskBody));
+  check("runTask applies the DOABLE/JUDGMENT automatable-flip", /DOABLE_STEP\.test\(s\.text\) && !JUDGMENT_STEP\.test\(s\.text\)/.test(runTaskBody));
+  check("runTask vetoes flashcards/quiz on a coordination-outcome DoD", /dodLooksLikeCoordinationOutcome\(definitionOfDone\)/.test(runTaskBody));
+  // All four taskType classification sites must offer/accept the same full 15-value enum — this is the
+  // actual root cause of the live bug (three of four were truncated to the old 10-value list, so
+  // "logistics"/"decide" were either never offerable to the model or silently discarded back to a wrong
+  // fallback). Pin that all four `validTaskTypes` arrays now match, so a future addition to TaskType can't
+  // silently land in only one of the four copies again.
+  const validTaskTypesBlocks = [...src.matchAll(/const validTaskTypes: TaskType\[\] = \[([\s\S]*?)\]/g)].map((m) => m[1].replace(/\s+/g, " ").trim());
+  check("exactly 4 validTaskTypes filter arrays exist", validTaskTypesBlocks.length === 4);
+  check("all 4 validTaskTypes arrays include the full 15-value list, not just the old 10", validTaskTypesBlocks.every((b) => /"analyze"/.test(b) && /"decide"/.test(b) && /"logistics"/.test(b) && /"maintain"/.test(b) && /"problem_solve"/.test(b)));
 }
 
 section("dueLine — always-shown due-date + server-computed days-until for chat");
