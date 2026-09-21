@@ -4455,13 +4455,13 @@ export async function runTask(
       `Based on all this information:\n${context || "(no external context was needed — plan from the task itself)"}\n\n` +
       `Create small, minimal, actionable steps to help the user achieve this.\n` +
       `RULES:\n` +
-      `- 3-10 steps, each a SHORT concrete one-liner (≤10 words). Each step is ONE single action, not a broad category.\n` +
+      `- 3-5 steps, each a SHORT concrete one-liner (≤10 words). Each step is ONE single action, not a broad category.\n` +
       `- Break the work into INDIVIDUAL steps — never one big step with sub-steps. If you're tempted to write a step like "Review chapter 5" that's really several things, write each thing as its own step instead.\n` +
       `- Only steps the STUDENT must do (decisions, physical actions, logins, review, practice, solving).\n` +
       `- GROUNDING — DO NOT INVENT: every specific name, place, price, date, or option a step mentions MUST actually appear in the CONTEXT above. If the context doesn't name it, the step can't either — no exceptions, even for something that sounds plausible or that you know to be real from general knowledge. A step about a real-world place/attraction/product you weren't actually handed research on is a fabrication, not a shortcut.\n` +
       `- Never include research/search steps IF the context above already contains enough concrete, specific material to satisfy the definition of done. But check that first: if the definition of done asks for a produced list/comparison/shortlist of real specific options (activities, sources, products, providers) and the context above is thin, generic, or missing that — a handful of search queries and a paragraph of vague summary is NOT the same as an actual curated list — then the FIRST steps must be genuine research/compilation steps that actually build that list, not steps that assume it already exists. Skipping straight to refinement steps (filtering, tagging, comparing) when there's nothing concrete yet to filter/tag/compare produces a step list that can't reach the definition of done at all.\n` +
       `- Never include artifact-creation steps (flashcards/quiz/note creation — that's handled separately).\n` +
-      `- Match the plan's size to the task's real complexity — 3 steps for a simple task, more for a complex one. Never pad to look thorough.\n` +
+      `- Match the plan's size to the task's real complexity — 3 steps for a simple task, up to 5 for a genuinely complex one. Never pad to look thorough. Fewer is better.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
       adaptiveInstructions +
       `Return JSON: {"steps": [{"text": "...", "automatable": false}], "definitionOfDone": "refined if needed"}`,
@@ -4479,7 +4479,7 @@ export async function runTask(
     }));
     console.log(`${new Date().toISOString()} [ai] step 4 result: ${steps.length} steps before filtering`);
     // Apply the same quality gates every step list passes through.
-    steps = anchorStepsToTask(steps, task.title, 12);
+    steps = anchorStepsToTask(steps, task.title, 6);
     steps = dropTrivialSteps(steps);
     console.log(`${new Date().toISOString()} [ai] step 4 result: ${steps.length} steps after filtering`);
     // If all steps were filtered out, keep at least the raw model output rather than falling back to a
@@ -4781,7 +4781,7 @@ export async function writeStepsFromContext(
           `STEP 6: Decide if this is a BIG project\n` +
           `Is this a multi-week/multi-stage project (essay, dissertation, IB Extended Essay/TOK/CAS/IA)?\n` +
           `If YES: create milestones with targetDates (YYYY-MM-DD)\n` +
-          `If NO: create ordinary steps (2-6 meaningful actions)\n\n` +
+          `If NO: create ordinary steps (2-5 meaningful actions, 3 is ideal for most tasks)\n\n` +
           `CRITICAL RULES:\n` +
           `1. The TASK TITLE is the objective — never lose sight of it\n` +
           `2. CONTEXT is supporting information only — never let it become the objective\n` +
@@ -5307,7 +5307,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
       // would permanently block the step client-side.
       dependsOn: Number.isInteger(s?.dependsOn) && s.dependsOn >= 0 && s.dependsOn < rawSteps.length && s.dependsOn !== idx ? s.dependsOn : undefined,
       ...sanitizeStepExtras(s),
-    })), taskTitle || "", 15); // generous ceiling — let the AI decide the right number of steps for the task
+    })), taskTitle || "", 8); // keep step lists short — 3 for simple tasks, up to 8 for genuinely complex ones
 
   // Apply contamination filters ALWAYS — not gated on definitionOfDone (often undefined for manual/pronote
   // tasks), which left cross-contamination unchecked for the majority of real tasks.
