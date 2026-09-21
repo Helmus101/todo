@@ -564,7 +564,7 @@ export function App() {
     // serverless instance — fewer polls is the one lever that reduces total request volume regardless of
     // that, so this and the cache TTL bump are complementary, not redundant. 5 min still surfaces a new task
     // well within a normal session.
-    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 5 * 60_000);
+    const syncTick = setInterval(() => { if (!document.hidden && !signedOutRef.current) { void syncTasks(); void loadStatus(); } }, 10 * 60_000);
     const fullTick = setInterval(on, 15 * 60_000); // periodic budget refresh + cadence-gated sweep check — was 5min
     return () => { document.removeEventListener("visibilitychange", on); window.removeEventListener("focus", on); clearInterval(syncTick); clearInterval(fullTick); };
   }, [connected, syncTasks, sweepIfDue, loadBudget, loadStatus, status?.pronoteConnected]);
@@ -602,7 +602,7 @@ export function App() {
       finally { kicking.current = false; }
     };
     void tick();
-    const id = setInterval(tick, 4000);
+    const id = setInterval(tick, 10000);
     return () => clearInterval(id);
   }, [connected, loaded, status?.paused, hasActiveWork(tasks)]);
 
@@ -3359,7 +3359,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   // Pronote is a French national-education-system tool — real and worth asking about for "bac"/unset, but
   // actively misleading to lead with for an IB/other-track student whose school very likely doesn't use it
   // at all (Google Classroom, Managebac, Toddle, or just email/calendar are far more common internationally).
-  const pronoteIsPrimary = track !== "ib" && track !== "other";
+  const pronoteIsPrimary = false;
 
   return (
     <div className="onboard-overlay" role="dialog" aria-modal="true">
@@ -3375,7 +3375,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
         {step === 0 && (
           <div className="onboard-step">
             <h2>{L("Bienvenue sur Otto", "Welcome to Otto")}</h2>
-            <p className="onboard-lead">{L("Otto lit ton Pronote, transforme tes devoirs et contrôles en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place.", "Otto reads your Pronote, turns your homework and tests into a clear plan for today, and helps you get started — never doing the work for you.")}</p>
+            <p className="onboard-lead">{L("Otto lit tes devoirs, contrôles et mails, transforme tout ça en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place. Connecte Pronote, Gmail, ou ajoute tes tâches à la main.", "Otto reads your homework, tests and emails, turns them into a clear plan for today, and helps you get started — never doing the work for you. Connect Pronote, Gmail, or add tasks by hand.")}</p>
             <label className="field onboard-name"><span>{L("Comment veux-tu qu'Otto t'appelle ?", "What should Otto call you?")}</span>
               <input className="addinput" placeholder={L("Ton prénom", "Your first name")} value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
