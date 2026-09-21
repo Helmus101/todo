@@ -4441,14 +4441,25 @@ export async function runTask(
     // For academic revision/prep tasks, artifacts (flashcards, quizzes, notes) are genuinely useful
     // and should be created proactively. For logistics/admin tasks, skip them.
     console.log(`${new Date().toISOString()} [ai] step 5: checking if artifacts needed`);
-    const isAcademic = /revision|revis|prep|study|exam|test|control|contr[ôo]le|assessment|memoris|memoriz|drill|practice|pratique|exercis|exercic|chapter|chapitre|notion|formula|formule|definition|d[ée]finition|vocab|vocabulary|vocabulaire|grammar|grammaire|history|histoire|dates|biology|biologie|chemistry|chimie|physics|physique|maths|math[ée]mat|geography|g[ée]o|econom|[ée]conom|philosophy|philo|french|fran[çc]ais|english|anglais|spanish|espagnol|german|allemand|literature|litt[ée]rature/i.test(`${task.title} ${task.why} ${definitionOfDone}`);
-    
+    // taskType (set by the classifier in step 1/2) is the authoritative signal for "is this actually
+    // a learning task" — when known, trust it over the keyword regex below. The regex used to include
+    // a bare "prep" match, which fired on "Oslo Trip Prep: Purpose, Dates, Bookings" (a logistics task)
+    // and generated an irrelevant flashcard deck. When taskType is known and NOT one of the study types,
+    // skip artifact creation outright rather than asking the model at all — cheaper and can't be talked
+    // into "yes" by a subject-word coincidence.
+    if (task.taskType && !STUDY_TASK_TYPES.has(task.taskType)) {
+      console.log(`${new Date().toISOString()} [ai] step 5: skipping artifacts — taskType "${task.taskType}" is not a study type`);
+    } else {
+    const isAcademic = task.taskType
+      ? STUDY_TASK_TYPES.has(task.taskType)
+      : /revision|revis|study|exam|test|control|contr[ôo]le|assessment|memoris|memoriz|drill|practice|pratique|exercis|exercic|chapter|chapitre|notion|formula|formule|definition|d[ée]finition|vocab|vocabulary|vocabulaire|grammar|grammaire|history|histoire|dates|biology|biologie|chemistry|chimie|physics|physique|maths|math[ée]mat|geography|g[ée]o|econom|[ée]conom|philosophy|philo|french|fran[çc]ais|english|anglais|spanish|espagnol|german|allemand|literature|litt[ée]rature/i.test(`${task.title} ${task.why} ${definitionOfDone}`);
+
     // Get focus-based artifact recommendation
     const artifactRecommendation = task.sourceSubject ? recommendArtifactType(task.sourceSubject, profile) : null;
     if (artifactRecommendation) {
       console.log(`${new Date().toISOString()} [ai] step 5: focus-based artifact recommendation: ${artifactRecommendation}`);
     }
-    
+
     const artifactOut = await ask(
       `There is this task: "${task.title}".\n` +
       `The user wants to have this definition of done: ${definitionOfDone}\n\n` +
@@ -4548,6 +4559,7 @@ export async function runTask(
     }
     if (!requestedArtifacts.length) {
       audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: skipped (not needed)` });
+    }
     }
 
     // ── DoD verification — does the finished plan actually GET THERE? ──────────────────────────────────
