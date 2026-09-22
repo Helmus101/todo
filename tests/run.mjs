@@ -1123,6 +1123,14 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   check("runTask's step-4 output is filtered through dropOffTopicStudySteps", /steps = dropOffTopicStudySteps\(task\.taskType, steps\);/.test(runTaskBody));
   check("runTask applies the DOABLE/JUDGMENT automatable-flip", /DOABLE_STEP\.test\(s\.text\) && !JUDGMENT_STEP\.test\(s\.text\)/.test(runTaskBody));
   check("runTask vetoes flashcards/quiz on a coordination-outcome DoD", /dodLooksLikeCoordinationOutcome\(definitionOfDone\)/.test(runTaskBody));
+  // Reported live: a "reach a clean run on an MCQ set" task generated step 1 as "Log missed items, then
+  // retake until no unresolved misses" and step 2 as "Sit a timed set" — backwards, since there's nothing
+  // to log/retake before a first attempt happens. Both step-writing prompts (runTask's own STEP 4, and
+  // writeStepsFromContext's separate pipeline) need the same sequencing instruction.
+  check("runTask's step-4 prompt instructs sequencing attempt-before-review steps", /SEQUENCE STEPS IN THE ORDER THE STUDENT WILL ACTUALLY DO THEM/.test(runTaskBody));
+  const writeStepsStart = src.indexOf("export async function writeStepsFromContext(");
+  const writeStepsBody = src.slice(writeStepsStart, src.indexOf("\nasync function decideArtifact", writeStepsStart));
+  check("writeStepsFromContext's prompt instructs the same attempt-before-review sequencing", /SEQUENCE steps in the order the student will actually do them/.test(writeStepsBody));
   // All four taskType classification sites must offer/accept the same full 15-value enum — this is the
   // actual root cause of the live bug (three of four were truncated to the old 10-value list, so
   // "logistics"/"decide" were either never offerable to the model or silently discarded back to a wrong

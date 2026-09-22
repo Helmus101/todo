@@ -4447,6 +4447,7 @@ export async function runTask(
       `RULES:\n` +
       `- 3-5 steps, each a SHORT concrete one-liner (≤10 words). Each step is ONE single action, not a broad category.\n` +
       `- Break the work into INDIVIDUAL steps — never one big step with sub-steps. If you're tempted to write a step like "Review chapter 5" that's really several things, write each thing as its own step instead.\n` +
+      `- SEQUENCE STEPS IN THE ORDER THE STUDENT WILL ACTUALLY DO THEM. A step that reacts to, reviews, or repeats based on an ATTEMPT (retake, log mistakes, fix what was wrong, redo until clean) can only come AFTER the step where that attempt actually happens — never before it. Reported live: a "reach a clean run on an MCQ set" task generated step 1 as "Log missed items, then retake until no unresolved misses" and step 2 as "Sit a timed set" — backwards, since there's nothing to log or retake before a first attempt has happened. The correct order is: attempt first, THEN log/retake based on that attempt.\n` +
       `- Only steps the STUDENT must do (decisions, physical actions, logins, review, practice, solving).\n` +
       `- GROUNDING — DO NOT INVENT: every specific name, place, price, date, or option a step mentions MUST actually appear in the CONTEXT above. If the context doesn't name it, the step can't either — no exceptions, even for something that sounds plausible or that you know to be real from general knowledge. A step about a real-world place/attraction/product you weren't actually handed research on is a fabrication, not a shortcut.\n` +
       `- Never include research/search steps IF the context above already contains enough concrete, specific material to satisfy the definition of done. But check that first: if the definition of done asks for a produced list/comparison/shortlist of real specific options (activities, sources, products, providers) and the context above is thin, generic, or missing that — a handful of search queries and a paragraph of vague summary is NOT the same as an actual curated list — then the FIRST steps must be genuine research/compilation steps that actually build that list, not steps that assume it already exists. Skipping straight to refinement steps (filtering, tagging, comparing) when there's nothing concrete yet to filter/tag/compare produces a step list that can't reach the definition of done at all.\n` +
@@ -4874,7 +4875,11 @@ export async function writeStepsFromContext(
           `of real specific options and CONTEXT above is thin or generic (not an actual list of real ` +
           `candidates), the first user steps must be genuine research/compilation steps that build it — ` +
           `refinement-style steps (filter, tag, compare) with nothing concrete yet to filter/tag/compare ` +
-          `can't reach the Definition of Done\n\n` +
+          `can't reach the Definition of Done\n` +
+          `10. SEQUENCE steps in the order the student will actually do them — a step that reacts to an ` +
+          `ATTEMPT (retake, log mistakes, fix what was wrong, redo until clean) must come AFTER the step ` +
+          `where that attempt happens, never before it (reported live: "log misses, then retake" was ` +
+          `generated as step 1, before "sit a timed set" as step 2 — backwards, nothing to log yet)\n\n` +
           `- Directly contribute to the Definition of Done for "${task.title}"\n` +
           `- Be something the student must do (not Otto)\n` +
           `- Be concrete and actionable (not "research X" or "find Y") UNLESS rule 9 above applies\n` +
