@@ -4195,6 +4195,17 @@ export async function runTask(
 
   let tokIn = 0;
   let tokOut = 0;
+  // Total-outage detection: ask() deliberately never throws (a single failed call shouldn't break the
+  // whole pipeline — see its own comment), which means a COMPLETE AI outage for this entire run previously
+  // fell through silently: every ask() call returned {}, but runTask still built and returned a normal-
+  // looking RunOutput (a one-step fallback, an "Error during analysis. Retry." synthesis) instead of
+  // throwing — server/tasks.ts's aiRun then took the SUCCESS path (task.status = "needs_review"), never
+  // the failure path that feeds jobs.ts's actual attempt-count/backoff/retry machinery. A sweep-time outage
+  // produced a batch of tasks stuck at needs_review with garbage content, indistinguishable in state from a
+  // genuinely completed run, with no automatic retry. Tracked here and checked right before the final
+  // return — if every single ask() call in this run failed, throw for real instead of pretending to succeed.
+  let askCalls = 0;
+  let askFailures = 0;
   let context = "";
   let links: TaskLink[] = [];
   let notes: TaskNote[] = [];
@@ -4217,6 +4228,7 @@ export async function runTask(
    *  the exact failure the caller's OWN fallback-for-empty-array branch exists to catch, but shouldn't need
    *  to reach nearly this often. */
   async function ask(prompt: string, maxTokens: number): Promise<any> {
+    askCalls++;
     const attempt = async (tokens: number, extraInstruction: string): Promise<{ parsed: any; truncated: boolean } | null> => {
       const res = await retryRequest(() => client.chat.completions.create({
         model, max_tokens: tokens, temperature: 0.2,
@@ -4246,11 +4258,13 @@ export async function runTask(
       // 2000) and an explicit steer toward brevity, so the retry is less likely to hit the SAME ceiling.
       console.log(`${new Date().toISOString()} [ai] ask retrying with a larger budget after truncation/parse failure`);
       const second = await attempt(Math.max(maxTokens * 2.5, 2000), "\n\nBe concise — short phrases, no extra commentary. Fit your ENTIRE answer well within the token budget.");
+      if (!second?.parsed) askFailures++;
       return second?.parsed || {};
     } catch (err: any) {
       console.error(`${new Date().toISOString()} [ai] ask error: ${err?.message || err}`);
       console.error(`${new Date().toISOString()} [ai] error stack: ${err?.stack || "no stack"}`);
       // Return empty object instead of throwing to avoid breaking the entire pipeline
+      askFailures++;
       return {};
     }
   }
@@ -4457,7 +4471,6 @@ export async function runTask(
     console.log(`${new Date().toISOString()} [ai] step 4 result: ${steps.length} steps before filtering`);
     // Apply the same quality gates every step list passes through.
     steps = anchorStepsToTask(steps, task.title, 6);
-    steps = dropTrivialSteps(steps);
     // The contamination filters below were built (and are still used) in writeStepsFromContext, the
     // separate pipeline reachable only from the manual /regenerate route — this is the LIVE task-creation
     // codepath (server/tasks.ts consumes runTask's steps directly) and never called them, despite the
@@ -4473,6 +4486,14 @@ export async function runTask(
     for (const s of steps) {
       if (!s.automatable && DOABLE_STEP.test(s.text) && !JUDGMENT_STEP.test(s.text) && !s.question) s.automatable = true;
     }
+    // dropTrivialSteps runs HERE, AFTER the automatable flip above — not before it, which is the ordering
+    // bug finalize()'s own comment (search "Triviality gate runs HERE") explicitly warns about and this
+    // file has "verified live to crash tests/run.mjs by zeroing out valid steps": a not-yet-flipped step
+    // like "Research X and compile a list" or "Find a time that works for the team" still looks like a
+    // bare trivial lookup BEFORE the flip runs, and dropTrivialSteps would delete it before it ever gets
+    // the chance to be marked as Otto's own automatable work. This file's own earlier revision of this
+    // exact block ran them in the wrong order — fixed to match finalize()'s documented-correct sequence.
+    steps = dropTrivialSteps(steps);
     // Observational only — never deletes a step. stepsMatchTitle/isFolderHousekeepingDrift are whole-plan
     // drift signals; this file has repeated scars from keyword-based DELETION filters "verified live to
     // crash tests by zeroing out valid steps," so these only ever log for debugging, never remove anything.
@@ -4690,6 +4711,14 @@ export async function runTask(
         // through indistinguishable from one that was genuinely verified — log it so it's debuggable.
         audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `DoD check inconclusive — the verification call didn't return a parseable result` });
       }
+    }
+
+    // Total-outage check — see askCalls/askFailures' own comment above. Every single ask() call in this
+    // run failed: this isn't a genuinely completed run with thin content, it's an AI outage wearing a
+    // success shape. Throw for real so the outer catch below (and, past that, server/tasks.ts's error
+    // path) actually runs — the same retry/backoff machinery a non-AI bug already gets.
+    if (askCalls > 0 && askFailures === askCalls) {
+      throw new Error(`runTask: all ${askCalls} AI calls failed — likely a total outage, not a thin result`);
     }
 
     // Build the synthesis line.

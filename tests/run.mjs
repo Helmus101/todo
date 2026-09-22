@@ -1131,6 +1131,17 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   const validTaskTypesBlocks = [...src.matchAll(/const validTaskTypes: TaskType\[\] = \[([\s\S]*?)\]/g)].map((m) => m[1].replace(/\s+/g, " ").trim());
   check("exactly 4 validTaskTypes filter arrays exist", validTaskTypesBlocks.length === 4);
   check("all 4 validTaskTypes arrays include the full 15-value list, not just the old 10", validTaskTypesBlocks.every((b) => /"analyze"/.test(b) && /"decide"/.test(b) && /"logistics"/.test(b) && /"maintain"/.test(b) && /"problem_solve"/.test(b)));
+  // Ordering bug found live: dropTrivialSteps ran BEFORE the DOABLE/JUDGMENT flip, so a not-yet-flipped
+  // step like "Research X and compile a list" still looked like a bare trivial lookup and got deleted
+  // before it could be marked as Otto's own automatable work — finalize()'s own comment ("Triviality gate
+  // runs HERE") documents this exact failure mode as "verified live to crash tests by zeroing out valid
+  // steps." Pin the fixed order so a future edit can't silently reintroduce it.
+  const trivialIdx = runTaskBody.indexOf("steps = dropTrivialSteps(steps);");
+  const flipIdx = runTaskBody.indexOf("DOABLE_STEP.test(s.text)");
+  check("dropTrivialSteps runs AFTER the DOABLE/JUDGMENT flip, not before", trivialIdx > 0 && flipIdx > 0 && trivialIdx > flipIdx);
+  // Total-outage detection: every ask() call failing used to silently return a normal-looking RunOutput
+  // instead of throwing, bypassing server/tasks.ts's actual retry/backoff machinery entirely.
+  check("runTask throws when every AI call in the run failed (total-outage detection)", /askCalls > 0 && askFailures === askCalls/.test(runTaskBody));
 }
 
 section("dueLine — always-shown due-date + server-computed days-until for chat");

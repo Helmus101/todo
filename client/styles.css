@@ -2236,6 +2236,20 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .chip-attention { background: var(--accent-soft); color: var(--accent); }
 .chip-bad { background: var(--bg-2); color: var(--ink); }
 .chip-good { background: var(--bg-2); color: var(--ink-3); }
+/* Informational, not urgent — same neutral treatment as the other non-attention chips above, per the
+   one-accent rule (accent is reserved for "needs you"). Marks an experimental/unproven feature so a
+   student's expectations are set correctly, not a call to action. */
+.beta-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-2);
+  color: var(--ink-3);
+  vertical-align: middle;
+}
 
 /* ─── Login & Auth ─────────────────────────────────────────────────────────── */
 .login-page { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; background: var(--bg); position: relative; }

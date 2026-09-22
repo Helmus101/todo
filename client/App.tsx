@@ -2632,7 +2632,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             radii, strictly re-validated (format + contrast) before it's ever saved. One click, one small AI
             call, reversible with Reset — not something that changes on its own. */}
         <div className="modal-row">
-          <span className="lbl">{L("Thème personnalisé (IA)", "Personalized theme (AI)")}</span>
+          <span className="lbl">{L("Thème personnalisé (IA)", "Personalized theme (AI)")} <span className="beta-badge" title={L("Fonctionnalité expérimentale", "Experimental feature")}>{L("BÊTA", "BETA")}</span></span>
           <span className="val">
             <button type="button" className="btn xs ghost" disabled={themeBusy} onClick={async () => {
               setThemeBusy(true);
