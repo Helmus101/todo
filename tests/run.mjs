@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -2107,6 +2107,43 @@ section("/finance (Plaid) — plaidToItems + plaidBillsToTasks, and that NONE of
   const stepPrompt = claudeSrc.slice(claudeSrc.indexOf("SEQUENCE STEPS IN THE ORDER"), claudeSrc.indexOf("Only steps the STUDENT must do"));
   check("the sequencing rule covers prerequisites, not just reacting-to-an-attempt", /SETTLING WHAT THE LATER WORK OPERATES ON/.test(stepPrompt) && /REACTING TO AN ATTEMPT/.test(stepPrompt));
   check("step 4 is told one deliverable per step, with the live compound-step example", /ONE DELIVERABLE PER STEP/.test(stepPrompt) && /Book transport and lodging, draft itinerary and packing list/.test(stepPrompt));
+}
+
+// ── Steps anchored to the definition of done + briefs for practical tasks ─────────────────────────
+{
+  const plan = [
+    { text: "Fix trip dates against the school calendar", automatable: false },
+    { text: "Book transport for those dates", automatable: false },
+    { text: "Review your general study habits", automatable: false },
+  ];
+  const anchored = new Set(["Fix trip dates against the school calendar", "Book transport for those dates"]);
+  check("drops a step the writer couldn't tie to any part of the definition of done",
+    dropUnanchoredSteps(plan, (t) => anchored.has(t)).length === 2);
+  check("the whole plan stands when fewer than 2 steps would survive (part-numbering is the likelier fault)",
+    dropUnanchoredSteps(plan, (t) => t === plan[0].text).length === 3);
+  check("an all-anchored plan passes through untouched", dropUnanchoredSteps(plan, () => true).length === 3);
+
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const stepPrompt = src.slice(src.indexOf("HOW TO ANSWER"), src.indexOf('"definitionOfDone": "refined if needed"}`,'));
+  check("step 4 must enumerate the definition of done's parts before writing steps", /"dodParts"/.test(stepPrompt));
+  check("every step must cite the dodPart number it advances", /"dodPart": the 1-based number/.test(stepPrompt));
+  check("a step that advances no part is told not to be written at all", /it is not a step for this task/.test(stepPrompt));
+
+  const step5 = src.slice(src.indexOf("NOTE_ONLY_TASK_TYPES"), src.indexOf("for (const artReq of requestedArtifacts)"));
+  check("logistics/administrative/maintain are note-only, no longer hard-skipped out of artifacts",
+    /NOTE_ONLY_TASK_TYPES = new Set<string>\(\["administrative", "logistics", "maintain"\]\)/.test(step5) && !/NEVER_ARTIFACT_TASK_TYPES/.test(src));
+  check("a practical task's non-note artifact requests are dropped server-side, not just discouraged",
+    /wrongType = requestedArtifacts\.filter\(\(a\) => a\.type !== "note"\)/.test(step5));
+  check("a practical task with researched context gets a brief nudged in", /auto-adding a brief for practical task/.test(step5));
+  check("a thin practical task gets no near-empty brief (context floor)", /context \|\| ""\}`\.trim\(\)\.length > 400/.test(step5));
+  check("the artifact chooser is told what a brief is, not that logistics means none",
+    /a BRIEF for a practical\/coordination task/.test(src) && !/nothing to compile or reference later\), the answer is almost always none/.test(src));
+  const noteWriter = src.slice(src.indexOf("Create a short in-app reference note"), src.indexOf('{"title": "note title"'));
+  check("the note writer knows the BRIEF shape (settled / still open / checklist)",
+    /- BRIEF, if this is a practical/.test(noteWriter) && /SETTLED/.test(noteWriter) && /still OPEN/.test(noteWriter));
+  check("a brief is required to carry real specifics, not generic advice", /a brief made of generic advice/.test(noteWriter));
+  check("the repair pass reuses step 4's own enumerated parts rather than re-deriving them",
+    /The definition of done breaks into these parts/.test(src));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

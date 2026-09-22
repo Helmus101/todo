@@ -176,6 +176,14 @@ export function dropRedundantArtifactSteps(
   return kept.length ? kept : steps;
 }
 
+/** Keep only steps that the step-writer itself tied to a numbered part of the definition of done — with a
+ *  floor, because a plan is never worth emptying out over this. If fewer than 2 steps would survive, the
+ *  model's part-numbering is more likely broken than the whole plan is, so the original list stands. */
+export function dropUnanchoredSteps(steps: TaskStep[], isAnchored: (text: string) => boolean): TaskStep[] {
+  const kept = steps.filter((s) => isAnchored(s.text));
+  return kept.length >= 2 ? kept : steps;
+}
+
 /** Carry step 4's structured extras (url / question / options / minutes) across the plan-repair pass, which
  *  returns text + automatable only. Without this, a repaired plan silently loses the clickable link or the
  *  inline question a step was carrying. Matched on token overlap rather than exact text because repair is
@@ -4524,7 +4532,15 @@ export async function runTask(
       `- Match the plan's size to the task's real complexity — 3 steps for a simple task, up to 5 for a genuinely complex one. Never pad to look thorough. Fewer is better.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
       adaptiveInstructions +
-      `Return JSON: {"steps": [{"text": "...", "automatable": false}], "definitionOfDone": "refined if needed"}`,
+      `\nHOW TO ANSWER:\n` +
+      `First fill "dodParts": split the DEFINITION OF DONE into its distinct parts, in order, one short ` +
+      `phrase each — these are the things that must be true for this task to be finished.\n` +
+      `Then write the steps. EVERY step must carry "dodPart": the 1-based number of the part it directly ` +
+      `advances. This is the real test of a step: if you cannot point at the part of the definition of done ` +
+      `it moves forward, it is not a step for this task — do not write it, and write the step that part ` +
+      `actually needs instead. A step that is merely on-topic, generically sensible, or good study advice ` +
+      `is exactly what this rule exists to keep out.\n` +
+      `Return JSON: {"dodParts": ["...", "..."], "steps": [{"text": "...", "automatable": false, "dodPart": 1}], "definitionOfDone": "refined if needed"}`,
       // 800 was verified live to truncate mid-JSON on an ordinary task (DeepSeek v4's hidden reasoning
       // tokens count against max_tokens — see ask()'s own comment) — up to 10 step objects, each with 5
       // fields, needs real headroom. ask() now also retries once with a bumped budget on truncation, but
@@ -4532,12 +4548,35 @@ export async function runTask(
       2200,
     );
 
+    const dodParts: string[] = (Array.isArray(stepsOut.dodParts) ? stepsOut.dodParts : [])
+      .map((p: any) => String(p || "").trim()).filter(Boolean).slice(0, 8);
     let steps: TaskStep[] = (stepsOut.steps || []).map((s: any) => ({
       text: truncateStepText(String(s.text || "")),
       automatable: !!s.automatable,
       ...sanitizeStepExtras(s),
     }));
     console.log(`${new Date().toISOString()} [ai] step 4 result: ${steps.length} steps before filtering`);
+
+    // Anchoring: a step only belongs in this plan if it advances a named part of the definition of done.
+    // The model was just asked to enumerate those parts and cite one per step, so a step that cites none
+    // (or an out-of-range part) is the model itself saying it couldn't connect that step to the goal —
+    // which is exactly the "on-topic but not actually pointed at the DoD" step that keeps showing up.
+    // Acting on this is safe only because the signal comes from the model's own bookkeeping rather than a
+    // keyword guess (this file's repeatedly-deleted step filters were all the latter), and even so it is
+    // floored: at least 2 anchored steps must survive, otherwise the whole plan stands untouched.
+    if (dodParts.length) {
+      const anchoredTexts = new Set<string>(
+        (stepsOut.steps || [])
+          .filter((s: any) => Number.isInteger(s?.dodPart) && s.dodPart >= 1 && s.dodPart <= dodParts.length)
+          .map((s: any) => truncateStepText(String(s.text || ""))),
+      );
+      const beforeAnchor = steps.length;
+      steps = dropUnanchoredSteps(steps, (text) => anchoredTexts.has(text));
+      if (steps.length < beforeAnchor) {
+        console.log(`${new Date().toISOString()} [ai] step 4: dropped ${beforeAnchor - steps.length} step(s) not tied to any part of the definition of done`);
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étape(s) retirée(s) : aucun lien avec la définition de terminé` : `Removed step(s) that didn't advance any part of the definition of done` });
+      }
+    }
     // Apply the same quality gates every step list passes through.
     steps = anchorStepsToTask(steps, task.title, 6);
     // The contamination filters below were built (and are still used) in writeStepsFromContext, the
@@ -4615,10 +4654,16 @@ export async function runTask(
     // for a compiled research shortlist/comparison, not just an academic reference sheet — see the note
     // type's own broadened description below. Only hard-skip taskTypes where an artifact genuinely never
     // makes sense (pure logistics/admin/upkeep with no content worth saving); every other type still asks.
-    const NEVER_ARTIFACT_TASK_TYPES = new Set<string>(["administrative", "logistics", "maintain"]);
-    if (task.taskType && NEVER_ARTIFACT_TASK_TYPES.has(task.taskType)) {
-      console.log(`${new Date().toISOString()} [ai] step 5: skipping artifacts — taskType "${task.taskType}" never needs one`);
-    } else {
+    // ...and even those don't get NOTHING. Reported live: "Lock dates, bookings and an Arctic-ready
+    // itinerary" (taskType "logistics") was hard-skipped here, so a run that had already researched dates,
+    // transport options and Arctic kit produced no document at all — the student got two vague steps and
+    // every real specific Otto found was thrown away. A logistics/admin task's right artifact is a BRIEF:
+    // the dates settled, what's booked vs still outstanding, the itinerary skeleton, the checklist. So
+    // these types stay in the pipeline and can have a "note"; what they can never have is flashcards or a
+    // quiz (nothing here is memorizable content), enforced below rather than by skipping the whole step.
+    const NOTE_ONLY_TASK_TYPES = new Set<string>(["administrative", "logistics", "maintain"]);
+    const isNoteOnly = !!task.taskType && NOTE_ONLY_TASK_TYPES.has(task.taskType);
+    {
     const isAcademic = task.taskType
       ? STUDY_TASK_TYPES.has(task.taskType) || task.taskType === "analyze" || task.taskType === "problem_solve"
       : /revision|revis|study|exam|test|control|contr[ôo]le|assessment|memoris|memoriz|drill|practice|pratique|exercis|exercic|chapter|chapitre|notion|formula|formule|definition|d[ée]finition|vocab|vocabulary|vocabulaire|grammar|grammaire|history|histoire|dates|biology|biologie|chemistry|chimie|physics|physique|maths|math[ée]mat|geography|g[ée]o|econom|[ée]conom|philosophy|philo|french|fran[çc]ais|english|anglais|spanish|espagnol|german|allemand|literature|litt[ée]rature/i.test(`${task.title} ${task.why} ${definitionOfDone}`);
@@ -4637,20 +4682,30 @@ export async function runTask(
       `Available types:\n` +
       `- "flashcards": a drillable deck for discrete facts (vocab, definitions, formulas, dates, equations).\n` +
       `- "quiz": multiple-choice self-check with NEW questions (for checking understanding before a test).\n` +
-      `- "note": a short in-app reference sheet — EITHER an academic one (formulas, key concepts, a study ` +
+      `- "note": a short in-app document — an academic reference sheet (formulas, key concepts, a study ` +
       `checklist, a worked example structure) OR a COMPILED RESEARCH OUTPUT: if the definition of done asks ` +
       `for a produced list/shortlist/comparison of real-world options (activities, places, products, ` +
       `providers, sources) and the context above actually contains enough concrete, specific material to ` +
       `build it, this is where that compiled result belongs — a categorized table/list with the real names, ` +
       `prices, locations, etc. from the context. Otherwise the student is left with a step describing work ` +
-      `Otto already had the material to just do.\n` +
+      `Otto already had the material to just do — OR a BRIEF for a practical/coordination task: the dates ` +
+      `and decisions settled, what is booked versus still outstanding, the itinerary or schedule skeleton, ` +
+      `the checklist of what to bring/prepare/send, each line carrying the real specifics from the context. ` +
+      `A brief is a document the student opens while doing the task, not a study aid — a trip, a booking, ` +
+      `an application, a repair, an event all deserve one.\n` +
       `- "none": no artifact needed.\n` +
       (artifactRecommendation ? `FOCUS-BASED RECOMMENDATION: Based on the student's historical focus patterns, consider prioritizing "${artifactRecommendation}" for this task/subject.\n` : "") +
       `For ACADEMIC revision/prep/study tasks, flashcards or a note are almost always useful — say yes.\n` +
       `For a research/compilation task whose definition of done asks for a produced list/shortlist/comparison, ` +
       `say yes to "note" WHENEVER the context above already has enough real, specific material to build it — ` +
       `only say none if the context is genuinely too thin to compile anything real from.\n` +
-      `For pure logistics/admin tasks (booking, paying, scheduling — nothing to compile or reference later), the answer is almost always none.\n` +
+      (isNoteOnly
+        ? `This is a practical/coordination task, so flashcards and a quiz are both WRONG here — never request them. ` +
+          `The question is only whether a "note" (a BRIEF, as described above) is worth writing: say yes whenever the ` +
+          `context or the definition of done carries real specifics worth having in one place while doing the task — ` +
+          `dates, options, prices, what is booked vs outstanding, what to bring, who to contact. Say none only for a ` +
+          `genuinely single-action task (pay one bill, send one message) where a document would be noise.\n`
+        : `For a pure single-action logistics/admin task (pay one bill, send one message — nothing to compile or reference later), the answer is none.\n`) +
       `You can request MULTIPLE artifacts if the task genuinely calls for it (e.g. flashcards AND a note).\n` +
       `Return JSON: {"artifacts": [{"type": "flashcards", "reason": "..."}], "needsArtifact": true/false}\n` +
       `Set needsArtifact to true if any artifacts are requested. Use an empty array with needsArtifact=false if none.`,
@@ -4674,6 +4729,24 @@ export async function runTask(
     if (!requestedArtifacts.length && isAcademic) {
       requestedArtifacts.push({ type: "note", reason: "Academic task — a study guide/outline note helps structure the work" });
       console.log(`${new Date().toISOString()} [ai] step 5: auto-adding note for academic task`);
+    }
+
+    // Practical/coordination tasks: a note (brief) is the ONLY artifact that can make sense, so drop any
+    // flashcards/quiz the model asked for regardless of its reasoning, and nudge a brief when this run
+    // actually has substance to put in one. The context-length floor is what keeps this from producing an
+    // empty document for a one-action errand: with nothing researched and a one-line DoD there's nothing
+    // to brief, and a near-blank note is worse than no note.
+    if (isNoteOnly) {
+      const wrongType = requestedArtifacts.filter((a) => a.type !== "note");
+      if (wrongType.length) {
+        console.log(`${new Date().toISOString()} [ai] step 5: dropped ${wrongType.length} non-note artifact request(s) — taskType "${task.taskType}" can only have a brief`);
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: dropped flashcards/quiz — a practical task gets a brief, not a study aid` });
+        for (const w of wrongType) requestedArtifacts.splice(requestedArtifacts.indexOf(w), 1);
+      }
+      if (!requestedArtifacts.length && `${context || ""}`.trim().length > 400) {
+        requestedArtifacts.push({ type: "note", reason: "Practical task with researched specifics — a brief keeps them in one place" });
+        console.log(`${new Date().toISOString()} [ai] step 5: auto-adding a brief for practical task`);
+      }
     }
 
     // Defense in depth, independent of taskType/isAcademic (both upstream classifications that can be
@@ -4745,16 +4818,23 @@ export async function runTask(
           `Context:\n${context}\n\n` +
           `Create a concise reference sheet with REAL content. Use the context above when available, but ` +
           `Missing the class's EXACT source material is NEVER a reason to skip: use your general knowledge of the topic. ` +
-          `Create either an ACADEMIC one ` +
-          `(key formulas, definitions, concepts, a worked example structure, a study checklist) OR, if the ` +
-          `definition of done asks for a produced list/shortlist/comparison of real-world options, the actual ` +
-          `COMPILED RESULT: a categorized table/list using the real names, prices, locations, durations, etc. ` +
-          `from the context above — this is the deliverable itself, not a guide to making one. Use markdown ` +
+          `Choose the shape that fits this task:\n` +
+          `- ACADEMIC reference (key formulas, definitions, concepts, a worked example structure, a study checklist).\n` +
+          `- COMPILED RESULT, if the definition of done asks for a produced list/shortlist/comparison of ` +
+          `real-world options: a categorized table/list using the real names, prices, locations, durations ` +
+          `from the context above — this is the deliverable itself, not a guide to making one.\n` +
+          `- BRIEF, if this is a practical/coordination task (a trip, a booking, an application, an event, a ` +
+          `repair): the working document the student opens while doing it. Lead with what is already SETTLED ` +
+          `(dates, decisions, anything confirmed), then what is still OPEN with the concrete options and their ` +
+          `real prices/links/deadlines from the context, then the checklist of what to book, bring, prepare or ` +
+          `send. Every line carries a real specific — a brief made of generic advice ("research your options", ` +
+          `"pack warm clothes") is worthless; the whole point is that the specifics are already in it.\n` +
+          `Use markdown ` +
           `(headings, **bold**, bullet lists, GFM pipe tables when tabular). Every cell in a table must be ` +
           `filled with real content from the context — never leave blanks, and never invent a name/price/detail ` +
           `the context doesn't actually contain. For the academic case only, this is a GUIDE to help the ` +
           `student do the work, never a completed assignment — that distinction doesn't apply to a compiled ` +
-          `research shortlist, which IS the deliverable.\n` +
+          `research shortlist or a brief, both of which ARE the deliverable.\n` +
           `Return JSON: {"title": "note title", "body": "markdown content"}`,
           2000,
         );
@@ -4815,11 +4895,16 @@ export async function runTask(
         `PLANNED STEPS (what the student will do):\n${steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n")}\n\n` +
         `ARTIFACTS ALREADY CREATED FOR THE STUDENT:\n${artifactSummary}\n\n` +
         `Audit this plan on three things, then return the corrected plan.\n\n` +
-        `1. COVERAGE. Break the definition of done into its distinct parts — commas, "and" and semicolons ` +
-        `usually separate them, so "flashcards covering each figure, plus an identification quiz, worked ` +
-        `through once, scored, with every missed figure noted" is FIVE parts, not one. Every part must be ` +
-        `either addressed by a step or already fully delivered by an artifact listed above. Add a step for ` +
-        `each part that is neither. Be strict in particular when the definition of done asks for a produced ` +
+        (dodParts.length
+          ? `1. COVERAGE. The definition of done breaks into these parts:\n${dodParts.map((p, i) => `   ${i + 1}. ${p}`).join("\n")}\n` +
+            `Every one of them must be either addressed by a step or already fully delivered by an artifact ` +
+            `listed above. Add a step for each part that is neither, and drop any step that advances none of them.`
+          : `1. COVERAGE. Break the definition of done into its distinct parts — commas, "and" and semicolons ` +
+            `usually separate them, so "flashcards covering each figure, plus an identification quiz, worked ` +
+            `through once, scored, with every missed figure noted" is FIVE parts, not one. Every part must be ` +
+            `either addressed by a step or already fully delivered by an artifact listed above. Add a step for ` +
+            `each part that is neither.`) +
+        ` Be strict in particular when the definition of done asks for a produced ` +
         `list/comparison/set of real specific options (activities, sources, products, providers) and ` +
         `neither the steps nor the artifacts actually contain or will produce real specific content — only ` +
         `refinement/filtering/tagging steps with nothing concrete yet to refine.\n` +
