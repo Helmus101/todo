@@ -870,7 +870,7 @@ export function dodLooksLikeCoordinationOutcome(definitionOfDone: string): boole
 // Otto-work leak check, module-scope so both runTask's step-4 filtering and finalize() share the same
 // definition: a step starting with a doable verb and carrying no judgment word for the user is Otto's own
 // work ("Research X and compile a list" / "Find options for Y"), not a to-do to dump on the student.
-export const DOABLE_STEP = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make|research|find|look up|look into|gather|collect|identify|explore|investigate|list)\b/i;
+export const DOABLE_STEP = /^(create|draft|write|update|add|fill|schedule|search|compile|prepare|generate|make|research|find|look up|look into|gather|collect|identify|explore|investigate|list|build|assemble|organize|categorize|sort)\b/i;
 export const JUDGMENT_STEP = /\b(choose|decide|pick|confirm|approve|review|prefer|want|which|verify|check with|sign|pay)\b/i;
 // A step that narrates OTTO'S OWN RUN/TOOL STATE instead of something the STUDENT should do — observed live
 // patterns include: "Enable or reconnect a create/write tool — this run was in plan-only mode",
@@ -4481,6 +4481,13 @@ export async function runTask(
     steps = dropForeignEntitySteps(task, links, steps);
     steps = dropSiblingBleedSteps(task, siblingTasks || [], steps);
     steps = dropOffTopicStudySteps(task.taskType, steps);
+    // Same gap as the comment above (a filter that existed but was never wired into THIS live pipeline):
+    // OTTO_INTERNAL_STEP/THIRD_PERSON_STUDENT_STEP were only ever applied in the separate manual-regenerate
+    // path. Reported live: "Build a shortlist of Oslo activities" left a step reading "Re-run searches for
+    // Oslo prices, hours, booking channels" — Otto narrating its OWN research action as if it were the
+    // student's to-do, exactly what OTTO_INTERNAL_STEP exists to catch (the searches already ran THIS turn
+    // in step 2 above; a leftover "re-run" instruction is stale process narration, not a real next action).
+    steps = steps.filter((s) => !OTTO_INTERNAL_STEP.test(s.text) && !THIRD_PERSON_STUDENT_STEP.test(s.text));
     // DOABLE/JUDGMENT automatable-flip — otherwise pulled forward from the dead finalize() (see its own
     // comment there): a step starting with a doable verb ("research", "compile", "find", "draft"...) and
     // carrying no judgment word is Otto's own work, not a to-do to dump on the student.
@@ -4531,11 +4538,18 @@ export async function runTask(
     // taskType (set by the classifier in step 1/2) is the authoritative signal for "is this actually
     // a learning task" — when known, trust it over the keyword regex below. The regex used to include
     // a bare "prep" match, which fired on "Oslo Trip Prep: Purpose, Dates, Bookings" (a logistics task)
-    // and generated an irrelevant flashcard deck. When taskType is known and NOT one of the study types,
-    // skip artifact creation outright rather than asking the model at all — cheaper and can't be talked
-    // into "yes" by a subject-word coincidence.
-    if (task.taskType && !STUDY_TASK_TYPES.has(task.taskType)) {
-      console.log(`${new Date().toISOString()} [ai] step 5: skipping artifacts — taskType "${task.taskType}" is not a study type`);
+    // and generated an irrelevant flashcard deck. BUT this used to hard-skip on ANY non-study taskType,
+    // including "research"/"analyze"/"decide"/"project"/"create"/"write" — reported live: "Build a
+    // shortlist of Oslo activities" (taskType "research", DoD asking for a categorized list of 15-20 real
+    // options) never even got a note artifact considered, so the actual compiled shortlist Otto's own
+    // research produced had nowhere to live — it stayed as ungrounded STEPS ("Build 15-20 rows by
+    // category…") instead of a real note the student could open. A "note" is exactly the right artifact
+    // for a compiled research shortlist/comparison, not just an academic reference sheet — see the note
+    // type's own broadened description below. Only hard-skip taskTypes where an artifact genuinely never
+    // makes sense (pure logistics/admin/upkeep with no content worth saving); every other type still asks.
+    const NEVER_ARTIFACT_TASK_TYPES = new Set<string>(["administrative", "logistics", "maintain"]);
+    if (task.taskType && NEVER_ARTIFACT_TASK_TYPES.has(task.taskType)) {
+      console.log(`${new Date().toISOString()} [ai] step 5: skipping artifacts — taskType "${task.taskType}" never needs one`);
     } else {
     const isAcademic = task.taskType
       ? STUDY_TASK_TYPES.has(task.taskType)
@@ -4555,11 +4569,20 @@ export async function runTask(
       `Available types:\n` +
       `- "flashcards": a drillable deck for discrete facts (vocab, definitions, formulas, dates, equations).\n` +
       `- "quiz": multiple-choice self-check with NEW questions (for checking understanding before a test).\n` +
-      `- "note": a short in-app reference sheet (formulas, key concepts, a study checklist, a worked example structure).\n` +
+      `- "note": a short in-app reference sheet — EITHER an academic one (formulas, key concepts, a study ` +
+      `checklist, a worked example structure) OR a COMPILED RESEARCH OUTPUT: if the definition of done asks ` +
+      `for a produced list/shortlist/comparison of real-world options (activities, places, products, ` +
+      `providers, sources) and the context above actually contains enough concrete, specific material to ` +
+      `build it, this is where that compiled result belongs — a categorized table/list with the real names, ` +
+      `prices, locations, etc. from the context. Otherwise the student is left with a step describing work ` +
+      `Otto already had the material to just do.\n` +
       `- "none": no artifact needed.\n` +
       (artifactRecommendation ? `FOCUS-BASED RECOMMENDATION: Based on the student's historical focus patterns, consider prioritizing "${artifactRecommendation}" for this task/subject.\n` : "") +
       `For ACADEMIC revision/prep/study tasks, flashcards or a note are almost always useful — say yes.\n` +
-      `For logistics/admin tasks (booking, paying, scheduling), the answer is almost always none.\n` +
+      `For a research/compilation task whose definition of done asks for a produced list/shortlist/comparison, ` +
+      `say yes to "note" WHENEVER the context above already has enough real, specific material to build it — ` +
+      `only say none if the context is genuinely too thin to compile anything real from.\n` +
+      `For pure logistics/admin tasks (booking, paying, scheduling — nothing to compile or reference later), the answer is almost always none.\n` +
       `You can request MULTIPLE artifacts if the task genuinely calls for it (e.g. flashcards AND a note).\n` +
       `Return JSON: {"artifacts": [{"type": "flashcards", "reason": "..."}], "needsArtifact": true/false}\n` +
       `Set needsArtifact to true if any artifacts are requested. Use an empty array with needsArtifact=false if none.`,
@@ -4639,10 +4662,16 @@ export async function runTask(
           `TASK: "${task.title}"\n` +
           `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
           `Context:\n${context}\n\n` +
-          `Create a concise reference sheet with REAL content from the context above — key formulas, definitions, ` +
-          `concepts, a worked example structure, or a study checklist. Use markdown (headings, **bold**, bullet lists, ` +
-          `GFM pipe tables when tabular). Every cell in a table must be filled with real content — never leave blanks. ` +
-          `This is a GUIDE to help the student do the work, never a completed assignment.\n` +
+          `Create a concise reference sheet with REAL content from the context above — either an ACADEMIC one ` +
+          `(key formulas, definitions, concepts, a worked example structure, a study checklist) OR, if the ` +
+          `definition of done asks for a produced list/shortlist/comparison of real-world options, the actual ` +
+          `COMPILED RESULT: a categorized table/list using the real names, prices, locations, durations, etc. ` +
+          `from the context above — this is the deliverable itself, not a guide to making one. Use markdown ` +
+          `(headings, **bold**, bullet lists, GFM pipe tables when tabular). Every cell in a table must be ` +
+          `filled with real content from the context — never leave blanks, and never invent a name/price/detail ` +
+          `the context doesn't actually contain. For the academic case only, this is a GUIDE to help the ` +
+          `student do the work, never a completed assignment — that distinction doesn't apply to a compiled ` +
+          `research shortlist, which IS the deliverable.\n` +
           `Return JSON: {"title": "note title", "body": "markdown content"}`,
           2000,
         );
