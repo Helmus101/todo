@@ -3899,358 +3899,116 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
   }, [reduced, DRAFT]);
 
   return (
-    <div className="landing">
-      {/* Floating Apple-grade Navigation Chrome */}
-      <header className="landing-nav glass-nav">
-        <span className="brand"><Logo size={22} /> <span className="brand-name">Otto</span></span>
+    <div className="landing landing-simple">
+      {/* Simple Navigation */}
+      <header className="landing-nav-simple">
+        <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
         <nav className="landing-navlinks">
           <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")} aria-label={en ? "Changer de langue" : "Switch language"}>{en ? "FR" : "EN"}</button>
           <a className="btn ghost" href="/login">{L("Se connecter", "Log in")}</a>
-          <a className="btn primary nav-cta" href="/signup">{L("Commencer", "Get started")}</a>
+          <a className="btn primary" href="/signup">{L("Commencer", "Get started")}</a>
         </nav>
       </header>
 
-      {/* Hero Section */}
-      <main className="hero">
-        <div className="hero-kicker-pill hero-in" style={{ ["--d" as any]: "0.02s" }}>
-          {L("Nouveau · Conçu pour le Bac et l'IB", "New · Crafted for the Bac & IB")}
-        </div>
-
-        <h1 className="hero-title hero-in" style={{ ["--d" as any]: "0.08s" }}>
-          {L("Le prolongement naturel de tes cours.", "Your coursework,")} <br />
-          <span className="hero-gradient">{L("Moins de panique. Plus de clarté.", "in perfect flow.")}</span>
+      {/* Hero Section - Simplified */}
+      <main className="hero-simple">
+        <h1 className="hero-title-simple">
+          {L("Ton lycée, plus clair.", "Your studies, clearer.")}
         </h1>
 
-        <p className="hero-sub hero-in" style={{ ["--d" as any]: "0.16s" }}>
+        <p className="hero-sub-simple">
           {L(
-            "Dimanche 19h, 11 devoirs et 2 contrôles — la surcharge s'arrête ici. Otto se synchronise à ton Pronote ou ton agenda pour transformer le mur de travail en 3 actions nettes pour aujourd'hui. Fiches de révision, méthodes et étapes prêtes : tu gardes le contrôle, la compréhension reste la tienne.",
-            "Sunday evening with dozens of assignments and upcoming exams — stress disappears. Otto connects with your school platforms and turns the workload into 3 focused actions for today with structured flashcards and checklists. You stay in the flow; understanding is always yours.",
+            "Otto transforme tes devoirs et contrôles en un plan simple pour aujourd'hui. Fiches, quiz, et étapes — sans jamais faire le travail à ta place.",
+            "Otto turns your homework and exams into a simple plan for today. Flashcards, quizzes, and steps — never doing the work for you.",
           )}
         </p>
 
-        <div className="hero-cta hero-in" style={{ ["--d" as any]: "0.24s" }}>
-          <a className="btn primary big hero-btn-primary" href="/signup">{L("Connecter mon Pronote", "Get started free")}</a>
-          <a className="btn ghost big hero-btn-secondary" href="/login">{L("Se connecter", "Log in")}</a>
-        </div>
-
-        {/* Trust badges — the standalone "fineprint" line that used to sit here ("Un guide, jamais un
-            exécutant...") said the same thing as the 4th badge below AND the whole Ethics section further
-            down the page; three places making the identical claim was noise, not reinforcement. */}
-        <ul className="hero-trust hero-in" style={{ ["--d" as any]: "0.30s" }}>
-          <li><span className="trust-icon"><Lock size={13} strokeWidth={1.5} /></span> {L("Chiffrement de bout en bout (AES-256)", "End-to-end encrypted credentials")}</li>
-          <li><span className="trust-icon"><GraduationCap size={13} strokeWidth={1.5} /></span> {L("Spécialisé Baccalauréat & Bac International", "Built for French Bac & IB")}</li>
-          <li><span className="trust-icon"><Zap size={13} strokeWidth={1.5} /></span> {L("Plafond d'usage transparent", "Capped & visible AI cost")}</li>
-          <li><span className="trust-icon"><ShieldCheck size={13} strokeWidth={1.5} /></span> {L("Intégrité académique garantie", "Guaranteed academic integrity")}</li>
-        </ul>
-
-        {/* Live Animated Simulation Window */}
-        <div className="hero-demo hero-in" style={{ ["--d" as any]: "0.42s" }} aria-hidden="true">
-          <div className="hero-demo-label">
-            <span className="live-dot" />
-            <span>{L("Aperçu direct · Ton plan du jour optimisé", "Live preview · Today's optimized focus plan")}</span>
-          </div>
-          <div className="demo-window glass-card">
-            <div className="demo-titlebar">
-              <span className="win-ctrl close" />
-              <span className="win-ctrl min" />
-              <span className="win-ctrl max" />
-              <span className="demo-title-text">{L("Aujourd'hui · 3 sessions prévues", "Today · 3 sessions scheduled")}</span>
-            </div>
-            <div className="demo-body">
-              <div className="demo-item active-item">
-                <div className="demo-item-head">
-                  <span className="demo-sub-tag maths">{L("Maths", "Math")}</span>
-                  <span className="demo-task-name">{L("Contrôle vendredi — Suites numériques", "Test on Friday — Sequences")}</span>
-                  <span className="demo-badge">30 min</span>
-                </div>
-                <div className="demo-typed-line">{typed}<span className="demo-caret" /></div>
-              </div>
-              <div className="demo-item">
-                <div className="demo-item-head">
-                  <span className="demo-sub-tag physics">{L("Physique", "Physics")}</span>
-                  <span className="demo-task-name">{L("DM Mécanique — 3 exercices préparés", "Mechanics Homework — 3 exercises prepped")}</span>
-                  <span className="demo-badge muted">20 min</span>
-                </div>
-              </div>
-              <div className="demo-item">
-                <div className="demo-item-head">
-                  <span className="demo-sub-tag philo">{L("Philo", "Philosophy")}</span>
-                  <span className="demo-task-name">{L("Fiche méthode dissertation prête", "Essay methodology sheet ready")}</span>
-                  <span className="demo-badge muted">15 min</span>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="hero-cta-simple">
+          <a className="btn primary big" href="/signup">{L("Commencer", "Get started")}</a>
+          <a className="btn ghost big" href="/login">{L("Se connecter", "Log in")}</a>
         </div>
       </main>
 
-      {/* Bento Showcase Grid */}
-      <section className="showcase-sec">
-        <div className="sec-header">
-          <span className="sec-kicker">{L("Fonctionnalités", "Capabilities")}</span>
-          <h2 className="reveal">{L("La puissance d'un copilote d'études.", "The power of a true study copilot.")}</h2>
-          <p className="lead reveal">{L("Des outils physiques conçus pour stimuler la concentration et pérenniser la mémoire.", "Physical tools designed to elevate focus and lock in long-term memory.")}</p>
+      {/* Simple Features */}
+      <section className="features-simple">
+        <div className="feature-simple">
+          <h3>{L("Plan du jour", "Daily plan")}</h3>
+          <p>{L("3 actions prioritaires pour aujourd'hui, pas plus.", "3 priority actions for today, nothing more.")}</p>
         </div>
-
-        <div className="showcase-grid">
-          <a className="showcase-card glass-card reveal" style={{ ["--d" as any]: "0.0s" }} href="/signup" aria-label={L("Vue de la semaine", "This week view")}>
-            <div className="showcase-preview">
-              <div className="showcase-week">
-                {[3, 6, 2, 8, 4, 1, 0].map((v, i) => (
-                  <div key={i} className="showcase-bar-col">
-                    <span className="showcase-bar" style={{ height: `${12 + v * 8}px` }} />
-                    <span className="showcase-bar-day">{[L("L", "M"), L("M", "T"), L("M", "W"), L("J", "T"), L("V", "F"), L("S", "S"), L("D", "S")][i]}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <h3>{L("Charge prédictive de la semaine", "Predictive weekly workload")}</h3>
-            <p>{L("Anticipe les pics d'évaluation avant d'être sous l'eau.", "Spot overloaded days before deadlines catch you by surprise.")}</p>
-            <span className="showcase-arrow" aria-hidden="true">→</span>
-          </a>
-
-          <a className="showcase-card glass-card reveal" style={{ ["--d" as any]: "0.1s" }} href="/signup" aria-label={L("Répétition espacée", "Spaced repetition")}>
-            <div className="showcase-preview showcase-card-flip">
-              <div className="showcase-flashcard">
-                <span className="flashcard-badge">{L("Flashcard", "Flashcard")}</span>
-                <span className="flashcard-q">{L("Formule : Somme des termes d'une suite géométrique", "Formula: Sum of a geometric series")}</span>
-              </div>
-              <div className="showcase-boxes">
-                {[1, 2, 3, 4, 5].map((b) => <span key={b} className={`showcase-box ${b <= 3 ? "on" : ""}`}>{b}</span>)}
-              </div>
-            </div>
-            <h3>{L("Répétition espacée (Leitner)", "Spaced repetition (Leitner)")}</h3>
-            <p>{L("Tes cartes réapparaissent exactement au moment optimal pour ancrer le souvenir.", "Cards resurface right when you are about to forget for permanent retention.")}</p>
-            <span className="showcase-arrow" aria-hidden="true">→</span>
-          </a>
-
-          <a className="showcase-card glass-card reveal" style={{ ["--d" as any]: "0.2s" }} href="/signup" aria-label={L("Brouillons", "Smart drafts")}>
-            <div className="showcase-preview">
-              <div className="showcase-draft">
-                <div className="showcase-draft-header">
-                  <span className="draft-dot" />
-                  <span className="draft-title">{L("Email prof de Maths", "Math Teacher Email")}</span>
-                </div>
-                <div className="showcase-draft-line long" />
-                <div className="showcase-draft-line" />
-                <div className="showcase-draft-line short" />
-                <span className="showcase-draft-btn">{L("Envoyer ↗", "Send ↗")}</span>
-              </div>
-            </div>
-            <h3>{L("Brouillons & demandes d'aide", "Drafts & teacher requests")}</h3>
-            <p>{L("Otto rédige tes emails de questions au professeur. Un clic pour envoyer, jamais automatique.", "Otto structures questions for your teachers. One click to confirm, never unattended.")}</p>
-            <span className="showcase-arrow" aria-hidden="true">→</span>
-          </a>
+        <div className="feature-simple">
+          <h3>{L("Fiches & Quiz", "Flashcards & Quizzes")}</h3>
+          <p>{L("Générés automatiquement à partir de ton travail.", "Automatically generated from your work.")}</p>
+        </div>
+        <div className="feature-simple">
+          <h3>{L("Otto t'aide", "Otto helps")}</h3>
+          <p>{L("Un tuteur qui t'explique, jamais un solutionnaire.", "A tutor who explains, never a solution key.")}</p>
         </div>
       </section>
 
-      {/* What Otto prepares */}
-      <section className="landing-sec">
-        <div className="sec-header">
-          <span className="sec-kicker">{L("Méthode", "Methodology")}</span>
-          <h2 className="reveal">{L("Ce qu'Otto prépare pour toi.", "What Otto crafts for you.")}</h2>
-          <p className="lead reveal">{L("Chaque tâche est découpée en éléments digestes avec un temps clair et des objectifs précis.", "Every assignment is turned into digestible components with clear timeboxes and concrete goals.")}</p>
+      {/* Research — kept but simplified */}
+      <section className="landing-sec-simple">
+        <div className="sec-header-simple">
+          <h2>{L("Construit sur des méthodes qui marchent.", "Built on methods that work.")}</h2>
         </div>
-        <div className="outcomes">
-          <div className="outcome glass-row reveal" style={{ ["--d" as any]: "0.0s" }}>
-            <span className="outcome-mark">✓</span>
-            <div>
-              <h3>{L("Fiches de révision structurées", "Structured revision summaries")}</h3>
-              <p>{L("Formules, définitions fondamentales et théorèmes synthétisés à partir de tes cours et devoirs.", "Key formulas, definitions, and core theorems distilled directly from your curriculum.")}</p>
-            </div>
-          </div>
-          <div className="outcome glass-row reveal" style={{ ["--d" as any]: "0.1s" }}>
-            <span className="outcome-mark">✓</span>
-            <div>
-              <h3>{L("Checklist chirurgicale pas à pas", "Surgical step-by-step checklists")}</h3>
-              <p>{L("\"1. Relire les notions clés (10 min) · 2. Faire l'exercice d'application (15 min) · 3. Vérifier les erreurs types (5 min)\"", "\"1. Review key concepts (10 min) · 2. Apply on test problem (15 min) · 3. Self-correct typical mistakes (5 min)\"")}</p>
-            </div>
-          </div>
-          <div className="outcome glass-row reveal" style={{ ["--d" as any]: "0.2s" }}>
-            <span className="outcome-mark">✓</span>
-            <div>
-              <h3>{L("Zéro complaisance : ton apprentissage préservé", "Zero cheating: your learning protected")}</h3>
-              <p>{L("Pas de devoirs faits par l'IA, pas de réponses générées sans effort. Tu développes tes propres compétences.", "No AI-generated homework shortcuts. You build genuine intellectual independence.")}</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Interactive Walkthrough */}
-      <section className="landing-sec">
-        <div className="sec-header">
-          <span className="sec-kicker">{L("Démonstration", "Walkthrough")}</span>
-          <h2 className="reveal">{L("Comment ça fonctionne.", "How it works in practice.")}</h2>
-          <p className="lead reveal">{L("Connecte ton compte en 30 secondes. Otto fonctionne en silence et prépare ton terrain de travail quotidien.", "Connect your school account in 30 seconds. Otto works silently to prepare your daily focus sessions.")}</p>
-        </div>
-        <Walkthrough lang={lang} />
-      </section>
-
-      {/* Academic Integrity / Values */}
-      <section className="landing-sec">
-        <div className="sec-header">
-          <span className="sec-kicker">{L("Éthique", "Ethics")}</span>
-          <h2 className="reveal">{L("Un copilote, pas un tricheur.", "A copilot, not a cheat.")}</h2>
-        </div>
-        <div className="features">
-          <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.0s" }}>
-            <span className="feature-icon"><Compass size={22} strokeWidth={1.5} /></span>
-            <div>
-              <h3>{L("Intégrité académique absolue", "Strict academic integrity")}</h3>
-              <p>{L("Otto refuse de générer des dissertations complètes ou de résoudre des exercices à ta place. Il t'apprend la méthode.", "Otto refuses to write full essays or solve graded problems. It teaches you the methodology.")}</p>
-            </div>
-          </div>
-          <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.1s" }}>
-            <span className="feature-icon"><Lock size={22} strokeWidth={1.5} /></span>
-            <div>
-              <h3>{L("Données protégées et jamais vendues", "Data private, secure & never sold")}</h3>
-              <p>{L("Identifiants chiffrés avec AES-256-GCM. Tes devoirs et notes ne servent jamais à entraîner des modèles d'IA publics.", "Encrypted with AES-256-GCM. Your school data is never used to train public AI models.")}</p>
-            </div>
-          </div>
-          <div className="feature glass-row reveal" style={{ ["--d" as any]: "0.2s" }}>
-            <span className="feature-icon"><BarChart3 size={22} strokeWidth={1.5} /></span>
-            <div>
-              <h3>{L("Transparence totale et maîtrise des coûts", "Transparent usage & clear control")}</h3>
-              <p>{L("Suis en temps réel ton quota d'IA dans les Réglages. Aucun abonnement caché, aucun piège.", "Track your AI quota in real-time in Settings. No hidden recurring fees, no dark patterns.")}</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Research — deliberately plain text, no icons/cards, unlike the sections above: this is a
-          methodology citation, not another feature pitch, and looking like one would undercut the point. */}
-      <section className="landing-sec">
-        <div className="sec-header">
-          <span className="sec-kicker">{L("Recherche", "Research")}</span>
-          <h2 className="reveal">{L("Construit sur des méthodes qui marchent, pas sur des vibes.", "Built on methods that work, not vibes.")}</h2>
-        </div>
-        <dl className="research-list reveal">
-          <div className="research-row">
+        <dl className="research-list-simple">
+          <div className="research-row-simple">
             <dt>{L("Questionnement socratique", "Socratic questioning")}</dt>
-            <dd>{L("Otto guide par des questions qui te font trouver la réponse — il ne la donne pas à ta place.", "Otto guides with questions that lead you to the answer — it doesn't hand it over.")}</dd>
+            <dd>{L("Otto guide par des questions qui te font trouver la réponse.", "Otto guides with questions that lead you to the answer.")}</dd>
           </div>
-          <div className="research-row">
-            <dt>{L("Répétition espacée (Leitner)", "Spaced repetition (Leitner)")}</dt>
-            <dd>{L("Chaque carte revient juste avant que tu ne l'oublies, pas au hasard.", "Each card resurfaces right before you'd forget it, not at random.")}</dd>
+          <div className="research-row-simple">
+            <dt>{L("Répétition espacée", "Spaced repetition")}</dt>
+            <dd>{L("Chaque carte revient juste avant que tu ne l'oublies.", "Each card resurfaces right before you'd forget it.")}</dd>
           </div>
-          <div className="research-row">
-            <dt>{L("Hiérarchie d'engagement (ICAP)", "Engagement hierarchy (ICAP)")}</dt>
-            <dd>{L("Réciter à voix haute ou expliquer avec ses mots ancre mieux qu'un simple relis — Otto pousse vers l'actif, pas le passif.", "Explaining something in your own words sticks better than re-reading it — Otto pushes toward active recall, not passive review.")}</dd>
-          </div>
-          <div className="research-row">
+          <div className="research-row-simple">
             <dt>{L("Matrice d'Eisenhower", "Eisenhower matrix")}</dt>
-            <dd>{L("Tes tâches sont classées par urgent/important réel, pas par ordre d'arrivée.", "Your tasks are ranked by real urgency/importance, not by whatever arrived last.")}</dd>
+            <dd>{L("Tes tâches sont classées par urgent/important réel.", "Your tasks are ranked by real urgency/importance.")}</dd>
           </div>
         </dl>
-        <a className="research-more" href="/research">{L("Lire l'article complet →", "Read the full article →")}</a>
       </section>
 
-      {/* Comparison Matrix */}
-      <section className="landing-sec">
-        <div className="sec-header">
-          <span className="sec-kicker">{L("Comparatif", "Comparison")}</span>
-          <h2 className="reveal">{L("Pourquoi Otto change la donne.", "Why Otto changes the game.")}</h2>
-          <p className="lead reveal">{L("Un chatbot générique répond à une question isolée. Otto gère ton trimestre dans la durée.", "A generic chatbot answers one-off questions. Otto orchestrates your whole academic semester.")}</p>
+      {/* FAQ — kept but simplified */}
+      <section className="landing-sec-simple">
+        <div className="sec-header-simple">
+          <h2>{L("Questions fréquentes.", "Frequently asked questions.")}</h2>
         </div>
-        <div className="compare-wrap glass-card reveal">
-          <table className="compare-table">
-            <thead>
-              <tr>
-                <th scope="col">{L("Critères", "Criteria")}</th>
-                <th scope="col">{L("Seul·e", "On your own")}</th>
-                <th scope="col">{L("Chatbot IA", "Generic Chatbot")}</th>
-                <th scope="col" className="compare-otto"><Logo size={16} /> Otto</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <th scope="row">{L("Lecture automatique de Pronote / Agenda", "Auto-sync with Pronote / Calendar")}</th>
-                <td>—</td><td>—</td><td className="compare-yes">✓</td>
-              </tr>
-              <tr>
-                <th scope="row">{L("Plan d'action quotidien structuré en 3 tâches", "Daily structured plan with 3 focal tasks")}</th>
-                <td>—</td><td>—</td><td className="compare-yes">✓</td>
-              </tr>
-              <tr>
-                <th scope="row">{L("Mémoire de tes matières, profs et points faibles", "Memory of your teachers, subjects & gaps")}</th>
-                <td>—</td><td>—</td><td className="compare-yes">✓</td>
-              </tr>
-              <tr>
-                <th scope="row">{L("Répétition espacée programmée des fiches", "Scheduled spaced repetition flashcards")}</th>
-                <td>—</td><td>—</td><td className="compare-yes">✓</td>
-              </tr>
-              <tr>
-                <th scope="row">{L("Refus structurel de faire le travail noté", "Structural refusal to do graded work")}</th>
-                <td className="compare-yes">✓</td><td>{L("Aléatoire", "Unreliable")}</td><td className="compare-yes">✓</td>
-              </tr>
-              <tr>
-                <th scope="row">{L("Interface fluide inspirée des standards Apple", "Fluid Apple-grade interaction design")}</th>
-                <td>—</td><td>—</td><td className="compare-yes">✓</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* FAQ Accordion */}
-      <section className="landing-sec">
-        <div className="sec-header">
-          <span className="sec-kicker">FAQ</span>
-          <h2 className="reveal">{L("Questions fréquentes.", "Frequently asked questions.")}</h2>
-        </div>
-        <div className="faq-list reveal">
-          <details className="faq-item glass-card">
+        <div className="faq-list-simple">
+          <details className="faq-item-simple">
             <summary>{L("Est-ce qu'Otto fait mes devoirs à ma place ?", "Does Otto do my homework for me?")}</summary>
-            <p>{L("Non — c'est structurellement impossible dans notre architecture. Otto détecte toute consigne de travail noté et produit à la place une fiche méthodologique, une checklist ou des questions guides pour t'accompagner.", "No — our architecture structurally prevents this. When Otto detects graded work prompts, it provides step-by-step methodologies, flashcards, or self-test problems instead.")}</p>
+            <p>{L("Non — Otto détecte toute consigne de travail noté et produit à la place une fiche méthodologique ou des questions guides.", "No — Otto detects graded work and provides step-by-step methodologies instead.")}</p>
           </details>
-          <details className="faq-item glass-card">
-            <summary>{L("Je suis en filière IB (Baccalauréat International), est-ce adapté ?", "I am an IB student, does Otto adapt to my curriculum?")}</summary>
-            <p>{L("Absolument. Otto prend en charge les filières HL/SL, TOK, CAS et Extended Essay, et fonctionne avec Google Calendar ou des entrées manuelles sans nécessiter Pronote.", "Yes. Otto fully supports HL/SL subjects, TOK, CAS, and Extended Essay milestones with Google Calendar sync or manual entries.")}</p>
+          <details className="faq-item-simple">
+            <summary>{L("Je suis en filière IB, est-ce adapté ?", "I am an IB student, does Otto adapt?")}</summary>
+            <p>{L("Absolument. Otto prend en charge les filières HL/SL, TOK, CAS et Extended Essay avec Google Calendar ou des entrées manuelles.", "Yes. Otto fully supports HL/SL subjects, TOK, CAS, and Extended Essay with Google Calendar or manual entries.")}</p>
           </details>
-          <details className="faq-item glass-card">
-            <summary>{L("Mes identifiants scolaires sont-ils sécurisés ?", "Are my school credentials safe and secure?")}</summary>
-            <p>{L("Tes identifiants ne sont jamais stockés en clair. Ils sont chiffrés au niveau de la base de données avec AES-256-GCM et ne sont jamais partagés ni revendus à des tiers.", "Your credentials are never stored in plain text. They are encrypted using AES-256-GCM and never shared or sold to third parties.")}</p>
-          </details>
-          <details className="faq-item glass-card">
-            <summary>{L("Combien coûte Otto ?", "How much does Otto cost?")}</summary>
-            <p>{L("L'accès de base est gratuit sans carte bancaire requise. Les quotas d'IA sont généreux et clairement indiqués dans vos Réglages.", "Getting started is completely free with no credit card required. Monthly AI allowances are generous and fully transparent in Settings.")}</p>
+          <details className="faq-item-simple">
+            <summary>{L("Mes identifiants scolaires sont-ils sécurisés ?", "Are my school credentials safe?")}</summary>
+            <p>{L("Tes identifiants sont chiffrés avec AES-256-GCM et ne sont jamais partagés ni revendus.", "Your credentials are encrypted using AES-256-GCM and never shared or sold.")}</p>
           </details>
         </div>
       </section>
 
-      {/* Apple Keynote CTA Banner */}
-      <section className="cta-band glass-card reveal">
-        <span className="cta-kicker">{L("Passe à la vitesse supérieure", "Elevate your study flow")}</span>
+      {/* CTA Banner — kept but simplified */}
+      <section className="cta-band-simple">
         <h2>{L("Reprends le contrôle de tes études.", "Take command of your coursework.")}</h2>
-        <p>{L("Connecte ton Pronote ou ton agenda en 30 secondes et aborde chaque semaine avec sérénité.", "Connect your school agenda in 30 seconds and enter every week with complete focus.")}</p>
-        <div className="cta-actions">
-          <a className="btn primary big cta-band-btn" href="/signup">{L("Connecter mon compte gratuitement", "Get started for free")}</a>
-          <a className="btn ghost big cta-band-sub" href="/login">{L("Se connecter", "Log in")}</a>
+        <p>{L("Connecte ton Pronote ou ton agenda en 30 secondes.", "Connect your school agenda in 30 seconds.")}</p>
+        <div className="cta-actions-simple">
+          <a className="btn primary big" href="/signup">{L("Commencer gratuitement", "Get started for free")}</a>
         </div>
-        <div className="cta-fine">{L("Sans engagement · Sans carte bancaire · Respect strict de l'éthique", "No credit card needed · Zero risk · Academic integrity first")}</div>
       </section>
 
-      {/* Refined Apple-grade Footer */}
-      <footer className="landing-foot-rich">
-        <div className="foot-top">
-          <div className="foot-brand">
+      {/* Footer — kept but simplified */}
+      <footer className="landing-foot-simple">
+        <div className="foot-top-simple">
+          <div className="foot-brand-simple">
             <span className="brand"><Logo size={20} /> <span className="brand-name">Otto</span></span>
-            <p>{L("Le compagnon d'études nouvelle génération conçu pour le calme et l'excellence.", "The next-generation study copilot crafted for focus, calm, and academic excellence.")}</p>
           </div>
-          <nav className="foot-group" aria-label={L("Navigation produit", "Product navigation")}>
-            <h4>{L("Produit", "Product")}</h4>
-            <a href="/signup">{L("Créer un compte", "Create account")}</a>
-            <a href="/login">{L("Se connecter", "Log in")}</a>
-          </nav>
-          <nav className="foot-group" aria-label={L("Mentions légales", "Legal")}>
-            <h4>{L("Légal", "Legal")}</h4>
+          <nav className="foot-group-simple">
             <a href="/privacy">{L("Confidentialité", "Privacy")}</a>
-            <a href="/terms">{L("Conditions d'utilisation", "Terms")}</a>
+            <a href="/terms">{L("Conditions", "Terms")}</a>
           </nav>
         </div>
-        <div className="foot-bottom">
-          <span className="foot-mit">© 2026 Otto · {L("Conçu avec les principes Apple Design", "Crafted with Apple Design Principles")}</span>
-          <button type="button" className="lang-toggle" onClick={() => onLangChange(en ? "fr" : "en")}>{en ? "FR" : "EN"}</button>
+        <div className="foot-bottom-simple">
+          <span>© 2026 Otto</span>
         </div>
       </footer>
     </div>
