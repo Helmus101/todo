@@ -138,6 +138,71 @@ export function dropTrivialSteps(steps: TaskStep[]): TaskStep[] {
   });
 }
 
+/** Step 4's prompt says "never include artifact-creation steps (flashcards/quiz/note creation — that's
+ *  handled separately)", but nothing verified it, and live it is plainly violated: a "Build flashcards and
+ *  quiz for figures de style" task shipped with step 1 = "Build flashcards (definition, mechanism, example)
+ *  for each figure" sitting directly above the flashcard deck Otto had ALREADY built for that exact task.
+ *  The student is handed a to-do that is already done — the single most visible way a plan looks like it
+ *  wasn't grounded in the task at all.
+ *
+ *  Deliberately narrow, because this file's history is full of keyword deletion filters that "zeroed out
+ *  valid steps": a step is only dropped when it is a create-verb aimed at an artifact noun AND an artifact
+ *  of that same kind actually exists on this run AND dropping it leaves at least one step standing. So
+ *  "Build flashcards for each figure" goes only when there is a real deck; "Review the flashcards" (no
+ *  create verb) and "Build a packing list" (no artifact noun) always stay. */
+const ARTIFACT_STEP_VERB = /^(build|create|make|write|prepare|assemble|generate|draft|produce|put together)\b/i;
+const ARTIFACT_STEP_NOUNS: Record<"note" | "flashcards" | "quiz", RegExp> = {
+  note: /\b(note|notes|fiche|fiches|summary sheet|revision sheet|study sheet)\b/i,
+  flashcards: /\b(flashcards?|flash cards?|cartes m[ée]moire|card deck|deck of cards)\b/i,
+  quiz: /\b(quiz|quizzes|self-?test|practice test|questionnaire)\b/i,
+};
+export function dropRedundantArtifactSteps(
+  steps: TaskStep[],
+  created: { note?: boolean; flashcards?: boolean; quiz?: boolean },
+): TaskStep[] {
+  const kept = steps.filter((s) => {
+    const text = String(s.text || "");
+    if (!ARTIFACT_STEP_VERB.test(text.trim())) return true;
+    for (const kind of ["note", "flashcards", "quiz"] as const) {
+      if (created[kind] && ARTIFACT_STEP_NOUNS[kind].test(text)) {
+        console.log(`${new Date().toISOString()} [ai] dropped step duplicating an artifact Otto already made: "${text}"`);
+        return false;
+      }
+    }
+    return true;
+  });
+  // Never empty the plan out over a wording coincidence — that is exactly the failure mode the deleted
+  // keyword gates kept hitting. If every step looked redundant, the plan is the problem, not these steps.
+  return kept.length ? kept : steps;
+}
+
+/** Carry step 4's structured extras (url / question / options / minutes) across the plan-repair pass, which
+ *  returns text + automatable only. Without this, a repaired plan silently loses the clickable link or the
+ *  inline question a step was carrying. Matched on token overlap rather than exact text because repair is
+ *  explicitly allowed to reword and to split one step into two. */
+function stepTokens(text: string): Set<string> {
+  return new Set(String(text || "").toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || []);
+}
+export function reattachStepExtras(repaired: TaskStep[], original: TaskStep[]): TaskStep[] {
+  const originalTokens = original.map((s) => stepTokens(s.text));
+  return repaired.map((step) => {
+    const tokens = stepTokens(step.text);
+    if (!tokens.size) return step;
+    let best = -1;
+    let bestScore = 0;
+    originalTokens.forEach((other, i) => {
+      if (!other.size) return;
+      let shared = 0;
+      for (const t of tokens) if (other.has(t)) shared++;
+      const score = shared / new Set([...tokens, ...other]).size;
+      if (score > bestScore) { bestScore = score; best = i; }
+    });
+    if (best < 0 || bestScore < 0.5) return step;
+    const { url, question, options, needsPermission, minutes } = original[best];
+    return { ...step, ...(url ? { url } : {}), ...(question ? { question } : {}), ...(options ? { options } : {}), ...(needsPermission ? { needsPermission } : {}), ...(minutes ? { minutes } : {}) };
+  });
+}
+
 /** validateStepAgainstDefinitionOfDone/filterStepsByDefinitionOfDone/isResearchOperation/isInternalOttoWork
  *  used to live here — a keyword-matching gate meant to delete steps that don't relate to the task. Deleted
  *  (not just left disabled): it was never actually reachable in the live pipeline (every real call site had
@@ -4447,7 +4512,10 @@ export async function runTask(
       `RULES:\n` +
       `- 3-5 steps, each a SHORT concrete one-liner (≤10 words). Each step is ONE single action, not a broad category.\n` +
       `- Break the work into INDIVIDUAL steps — never one big step with sub-steps. If you're tempted to write a step like "Review chapter 5" that's really several things, write each thing as its own step instead.\n` +
-      `- SEQUENCE STEPS IN THE ORDER THE STUDENT WILL ACTUALLY DO THEM. A step that reacts to, reviews, or repeats based on an ATTEMPT (retake, log mistakes, fix what was wrong, redo until clean) can only come AFTER the step where that attempt actually happens — never before it. Reported live: a "reach a clean run on an MCQ set" task generated step 1 as "Log missed items, then retake until no unresolved misses" and step 2 as "Sit a timed set" — backwards, since there's nothing to log or retake before a first attempt has happened. The correct order is: attempt first, THEN log/retake based on that attempt.\n` +
+      `- SEQUENCE STEPS IN THE ORDER THE STUDENT WILL ACTUALLY DO THEM. Before writing the list, ask of every step: what must already be true for the student to be able to start this one? That prerequisite step goes FIRST. Two forms of this keep going wrong live:\n` +
+      `  (a) REACTING TO AN ATTEMPT. A step that reacts to, reviews, or repeats based on an attempt (retake, log mistakes, fix what was wrong, redo until clean) can only come AFTER the step where that attempt actually happens. Reported live: a "reach a clean run on an MCQ set" task generated step 1 as "Log missed items, then retake until no unresolved misses" and step 2 as "Sit a timed set" — backwards, since there's nothing to log or retake before a first attempt has happened.\n` +
+      `  (b) SETTLING WHAT THE LATER WORK OPERATES ON. A step that decides the scope, dates, list, or selection that a later step then acts on must come BEFORE that later step. Reported live: a trip task generated step 1 as "Book transport and lodging" and step 2 as "Fix trip dates against the school calendar" — you cannot book before the dates are settled. Same failure on a revision task: "Build flashcards for each figure" before "Mark the 15 figures you'll actually be tested on".\n` +
+      `- ONE DELIVERABLE PER STEP. If a step names two or more separate things to produce or do, it is not one step — split it. Reported live: "Book transport and lodging, draft itinerary and packing list" is FOUR steps crammed into one, and a student reading it cannot tell what "done" means or tick it off honestly.\n` +
       `- Only steps the STUDENT must do (decisions, physical actions, logins, review, practice, solving).\n` +
       `- GROUNDING — DO NOT INVENT: every specific name, place, price, date, or option a step mentions MUST actually appear in the CONTEXT above. If the context doesn't name it, the step can't either — no exceptions, even for something that sounds plausible or that you know to be real from general knowledge. A step about a real-world place/attraction/product you weren't actually handed research on is a fabrication, not a shortcut.\n` +
       `- Never include research/search steps IF the context above already contains enough concrete, specific material to satisfy the definition of done. But check that first: if the definition of done asks for a produced list/comparison/shortlist of real specific options (activities, sources, products, providers) and the context above is thin, generic, or missing that — a handful of search queries and a paragraph of vague summary is NOT the same as an actual curated list — then the FIRST steps must be genuine research/compilation steps that actually build that list, not steps that assume it already exists. Skipping straight to refinement steps (filtering, tagging, comparing) when there's nothing concrete yet to filter/tag/compare produces a step list that can't reach the definition of done at all.\n` +
@@ -4726,35 +4794,80 @@ export async function runTask(
         ...flashcards.map((f) => `Flashcard deck "${f.title}" (${f.cards.length} cards)`),
         ...quizzes.map((q) => `Quiz "${q.title}" (${q.questions.length} questions)`),
       ].join("\n") || "(none)";
-      const dodCheck = await ask(
+      // Deterministic pre-pass: never hand the student a step telling them to build something that is
+      // already sitting on the task as a finished artifact. Runs BEFORE the repair call so the model is
+      // auditing the plan the student would actually see.
+      const beforeArtifactDedupe = steps.length;
+      steps = dropRedundantArtifactSteps(steps, { note: notes.length > 0, flashcards: flashcards.length > 0, quiz: quizzes.length > 0 });
+      if (steps.length < beforeArtifactDedupe) {
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étape retirée : Otto avait déjà créé ce document` : `Removed a step that asked for something Otto had already made` });
+      }
+
+      // The old version of this pass asked one yes/no question, was told to "say yes" on anything that
+      // wasn't the produced-list failure mode, and could add at most ONE step — so the failures reported
+      // live sailed straight through it. A DoD naming five things while the plan covers two is not a close
+      // enough match, and a plan whose steps are in an impossible order is not satisfied just because every
+      // part is mentioned somewhere. So this is now a repair pass over the whole plan: coverage, order and
+      // one-deliverable-per-step, returning the corrected list rather than a single patch step.
+      const repair = await ask(
         `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
+        `TASK: "${task.title}"\n\n` +
         `PLANNED STEPS (what the student will do):\n${steps.map((s, i) => `${i + 1}. ${s.text}`).join("\n")}\n\n` +
         `ARTIFACTS ALREADY CREATED FOR THE STUDENT:\n${artifactSummary}\n\n` +
-        `Would completing every step above, with the artifacts already created, actually satisfy the ` +
-        `definition of done? Be strict about ONE specific failure mode: if the definition of done asks for ` +
-        `a produced list/comparison/set of real specific options (activities, sources, products, providers) ` +
-        `and neither the steps nor the artifacts actually contain or will produce real specific content — ` +
-        `only refinement/filtering/tagging steps with nothing concrete yet to refine — say no. Otherwise, ` +
-        `or if it's a close enough match for a reasonable plan, say yes.\n` +
-        `Return JSON: {"satisfied": true|false, "missingStep": "one short concrete step (≤10 words) to add if not satisfied, else omit"}`,
-        // Was 300 — the smallest budget anywhere in this file, for arguably the most reasoning-heavy
-        // judgment in the pipeline (weighing the full step list + artifact summary against the DoD).
-        // ask()'s truncation-retry helps, but on a second failed parse it returns {}, which this check
-        // silently treats as "satisfied" — biased toward a no-op specifically on the harder/longer cases.
-        // 800 matches step 3's proven-necessary size for a similarly-shaped judgment call.
-        800,
+        `Audit this plan on three things, then return the corrected plan.\n\n` +
+        `1. COVERAGE. Break the definition of done into its distinct parts — commas, "and" and semicolons ` +
+        `usually separate them, so "flashcards covering each figure, plus an identification quiz, worked ` +
+        `through once, scored, with every missed figure noted" is FIVE parts, not one. Every part must be ` +
+        `either addressed by a step or already fully delivered by an artifact listed above. Add a step for ` +
+        `each part that is neither. Be strict in particular when the definition of done asks for a produced ` +
+        `list/comparison/set of real specific options (activities, sources, products, providers) and ` +
+        `neither the steps nor the artifacts actually contain or will produce real specific content — only ` +
+        `refinement/filtering/tagging steps with nothing concrete yet to refine.\n` +
+        `2. ORDER. Put the steps in the order the student will really do them: whatever settles the scope, ` +
+        `dates or selection comes before the work that acts on it, and anything that logs, scores, retakes ` +
+        `or fixes comes after the attempt it reacts to.\n` +
+        `3. ONE DELIVERABLE PER STEP. Split any step naming two or more separate things to produce or do.\n\n` +
+        `Rules for the corrected plan: keep every existing step's intent (you may reword, reorder or split, ` +
+        `but never drop work); never add a step that just re-creates an artifact already listed above; each ` +
+        `step is a short concrete one-liner (≤10 words); at most 8 steps total.\n` +
+        `Return JSON: {"uncovered": ["definition-of-done part that had no step, if any"], "steps": [{"text": "...", "automatable": true|false}]}`,
+        // Returning a full rewritten plan (up to 8 step objects) on top of DeepSeek's hidden reasoning
+        // tokens needs step 4's own order of budget, not the 800 a yes/no answer used to get by on.
+        2200,
       );
-      if (dodCheck?.satisfied === false && dodCheck?.missingStep) {
-        const missingText = truncateStepText(String(dodCheck.missingStep));
-        console.log(`${new Date().toISOString()} [ai] DoD check: plan didn't satisfy definition of done — adding step: "${missingText}"`);
-        steps = [{ text: missingText, automatable: false }, ...steps];
-        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étape ajoutée pour vraiment atteindre l'objectif : ${missingText}` : `Added a step so the plan actually reaches the definition of done: ${missingText}` });
-      } else if (dodCheck?.satisfied === undefined) {
-        // ask() returned {} — the call failed to produce parseable JSON even after its own retry. Silently
-        // treating this as "satisfied" (the `if` above just falls through) is the intended best-effort
-        // behavior, but leaving zero trace that the check didn't actually run makes a bad plan that slips
-        // through indistinguishable from one that was genuinely verified — log it so it's debuggable.
+
+      const repaired: TaskStep[] = (Array.isArray(repair?.steps) ? repair.steps : [])
+        .map((s: any) => ({ text: truncateStepText(String(s?.text || "")), automatable: !!s?.automatable }))
+        .filter((s: TaskStep) => s.text);
+      // The one invariant that matters: a repair may grow or reshuffle the plan, never shrink it. This is
+      // the guard that keeps this pass from becoming another of this file's step-zeroing filters — if the
+      // model returned fewer steps than it was given, it dropped work, so the original plan stands.
+      if (repaired.length >= steps.length && repaired.length <= 8) {
+        const uncovered = (Array.isArray(repair?.uncovered) ? repair.uncovered : []).map((u: any) => String(u)).filter(Boolean);
+        const grew = repaired.length > steps.length;
+        const reordered = repaired.length === steps.length && repaired.some((s, i) => s.text !== steps[i].text);
+        steps = reattachStepExtras(repaired, steps);
+        // Repaired/split steps have never been through step 4's own gates, so re-run them here, in the same
+        // order step 4 uses: the automatable flip FIRST, then the triviality gate (see step 4's comment on
+        // why the reverse ordering deletes legitimate research steps), then the artifact dedupe again.
+        for (const s of steps) {
+          if (!s.automatable && DOABLE_STEP.test(s.text) && !JUDGMENT_STEP.test(s.text) && !s.question) s.automatable = true;
+        }
+        steps = dropRedundantArtifactSteps(steps, { note: notes.length > 0, flashcards: flashcards.length > 0, quiz: quizzes.length > 0 });
+        steps = dropTrivialSteps(steps);
+        if (uncovered.length) {
+          console.log(`${new Date().toISOString()} [ai] DoD repair: parts with no step — ${uncovered.join("; ")}`);
+          audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étapes ajoutées pour couvrir la définition de terminé : ${uncovered.join(" ; ")}` : `Added steps so the plan covers every part of the definition of done: ${uncovered.join("; ")}` });
+        } else if (grew || reordered) {
+          audit.push({ at: new Date().toISOString(), kind: "guardrail", label: fr ? `Étapes réordonnées / séparées pour suivre l'ordre réel du travail` : `Steps reordered and split so they follow the real order of the work` });
+        }
+      } else if (!repaired.length) {
+        // ask() returned {} or nothing usable — the call failed even after its own retry. Falling through
+        // with the original plan is the intended best-effort behavior, but leaving no trace makes a bad
+        // plan that slipped through indistinguishable from one that was genuinely verified.
         audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `DoD check inconclusive — the verification call didn't return a parseable result` });
+      } else {
+        console.log(`${new Date().toISOString()} [ai] DoD repair rejected: returned ${repaired.length} steps for a plan of ${steps.length} — keeping the original`);
       }
     }
 

@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -2074,6 +2074,39 @@ section("/finance (Plaid) — plaidToItems + plaidBillsToTasks, and that NONE of
   const alertTasks = plaidBillsToTasks([alertCandidate], []);
   check("a suspicious-charge candidate also lands at needs_review, never auto-run", alertTasks.length === 1 && alertTasks[0].status === "needs_review");
   check("a suspicious-charge task's step is 'go verify', not 'go pay'", /confirm|check|v[ée]rifie/i.test(alertTasks[0].steps[0].text));
+}
+
+// ── Step-generation repair pass: artifact dedupe, extras carry-over, and the runTask wiring ────────
+{
+  const deck = { note: false, flashcards: true, quiz: false };
+  check("drops a 'build flashcards' step when Otto already created the flashcard deck",
+    dropRedundantArtifactSteps([{ text: "Build flashcards (definition, mechanism, example) for each figure", automatable: true }, { text: "Mark the 15 figures you'll be tested on", automatable: false }], deck)
+      .every((s) => !/build flashcards/i.test(s.text)));
+  check("keeps that same step when no flashcard deck was actually created",
+    dropRedundantArtifactSteps([{ text: "Build flashcards for each figure", automatable: true }], { note: false, flashcards: false, quiz: false }).length === 1);
+  check("keeps a step that USES the artifact rather than creating it ('Review the flashcards')",
+    dropRedundantArtifactSteps([{ text: "Review the flashcards and score yourself", automatable: false }], deck).length === 1);
+  check("keeps a create-step aimed at something that isn't an artifact ('Build a packing list')",
+    dropRedundantArtifactSteps([{ text: "Build a packing list for the trip", automatable: false }], deck).length === 1);
+  check("never empties the plan out — if every step looked redundant, the original list stands",
+    dropRedundantArtifactSteps([{ text: "Build flashcards for each figure", automatable: true }], deck).length === 1);
+  check("a quiz step goes only when a quiz exists, not when only a deck does",
+    dropRedundantArtifactSteps([{ text: "Create a quiz on the figures", automatable: true }, { text: "Sit the quiz", automatable: false }], deck).length === 2);
+
+  const original = [{ text: "Sit a timed set at 1.5 minutes per MCQ", automatable: false, url: "https://example.com/set" }];
+  check("reattachStepExtras carries a step's url across a reworded repair", reattachStepExtras([{ text: "Sit a timed MCQ set at 1.5 minutes per question", automatable: false }], original)[0].url === "https://example.com/set");
+  check("reattachStepExtras does NOT attach extras onto an unrelated new step", reattachStepExtras([{ text: "Log every missed item afterwards", automatable: false }], original)[0].url === undefined);
+
+  const claudeSrc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const repairBlock = claudeSrc.slice(claudeSrc.indexOf("const repair = await ask("), claudeSrc.indexOf("Total-outage check"));
+  check("the DoD pass audits coverage, order AND one-deliverable-per-step", /1\. COVERAGE/.test(repairBlock) && /2\. ORDER/.test(repairBlock) && /3\. ONE DELIVERABLE PER STEP/.test(repairBlock));
+  check("the DoD pass no longer tells the model to 'say yes' on anything but one failure mode", !/close enough match for a reasonable plan, say yes/.test(repairBlock));
+  check("a repair is rejected unless it has at least as many steps as it was given (never shrinks the plan)", /repaired\.length >= steps\.length && repaired\.length <= 8/.test(repairBlock));
+  check("repaired steps go through the automatable flip BEFORE the triviality gate", repairBlock.indexOf("DOABLE_STEP.test") < repairBlock.indexOf("dropTrivialSteps(steps)"));
+  check("artifact dedupe runs on the repaired plan too, not only before the call", (repairBlock.match(/dropRedundantArtifactSteps/g) || []).length >= 1);
+  const stepPrompt = claudeSrc.slice(claudeSrc.indexOf("SEQUENCE STEPS IN THE ORDER"), claudeSrc.indexOf("Only steps the STUDENT must do"));
+  check("the sequencing rule covers prerequisites, not just reacting-to-an-attempt", /SETTLING WHAT THE LATER WORK OPERATES ON/.test(stepPrompt) && /REACTING TO AN ATTEMPT/.test(stepPrompt));
+  check("step 4 is told one deliverable per step, with the live compound-step example", /ONE DELIVERABLE PER STEP/.test(stepPrompt) && /Book transport and lodging, draft itinerary and packing list/.test(stepPrompt));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
