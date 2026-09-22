@@ -914,6 +914,7 @@ app.get("/api/status", ah(async (req, res) => {
     unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
     customTheme: req.session.profile?.customTheme,
+    betaFeatures: !!req.session.profile?.betaFeatures,
   };
   // Hand the CSRF synchronizer token to the client here — this is the ONE place it's ever transmitted (see
   // requireAuth's own comment). Generated lazily so an already-logged-in session picks one up on its next
@@ -998,7 +999,12 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       // near-tied tasks' order at random, reported live as "the order of tasks keeps randomly changing."
       // Only re-draws when the bucket itself changes (e.g. morning → afternoon — see contextKey).
       let orderingArm = req.session.orderingArmCache?.key === orderingKey ? req.session.orderingArmCache.armId : undefined;
-      if (!orderingArm) {
+      // Beta-gated (see Profile.betaFeatures' own doc comment) — "urgency-first" is this app's own
+      // baseline ranking philosophy (urgent + important first, per the dashboard's own framing), so it's
+      // the correct default, not an arbitrary pick, when personalization is off.
+      if (!orderingArm && !req.session.profile?.betaFeatures) {
+        orderingArm = "urgency-first";
+      } else if (!orderingArm) {
         const orderingState = await loadBanditState(req.session.user!, "ordering");
         orderingArm = chooseArm(ORDERING_ARMS, orderingState, orderingKey).arm.id;
         req.session.orderingArmCache = { key: orderingKey, armId: orderingArm };
@@ -1329,11 +1335,15 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // Seventh bandit target (CHAT_STYLE_ARMS) — chosen once per turn, best-effort (a bandit hiccup must
     // never block the chat reply itself).
     let chatStyleArm: string | undefined;
-    try {
-      const styleKey = banditContextKey(new Date(), profile);
-      const styleState = await loadBanditState(req.session.user!, "chatstyle");
-      chatStyleArm = chooseArm(CHAT_STYLE_ARMS, styleState, styleKey).arm.id;
-    } catch { /* best-effort — the reply below still proceeds with the default (concise) style */ }
+    // Beta-gated (see Profile.betaFeatures' own doc comment) — leaves chatStyleArm undefined, same as a
+    // live failure, so the reply below proceeds with the default (concise) style.
+    if (profile?.betaFeatures) {
+      try {
+        const styleKey = banditContextKey(new Date(), profile);
+        const styleState = await loadBanditState(req.session.user!, "chatstyle");
+        chatStyleArm = chooseArm(CHAT_STYLE_ARMS, styleState, styleKey).arm.id;
+      } catch { /* best-effort — the reply below still proceeds with the default (concise) style */ }
+    }
     // "It grows with them" — the Primer quality of a tutor that's actually watched this student over time,
     // not a stateless one-off. Only the POSITIVE direction is surfaced mid-conversation (a real, earned
     // "you've been improving at this") — a declining trend is a Settings-level signal (weak-subject
@@ -1866,23 +1876,27 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   // pick the arm for the NEW deck about to be generated. Both best-effort: a bandit hiccup must never block
   // the flashcards the student is actually waiting on (same posture as the Pomodoro routes above).
   let flashcardArmId: string | undefined;
-  try {
-    const email = req.session.user!;
-    const banditKey = banditContextKey(new Date(), req.session.profile);
-    let banditState = await loadBanditState(email, "flashcards");
-    const outgoing = t.flashcards?.[0];
-    if (outgoing?.styleArmId) {
-      const reviewed = outgoing.cards.filter((c) => (c.review?.seen || 0) > 0 && c.review?.box);
-      if (reviewed.length) {
-        const avgBoxProgress = reviewed.reduce((s, c) => s + ((c.review!.box || 1) - 1), 0) / reviewed.length;
-        const reward = computeCardReward(avgBoxProgress);
-        banditState = updatePosterior(banditState, banditKey, outgoing.styleArmId, reward);
-        await saveBanditState(email, "flashcards", banditState);
-        void recordSessionOutcome({ userEmail: email, decisionKey: "flashcards", arm: outgoing.styleArmId, context: banditKey, reward, at: new Date().toISOString() });
+  // Beta-gated (see Profile.betaFeatures' own doc comment) — leaves flashcardArmId undefined, same as a
+  // live failure, so generation below proceeds with the default style.
+  if (req.session.profile?.betaFeatures) {
+    try {
+      const email = req.session.user!;
+      const banditKey = banditContextKey(new Date(), req.session.profile);
+      let banditState = await loadBanditState(email, "flashcards");
+      const outgoing = t.flashcards?.[0];
+      if (outgoing?.styleArmId) {
+        const reviewed = outgoing.cards.filter((c) => (c.review?.seen || 0) > 0 && c.review?.box);
+        if (reviewed.length) {
+          const avgBoxProgress = reviewed.reduce((s, c) => s + ((c.review!.box || 1) - 1), 0) / reviewed.length;
+          const reward = computeCardReward(avgBoxProgress);
+          banditState = updatePosterior(banditState, banditKey, outgoing.styleArmId, reward);
+          await saveBanditState(email, "flashcards", banditState);
+          void recordSessionOutcome({ userEmail: email, decisionKey: "flashcards", arm: outgoing.styleArmId, context: banditKey, reward, at: new Date().toISOString() });
+        }
       }
-    }
-    flashcardArmId = chooseArm(FLASHCARD_ARMS, banditState, banditKey).arm.id;
-  } catch { /* best-effort — generation below still proceeds with the default style */ }
+      flashcardArmId = chooseArm(FLASHCARD_ARMS, banditState, banditKey).arm.id;
+    } catch { /* best-effort — generation below still proceeds with the default style */ }
+  }
   // REAL spaced-repetition reinforcement from PREVIOUS days — not "recently got wrong within N days" (that's
   // not what spaced repetition means), but cards whose own Leitner schedule says they're due for review
   // RIGHT NOW, exactly the same due-ness check GET /api/reviews/due uses. A box-1 card comes back in a day
@@ -2230,6 +2244,9 @@ app.post("/api/study/extract-text", requireAuth, rateLimit(30, 60_000), ah(async
 // starting or ending a study session, so both routes degrade to a safe default/no-op on any failure rather
 // than surfacing an error the student would have to do anything about.
 app.get("/api/study/pomodoro-suggestion", requireAuth, ah(async (req, res) => {
+  // Beta-gated — see Profile.betaFeatures' own doc comment. Off (the common case) takes exactly the
+  // same safe default this route already falls back to on a live failure — no new behavior to invent.
+  if (!req.session.profile?.betaFeatures) { res.json({ enabled: false, workMinutes: 25, breakMinutes: 5, coldStart: true }); return; }
   try {
     const key = banditContextKey(new Date(), req.session.profile);
     const state = await loadBanditState(req.session.user!, "pomodoro");
@@ -2243,6 +2260,7 @@ app.get("/api/study/pomodoro-suggestion", requireAuth, ah(async (req, res) => {
 // Fourth bandit target: desk ambience (see AUDIO_ARMS in bandit.ts) — "if trends emerge in study mode,
 // pre-build that environment" from the personalization ask. Same shape as pomodoro-suggestion above.
 app.get("/api/study/audio-suggestion", requireAuth, ah(async (req, res) => {
+  if (!req.session.profile?.betaFeatures) { res.json({ audioType: "silence", coldStart: true }); return; }
   try {
     const key = banditContextKey(new Date(), req.session.profile);
     const state = await loadBanditState(req.session.user!, "audio");
@@ -2259,6 +2277,7 @@ app.get("/api/study/audio-suggestion", requireAuth, ah(async (req, res) => {
 app.get("/api/ui/density-suggestion", requireAuth, ah(async (req, res) => {
   try {
     if (req.session.profile?.uiDensity) { res.json({ density: req.session.profile.uiDensity, manual: true }); return; }
+    if (!req.session.profile?.betaFeatures) { res.json({ density: "cozy", manual: false, coldStart: true }); return; }
     const key = banditContextKey(new Date(), req.session.profile);
     const state = await loadBanditState(req.session.user!, "density");
     const { arm, coldStart } = chooseArm(DENSITY_ARMS, state, key);
@@ -2272,6 +2291,9 @@ app.get("/api/ui/density-suggestion", requireAuth, ah(async (req, res) => {
 // the model proposes values for a small fixed allowlist only, every value is independently re-validated
 // (format + WCAG contrast) before it's ever stored, and normalizeProfile re-checks it again on every load.
 app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(async (req, res) => {
+  // Beta-gated (defense in depth — the client button is already hidden when off, but the route itself
+  // must not trust that alone). See Profile.betaFeatures' own doc comment.
+  if (!req.session.profile?.betaFeatures) { res.status(403).json({ error: "Beta features are off — turn them on in Settings to try this." }); return; }
   if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to personalize your theme." }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
   if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
@@ -2681,6 +2703,8 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
       // DENSITY_ARMS's doc comment (server/bandit.ts) for why an auto-changing layout would undermine the
       // "calm" goal the rest of this app is built around.
       p.uiDensity = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "betaFeatures" && typeof value === "boolean") {
+      p.betaFeatures = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "autoApprove" && Array.isArray(value)) {
       p.autoApprove = value.map(String); p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "genPerDay") {

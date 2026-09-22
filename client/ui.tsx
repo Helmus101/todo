@@ -142,6 +142,28 @@ export function sourceAttributionLine(t: { source?: string; createdAt?: string }
   return when ? `${en ? label.en : label.fr} · ${when}` : (en ? label.en : label.fr);
 }
 
+// Onboarding's step 6 sidebar tour is the ONLY place any page's purpose gets explained — once a student
+// dismisses onboarding, that explanation is gone for good, with nothing on the page itself. A small,
+// dismissible one-line caption closes that gap without turning into a nagging banner: same persisted-
+// dismissal pattern already used for "skip connect" (App.tsx's otto-skip-connect), keyed per page so
+// dismissing one page's hint doesn't hide another's.
+export function PageInfoHint({ pageKey, text }: { pageKey: string; text: string }) {
+  const storageKey = `otto-hint-dismissed-${pageKey}`;
+  const [dismissed, setDismissed] = useState(() => {
+    try { return localStorage.getItem(storageKey) === "1"; } catch { return false; }
+  });
+  if (dismissed) return null;
+  return (
+    <p className="page-info-hint muted small">
+      {text}
+      <button type="button" className="page-info-hint-x" aria-label="Dismiss" onClick={() => {
+        setDismissed(true);
+        try { localStorage.setItem(storageKey, "1"); } catch { /* best-effort */ }
+      }}>×</button>
+    </p>
+  );
+}
+
 // Explicit card status: what state is this task ACTUALLY in, in user terms. Derived from the canonical
 // lifecycle + the task's contents (a sendable → "Draft ready"; an open question → "Needs your answer").
 export function statusChip(t: WebTask, retrying?: boolean, en?: boolean): { label: string; tone: "muted" | "busy" | "attention" | "bad" | "good" } | null {

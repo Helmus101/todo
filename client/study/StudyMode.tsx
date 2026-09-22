@@ -38,6 +38,10 @@ interface StudyModeProps {
   onTaskUpdate: (t: WebTask) => void;
   userId?: string;
   language?: "fr" | "en";
+  /** Gates the focus camera (see Profile.betaFeatures' own doc comment in shared/types.ts) — off by
+   *  default for every account, camera access is the most privacy-sensitive beta feature here so the
+   *  toggle is hidden entirely rather than shown-but-disabled until a student explicitly opts in. */
+  betaFeatures?: boolean;
 }
 
 // ── Detect task type from task title/description ──────────────────────────────
@@ -194,7 +198,7 @@ export const AUDIO_OPTIONS: { id: NoiseType; label: string }[] = [
 ];
 
 // ── Main StudyMode component ───────────────────────────────────────────────────
-export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" }: StudyModeProps) {
+export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr", betaFeatures = false }: StudyModeProps) {
   const [phase, setPhase] = useState<"setup" | "session">("setup");
   const [env, setEnv] = useState<StudyEnvironment | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
@@ -1146,8 +1150,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
           separately from the CameraArtifact widget, causing a second getUserMedia prompt that could kick
           the browser out of fullscreen — the "study mode sometimes auto exits" report. Now the camera
           is owned by useFocusCamera (started once, shared), and this overlay is just a lightweight VIEW
-          onto its tracking state. */}
-      <div className={`sm-focus-overlay ${chromeIdle ? "sm-chrome-idle" : ""}`} style={{
+          onto its tracking state. Gated on betaFeatures — hidden entirely (not shown-but-disabled) when
+          off, since camera access is the most privacy-sensitive item behind the beta toggle and shouldn't
+          be visible/inviting a click until a student has actually opted in. useFocusCamera itself is
+          unchanged; this is the one UI entry point that ever calls startCamera. */}
+      {betaFeatures && <div className={`sm-focus-overlay ${chromeIdle ? "sm-chrome-idle" : ""}`} style={{
         position: "absolute", top: "52px", right: "12px", display: "flex", alignItems: "center", gap: "8px",
         zIndex: 50, transition: "opacity 0.4s ease",
       }}>
@@ -1175,7 +1182,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr" 
         >
           {focusCamera.enabled ? "◉ Focus on" : "○ Focus off"}
         </button>
-      </div>
+      </div>}
 
       {/* ── Main middle section ── */}
       <div className="sm-main-container" style={{ position: "relative", gridRow: 2, minHeight: 0 }}>

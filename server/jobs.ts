@@ -369,10 +369,14 @@ async function processExecuteTask(job: store.Job): Promise<string> {
     // gets its step granularity biased by whichever arm this student's procrastination-latency history
     // currently favors (see stampFirstAction in index.ts for where the outcome gets scored back).
     let granularityArm: string | undefined;
-    try {
-      const banditState = await store.loadBanditState(email, "granularity");
-      granularityArm = chooseArm(GRANULARITY_ARMS, banditState, banditContextKey(new Date(), profile)).arm.id;
-    } catch { /* best-effort — the run proceeds with standard granularity */ }
+    // Beta-gated (see Profile.betaFeatures' own doc comment) — leaves granularityArm undefined, same as
+    // a live failure, so the run proceeds with standard granularity.
+    if (profile?.betaFeatures) {
+      try {
+        const banditState = await store.loadBanditState(email, "granularity");
+        granularityArm = chooseArm(GRANULARITY_ARMS, banditState, banditContextKey(new Date(), profile)).arm.id;
+      } catch { /* best-effort — the run proceeds with standard granularity */ }
+    }
     const updated = await tasks.runById(list, taskId, profile, extras, job.input?.note ? String(job.input.note) : undefined, academic, granularityArm);
     if (updated?.steps?.length) void store.recordMetric(email, "task_steps_count", updated.steps.length, updated.source || "n/a");
     // Live artifact verification: read every claimed draft/event/doc back from the real account before the

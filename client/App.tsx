@@ -5,7 +5,7 @@ import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
 import { pushError, getErrors, clearErrors } from "./errorLog.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard } from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { 
@@ -789,6 +789,7 @@ export function App() {
               }}
               userId={status?.user}
               language={status?.language === "en" ? "en" : "fr"}
+              betaFeatures={!!status?.betaFeatures}
             />
           </NotifyContext.Provider>
         </LangContext.Provider>
@@ -982,6 +983,14 @@ export function App() {
               </div>
             )}
           </div>
+          {/* Onboarding's sidebar tour explains what the Tasks tab IS, but never what "Do now"/"This
+              week"/"Later" actually mean or how a task lands in one — the one piece of real complexity
+              on this page nothing else explains (the landing page's marketing copy covers this for
+              prospects, but a logged-in student never sees that page again). Dismiss-once, not a
+              permanent fixture — see PageInfoHint's own comment. */}
+          <PageInfoHint pageKey="dashboard" text={en
+            ? "Sorted by real priority, not just deadline: \"Do now\" is urgent AND important, \"This week\" and \"Later\" are what can wait — urgency climbs on its own as a deadline nears."
+            : "Trié par vraie priorité, pas juste par échéance : « À faire maintenant » est urgent ET important, « Cette semaine » et « Plus tard » peuvent attendre — l'urgence monte automatiquement à l'approche d'une échéance."} />
           {status.paused && (
             <div className="intro paused-banner">
               <div className="intro-body">
@@ -1951,6 +1960,7 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
         : [...prev, u])}
       userId={status?.user}
       language={en ? "en" : "fr"}
+      betaFeatures={!!status?.betaFeatures}
     />
   );
 }
@@ -2381,6 +2391,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   
   // Optimistic toggles/selects — flip instantly, reconcile with the server after (no round-trip lag).
   const [paused, setPausedLocal] = useState(status.paused);
+  const [betaFeatures, setBetaFeaturesLocal] = useState(!!status.betaFeatures);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [importingData, setImportingData] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -2408,6 +2419,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
   const [profileError, setProfileError] = useState(false);
   const loadProfile = () => { setProfileError(false); void api.profile().then(setProfile).catch(() => setProfileError(true)); };
   useEffect(() => { setPausedLocal(status.paused); }, [status.paused]);
+  useEffect(() => { setBetaFeaturesLocal(!!status.betaFeatures); }, [status.betaFeatures]);
   useEffect(() => { loadProfile(); void api.usage().then(setUsage).catch(() => {}); }, []);
   // Month-to-date AI spend vs. the cap — both computed server-side (EUR, approximate; for visibility + the cap).
   // Was hardcoded to "€" + French comma formatting for every account regardless of language — the
@@ -2631,17 +2643,27 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             own doc comment (server/claude.ts) for the full safety story: a small fixed allowlist of colors/
             radii, strictly re-validated (format + contrast) before it's ever saved. One click, one small AI
             call, reversible with Reset — not something that changes on its own. */}
+        {/* The generate button is gated on Settings' "Beta features" toggle (Preferences section) — the
+            standalone BETA badge this row used to carry is gone now that the row only offers generation
+            at all once beta is already on; a badge next to an already-opt-in control is noise. Reset stays
+            visible regardless of the toggle: a student with an existing custom theme (from before they
+            turned beta off, or from before this gate existed) must always be able to get back to the
+            default appearance, not get stranded on a theme they can no longer reach the controls for. */}
         <div className="modal-row">
-          <span className="lbl">{L("Thème personnalisé (IA)", "Personalized theme (AI)")} <span className="beta-badge" title={L("Fonctionnalité expérimentale", "Experimental feature")}>{L("BÊTA", "BETA")}</span></span>
+          <span className="lbl">{L("Thème personnalisé (IA)", "Personalized theme (AI)")}</span>
           <span className="val">
-            <button type="button" className="btn xs ghost" disabled={themeBusy} onClick={async () => {
-              setThemeBusy(true);
-              try { await api.personalizeTheme(); onChanged(); }
-              catch (e: any) { notify(e?.message || L("Impossible de personnaliser le thème pour l'instant.", "Couldn't personalize the theme right now."), "error"); }
-              finally { setThemeBusy(false); }
-            }}>
-              {themeBusy ? L("Création…", "Creating…") : status.customTheme ? L("Réessayer", "Try another") : L("Laisser Otto personnaliser mon thème", "Let Otto personalize my theme")}
-            </button>
+            {betaFeatures ? (
+              <button type="button" className="btn xs ghost" disabled={themeBusy} onClick={async () => {
+                setThemeBusy(true);
+                try { await api.personalizeTheme(); onChanged(); }
+                catch (e: any) { notify(e?.message || L("Impossible de personnaliser le thème pour l'instant.", "Couldn't personalize the theme right now."), "error"); }
+                finally { setThemeBusy(false); }
+              }}>
+                {themeBusy ? L("Création…", "Creating…") : status.customTheme ? L("Réessayer", "Try another") : L("Laisser Otto personnaliser mon thème", "Let Otto personalize my theme")}
+              </button>
+            ) : (
+              <span className="settings-hint">{L("Active les fonctionnalités bêta ci-dessus pour essayer ça.", "Turn on beta features above to try this.")}</span>
+            )}
             {status.customTheme ? (
               <button type="button" className="btn xs ghost" onClick={() => void api.resetTheme().then(onChanged)}>
                 {L("Réinitialiser", "Reset")}
@@ -2716,6 +2738,22 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
               setPausedLocal(v); // optimistic — revert below on failure
               void api.setPaused(v).then(() => onChanged()).catch((err: any) => {
                 setPausedLocal(!v);
+                notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
+              });
+            }} /><span className="switch-track" /></span>
+          </label>
+          {/* Off by default for every account. On unlocks: personalized Pomodoro/audio/density/chat-style
+              suggestions, the Study Mode focus camera, and the AI-personalized theme generator — listed
+              explicitly in the hint so turning it off doesn't just silently make things disappear with no
+              explanation. Off is never a degraded experience, it's each feature's own existing safe
+              default (the same one already used if the live personalization call ever fails). */}
+          <label className="set-row">
+            <span className="set-text"><b>{L("Fonctionnalités bêta", "Beta features")}</b><span className="settings-hint">{L("Suggestions personnalisées (Pomodoro, son, densité, style), caméra de concentration, thème IA.", "Personalized suggestions (Pomodoro, audio, density, chat style), the focus camera, AI theme.")}</span></span>
+            <span className="switch"><input type="checkbox" checked={betaFeatures} onChange={(e) => {
+              const v = e.target.checked;
+              setBetaFeaturesLocal(v); // optimistic — revert below on failure
+              void api.setProfilePreference("betaFeatures", v).then(() => onChanged()).catch((err: any) => {
+                setBetaFeaturesLocal(!v);
                 notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
               });
             }} /><span className="switch-track" /></span>

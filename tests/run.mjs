@@ -1094,6 +1094,37 @@ section("dropSiblingBleedSteps — cross-task bleed backstop #2 (non-entity cont
 // despite the taskType-based artifact gate, because taskType itself was misclassified upstream. This is
 // the independent, code-level backstop added on top of that: veto flashcards/quiz purely from the
 // definition of done's own wording, regardless of what taskType said.
+// PageInfoHint — the dashboard's per-page orientation caption (explains the "Do now"/"This week"/"Later"
+// priority ranking, the one real piece of complexity onboarding's sidebar tour never actually explains).
+// No DOM interaction test runner exists in this suite (renderToStaticMarkup is single-pass, per the
+// module-graph check's own comment) — this pins the initial (not-yet-dismissed) render only.
+section("PageInfoHint — dashboard orientation caption");
+{
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const React = await import("react");
+  const { PageInfoHint } = await import("../client/ui.tsx");
+  const html = renderToStaticMarkup(React.createElement(PageInfoHint, { pageKey: "test-page", text: "Explains the thing." }));
+  check("renders the hint text", html.includes("Explains the thing."));
+  check("renders a dismiss button", /page-info-hint-x/.test(html));
+}
+// Beta-features gate (Profile.betaFeatures, shared/types.ts): the 7 bandit-personalization call sites and
+// the AI theme route must all check it before doing any real personalization — server/index.ts and
+// server/jobs.ts aren't imported directly here (the Express app entrypoint is too heavy to import for a
+// pure-function test suite, same reason runTask's own wiring is verified via source-order pins), so this
+// greps the source directly, same pattern as the runTask wiring pins above.
+section("betaFeatures gates all 7 bandit call sites + the AI theme route (source-order pins)");
+{
+  const indexSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
+  check("pomodoro-suggestion route checks betaFeatures before chooseArm", /req\.session\.profile\?\.betaFeatures[\s\S]{0,400}chooseArm\(POMODORO_ARMS/.test(indexSrc));
+  check("audio-suggestion route checks betaFeatures before chooseArm", /req\.session\.profile\?\.betaFeatures[\s\S]{0,400}chooseArm\(AUDIO_ARMS/.test(indexSrc));
+  check("density-suggestion route checks betaFeatures before chooseArm", /req\.session\.profile\?\.betaFeatures[\s\S]{0,400}chooseArm\(DENSITY_ARMS/.test(indexSrc));
+  check("ordering (task list) checks betaFeatures before chooseArm", /!req\.session\.profile\?\.betaFeatures[\s\S]{0,200}orderingArm = "urgency-first"/.test(indexSrc));
+  check("chat-style bandit call is gated on betaFeatures", /if \(profile\?\.betaFeatures\) \{[\s\S]{0,300}chooseArm\(CHAT_STYLE_ARMS/.test(indexSrc));
+  check("flashcard-style bandit call is gated on betaFeatures", /if \(req\.session\.profile\?\.betaFeatures\) \{[\s\S]{0,1100}chooseArm\(FLASHCARD_ARMS/.test(indexSrc));
+  check("theme-personalize route checks betaFeatures before generateThemeTokens", /req\.session\.profile\?\.betaFeatures[\s\S]{0,600}generateThemeTokens/.test(indexSrc));
+  check("granularity bandit call (jobs.ts) is gated on betaFeatures", /if \(profile\?\.betaFeatures\) \{[\s\S]{0,300}chooseArm\(GRANULARITY_ARMS/.test(jobsSrc));
+}
 section("dodLooksLikeCoordinationOutcome — DoD-wording veto for flashcards/quiz (defense in depth)");
 {
   const oslo = "A confirmed Oslo plan: purpose, dates, travellers, transport and accommodation booked, and any required documents or event prep identified — with every open question answered by Willem.";

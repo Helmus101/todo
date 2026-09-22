@@ -43,6 +43,12 @@ export interface Profile {
   courses: string[];
   unlimited?: boolean;    // account has no monthly AI spend cap (set by visiting /unlimited) — overMonthlyBudget/
                           // overInteractiveBudget always read false for it, regardless of monthCostUsd
+  // Opt-in gate for anything experimental: the 7 bandit-personalization suggestions (Pomodoro/audio/
+  // density/chat-style/flashcard-verbosity/granularity/ordering), the Study Mode focus camera, and the
+  // AI-personalized theme generator. Off (undefined) by default for every account — each gated feature
+  // falls back to the exact same safe default it already uses today when its own live call fails, so
+  // turning this off is never a new code path, just always taking the one that already exists.
+  betaFeatures?: boolean;
   // Stamped at signup once the required "I'm 15+, or a parent set this up for me" checkbox is checked
   // (server/index.ts's /api/auth/signup rejects signup without it) — a real audit trail for the RGPD
   // Art.8 parental-consent requirement, not just a UI gate that leaves no record.
@@ -1289,6 +1295,7 @@ export interface ConnectionStatus {
   genPerDay?: number;         // how many times/day Otto scans for new tasks (1–4) — drives the client sweep cadence
   timezone?: string;          // the account's captured IANA timezone (client compares to detect a change)
   customTheme?: ThemeTokens;  // AI-personalized theme override, if the student opted in (see validateThemeTokens)
+  betaFeatures?: boolean;     // opt-in gate for bandit personalization / focus camera / AI theme — see Profile's own doc comment
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
