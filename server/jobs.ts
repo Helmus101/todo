@@ -416,7 +416,7 @@ async function processExecuteTask(job: store.Job): Promise<string> {
       let substepRunsLeft = 2;
       for (const s of expandable) {
         try {
-          const substeps = await claude.expandStep({ title: updated.title, why: updated.why }, { text: s.text }, profile, updated.links);
+          const substeps = await claude.expandStep({ title: updated.title, why: updated.why, goal: updated.goal, context: updated.context, sourceDetail: updated.sourceDetail, sourceSubject: updated.sourceSubject, steps: updated.steps }, { text: s.text }, profile, updated.links);
           if (!substeps.length) continue;
           s.substeps = substeps;
           for (const sub of s.substeps) {

@@ -2402,7 +2402,7 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
   const step = task?.steps?.[index];
   if (!task || !step) { res.status(404).json({ error: "not found" }); return; }
   try {
-    const substeps = await expandStep({ title: task.title, why: task.why }, { text: step.text }, req.session.profile, task.links);
+    const substeps = await expandStep({ title: task.title, why: task.why, goal: task.goal, context: task.context, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, steps: task.steps }, { text: step.text }, req.session.profile, task.links);
     if (substeps.length) {
       step.substeps = substeps;
       task.updatedAt = new Date().toISOString();

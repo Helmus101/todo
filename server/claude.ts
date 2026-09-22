@@ -5187,7 +5187,7 @@ async function decideArtifact(
  *  and forcing every step through this would bury the plan in sub-lists nobody asked for. Persisted on
  *  the step itself by the caller (server/index.ts), not returned as throwaway chat text. */
 export async function expandStep(
-  task: { title: string; why: string },
+  task: { title: string; why: string; goal?: string; context?: string; sourceDetail?: string; sourceSubject?: string; steps?: TaskStep[] },
   step: { text: string },
   profile?: Profile,
   // Resources the TASK already found this run/prior runs (task.links) — not a fresh web_search: giving
@@ -5201,6 +5201,19 @@ export async function expandStep(
   try {
     const client = deepseekClient();
     const linksBlock = links.length ? `\n\nRESOURCES ALREADY ON THIS TASK:\n${links.map((l) => `- ${l.label}: ${l.url}`).join("\n")}` : "";
+    // Anchor the substeps in the task's FULL context — not just the title/why. Without the Definition of
+    // Done (goal), the research context, the source material, and the sibling steps, the model breaks a
+    // step down in a vacuum: substeps drift from the task's actual goal, duplicate work a sibling step
+    // already covers, or miss a part of the DoD this step was supposed to address. Each block is included
+    // only when present so a thin task (no goal/context/source) behaves exactly as before.
+    const goalBlock = task.goal?.trim() ? `\nDEFINITION OF DONE: ${task.goal.trim()}\n` : "";
+    const contextBlock = task.context?.trim() ? `\nCONTEXT (research already gathered for this task):\n${task.context.trim()}\n` : "";
+    const sourceBlock = task.sourceDetail?.trim() ? `\nSOURCE MATERIAL (the teacher's own assignment text):\n${task.sourceDetail.trim().slice(0, 800)}\n` : "";
+    const siblingSteps = (task.steps || [])
+      .filter((s) => s.text !== step.text && !s.done)
+      .map((s) => `- ${s.text}`)
+      .join("\n");
+    const siblingBlock = siblingSteps ? `\nOTHER STEPS IN THIS TASK (do not duplicate these — your substeps are for the ONE step above only):\n${siblingSteps}\n` : "";
     const res: any = await retryRequest(() => client.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
@@ -5208,7 +5221,7 @@ export async function expandStep(
       response_format: { type: "json_object" },
       messages: [{
         role: "user",
-        content: `TASK: "${task.title}" (${task.why})\nSTEP TO BREAK DOWN: "${step.text}"${linksBlock}\n\n` +
+        content: `TASK: "${task.title}" (${task.why})\nSTEP TO BREAK DOWN: "${step.text}"${goalBlock}${contextBlock}${sourceBlock}${siblingBlock}${linksBlock}\n\n` +
           languageLine(profile) +
       `Break this ONE step into small, concrete sub-actions the student can tick off one at a time — ` +
       `each a SHORT imperative (≤10 words), specific enough to just start doing, no vague categories like ` +
@@ -5220,6 +5233,12 @@ export async function expandStep(
           `every sub-step is something THEY do — never phrase the graded/` +
           `learning work itself (writing, arguing, solving) as if it were already done or as Otto's job. Stay ` +
           `strictly inside the scope of "${step.text}" — do not re-plan the whole task, only this one step.\n\n` +
+          `ANCHOR IN THE TASK'S CONTEXT: the substeps must serve the DEFINITION OF DONE and use the CONTEXT ` +
+          `and SOURCE MATERIAL above — ground every sub-action in what this specific task actually needs, ` +
+          `not a generic breakdown of the step's verb. If the DEFINITION OF DONE names specific deliverables ` +
+          `or requirements, the substeps should move toward those, not toward a generic version of the step. ` +
+          `Do NOT duplicate any work already covered by the OTHER STEPS listed above — your substeps are for ` +
+          `this ONE step only.\n\n` +
           `If one of RESOURCES ALREADY ON THIS TASK above is exactly the page a sub-action needs, give that ` +
           `sub-action a "url" copied VERBATIM from the list �� never invent or guess one, and never a url that ` +
           `isn't in that list. Most sub-actions won't have one.\n\n` +
