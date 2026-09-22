@@ -1407,7 +1407,15 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
     : "";
   const focus = (decisions ? `${step.text}\n\nWhat the user has already decided/done:\n${decisions}` : step.text) + qa;
   const siblingTasks = list.filter((t) => t.id !== id).map((t) => ({ title: t.title, why: t.why }));
-  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue }, profile, focus, extras, academic, siblingTasks);
+  // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
+  // source") executing via this per-step run judged everything — grounding, artifact creation, the DoD-
+  // verification pass, all of it — against `task.why` (a one-line intent: "Give a ready set of options to
+  // pick from") instead of the task's own real, detailed goal/definitionOfDone (the specific "15-20
+  // activities with location, cost, typical duration, and whether booking is needed" the student actually
+  // set). runTask's own `definitionOfDone = task.goal || task.why` was silently always taking the `why`
+  // fallback here because `goal` (and taskType/infoRequirement/unknowns, which shape earlier steps of the
+  // pipeline too) was never passed through from the outer task at all. Now it is.
+  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue, taskType: task.taskType, goal: task.goal, infoRequirement: task.infoRequirement, unknowns: task.unknowns }, profile, focus, extras, academic, siblingTasks);
   addUsage(profile, out.tokens, "autorun");
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);

@@ -178,9 +178,13 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
     void api.profile().then(setProfile).catch(() => {});
   }, []);
   
-  // Get subject-specific focus score
-  const subjectFocus = task.sourceSubject ? profile?.focusStats?.subjectFocus?.[task.sourceSubject] : undefined;
-  const focusScore = subjectFocus ?? profile?.focusStats?.avgConcentration;
+  // Get subject-specific focus score. Reported live: this fell back to profile.focusStats.avgConcentration
+  // (the ACCOUNT-WIDE average) whenever a task had no sourceSubject or no subject-specific history — but the
+  // badge's own label always says "Historical focus on THIS SUBJECT" regardless, so a birthday-message task
+  // or a trip-planning task (no subject at all) showed the exact same number as every academic task, mislabeled
+  // as being specifically about it. Only show it when it's genuinely subject-specific — never fall back to
+  // the generic average under a subject-specific claim.
+  const focusScore = task.sourceSubject ? profile?.focusStats?.subjectFocus?.[task.sourceSubject] : undefined;
   const showFocusScore = focusScore !== undefined && focusScore < 100 && !isDone;
   
   // Check if current time is peak focus time

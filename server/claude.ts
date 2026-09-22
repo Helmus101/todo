@@ -4624,6 +4624,10 @@ export async function runTask(
           `Context:\n${context}\n\n` +
           `Create 8-15 flashcards with real, specific content from the context above. ` +
           `One idea per card. Front: asks for recall, never leaks the answer. Back: the answer, detailed enough to teach.\n` +
+          `Cards must build real understanding of the topic, not just isolated trivia — cover the concept's core ` +
+          `mechanics/reasoning (the "why"/"how"), not only names, dates, or definitions to memorize by rote when the ` +
+          `topic genuinely calls for understanding a process or method (e.g. a formula's derivation or when to apply ` +
+          `it, not just the formula itself in isolation).\n` +
           `Return JSON: {"title": "deck title", "cards": [{"front": "...", "back": "..."}]}`,
           1500,
         );

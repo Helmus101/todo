@@ -1182,6 +1182,23 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   // instead of throwing, bypassing server/tasks.ts's actual retry/backoff machinery entirely.
   check("runTask throws when every AI call in the run failed (total-outage detection)", /askCalls > 0 && askFailures === askCalls/.test(runTaskBody));
 }
+// Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
+// source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification
+// against task.why (a one-line intent) instead of the task's own real, detailed goal — because runStep's
+// call into aiRun (=runTask) never passed taskType/goal/infoRequirement/unknowns through at all, so
+// runTask's own `definitionOfDone = task.goal || task.why` silently always took the vaguer fallback for
+// every per-step automatable run. runById (the whole-task run) already passed all four correctly — only
+// runStep had the gap. Source-order pin since runStep isn't a pure function (calls the live AI pipeline).
+section("runStep passes goal/taskType/infoRequirement/unknowns through to aiRun (source-order pin)");
+{
+  const tasksSrc = readFileSync(new URL("../server/tasks.ts", import.meta.url), "utf8");
+  const runStepStart = tasksSrc.indexOf("export async function runStep(");
+  const runStepBody = tasksSrc.slice(runStepStart, tasksSrc.indexOf("\n/**", runStepStart));
+  check("runStep passes task.goal through to aiRun", /aiRun\(\{[^}]*goal: task\.goal/.test(runStepBody));
+  check("runStep passes task.taskType through to aiRun", /aiRun\(\{[^}]*taskType: task\.taskType/.test(runStepBody));
+  check("runStep passes task.infoRequirement through to aiRun", /aiRun\(\{[^}]*infoRequirement: task\.infoRequirement/.test(runStepBody));
+  check("runStep passes task.unknowns through to aiRun", /aiRun\(\{[^}]*unknowns: task\.unknowns/.test(runStepBody));
+}
 
 section("dueLine — always-shown due-date + server-computed days-until for chat");
 check("empty when there's no due date at all", dueLine(undefined) === "");
