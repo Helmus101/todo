@@ -1203,6 +1203,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
           onCompleteTask={completeTask}
           language={language}
           backgroundImageUrl={backgroundUrl}
+          userId={userId}
           chat={{
             currentStep, input: chatInput, setInput: setChatInput, sending: chatSending, error: chatError,
             pendingMsg, onSend: sendChat,

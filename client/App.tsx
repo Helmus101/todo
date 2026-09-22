@@ -2,9 +2,8 @@ import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateA
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
-import { saveDeckLocally, getAllLocalDecks } from "./localDecks.ts";
-import { saveQuizLocally, getAllLocalQuizzes } from "./localQuizzes.ts";
-import { pushError, getErrors, clearErrors } from "./errorLog.ts";
+import { saveDeckLocally, getAllLocalDecks, clearLocalDecks } from "./localDecks.ts";
+import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } from "./localQuizzes.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
@@ -295,10 +294,10 @@ export function App() {
   useEffect(() => {
     for (const t of tasks) {
       const logDate = t.source === "studylog" && t.logDate && !t.logDate.includes(":") ? t.logDate : undefined;
-      for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck, logDate);
-      for (const quiz of t.quizzes || []) saveQuizLocally(t.id, t.title, quiz, logDate);
+      for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck, logDate, status.user);
+      for (const quiz of t.quizzes || []) saveQuizLocally(t.id, t.title, quiz, logDate, status.user);
     }
-  }, [tasks]);
+  }, [tasks, status.user]);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
   const [scanning, setScanning] = useState(false); // the daily background sweep is running
   const [busy, setBusy] = useState(false);
@@ -657,6 +656,9 @@ export function App() {
     // replaces them — visible, if briefly, as someone else's to-do list. None of these are needed once
     // signed out; the next session starts genuinely fresh.
     try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+    // Clear user-specific local backups (decks, quizzes)
+    clearLocalDecks(status.user);
+    clearLocalQuizzes(status.user);
     setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus();
   };
 
@@ -1711,20 +1713,20 @@ const addDays = (dateStr: string, n: number): string => {
  *  every deck as it's created, so this is always populated even offline or if a task got pruned/merged
  *  server-side. Reviewing from here posts back to the deck's real owner (taskId) exactly like reviewing it
  *  from the task/journal itself — this is a second way IN, not a separate copy of the review state. */
-function FlashcardsLibraryPage({ lang, tasks, embedded }: { lang?: "fr" | "en"; tasks: WebTask[]; embedded?: boolean }) {
+function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" | "en"; tasks: WebTask[]; embedded?: boolean; userId: string | null }) {
   const L = useLang();
   const en = lang === "en";
-  const [decks, setDecks] = useState(() => getAllLocalDecks());
-  const [quizzes, setQuizzes] = useState(() => getAllLocalQuizzes());
+  const [decks, setDecks] = useState(() => getAllLocalDecks(userId));
+  const [quizzes, setQuizzes] = useState(() => getAllLocalQuizzes(userId));
   const [openId, setOpenId] = useState<string | null>(null);
   const [openQuizId, setOpenQuizId] = useState<string | null>(null);
   // Local storage isn't reactive — refresh the list on focus so a deck/quiz generated in another tab (or
   // just now, before this page was opened) shows up without needing a full reload.
   useEffect(() => {
-    const refresh = () => { setDecks(getAllLocalDecks()); setQuizzes(getAllLocalQuizzes()); };
+    const refresh = () => { setDecks(getAllLocalDecks(userId)); setQuizzes(getAllLocalQuizzes(userId)); };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
-  }, []);
+  }, [userId]);
   const open = decks.find((d) => d.deck.id === openId) || null;
   const openQuiz = quizzes.find((q) => q.quiz.id === openQuizId) || null;
   // The local backup can outlive the deck/quiz it's a copy of — an old day's deck gets replaced by a fresh
@@ -2055,19 +2057,19 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
   useEffect(() => {
     for (const d of days) {
       if (!d) continue;
-      for (const deck of d.flashcards || []) saveDeckLocally(d.id, d.title, deck, d.logDate);
-      for (const quiz of d.quizzes || []) saveQuizLocally(d.id, d.title, quiz, d.logDate);
+      for (const deck of d.flashcards || []) saveDeckLocally(d.id, d.title, deck, d.logDate, status.user);
+      for (const quiz of d.quizzes || []) saveQuizLocally(d.id, d.title, quiz, d.logDate, status.user);
     }
     if (summary) {
-      for (const deck of summary.flashcards || []) saveDeckLocally(summary.id, summary.title, deck);
-      for (const quiz of summary.quizzes || []) saveQuizLocally(summary.id, summary.title, quiz);
+      for (const deck of summary.flashcards || []) saveDeckLocally(summary.id, summary.title, deck, undefined, status.user);
+      for (const quiz of summary.quizzes || []) saveQuizLocally(summary.id, summary.title, quiz, undefined, status.user);
     }
-  }, [days, summary]);
+  }, [days, summary, status.user]);
   useEffect(() => {
     if (!monthSummary) return;
-    for (const deck of monthSummary.flashcards || []) saveDeckLocally(monthSummary.id, monthSummary.title, deck);
-    for (const quiz of monthSummary.quizzes || []) saveQuizLocally(monthSummary.id, monthSummary.title, quiz);
-  }, [monthSummary]);
+    for (const deck of monthSummary.flashcards || []) saveDeckLocally(monthSummary.id, monthSummary.title, deck, undefined, status.user);
+    for (const quiz of monthSummary.quizzes || []) saveQuizLocally(monthSummary.id, monthSummary.title, quiz, undefined, status.user);
+  }, [monthSummary, status.user]);
 
   const load = useCallback((m: string) => {
     const cached = loadWeekCache(m);
@@ -2215,7 +2217,7 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
           these decks actually live. */}
       <DueReviews lang={lang} tasks={tasks} />
 
-      {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded /> : (
+      {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status.user} /> : (
       <>
       <div className="studylog-weeknav">
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>
@@ -2369,7 +2371,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
     studyMetrics: { totalSessions: number; totalStudySeconds: number; totalBreakSeconds: number; avgIdleRatio: number | null; earlyExitRate: number | null; pomodoroCyclesCompleted: number; windowDays: number; avgFocusScore: number | null; avgGazeOnScreenPct: number | null; focusSessionCount: number } | null;
   } | null>(null);
   useEffect(() => { void api.patternsSummary().then(setPatterns).catch(() => {}); }, []);
-  const [errorLog, setErrorLog] = useState(() => getErrors());
   
   // Load focus analytics when section is opened
   const loadFocusAnalytics = async () => {
@@ -2938,36 +2939,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.17s" }}>
-        {/* Quiet by default (collapsed, count only) — a diagnostics drawer, not something to surface
-            unprompted on a page meant to feel calm. Client-side only (see errorLog.ts): the last things
-            that actually went wrong on THIS device, so a confusing toast that vanished in 12s can be
-            revisited later instead of just "sometimes it shows this, doesn't make sense" with no trace. */}
-        {errorLog.length > 0 ? (
-          <div className="modal-row">
-            <span className="lbl">{L("Journal d'erreurs", "Error log")}</span>
-            <span className="val">
-              <button type="button" className="btn xs ghost audit-toggle" aria-expanded={showErrorLog} onClick={() => setShowErrorLog((v) => !v)}>
-                {L("Voir", "View")} ({errorLog.length})
-              </button>
-              {showErrorLog ? (
-                <>
-                  <ul className="audit-list">
-                    {errorLog.map((e, i) => (
-                      <li key={i} className="audit-other">
-                        <span className="audit-icon" aria-hidden="true">•</span>
-                        <span className="audit-label">{e.message}</span>
-                        <span className="audit-at">{new Date(e.at).toLocaleString(status.language === "en" ? "en-GB" : "fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <button type="button" className="btn xs ghost" onClick={() => { clearErrors(); setErrorLog([]); }}>
-                    {L("Effacer", "Clear")}
-                  </button>
-                </>
-              ) : null}
-            </span>
-          </div>
-        ) : null}
+
       </section>
 
       {/* "How Otto sees you" — full visibility + one-click reset for profile.studentModel, the AI-synthesized
@@ -3356,7 +3328,7 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
  *  welcome + name → how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
  *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
  *  finishing (or "Skip") clears the otto-onboard flag. */
-const OB_STEPS = 12;
+const OB_STEPS = 11;
 /** Otto Lycée v1: onboarding is now just name → what Otto does → connect Pronote (the ONE data source) →
  *  done. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone — every extra sign-in step is a
  *  dropout for a lycéen without a work Google account, and Pronote's connect flow (URL + identifiants,
@@ -3446,29 +3418,15 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
         {step === 1 && (
           <div className="onboard-step">
             <h2>{L("Ton parcours", "Your track")}</h2>
-            <p className="onboard-lead">{L("Ça change le vocabulaire qu'Otto utilise et, à l'étape suivante, comment il trouve ton travail — modifiable à tout moment dans les Réglages.", "This changes the vocabulary Otto uses and, on the next step, how it finds your work — changeable any time in Settings.")}</p>
+            <p className="onboard-lead">{L("Ça change le vocabulaire qu'Otto utilise — modifiable à tout moment dans les Réglages.", "This changes the vocabulary Otto uses — changeable any time in Settings.")}</p>
             <div className="onboard-apps">
               <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{L("Bac français (lycée)", "French Bac (lycée)")}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>{L("IB", "IB")}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
             </div>
-            {/* "Other" is a deliberately broad catch-all, not just "a different high school system" —
-                covers collège/middle school, a national curriculum that's neither Bac nor IB, or anyone who
-                just doesn't fit the first two. Nothing downstream (claude.ts's prompts, subject vocabulary)
-                special-cases "other" further by age/level today — it's a flexible bucket, not a distinct
-                third syllabus — so no separate "middle school" track value is needed for this to work. */}
-            <label className="field onboard-name">
-              <span>{L("Ta classe / ton année (facultatif)", "Your year/grade (optional)")}</span>
-              <input className="addinput" maxLength={40}
-                placeholder={track === "ib" ? L("ex. DP1, Year 12", "e.g. DP1, Year 12") : track === "other" ? L("ex. 5ème, Grade 7", "e.g. 5ème, Grade 7") : L("ex. Terminale, Première", "e.g. Terminale, Première")}
-                value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
-                onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") void saveYearLevel(); }} />
-            </label>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
-              {track
-                ? <button className="btn primary" onClick={() => { void saveYearLevel(); setStep(2); }}>{L("Continuer", "Continue")}</button>
-                : <button className="btn ghost" onClick={() => { void saveYearLevel(); setStep(2); }}>{L("Passer", "Skip")}</button>}
+              <button className="btn primary" onClick={() => setStep(2)}>{L("Continuer", "Continue")}</button>
             </div>
           </div>
         )}
@@ -3547,7 +3505,6 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
         {step === 4 && (
           <div className="onboard-step">
             <h2>{L("Ta langue", "Your language")}</h2>
-            <p className="onboard-lead">{L("Change l'interface et tout ce qu'Otto écrit — modifiable à tout moment dans les Réglages.", "Switches the interface and everything Otto writes — changeable any time in Settings.")}</p>
             <div className="set-list onboard-prefs">
               {/* onChanged MUST call onStatus — PreferencesFields.saveLang persists server-side, but
                   status.language (which drives the whole app's LangContext) only updates when something
@@ -3557,7 +3514,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             </div>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(6)}>{L("Suivant", "Next")}</button>
+              <button className="btn primary big" onClick={() => setStep(5)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
@@ -3566,26 +3523,25 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
             (step 2 already covers that), it was landing on the dashboard with 6 unexplained tabs and no
             idea what each one is for. One line per tab, not a full feature tour — enough to remove the
             "where do I even click" hesitation without turning onboarding into a chore. */}
-        {step === 6 && (
+        {step === 5 && (
           <div className="onboard-step">
             <h2>{L("Où trouver quoi", "Where to find things")}</h2>
             <p className="onboard-lead">{L("Un rapide topo de la barre latérale — tu peux toujours revenir ici plus tard.", "A quick map of the sidebar — you can always come back to this later.")}</p>
             <div className="ob-tour">
               <div className="ob-tour-row"><b>{L("Tâches", "Tasks")}</b><span>{L("Ton plan du jour, classé par priorité réelle (urgent + important d'abord).", "Your plan for today, ranked by real priority (urgent + important first).")}</span></div>
-              <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Note ce que tu as appris chaque jour — Otto en fait des fiches et un résumé de semaine.", "Log what you learned each day — Otto turns it into flashcards and a week summary.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Note ce que tu as appris chaque jour — Otto en fait des fiches.", "Log what you learned each day — Otto turns it into flashcards.")}</span></div>
               <div className="ob-tour-row"><b>{L("Étudier", "Study")}</b><span>{L("Un espace de concentration : minuteur, musique, notes, et Otto pour t'aider en direct.", "A focus workspace: timer, music, notes, and Otto to help live.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Journal d'erreurs", "Error log")}</b><span>{L("Ce que tu rates le plus souvent en contrôle, pour réviser ce qui compte vraiment.", "What you get wrong most on tests, so you review what actually matters.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Finance", "Finance")}</b><span>{L("Gère ton argent de poche, tes économies, et tes dépenses (optionnel).", "Manage your allowance, savings, and expenses (optional).")}</span></div>
+              <div className="ob-tour-row"><b>{L("Erreurs", "Error log")}</b><span>{L("Note tes erreurs précises pour cibler tes révisions avant un contrôle.", "Log your specific mistakes to target your revision before a test.")}</span></div>
               <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Connexions (Pronote, Gmail…), langue, et tout ce qu'Otto sait sur toi.", "Connections (Pronote, Gmail…), language, and everything Otto knows about you.")}</span></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(5)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(7)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(4)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(6)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 7 && (
+        {step === 6 && (
           <div className="onboard-step">
             <h2>{L("Mode Étude", "Study Mode")}</h2>
             <p className="onboard-lead">{L("Un espace de concentration avec tout ce qu'il faut pour travailler efficacement.", "A focus workspace with everything you need to work effectively.")}</p>
@@ -3594,7 +3550,6 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <div className="ob-tour-row"><b>{L("Musique de fond", "Background Music")}</b><span>{L("Bruit blanc, sons de nature, ou ambiance lo-fi pour bloquer les distractions.", "White noise, nature sounds, or lo-fi ambience to block out distractions.")}</span></div>
               <div className="ob-tour-row"><b>{L("Notes & Brouillons", "Notes & Drafts")}</b><span>{L("Prends des notes, écris des brouillons, et garde tout au même endroit.", "Take notes, write drafts, and keep everything in one place.")}</span></div>
               <div className="ob-tour-row"><b>{L("Otto en direct", "Live Otto")}</b><span>{L("Pose des questions, demande des explications, et obtiens de l'aide instantanée.", "Ask questions, request explanations, and get instant help.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Caméra de concentration", "Focus Camera")}</b><span>{L("Optionnel : la caméra suit ton attention pour mesurer ta concentration (100% local, jamais enregistré).", "Optional: camera tracks your attention to measure focus (100% local, never recorded).")}</span></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(6)}>{L("Retour", "Back")}</button>
@@ -3603,7 +3558,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
           </div>
         )}
 
-        {step === 8 && (
+        {step === 7 && (
           <div className="onboard-step">
             <h2>{L("Otto t'aide à comprendre", "Otto helps you understand")}</h2>
             <p className="onboard-lead">{L("Otto est un tuteur, pas un solutionnaire. Il t'explique, te guide, mais ne fait jamais le travail à ta place.", "Otto is a tutor, not a solution key. It explains, guides, but never does the work for you.")}</p>
@@ -3614,13 +3569,13 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Tu comprends", "You understand")}</b><span>{L("La compréhension reste la tienne — Otto t'aide à y arriver.", "Understanding stays yours — Otto helps you get there.")}</span></div></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(7)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(9)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(6)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(8)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 9 && (
+        {step === 8 && (
           <div className="onboard-step">
             <h2>{L("Fiches, Quiz et Notes", "Flashcards, Quizzes & Notes")}</h2>
             <p className="onboard-lead">{L("Otto crée automatiquement des supports de révision basés sur tes tâches et ton journal.", "Otto automatically creates study materials based on your tasks and journal.")}</p>
@@ -3628,16 +3583,15 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <div className="ob-tour-row"><b>{L("Fiches de révision", "Flashcards")}</b><span>{L("Générées automatiquement pour les définitions, formules, et concepts clés.", "Automatically generated for definitions, formulas, and key concepts.")}</span></div>
               <div className="ob-tour-row"><b>{L("Quiz interactifs", "Interactive Quizzes")}</b><span>{L("Teste tes connaissances avec des questions générées à partir de ton travail.", "Test your knowledge with questions generated from your work.")}</span></div>
               <div className="ob-tour-row"><b>{L("Notes synthétiques", "Synthetic Notes")}</b><span>{L("Résumés clairs et structurés pour réviser efficacement.", "Clear, structured summaries for effective revision.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Journal d'erreurs", "Error Log")}</b><span>{L("Ce que tu rates le plus souvent en contrôle, pour cibler tes révisions.", "What you get wrong most on tests, so you can target your revision.")}</span></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(8)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(10)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(7)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(9)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 10 && (
+        {step === 9 && (
           <div className="onboard-step">
             <h2>{L("Automatisation quotidienne", "Daily Automation")}</h2>
             <p className="onboard-lead">{L("Otto travaille pour toi tous les jours — pas besoin de lui demander.", "Otto works for you every day — no need to ask.")}</p>
@@ -3648,13 +3602,13 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Personnalisation", "Personalization")}</b><span>{L("Plus tu l'utilises, plus Otto s'ajuste à ta façon de travailler.", "The more you use it, the more Otto adjusts to how you work.")}</span></div></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(9)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(11)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(8)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(10)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 11 && (
+        {step === 10 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>

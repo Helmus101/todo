@@ -40,6 +40,7 @@ interface ArtifactCanvasProps {
   onCompleteTask?: () => void;
   language?: "fr" | "en";
   backgroundImageUrl?: string | null;
+  userId: string | null;
   // Ask Otto chat state — still owned/lived in StudyMode.tsx (same as `notes`/`scratchpad` above), just
   // threaded through so the "chat" artifact type can render it inside the generic movable/resizable chrome
   // instead of a fixed drawer. Optional: canvases that never render a chat artifact (there are none today,
@@ -190,9 +191,9 @@ export function ArtifactCanvas({
       case "document":
         return <DocumentArtifact url={art.source} title={art.title} />;
       case "flashcard":
-        return <FlashcardArtifact task={task} deckId={String(art.contentState?.deckId || "")} />;
+        return <FlashcardArtifact task={task} deckId={String(art.contentState?.deckId || "")} userId={userId} />;
       case "quiz":
-        return <QuizArtifact task={task} quizId={String(art.contentState?.quizId || "")} />;
+        return <QuizArtifact task={task} quizId={String(art.contentState?.quizId || "")} userId={userId} />;
       case "citation":
         return <CitationArtifact {...contentProps} />;
       case "chat":
