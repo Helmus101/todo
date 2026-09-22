@@ -123,6 +123,25 @@ export const relTime = (iso: string): string => {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
+// "Found in Gmail · 2h ago" — the Pillar-1 (proactive, not reactive) claim made concrete on the card
+// itself instead of living only in `task.why`'s free prose. `task.why` already explains WHY a task
+// matters, but never visibly says Otto found it on its own — this is that missing, structured "how Otto
+// found this" line. `manual` is deliberately excluded (the student added it themselves; there's nothing
+// for Otto to claim credit for finding).
+const SOURCE_LABEL: Record<string, { en: string; fr: string }> = {
+  gmail: { en: "Found in Gmail", fr: "Trouvé dans Gmail" },
+  calendar: { en: "Found in Calendar", fr: "Trouvé dans l'agenda" },
+  drive: { en: "Found in Drive", fr: "Trouvé dans Drive" },
+  pronote: { en: "Found in Pronote", fr: "Trouvé dans Pronote" },
+  studylog: { en: "From your study journal", fr: "Depuis ton journal d'étude" },
+};
+export function sourceAttributionLine(t: { source?: string; createdAt?: string }, en: boolean): string {
+  const label = t.source ? SOURCE_LABEL[t.source] : undefined;
+  if (!label) return "";
+  const when = t.createdAt ? relTime(t.createdAt) : "";
+  return when ? `${en ? label.en : label.fr} · ${when}` : (en ? label.en : label.fr);
+}
+
 // Explicit card status: what state is this task ACTUALLY in, in user terms. Derived from the canonical
 // lifecycle + the task's contents (a sendable → "Draft ready"; an open question → "Needs your answer").
 export function statusChip(t: WebTask, retrying?: boolean, en?: boolean): { label: string; tone: "muted" | "busy" | "attention" | "bad" | "good" } | null {

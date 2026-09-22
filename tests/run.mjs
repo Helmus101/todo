@@ -1318,6 +1318,20 @@ section("renderNoteBody — GFM pipe table support");
   check("plain markdown (no pipes) renders no table", !plain.includes("<table"));
   check("plain markdown still renders the heading/list/paragraph", /<h3/.test(plain) && /<ul/.test(plain) && /Texte\./.test(plain));
 }
+// sourceAttributionLine — the Pillar-1 (proactive) claim made visible on the card itself: "Found in
+// Gmail · 2h ago" instead of only living in task.why's free prose.
+section("sourceAttributionLine — proactive-pillar source attribution on task cards");
+{
+  const now = new Date().toISOString();
+  check("gmail source renders 'Found in Gmail · just now' (EN)", uiModule.sourceAttributionLine({ source: "gmail", createdAt: now }, true) === "Found in Gmail · just now");
+  // relTime itself is English-only everywhere in this codebase already (App.tsx:1147, TaskCard.tsx:619 —
+  // an existing, pre-existing convention, not something this feature introduces) — only the source LABEL
+  // half of this line is actually translated.
+  check("pronote source renders the French label with the same relTime text", uiModule.sourceAttributionLine({ source: "pronote", createdAt: now }, false) === "Trouvé dans Pronote · just now");
+  check("manual source renders nothing — the student added it themselves, nothing for Otto to claim", uiModule.sourceAttributionLine({ source: "manual", createdAt: now }, true) === "");
+  check("unknown/missing source renders nothing", uiModule.sourceAttributionLine({}, true) === "");
+  check("missing createdAt still renders the source label alone, no dangling separator", uiModule.sourceAttributionLine({ source: "calendar" }, true) === "Found in Calendar");
+}
 // formatMath (private to ui.tsx) is exercised through renderNoteBody, which calls it on every line. Bug
 // reported live: a flashcard/note written as plain "x^2 + y^2 = z^2" (no LaTeX escaping, just a bare caret —
 // how the model and students both naturally write exponents) rendered a literal caret instead of a real

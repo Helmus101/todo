@@ -15,7 +15,7 @@ import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { BookOpen, Activity } from "lucide-react";
 import {
-  LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel,
+  LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel, sourceAttributionLine,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
   withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, CondensedUserMessage, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
 } from "./ui.tsx";
@@ -307,6 +307,7 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
       <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
       {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
       {task.why ? <p className="dash-hero-why">{stripStrayMarkdown(task.why)}</p> : null}
+      {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
       {(task.sourceSubject || w || showChip || task.taskType) ? (
         <div className="dash-hero-meta">
           {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
@@ -523,6 +524,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           </div>
         ) : null}
         {task.why ? <p className="tf-why">{stripStrayMarkdown(task.why)}</p> : null}
+        {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
         <div className="tf-meta">
           {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}

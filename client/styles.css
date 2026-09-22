@@ -872,6 +872,14 @@ input:focus, textarea:focus {
   color: var(--ink-2);
   max-width: 54ch;
 }
+/* The proactive-pillar claim ("Otto found this on its own") made visible on the card itself, not just
+   implied by task.why's prose — see sourceAttributionLine in ui.tsx. Quiet by design: a small caption,
+   not a badge competing with the title/why for attention. */
+.card-source-attribution {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
 .dash-hero-meta {
   display: flex;
   flex-wrap: wrap;
@@ -4759,6 +4767,11 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-pomodoro-config input[type="number"] {
   width: 56px;
   padding: var(--space-1) var(--space-2);
+}
+.sm-setup-personalized-note {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--accent);
 }
 .sm-audio-spotify { margin-top: var(--space-4); }
 .sm-audio-spotify label {

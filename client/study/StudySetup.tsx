@@ -131,6 +131,13 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
   // removed rather than kept as dead weight.
   const [audioChoice, setAudioChoice] = useState<AudioChoice>({ audioType: "silence", armId: "silence" });
   const suggestionRef = useRef<{ enabled: boolean; workMinutes: number; breakMinutes: number } | null>(null);
+  // Real personalization (server/bandit.ts's POMODORO_ARMS via Thompson Sampling) has always shaped this
+  // screen's defaults silently — reported live as a positioning gap: the RL-personalization pillar was
+  // genuinely wired end to end but invisible in day-to-day use, only surfaced in a Settings "what Otto's
+  // learned" panel the student has to go looking for. `coldStart` (already returned by the endpoint, just
+  // discarded before) distinguishes a REAL learned suggestion from the arm-selection algorithm's own
+  // exploration-phase default — only worth telling the student about once it's actually personalized.
+  const [pomodoroPersonalized, setPomodoroPersonalized] = useState(false);
   useEffect(() => {
     // Only for a genuinely FRESH session — resuming an existing environment means the student already
     // made (and is relying on) their own choice; the bandit must never override that.
@@ -139,6 +146,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
       setPomodoroEnabled(s.enabled);
       setWorkMinutes(s.workMinutes);
       setBreakMinutes(s.breakMinutes);
+      setPomodoroPersonalized(!s.coldStart);
       suggestionRef.current = { enabled: s.enabled, workMinutes: s.workMinutes, breakMinutes: s.breakMinutes };
     }).catch(() => {}); // best-effort — the picker's own hardcoded defaults (25/5, off) already cover this
   }, [existingEnv]);
@@ -334,6 +342,14 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
               </label>
             </div>
           )}
+          {pomodoroPersonalized && suggestionRef.current
+            && suggestionRef.current.enabled === pomodoroEnabled
+            && suggestionRef.current.workMinutes === workMinutes
+            && suggestionRef.current.breakMinutes === breakMinutes ? (
+            // Only shown while the values still match the untouched suggestion — the moment the student
+            // edits anything, this is no longer an honest claim about what Otto picked.
+            <p className="sm-setup-personalized-note">Set from how your focus has trended recently.</p>
+          ) : null}
         </div>
 
         {/* Start button */}
