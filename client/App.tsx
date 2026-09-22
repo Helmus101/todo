@@ -3325,6 +3325,14 @@ const OB_STEPS = 7;
  *  handled by PronoteTile) isn't OAuth at all, so it doesn't fit that step's "opens in a new tab" pattern. */
 function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => void }) {
   const L = useLang();
+  // Every profile write below is deliberately non-blocking (a failed save shouldn't trap the student on
+  // this screen — see saveTrack's own comment, and the copy already tells them everything here is
+  // "changeable any time in Settings"), but non-blocking used to also mean SILENT: the catch blocks were
+  // empty, so a failed save looked identical to a successful one from the student's side — they'd move on
+  // thinking Otto knew their name/track when it didn't. A brief toast (the same NotifyContext every other
+  // save failure in the app already uses) doesn't change the non-blocking design, it just makes "this
+  // didn't save" an honest, visible fact instead of a silent one.
+  const notify = useNotify();
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [pronoteConnected, setPronoteConnected] = useState(false);
@@ -3340,16 +3348,16 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   const [yearLevel, setYearLevelState] = useState("");
   const saveYearLevel = async () => {
     const v = yearLevel.trim();
-    if (v) { try { await api.setProfilePreference("yearLevel", v); await onStatus(); } catch { /* non-blocking */ } }
+    if (v) { try { await api.setProfilePreference("yearLevel", v); await onStatus(); } catch { notify(L("Non enregistré — tu peux le refaire dans Réglages.", "Didn't save — you can set it later in Settings."), "error"); } }
   };
   const saveName = async () => {
     const n = name.trim();
-    if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { /* non-blocking */ } }
+    if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify(L("Prénom non enregistré — tu peux le refaire dans Réglages.", "Name didn't save — you can set it later in Settings."), "error"); } }
     setStep(1);
   };
   const saveTrack = async (t: "ib" | "bac" | "other") => {
     setTrack(t);
-    try { await api.setProfilePreference("track", t); await onStatus(); } catch { /* non-blocking */ }
+    try { await api.setProfilePreference("track", t); await onStatus(); } catch { notify(L("Parcours non enregistré — tu peux le refaire dans Réglages.", "Track didn't save — you can set it later in Settings."), "error"); }
     // Used to jump straight to step 2 here — but the year-level field below lives on this SAME step, so
     // auto-advancing the instant a track button is clicked never gave the student a chance to see or fill
     // it in. Stay put; "Continue" (added alongside the field) is what actually moves on now.
