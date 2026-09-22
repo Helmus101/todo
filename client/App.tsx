@@ -343,7 +343,7 @@ export function App() {
   const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
-  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); } catch { /* ignore */ } setOnboard(false); };
+  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
@@ -656,7 +656,7 @@ export function App() {
     // PREVIOUS account's cached tasks/status (see CACHED_TASKS/CACHED_STATUS above) before the real fetch
     // replaces them — visible, if briefly, as someone else's to-do list. None of these are needed once
     // signed out; the next session starts genuinely fresh.
-    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
     setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus();
   };
 
@@ -3333,7 +3333,20 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
   // save failure in the app already uses) doesn't change the non-blocking design, it just makes "this
   // didn't save" an honest, visible fact instead of a silent one.
   const notify = useNotify();
-  const [step, setStep] = useState(0);
+  // Reload mid-onboarding used to always restart at step 0 — `onboard` itself survives a reload
+  // (localStorage["otto-onboard"]), but `step` was plain useState with no persistence, so a student who
+  // got to step 5 and refreshed (or the tab got killed/restored) landed back on "what's your name" with
+  // no memory of getting that far. Name/track/language ALREADY saved server-side by that point get
+  // silently redone, which is at least harmless — but re-walking steps you already finished is exactly
+  // the opposite of "seamless." Persisted the same way `onboard` itself is.
+  const [step, setStepState] = useState(() => {
+    try { return Math.min(OB_STEPS - 1, Math.max(0, Number(localStorage.getItem("otto-onboard-step")) || 0)); }
+    catch { return 0; }
+  });
+  const setStep = (s: number) => {
+    setStepState(s);
+    try { localStorage.setItem("otto-onboard-step", String(s)); } catch { /* best-effort */ }
+  };
   const [name, setName] = useState("");
   const [pronoteConnected, setPronoteConnected] = useState(false);
   // Which curriculum/track the student is on — drives both AI vocabulary (trackLine() in server/claude.ts,
@@ -3510,6 +3523,12 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               ? L("Connecte ton Pronote quand tu veux depuis les Réglages, et Otto se met au travail.", "Connect your Pronote any time from Settings, and Otto gets to work.")
               : L("Connecte Gmail/Calendar ou ajoute tes examens depuis les Réglages, et Otto se met au travail.", "Connect Gmail/Calendar or add your exams from Settings, and Otto gets to work.")}</p>
             <p className="muted small">{L("Otto regarde automatiquement, tous les jours — pas besoin de lui demander. Pour connecter d'autres comptes ou ajuster quoi que ce soit, retrouve tout dans les Réglages.", "Otto always looks automatically, every day — no need to ask. To connect more accounts or adjust anything, it's all in Settings.")}</p>
+            {/* The one pillar the earlier 7 steps never mention: onboarding covered "Otto finds your work"
+                (proactive) and "Otto never does it for you" (tutor boundary) in depth, but never that Otto
+                also personalizes to the individual student, not just static rules — the third leg of what
+                actually makes this different from a generic to-do app. One line, not a new step: enough
+                to set the expectation without turning a 7-step flow into 8. */}
+            <p className="muted small">{L("Plus tu l'utilises, plus Otto s'ajuste à ta façon de travailler — durée des sessions, type d'aide, tout ça.", "The more you use it, the more Otto adjusts to how you actually work — session length, the kind of help it offers, all of it.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{L("Voir mes tâches", "See my tasks")}</button></div>
           </div>
         )}
