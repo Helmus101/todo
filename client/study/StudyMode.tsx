@@ -1210,7 +1210,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
             onOpenDeck: (id, title) => openArtifactByKind("deck", id, title),
             onOpenQuiz: (id, title) => openArtifactByKind("quiz", id, title),
           }}
-          camera={focusCamera}
+          // Only exposed to the canvas while beta is on. Not just the add-path (ToolsDrawer/onAddTool
+          // above) — a camera widget placed on a board before the student turned beta off must not keep
+          // rendering a live "start camera" button afterward. ArtifactCanvas's `camera ? <CameraArtifact>
+          // : null` already handles an undefined camera by rendering nothing for that widget.
+          camera={betaFeatures ? focusCamera : undefined}
         />
 
         {/* ── Panels (Layer 2) ── */}
@@ -1257,6 +1261,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
         {openPanel === "tools" && (
           <ToolsDrawer
             template={env.template}
+            betaFeatures={betaFeatures}
             onClose={() => setOpenPanel(null)}
             onAddLink={(url) => {
               // Lets a student open a Google Doc/Sheet/Slides mid-session — not just the materials
@@ -1299,6 +1304,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
               // opening it from the tools drawer must not spawn a second one alongside whatever Otto's
               // already written to.
               if (type === "board") { openOrFocusBoard(); setOpenPanel(null); return; }
+              // Same "don't trust the caller" posture as onAddLink's own gdoc re-check just above: the
+              // drawer already omits this tool when betaFeatures is off, but re-checking here means this
+              // stays safe even if another caller is ever added later.
+              if (type === "camera" && !betaFeatures) { setOpenPanel(null); return; }
               const newArtifact: ArtifactState = {
                 id: crypto.randomUUID(),
                 type,

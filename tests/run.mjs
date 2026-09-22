@@ -1124,6 +1124,17 @@ section("betaFeatures gates all 7 bandit call sites + the AI theme route (source
   check("flashcard-style bandit call is gated on betaFeatures", /if \(req\.session\.profile\?\.betaFeatures\) \{[\s\S]{0,1100}chooseArm\(FLASHCARD_ARMS/.test(indexSrc));
   check("theme-personalize route checks betaFeatures before generateThemeTokens", /req\.session\.profile\?\.betaFeatures[\s\S]{0,600}generateThemeTokens/.test(indexSrc));
   check("granularity bandit call (jobs.ts) is gated on betaFeatures", /if \(profile\?\.betaFeatures\) \{[\s\S]{0,300}chooseArm\(GRANULARITY_ARMS/.test(jobsSrc));
+
+  // The camera tool has TWO reachable entry points into Study Mode, not one: the focus overlay
+  // (StudyMode.tsx, gated on betaFeatures since this flag's introduction) and, found in a later audit,
+  // ToolsDrawer's "Private camera" widget (ArtifactCanvas.tsx's "camera" case) — reachable regardless of
+  // the overlay's own gate, plus a camera widget already placed on a board stays live after beta is
+  // switched back off unless the canvas's own camera prop is withheld. All three checked here.
+  const toolsDrawerSrc = readFileSync(new URL("../client/study/ToolsDrawer.tsx", import.meta.url), "utf8");
+  const studyModeSrc = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
+  check("ToolsDrawer omits the camera tool from its list when betaFeatures is off", /betaFeatures \? ALL_TOOLS : ALL_TOOLS\.filter\(t => t\.type !== "camera"\)/.test(toolsDrawerSrc));
+  check("StudyMode's onAddTool re-checks betaFeatures before adding a camera artifact (doesn't just trust the drawer)", /type === "camera" && !betaFeatures[\s\S]{0,60}return/.test(studyModeSrc));
+  check("StudyMode withholds the camera prop from ArtifactCanvas when betaFeatures is off, so a widget placed earlier stops rendering a live camera too", /camera=\{betaFeatures \? focusCamera : undefined\}/.test(studyModeSrc));
 }
 section("dodLooksLikeCoordinationOutcome — DoD-wording veto for flashcards/quiz (defense in depth)");
 {

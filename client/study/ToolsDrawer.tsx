@@ -10,6 +10,11 @@ interface ToolsDrawerProps {
   backgroundImageName?: string;
   onSetBackground: (file: File) => void;
   onClearBackground: () => void;
+  // Off by default (see Profile.betaFeatures in shared/types.ts) — the camera tool must not even be
+  // offered here when off. StudyMode.tsx's focus overlay hides its own entry point the same way; this
+  // drawer is the OTHER path to the same getUserMedia call (ArtifactCanvas.tsx's "camera" case), reported
+  // live as reachable regardless of the overlay's own gate.
+  betaFeatures?: boolean;
 }
 
 const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: WorkspaceTemplate[] }[] = [
@@ -35,9 +40,10 @@ const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: W
 // task material.
 const GSUITE_DOC_RE = /^https:\/\/docs\.google\.com\/(document|spreadsheets|presentation)\//i;
 
-export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroundImageName, onSetBackground, onClearBackground }: ToolsDrawerProps) {
-  const recommended = ALL_TOOLS.filter(t => t.templates.includes(template));
-  const others = ALL_TOOLS.filter(t => !t.templates.includes(template));
+export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroundImageName, onSetBackground, onClearBackground, betaFeatures = false }: ToolsDrawerProps) {
+  const availableTools = betaFeatures ? ALL_TOOLS : ALL_TOOLS.filter(t => t.type !== "camera");
+  const recommended = availableTools.filter(t => t.templates.includes(template));
+  const others = availableTools.filter(t => !t.templates.includes(template));
   const bgInputRef = useRef<HTMLInputElement>(null);
   const [linkUrl, setLinkUrl] = useState("");
   const [linkError, setLinkError] = useState("");
