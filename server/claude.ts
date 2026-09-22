@@ -4233,7 +4233,7 @@ export async function runTask(
       const res = await retryRequest(() => client.chat.completions.create({
         model, max_tokens: tokens, temperature: 0.2,
         response_format: { type: "json_object" },
-        messages: [{ role: "user", content: prompt + extraInstruction + langLine + nowLine }],
+        messages: [{ role: "user", content: prompt + baseCtx + extraInstruction + langLine + nowLine }],
       }));
       tokIn += res.usage?.prompt_tokens || 0;
       tokOut += res.usage?.completion_tokens || 0;
@@ -4552,7 +4552,7 @@ export async function runTask(
       console.log(`${new Date().toISOString()} [ai] step 5: skipping artifacts — taskType "${task.taskType}" never needs one`);
     } else {
     const isAcademic = task.taskType
-      ? STUDY_TASK_TYPES.has(task.taskType)
+      ? STUDY_TASK_TYPES.has(task.taskType) || task.taskType === "analyze" || task.taskType === "problem_solve"
       : /revision|revis|study|exam|test|control|contr[ôo]le|assessment|memoris|memoriz|drill|practice|pratique|exercis|exercic|chapter|chapitre|notion|formula|formule|definition|d[ée]finition|vocab|vocabulary|vocabulaire|grammar|grammaire|history|histoire|dates|biology|biologie|chemistry|chimie|physics|physique|maths|math[ée]mat|geography|g[ée]o|econom|[ée]conom|philosophy|philo|french|fran[çc]ais|english|anglais|spanish|espagnol|german|allemand|literature|litt[ée]rature/i.test(`${task.title} ${task.why} ${definitionOfDone}`);
 
     // Get focus-based artifact recommendation
@@ -4600,6 +4600,13 @@ export async function runTask(
       requestedArtifacts.push({ type: "flashcards", reason: "Academic task with discrete facts to memorize" });
       console.log(`${new Date().toISOString()} [ai] step 5: auto-adding flashcards for academic task`);
     }
+    // For academic tasks that don't match the discrete-facts pattern (essays, analysis, understanding a
+    // concept, problem-solving), a note is the right fallback artifact — a structured guide, outline, or
+    // method reference. Only nudge when the DoD doesn't look like a coordination outcome (checked below).
+    if (!requestedArtifacts.length && isAcademic) {
+      requestedArtifacts.push({ type: "note", reason: "Academic task — a study guide/outline note helps structure the work" });
+      console.log(`${new Date().toISOString()} [ai] step 5: auto-adding note for academic task`);
+    }
 
     // Defense in depth, independent of taskType/isAcademic (both upstream classifications that can be
     // wrong — see dodLooksLikeCoordinationOutcome's own comment for the live bug this closes): veto any
@@ -4622,7 +4629,8 @@ export async function runTask(
           `TASK: "${task.title}"\n` +
           `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
           `Context:\n${context}\n\n` +
-          `Create 8-15 flashcards with real, specific content from the context above. ` +
+          `Create 8-15 flashcards with real, specific content. Use the context above when available, but ` +
+          `Missing the class's EXACT source material is NEVER a reason to skip: use your general knowledge of the topic. ` +
           `One idea per card. Front: asks for recall, never leaks the answer. Back: the answer, detailed enough to teach.\n` +
           `Cards must build real understanding of the topic, not just isolated trivia — cover the concept's core ` +
           `mechanics/reasoning (the "why"/"how"), not only names, dates, or definitions to memorize by rote when the ` +
@@ -4647,6 +4655,7 @@ export async function runTask(
           `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
           `Context:\n${context}\n\n` +
           `Create 4-8 multiple-choice quiz questions with NEW questions on the same notion (never the student's own exercise). ` +
+          `Use the context above when available, but Missing the class's EXACT source material is NEVER a reason to skip: use your general knowledge of the topic. ` +
           `Each question needs 2-4 options, a correct index, and a one-line explanation.\n` +
           `Return JSON: {"title": "quiz title", "questions": [{"q": "...", "options": ["a", "b", "c", "d"], "correct": 0, "why": "..."}]}`,
           2000,
@@ -4666,7 +4675,9 @@ export async function runTask(
           `TASK: "${task.title}"\n` +
           `DEFINITION OF DONE: ${definitionOfDone}\n\n` +
           `Context:\n${context}\n\n` +
-          `Create a concise reference sheet with REAL content from the context above — either an ACADEMIC one ` +
+          `Create a concise reference sheet with REAL content. Use the context above when available, but ` +
+          `Missing the class's EXACT source material is NEVER a reason to skip: use your general knowledge of the topic. ` +
+          `Create either an ACADEMIC one ` +
           `(key formulas, definitions, concepts, a worked example structure, a study checklist) OR, if the ` +
           `definition of done asks for a produced list/shortlist/comparison of real-world options, the actual ` +
           `COMPILED RESULT: a categorized table/list using the real names, prices, locations, durations, etc. ` +
