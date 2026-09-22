@@ -176,6 +176,32 @@ export function dropRedundantArtifactSteps(
   return kept.length ? kept : steps;
 }
 
+/** A step's url may only ever be one the research actually returned. Left ungated, "attach a link" is an
+ *  open invitation to emit a plausible-looking store or booking URL from memory — the same fabrication the
+ *  step text's own GROUNDING rule exists to stop, except a wrong link is worse than a wrong sentence: it
+ *  looks authoritative and the student clicks it. Anything not in the task's own link list is stripped;
+ *  the step itself survives without it. Compared host+path so a tracking query string or a trailing slash
+ *  isn't treated as a different page. */
+function canonicalUrl(url: string): string | undefined {
+  try {
+    const u = new URL(String(url));
+    return `${u.hostname.replace(/^www\./i, "")}${u.pathname.replace(/\/+$/, "")}`.toLowerCase();
+  } catch { return undefined; }
+}
+export function restrictStepUrlsToLinks(steps: TaskStep[], links: TaskLink[]): TaskStep[] {
+  const allowed = new Map<string, string>();
+  for (const l of links) { const c = canonicalUrl(l.url); if (c) allowed.set(c, l.url); }
+  return steps.map((s) => {
+    if (!s.url) return s;
+    const c = canonicalUrl(s.url);
+    const match = c ? allowed.get(c) : undefined;
+    if (match) return { ...s, url: match };
+    console.log(`${new Date().toISOString()} [ai] stripped an invented step link: "${s.url}"`);
+    const { url: _dropped, ...rest } = s;
+    return rest as TaskStep;
+  });
+}
+
 /** Keep only steps that the step-writer itself tied to a numbered part of the definition of done — with a
  *  floor, because a plan is never worth emptying out over this. If fewer than 2 steps would survive, the
  *  model's part-numbering is more likely broken than the whole plan is, so the original list stands. */
@@ -4391,6 +4417,16 @@ export async function runTask(
       `returns too little to actually build a curated list from; several targeted ones ("best museums Oslo", ` +
       `"outdoor winter activities Tromsø") do. Go up to the full 5 when the definition of done genuinely ` +
       `needs that much real material — don't under-search a task that needs a real list just to stay terse.\n` +
+      `RESOLVE WHAT THE TASK LEAVES UNNAMED. If the task or its definition of done points at something ` +
+      `without naming it — "the items still left", "the book", "the form", "the remaining questions" — the ` +
+      `specifics are in the source material further down this message (the email, the Pronote assignment). ` +
+      `Read them out of there and search for THOSE, not for the vague phrase. Never search the vague phrase ` +
+      `itself: a query like "items still left" returns nothing usable and leaves the whole task generic.\n` +
+      `IF THE TASK MEANS OBTAINING SOMETHING REAL — buying a book or product, booking travel or a ticket, ` +
+      `applying, or downloading an official document — then searching for where to actually get it is part ` +
+      `of the job: the exact edition/version named, what it currently costs, and a real page to buy or book ` +
+      `it from. A step that says "order the Actes Sud Babel edition" with no link behind it just hands the ` +
+      `research back to the student.\n` +
       `Return 1-5 search queries. If no web search is needed, return an empty array.\n` +
       `Return JSON: {"searches": ["query 1", "query 2"]}`,
       600, // same truncation risk as step 1's budget — see that comment
@@ -4531,6 +4567,14 @@ export async function runTask(
       `- COVER THE DEFINITION OF DONE'S OWN PARTS: identify its distinct sub-requirements (usually separated by commas/"and"/semicolons — e.g. "purpose, dates, travellers, transport and accommodation booked, and any required documents identified" is FIVE separate things, not one) and make sure the step list, together, actually addresses every one of them. A step list that looks plausible but silently leaves a named part of the definition of done untouched is incomplete, not just short — go back and add the missing step rather than padding an already-covered part.\n` +
       `- Match the plan's size to the task's real complexity — 3 steps for a simple task, up to 5 for a genuinely complex one. Never pad to look thorough. Fewer is better.\n` +
       `- Mark automatable=true ONLY for a step Otto already prepared (the student just clicks).\n` +
+      (links.length
+        ? `- ATTACH A LINK WHERE ONE WOULD SAVE THE STUDENT THE LOOKUP. A step that sends them somewhere — to ` +
+          `buy, book, order, download, register, or read a specific source — should carry "url", so they can ` +
+          `act on it instead of re-searching what Otto already found. Use ONLY these exact URLs, copied ` +
+          `character for character; never invent, shorten or guess one, and leave "url" off any step where ` +
+          `none of them genuinely fits:\n` +
+          links.map((l) => `  · ${l.label} — ${l.url}`).join("\n") + `\n`
+        : "") +
       adaptiveInstructions +
       `\nHOW TO ANSWER:\n` +
       `First fill "dodParts": split the DEFINITION OF DONE into its distinct parts, in order, one short ` +
@@ -4540,7 +4584,7 @@ export async function runTask(
       `it moves forward, it is not a step for this task — do not write it, and write the step that part ` +
       `actually needs instead. A step that is merely on-topic, generically sensible, or good study advice ` +
       `is exactly what this rule exists to keep out.\n` +
-      `Return JSON: {"dodParts": ["...", "..."], "steps": [{"text": "...", "automatable": false, "dodPart": 1}], "definitionOfDone": "refined if needed"}`,
+      `Return JSON: {"dodParts": ["...", "..."], "steps": [{"text": "...", "automatable": false, "dodPart": 1, "url": "only if one of the links above fits"}], "definitionOfDone": "refined if needed"}`,
       // 800 was verified live to truncate mid-JSON on an ordinary task (DeepSeek v4's hidden reasoning
       // tokens count against max_tokens — see ask()'s own comment) — up to 10 step objects, each with 5
       // fields, needs real headroom. ask() now also retries once with a bumped budget on truncation, but
@@ -4556,6 +4600,7 @@ export async function runTask(
       ...sanitizeStepExtras(s),
     }));
     console.log(`${new Date().toISOString()} [ai] step 4 result: ${steps.length} steps before filtering`);
+    steps = restrictStepUrlsToLinks(steps, links);
 
     // Anchoring: a step only belongs in this plan if it advances a named part of the definition of done.
     // The model was just asked to enumerate those parts and cite one per step, so a step that cites none

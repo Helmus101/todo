@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -2144,6 +2144,31 @@ section("/finance (Plaid) — plaidToItems + plaidBillsToTasks, and that NONE of
   check("a brief is required to carry real specifics, not generic advice", /a brief made of generic advice/.test(noteWriter));
   check("the repair pass reuses step 4's own enumerated parts rather than re-deriving them",
     /The definition of done breaks into these parts/.test(src));
+}
+
+// ── Step links: research-backed, never invented ──────────────────────────────────────────────────
+{
+  const found = [{ label: "Incendies — Actes Sud Babel", url: "https://www.example-shop.fr/incendies-babel" }];
+  const keep = restrictStepUrlsToLinks([{ text: "Order the Actes Sud Babel edition", automatable: false, url: "https://www.example-shop.fr/incendies-babel" }], found);
+  check("a step keeps a link the research actually returned", keep[0].url === "https://www.example-shop.fr/incendies-babel");
+  const invented = restrictStepUrlsToLinks([{ text: "Order the Actes Sud Babel edition", automatable: false, url: "https://www.amazon.fr/dp/2742780890" }], found);
+  check("an invented store link is stripped rather than shown to the student", invented[0].url === undefined);
+  check("the step itself survives losing its invented link", invented.length === 1 && invented[0].text === "Order the Actes Sud Babel edition");
+  const noisy = restrictStepUrlsToLinks([{ text: "Order it", automatable: false, url: "https://example-shop.fr/incendies-babel/?utm_source=x" }], found);
+  check("a tracking query string or trailing slash isn't treated as a different page", noisy[0].url === "https://www.example-shop.fr/incendies-babel");
+  check("a step with no link is left alone", restrictStepUrlsToLinks([{ text: "Read the first half", automatable: false }], found)[0].url === undefined);
+  check("with no research links at all, every step url is stripped", restrictStepUrlsToLinks([{ text: "Buy it", automatable: false, url: "https://anywhere.test/x" }], [])[0].url === undefined);
+
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const searchPrompt = src.slice(src.indexOf("What web searches should be performed"), src.indexOf('{"searches": ["query 1", "query 2"]}'));
+  check("step 2 is told to resolve what the task leaves unnamed from the source material", /RESOLVE WHAT THE TASK LEAVES UNNAMED/.test(searchPrompt));
+  check("step 2 is told never to search the vague phrase itself", /Never search the vague phrase/.test(searchPrompt));
+  check("step 2 treats buying/booking/obtaining as a real thing to search for", /IF THE TASK MEANS OBTAINING SOMETHING REAL/.test(searchPrompt));
+  const step4 = src.slice(src.indexOf("ATTACH A LINK WHERE ONE"), src.indexOf('"definitionOfDone": "refined if needed"}`,'));
+  check("step 4 is offered the research links and told to copy them verbatim", /Use ONLY these exact URLs, copied/.test(step4) && /links\.map\(\(l\) =>/.test(step4));
+  check("step 4's JSON shape allows a url on a step", /"url": "only if one of the links above fits"/.test(step4));
+  check("step links are validated against the task's own links before anything else runs",
+    src.indexOf("steps = restrictStepUrlsToLinks(steps, links)") < src.indexOf("steps = dropUnanchoredSteps"));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
