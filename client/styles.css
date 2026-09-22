@@ -3143,21 +3143,6 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   background: rgba(var(--bg-rgb), 0.4);
 }
 
-.card-focus-score {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border-radius: 12px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--ink-2);
-  background: rgba(255, 149, 10, 0.12);
-  margin-left: 4px;
-}
-.card-focus-score span {
-  font-variant-numeric: tabular-nums;
-}
 .card-peak-badge {
   display: inline-flex;
   align-items: center;

@@ -13,7 +13,7 @@ import { useEffect, useState, useRef, useContext, type ReactNode, type Dispatch,
 import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
 import { api } from "./api.ts";
-import { BookOpen, Activity } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import {
   LangContext, useLang, todayIso, fmtDate, relTime, statusChip, subtitle, quadrantLabel, sourceAttributionLine,
   fmtWhen, TAB_GROUP, openTab, openTabs, autoOpenTaskDocs,
@@ -178,15 +178,6 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
     void api.profile().then(setProfile).catch(() => {});
   }, []);
   
-  // Get subject-specific focus score. Reported live: this fell back to profile.focusStats.avgConcentration
-  // (the ACCOUNT-WIDE average) whenever a task had no sourceSubject or no subject-specific history — but the
-  // badge's own label always says "Historical focus on THIS SUBJECT" regardless, so a birthday-message task
-  // or a trip-planning task (no subject at all) showed the exact same number as every academic task, mislabeled
-  // as being specifically about it. Only show it when it's genuinely subject-specific — never fall back to
-  // the generic average under a subject-specific claim.
-  const focusScore = task.sourceSubject ? profile?.focusStats?.subjectFocus?.[task.sourceSubject] : undefined;
-  const showFocusScore = focusScore !== undefined && focusScore < 100 && !isDone;
-  
   // Check if current time is peak focus time
   const peakHour = profile?.focusStats?.peakFocusHour;
   const currentHour = new Date().getHours();
@@ -264,12 +255,6 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
           {(task.sourceSubject || w || secondary) ? (
             <span className="card-sub">
               {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
-              {showFocusScore ? (
-                <span className="card-focus-score" title={L(`Focus historique sur cette matière : ${Math.round(focusScore)}%`, `Historical focus on this subject: ${Math.round(focusScore)}%`)}>
-                  <Activity size={12} aria-hidden="true" />
-                  <span>{Math.round(focusScore)}%</span>
-                </span>
-              ) : null}
               {showPeakBadge ? (
                 <span className="card-peak-badge" title={L(`Heure de pic d'attention : ${peakHour}:00`, `Peak focus hour: ${peakHour}:00`)}>
                   {L("Meilleur moment", "Best time")}
