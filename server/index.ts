@@ -229,7 +229,7 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
   
   // Dirty-flag check: skip cloud sync if nothing changed (unless awaitCloud is true, which means this
   // is a high-value write like a journal save or flashcard review that must always persist).
-  const currentHash = createHash(JSON.stringify(localTasks) + JSON.stringify(localProfile)).digest("hex");
+  const currentHash = createHash("sha1").update(JSON.stringify(localTasks) + JSON.stringify(localProfile)).digest("hex");
   const sessionId = req.sessionID;
   const lastHash = sessionDirtyCache.get(sessionId);
   const isDirty = lastHash !== currentHash;
