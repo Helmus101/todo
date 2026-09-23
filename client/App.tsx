@@ -2727,7 +2727,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             Now gated by track: the narrow Lycée-only grid stays the default for "bac"/unset (unchanged for
             existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
         <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
-        <PronoteTile status={status} onStatusUpdate={loadStatus} />
+        <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
         <BlackbaudTile />
         <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
       </section>
@@ -3131,37 +3131,44 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [pronoteUsername, setPronoteUsername] = useState<string | undefined>();
-  
-  // Load pronote username when connected
+
+  // `mainStatus?.pronoteConnected` is briefly unreliable right after a write on serverless (see
+  // pronoteConnectedCached's own comment in server/pronote.ts): a status poll immediately following a
+  // connect/disconnect can land on a DIFFERENT warm Vercel instance whose cache still remembers the OLD
+  // value from before. `optimistic` overrides it until mainStatus actually agrees, so the tile reflects
+  // this tab's own just-completed action immediately instead of showing "Connect" for several seconds
+  // after a connection that had already genuinely succeeded.
+  const [optimistic, setOptimistic] = useState<boolean | null>(null);
   useEffect(() => {
+    if (optimistic !== null && mainStatus?.pronoteConnected === optimistic) setOptimistic(null);
+  }, [mainStatus?.pronoteConnected, optimistic]);
+  const effectivelyConnected = optimistic ?? mainStatus?.pronoteConnected;
+
+  // Load pronote username when connected — skipped while `optimistic` already set it locally (see connect()
+  // below), so this effect doesn't clear it back to undefined for the few seconds mainStatus lags behind.
+  useEffect(() => {
+    if (optimistic !== null) return;
     if (mainStatus?.pronoteConnected) {
       api.pronoteStatus().then(s => setPronoteUsername(s.username)).catch(() => {});
     } else {
       setPronoteUsername(undefined);
     }
-  }, [mainStatus?.pronoteConnected]);
-  
-  // Derive pronote status from main app status
-  const status = mainStatus?.pronoteConnected ? { connected: true, username: pronoteUsername } : { connected: false };
+  }, [mainStatus?.pronoteConnected, optimistic]);
+
+  const status = effectivelyConnected ? { connected: true, username: pronoteUsername } : { connected: false };
 
   const connect = async () => {
     if (!url.trim() || !username.trim() || !password) { setErr(L("Renseigne l'URL, l'identifiant et le mot de passe.", "Fill in the URL, username, and password.")); return; }
     setBusy(true); setErr("");
     try {
       const r = await api.connectPronote(url.trim(), username.trim(), password, kind === "parent" ? 7 : 6);
-      console.log("[Pronote] Connect response:", r);
       if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
       setPassword(""); setOpen(false);
-      // Force a fresh status check by calling it twice - first call with no-cache, second to get value
-      // The browser might cache the first call, so we use a timestamp to bust it
-      await fetch("/api/status?t=" + Date.now(), { cache: "no-store" });
-      const freshStatus = await api.status();
-      console.log("[Pronote] Fresh status after connect:", freshStatus);
-      // onStatusUpdate might not be defined in onboarding context, so check before calling
-      if (onStatusUpdate) onStatusUpdate();
+      setPronoteUsername(username.trim());
+      setOptimistic(true);
+      onStatusUpdate?.();
       onChanged?.();
     } catch (e: any) {
-      console.error("[Pronote] Connect error:", e);
       setErr(e?.message || L("Connexion impossible.", "Couldn't connect."));
     } finally { setBusy(false); }
   };
@@ -3169,7 +3176,8 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
     setBusy(true);
     try {
       await api.disconnectPronote();
-      if (onStatusUpdate) onStatusUpdate();
+      setOptimistic(false);
+      onStatusUpdate?.();
       onChanged?.();
     }
     catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }

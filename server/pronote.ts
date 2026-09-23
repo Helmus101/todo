@@ -186,12 +186,21 @@ export async function pronoteConnected(email: string): Promise<{ connected: bool
 
 // Cached wrapper for the hot /api/status path (client/App.tsx polls it every 45s, plus on every focus/
 // visibility change) — pronoteConnected() otherwise does a full cloud state load on EVERY call, with no
-// caching at all, for a value that only ever changes on an explicit connect/disconnect. 60s TTL, longer
-// than the poll interval so a normal poll actually hits the cache instead of re-reading every time.
+// caching at all, for a value that only ever changes on an explicit connect/disconnect.
+//
+// 10s TTL (was 60s): this Map is per-serverless-instance, and invalidatePronoteStatus() below can only
+// clear the entry on whichever instance handled the connect/disconnect request — a status poll landing on
+// a DIFFERENT warm Vercel instance right after was still serving up to 60s of a stale pre-connect "not
+// connected" from ITS OWN untouched cache, with no way to invalidate it remotely. This was reported live as
+// "I connected to Pronote but it still shows the Connect button" — the tile derives its displayed state
+// from THIS cached value (via /api/status's pronoteConnected field), not from the uncached direct read.
+// 60s made a freshly-connected account look disconnected for up to a full minute on an unlucky instance;
+// 10s isn't a real fix for the underlying per-instance locality problem, just a much smaller window for it
+// to bite — still meaningfully cuts Supabase read volume across a 45s poll cadence.
 const connectedCache = new Map<string, { at: number; data: { connected: boolean; username?: string; needsReconnect?: boolean } }>();
 export async function pronoteConnectedCached(email: string): Promise<{ connected: boolean; username?: string; needsReconnect?: boolean }> {
   const hit = connectedCache.get(email);
-  if (hit && Date.now() - hit.at < 60_000) return hit.data;
+  if (hit && Date.now() - hit.at < 10_000) return hit.data;
   const data = await pronoteConnected(email);
   connectedCache.set(email, { at: Date.now(), data });
   return data;
