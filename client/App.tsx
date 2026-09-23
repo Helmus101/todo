@@ -938,7 +938,7 @@ export function App() {
       {onboard && <Onboarding onStatus={loadStatus} onDone={finishOnboard} />}
 
       {route === "settings" ? (
-        <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} />
+        <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} />
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} />
       ) : route === "study" ? (
@@ -2390,7 +2390,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
 /** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
-function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void }) {
+function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void }) {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
