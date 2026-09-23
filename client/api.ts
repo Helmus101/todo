@@ -7,6 +7,10 @@ export interface IntegrationsResp { ready: boolean; items: IntegrationItem[]; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// ETag cache for GET endpoints that send ETags (currently /api/status and /api/tasks).
+// Stores { etag, body } per URL so a 304 Not Modified can return the previous body at 0 egress cost.
+const etagCache = new Map<string, { etag: string; body: string }>();
+
 // CSRF synchronizer token (see server/index.ts's requireAuth for the full defense-in-depth reasoning) —
 // handed to us once via /api/status's own JSON body (a cross-origin attacker page can't read that response,
 // no permissive CORS is set anywhere on this API), cached here, and attached to every mutating request
@@ -81,6 +85,14 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
   if (method !== "GET" && method !== "HEAD" && csrfToken) {
     init = { ...init, headers: { ...(init?.headers || {}), "x-csrf-token": csrfToken } };
   }
+  // ETag: attach If-None-Match on GET requests when we have a cached tag. A 304 response means nothing
+  // changed — synthesize a Response from our cached body so callers never see 304 and need no changes.
+  if (method === "GET") {
+    const cached = etagCache.get(url);
+    if (cached) {
+      init = { ...init, headers: { ...(init?.headers || {}), "if-none-match": cached.etag } };
+    }
+  }
   for (let attempt = 0; ; attempt++) {
     try {
       const r = await fetch(url, init);
@@ -91,6 +103,20 @@ async function req(url: string, init?: RequestInit, retries = 6, isCsrfRetry = f
       // other's write lands). Keeps this tab in sync without waiting for the NEXT /api/status poll.
       const freshToken = r.headers.get("x-csrf-token");
       if (freshToken) csrfToken = freshToken;
+      // 304 Not Modified — return the cached body as a synthetic 200 Response so every caller just sees
+      // a normal successful response, with 0 bytes transferred from the server.
+      if (r.status === 304) {
+        const cached = etagCache.get(url);
+        if (cached) return new Response(cached.body, { status: 200, headers: { "content-type": "application/json" } });
+      }
+      // Cache the ETag + body for future GET requests to this URL.
+      if (method === "GET" && r.ok) {
+        const etag = r.headers.get("etag");
+        if (etag) {
+          const body = await r.clone().text();
+          etagCache.set(url, { etag, body });
+        }
+      }
       // A CSRF mismatch can still arrive without a usable replacement header when the request lands on a
       // freshly-created serverless instance. Re-read /api/status once to obtain the session's authoritative
       // token, then replay only the original request. This is deliberately limited to the server's CSRF error

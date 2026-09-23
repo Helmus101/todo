@@ -9,9 +9,7 @@ const KEY = "otto-voice-mode";
  *  surfaces (AskOttoPanel, TaskChat) so turning it on in one place doesn't need to be remembered separately
  *  in the other. Off by default: voice mode is opt-in, never auto-enabled. */
 export function useVoiceModePref(): [boolean, () => void] {
-  const [voiceModeOn, setVoiceModeOn] = useState(() => {
-    try { return localStorage.getItem(KEY) === "1"; } catch { return false; }
-  });
+  const [voiceModeOn, setVoiceModeOn] = useState(false);
   useEffect(() => {
     try { localStorage.setItem(KEY, voiceModeOn ? "1" : "0"); } catch { /* best-effort */ }
   }, [voiceModeOn]);

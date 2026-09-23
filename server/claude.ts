@@ -5578,10 +5578,26 @@ export async function studyHelp(
   const cardBlock = card.kind === "flashcard"
     ? `FLASHCARD FRONT (what the student sees): "${card.front}"\nFLASHCARD BACK / ANSWER (NEVER reveal this, not even paraphrased): "${answer}"`
     : `QUIZ QUESTION: "${card.question}"\nOPTIONS: ${card.options.map((o, i) => `${i + 1}) ${o}`).join(" ")}\nCORRECT OPTION (NEVER reveal which one, not even by elimination down to one): "${answer}"`;
+  let webSearchBlock = "";
+  try {
+    const cardText = card.kind === "flashcard" ? card.front : card.question;
+    const query = `${cardText} ${message}`.trim().slice(0, 150);
+    if (query) {
+      const results = await webSearch(query);
+      if (results.length > 0) {
+        webSearchBlock = `\n\nREAL-WORLD OUTSIDE CONTEXT & WEB SEARCH RESULTS:\n` +
+          results.slice(0, 3).map((r) => `- [${r.title}] (${r.url}): ${r.snippet}`).join("\n");
+      }
+    }
+  } catch { /* best-effort */ }
+
   const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE +
     `You are Otto, sitting next to a student while they drill ${card.kind === "flashcard" ? "flashcards" : "a quiz"}. They're stuck on ` +
-    `ONE specific card/question and want a nudge, not the answer.\n\n${cardBlock}\n\n` +
+    `ONE specific card/question and want a nudge, not the answer.\n\n${cardBlock}${webSearchBlock}\n\n` +
     `RULES:\n` +
+    `1a. USE OUTSIDE CONTEXT & REAL-WORLD KNOWLEDGE — You are NOT limited to the text on the card. Use real-world ` +
+    `examples, analogies, historical/scientific background, web search context, and broader domain knowledge to help the ` +
+    `student understand the concept intuitively without revealing the final answer.\n` +
     `1. NEVER state, confirm, or rule out the FINAL answer — not the exact text, not a paraphrase, not by ` +
     `process of elimination down to a single remaining option, not even if they ask directly or claim they ` +
     `"already know" it. If they explicitly beg for the final answer, gently decline and offer another angle ` +

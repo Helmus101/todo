@@ -11,7 +11,7 @@ import bcrypt from "bcryptjs";
 const DUMMY_PASS_HASH = bcrypt.hashSync("otto-dummy-password-for-timing-safety", 10);
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
@@ -923,7 +923,13 @@ app.get("/api/status", ah(async (req, res) => {
     if (!req.session.csrfToken) req.session.csrfToken = randomBytes(24).toString("hex");
     s.csrfToken = req.session.csrfToken;
   }
-  res.json(s);
+  // ETag: hash the JSON payload so repeated polls within the same session cost 0 bytes when nothing changed.
+  // The CSRF token is session-specific and already in the payload, so the hash is also user-specific.
+  const statusJson = JSON.stringify(s);
+  const etag = `"${createHash("sha1").update(statusJson).digest("hex").slice(0, 16)}"`;
+  res.setHeader("ETag", etag);
+  if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
+  res.type("json").send(statusJson);
 }));
 
 // "Pause all AI usage" — the ONE toggle that stops generation and task runs. Enforced server-side
@@ -1028,7 +1034,13 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
     }
   }
-  res.json(req.session.tasks || []);
+  // ETag: 4-second poll loops hit this on every tick — a hash-gated 304 means 0 bytes egress on the
+  // overwhelming-majority of polls where nothing actually changed since the last fetch.
+  const tasksJson = JSON.stringify(req.session.tasks || []);
+  const etag = `"${createHash("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
+  res.setHeader("ETag", etag);
+  if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
+  res.type("json").send(tasksJson);
 });
 
 // Pattern recognition (server/patterns.ts) — predicts the student's next likely move from data already on

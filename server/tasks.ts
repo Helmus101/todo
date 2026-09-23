@@ -247,12 +247,17 @@ function looseDup(a: string, b: string): boolean {
  *  generated) — those can differ by weeks (a task sits unactioned, then finally gets dismissed), and sorting
  *  by creation time was evicting a record the user JUST dismissed in favor of an older-but-freshly-generated
  *  one, so a just-dismissed item's suppression could vanish within the same sweep that removed it — the
- *  exact "I dismissed this and it came right back" failure mode. */
+ *  exact "I dismissed this and it came right back" failure mode.
+ *  Egress reduction: handled tasks have their `chat` thread and `audit` log stripped — those are the largest
+ *  per-task blobs (a full conversation thread can be several KB; audit is N-entry JSON) and are never
+ *  needed again once a task is done/dismissed. Only the most-recent 3 audit entries are retained so the
+ *  completed-task card can still show its last outcome without shipping the full history. */
 export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
   const active = list.filter((t) => t.status !== "done" && t.status !== "dismissed");
   const handled = list.filter((t) => t.status === "done" || t.status === "dismissed")
     .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""))
-    .slice(0, keep);
+    .slice(0, keep)
+    .map((t) => ({ ...t, chat: undefined, audit: t.audit?.slice(-3) }));
   return [...active, ...handled];
 }
 
@@ -1114,7 +1119,7 @@ export function foldGenerated(existing: WebTask[], genTasks: {
     deduped.filter((t) => freshIds.has(t.id)).sort((a, b) => b.score - a.score).slice(0, MAX_NEW_PER_SWEEP).map((t) => t.id));
   const calmed = deduped.filter((t) => !freshIds.has(t.id) || keepNew.has(t.id));
   // Eisenhower ranking with deadline/VIP/freshness tie-breaks (was: bare score sort).
-  return trimOldStudylogArtifacts(pruneHandled(sortWithinQuadrant(calmed, highPriorityPeople), 120));
+  return trimOldStudylogArtifacts(pruneHandled(sortWithinQuadrant(calmed, highPriorityPeople), 35));
 }
 
 /** Add a task the user typed. No separate "clean up" pass anymore — it goes in with the raw title and runs

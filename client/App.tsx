@@ -547,7 +547,7 @@ export function App() {
     const on = () => {
       if (document.hidden || signedOutRef.current) return;
       const now = Date.now();
-      if (now - lastFocusSyncRef.current < 60_000) return;
+      if (now - lastFocusSyncRef.current < 120_000) return;
       lastFocusSyncRef.current = now;
       void syncTasks(); void loadStatus(); void loadBudget(); void sweepIfDue(); if (status?.pronoteConnected) void api.pronoteTouch();
     };
