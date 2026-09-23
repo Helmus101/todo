@@ -120,7 +120,7 @@ function normalizePronoteUrl(url: string, kind: number): string {
 
 /** Connect a Pronote account: log in ONCE with the real credentials (never stored past this call), then
  *  persist only the rotating token pawnote issues in their place. */
-export async function connectPronote(email: string, opts: { url: string; username: string; password: string; kind?: number }): Promise<{ ok: boolean; error?: string }> {
+export async function connectPronote(email: string, opts: { url: string; username: string; password: string; kind?: number }): Promise<{ ok: boolean; error?: string; connected?: boolean; username?: string }> {
   // Mandatory HERE specifically, unlike the rest of the app: a Pronote token is the replacement for a
   // student's REAL school password, a materially bigger liability than a revocable Google OAuth token if
   // this database ever leaked. crypto.ts itself stays non-fatal (it's imported by nearly everything, so a
@@ -150,7 +150,7 @@ export async function connectPronote(email: string, opts: { url: string; usernam
       // with zero visible error, and reconnecting just burned another one-time token for nothing.
       await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored }, { throwOnError: true });
       invalidatePronoteStatus(email);
-      return { ok: true };
+      return { ok: true, connected: true, username: stored.username };
     } catch (e: any) {
       console.warn("[pronote] connect failed:", e?.message || e);
       if (!isExpectedPronoteError(e)) reportError("pronote-connect", e, { email });

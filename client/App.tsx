@@ -3142,10 +3142,10 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
       console.log("[Pronote] Connect response:", r);
       if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
       setPassword(""); setOpen(false);
-      // Small delay to ensure server cache is invalidated
-      await new Promise(r => setTimeout(r, 500));
-      await load();
-      console.log("[Pronote] Status after connect:", status);
+      // Use the status returned from connect instead of making a separate status check
+      if (r.connected) {
+        setStatus({ connected: true, username: r.username });
+      }
       onChanged?.();
     } catch (e: any) {
       console.error("[Pronote] Connect error:", e);
