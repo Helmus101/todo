@@ -3152,7 +3152,11 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
       console.log("[Pronote] Connect response:", r);
       if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
       setPassword(""); setOpen(false);
-      // Trigger full status reload to update main app's pronoteConnected flag
+      // Force a fresh status check by calling it twice - first call with no-cache, second to get value
+      // The browser might cache the first call, so we use a timestamp to bust it
+      await fetch("/api/status?t=" + Date.now(), { cache: "no-store" });
+      const freshStatus = await api.status();
+      console.log("[Pronote] Fresh status after connect:", freshStatus);
       onStatusUpdate?.();
       onChanged?.();
     } catch (e: any) {
