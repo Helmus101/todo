@@ -3158,13 +3158,15 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
   const status = effectivelyConnected ? { connected: true, username: pronoteUsername } : { connected: false };
 
   const connect = async () => {
-    if (!url.trim() || !username.trim() || !password) { setErr(L("Renseigne l'URL, l'identifiant et le mot de passe.", "Fill in the URL, username, and password.")); return; }
+    const trimmedUrl = url.trim();
+    const trimmedUsername = username.trim();
+    if (!trimmedUrl || !trimmedUsername || !password) { setErr(L("Renseigne l'URL, l'identifiant et le mot de passe.", "Fill in the URL, username, and password.")); return; }
     setBusy(true); setErr("");
     try {
-      const r = await api.connectPronote(url.trim(), username.trim(), password, kind === "parent" ? 7 : 6);
+      const r = await api.connectPronote(trimmedUrl, trimmedUsername, password, kind === "parent" ? 7 : 6);
       if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
       setPassword(""); setOpen(false);
-      setPronoteUsername(username.trim());
+      setPronoteUsername(trimmedUsername);
       setOptimistic(true);
       onStatusUpdate?.();
       onChanged?.();
