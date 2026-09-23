@@ -3139,9 +3139,17 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
     setBusy(true); setErr("");
     try {
       const r = await api.connectPronote(url.trim(), username.trim(), password, kind === "parent" ? 7 : 6);
+      console.log("[Pronote] Connect response:", r);
       if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
       setPassword(""); setOpen(false);
-      await load(); onChanged?.();
+      // Small delay to ensure server cache is invalidated
+      await new Promise(r => setTimeout(r, 500));
+      await load();
+      console.log("[Pronote] Status after connect:", status);
+      onChanged?.();
+    } catch (e: any) {
+      console.error("[Pronote] Connect error:", e);
+      setErr(e?.message || L("Connexion impossible.", "Couldn't connect."));
     } finally { setBusy(false); }
   };
   const disconnect = async () => {
