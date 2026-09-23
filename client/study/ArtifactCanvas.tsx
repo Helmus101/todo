@@ -191,7 +191,7 @@ export function ArtifactCanvas({
       case "document":
         return <DocumentArtifact url={art.source} title={art.title} />;
       case "flashcard":
-        return <FlashcardArtifact task={task} deckId={String(art.contentState?.deckId || "")} userId={userId} />;
+        return <FlashcardArtifact task={task} deckId={String(art.contentState?.deckId || "")} userId={userId} onClose={() => onRemoveArtifact(art.id)} />;
       case "quiz":
         return <QuizArtifact task={task} quizId={String(art.contentState?.quizId || "")} userId={userId} />;
       case "citation":

@@ -159,7 +159,12 @@ export async function disconnectPronote(email: string): Promise<void> {
 }
 
 export async function pronoteConnected(email: string): Promise<{ connected: boolean; username?: string; needsReconnect?: boolean }> {
-  const current = await loadState(email);
+  // bypassCache: this is the direct "did my connect attempt register" read (called once on page load, once
+  // right after connect/disconnect — never a tight poll), so the extra Supabase read is cheap. Without it, a
+  // connect that landed on one Vercel lambda instance stayed invisible for up to 3min to a status check that
+  // landed on a DIFFERENT warm instance still serving its own stale stateCache entry — same root cause as the
+  // "flashcards saved but not showing" bug loadState's own comment describes, just for Pronote's connect flow.
+  const current = await loadState(email, { bypassCache: true });
   const stored = current.pronote;
   if (!stored) return { connected: false };
   // Purge a leftover mock connection from before PRONOTE_MOCK was removed — an account that got seeded

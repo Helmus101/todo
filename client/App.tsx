@@ -1384,6 +1384,7 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
               // it from the local due list the moment the review fires rather than waiting on a refetch.
               setDue((prev) => prev?.filter((d) => !(d.deckId === openDeckObj.id && d.cardIndex === cardIndex)) ?? prev);
             }}
+            onAllCorrect={() => setOpenDeck(null)}
           />
         </TaskModal>
       )}
@@ -1800,6 +1801,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
             deck={open.deck}
             taskId={open.taskId}
             onReview={liveOwner ? (cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); } : undefined}
+            onAllCorrect={() => setOpenId(null)}
           />
         </TaskModal>
       ) : null}
@@ -2365,10 +2367,10 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
       )}
 
       {openDeckFor === "summary" && summaryDeck ? (
-        <TaskModal onClose={() => setOpenDeckFor(null)} title={summaryDeck.title}><FlashcardDeck deck={summaryDeck} onReview={onSummaryReview} taskId={summary?.id} /></TaskModal>
+        <TaskModal onClose={() => setOpenDeckFor(null)} title={summaryDeck.title}><FlashcardDeck deck={summaryDeck} onReview={onSummaryReview} taskId={summary?.id} onAllCorrect={() => setOpenDeckFor(null)} /></TaskModal>
       ) : null}
       {openDeckFor === "month" && monthDeck ? (
-        <TaskModal onClose={() => setOpenDeckFor(null)} title={monthDeck.title}><FlashcardDeck deck={monthDeck} onReview={onMonthReview} taskId={monthSummary?.id} /></TaskModal>
+        <TaskModal onClose={() => setOpenDeckFor(null)} title={monthDeck.title}><FlashcardDeck deck={monthDeck} onReview={onMonthReview} taskId={monthSummary?.id} onAllCorrect={() => setOpenDeckFor(null)} /></TaskModal>
       ) : null}
       {openQuizFor === "day" && dayQuiz ? (
         <TaskModal onClose={() => setOpenQuizFor(null)} title={dayQuiz.title}><QuizPlayer quiz={dayQuiz} taskId={dayTask?.id} /></TaskModal>

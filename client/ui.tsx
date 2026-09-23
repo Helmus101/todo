@@ -733,7 +733,7 @@ function loadDeckProgress(deckId: string): { i: number; right: number[]; wrong: 
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; taskId?: string }) {
+export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; taskId?: string; onAllCorrect?: () => void }) {
   const L = useLang();
   const saved = useRef(loadDeckProgress(deck.id)).current;
   const [i, setI] = useState(saved?.i ?? 0);
@@ -812,6 +812,15 @@ export function FlashcardDeck({ deck, onReview, taskId }: { deck: TaskFlashcards
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [done, i, flipped]);
+  // Auto-close once every card is right — but only once the student has actually cleared any misses via
+  // retryWrong (wrong.length === 0 here means "correct on the pass that just finished", not "never got
+  // anything wrong ever": mark() already moves a card out of `wrong` the moment it's re-marked correct, so a
+  // finished retry pass with nothing left in `wrong` reads identically to a flawless first pass — both are
+  // "done, no mistakes outstanding" and should close the same way). Never fires while `wrong.length > 0`,
+  // so a first pass with misses always lands on the score screen for the retry button instead of vanishing.
+  useEffect(() => {
+    if (done && wrong.length === 0 && deck.cards.length > 0) onAllCorrect?.();
+  }, [done, wrong.length, deck.cards.length, onAllCorrect]);
   if (done) {
     const pct = deck.cards.length ? Math.round((right.length / deck.cards.length) * 100) : 0;
     return (
