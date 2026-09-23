@@ -3144,6 +3144,14 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
       setPassword(""); setOpen(false);
       // Use the status returned from connect instead of making a separate status check
       if (r.connected) {
+        // Update local status cache so it persists across page navigation
+        try {
+          const cachedStatus = JSON.parse(localStorage.getItem("weave-status") || "null");
+          if (cachedStatus) {
+            cachedStatus.pronoteConnected = true;
+            localStorage.setItem("weave-status", JSON.stringify(cachedStatus));
+          }
+        } catch { /* ignore */ }
         setStatus({ connected: true, username: r.username });
       }
       onChanged?.();
@@ -3154,7 +3162,19 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
   };
   const disconnect = async () => {
     setBusy(true);
-    try { await api.disconnectPronote(); await load(); onChanged?.(); }
+    try {
+      await api.disconnectPronote();
+      // Clear pronote status from local cache
+      try {
+        const cachedStatus = JSON.parse(localStorage.getItem("weave-status") || "null");
+        if (cachedStatus) {
+          cachedStatus.pronoteConnected = false;
+          localStorage.setItem("weave-status", JSON.stringify(cachedStatus));
+        }
+      } catch { /* ignore */ }
+      await load();
+      onChanged?.();
+    }
     catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
     finally { setBusy(false); }
   };
