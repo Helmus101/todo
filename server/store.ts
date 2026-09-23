@@ -356,7 +356,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   const cached = opts?.bypassCache ? undefined : stateCache.get(email);
   if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
   const { data, error } = await withRetry("load", async () =>
-    client!.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud").eq("email", email).maybeSingle());
+    client!.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud,studySessions,studyProfile").eq("email", email).maybeSingle());
   if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
@@ -369,7 +369,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   const blackbaud = d?.blackbaud && d.blackbaud.accessToken
     ? { ...(d.blackbaud as StoredBlackbaud), accessToken: decryptSecret(d.blackbaud.accessToken) }
     : undefined;
-  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, plaid, blackbaud };
+  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, plaid, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
   cacheSetState(email, result);
   return result;
 }
@@ -392,6 +392,12 @@ export async function saveState(email: string | undefined, state: AccountState, 
   }
   if ("blackbaud" in state) {
     row.blackbaud = state.blackbaud ? { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) } : null;
+  }
+  if ("studySessions" in state) {
+    row.studySessions = state.studySessions;
+  }
+  if ("studyProfile" in state) {
+    row.studyProfile = state.studyProfile;
   }
   // Invalidate rather than try to update-in-place: `state` here often omits google/pronote entirely (see
   // comment above), so overwriting the cached entry with it would wrongly blank out fields this save never

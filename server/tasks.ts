@@ -261,6 +261,14 @@ export function pruneHandled(list: WebTask[], keep: number): WebTask[] {
   return [...active, ...handled];
 }
 
+/** Strip expensive profile fields (focusSessions) before including in responses —
+ *  focusSessions is only needed on focus-specific routes, not on /api/tasks. */
+export function stripProfileForResponse(profile: any): any {
+  if (!profile) return profile;
+  const { focusSessions, ...stripped } = profile;
+  return stripped;
+}
+
 // Studylog day/week tasks (server/index.ts's /api/studylog/*) are permanent — status stays "needs_review"
 // forever (see their own comment: never "done", so GET /api/reviews/due keeps seeing them), which means
 // pruneHandled above NEVER touches them: every day of journaling adds ONE MORE task that lives forever, each
@@ -516,7 +524,7 @@ export function mergeTaskLists(existing: WebTask[], incoming: WebTask[]): WebTas
 export const ARTIFACT_CAP = 12;
 /** Cap on audit-log entries kept per task — enough to inspect the last several runs/chat turns without
  *  growing unbounded on a long-lived task. See WebTask.audit. */
-export const AUDIT_CAP = 100;
+export const AUDIT_CAP = 20;
 /** Union the three IN-APP STUDY artifact lists (fiches/decks/quizzes) across two copies of a task, by id.
  *  Distinct from `unionArtifacts` below, which tracks EXTERNAL artifacts (Google doc/draft/event ids) for
  *  rerun de-duplication — different lists, different purpose. Returns only the keys that actually changed

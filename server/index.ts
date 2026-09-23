@@ -35,8 +35,6 @@ declare module "express-session" {
     integrations?: Record<string, string>; // app key → Composio connectionId hint (status is live from Composio)
     lastGenDay?: string;  // "YYYY-MM-DD" of the last full generate sweep — the once-a-day floor (survives serverless cold starts)
     lastGenTime?: string; // ISO timestamp of the last generation (for continuous monitoring)
-    studySessions?: StudySession[]; // study session history
-    studyProfile?: StudyProfile; // adaptive study profile
     csrfToken?: string; // synchronizer-token CSRF defense — see requireAuth's own comment
     // Sticky per-session cache for the dashboard-ordering bandit arm (see ORDERING_ARMS in bandit.ts and
     // /api/tasks' own comment on the fix this backs) — Thompson Sampling draws a genuinely random sample
@@ -188,6 +186,11 @@ const saveSession = (req: express.Request) => new Promise<void>((r) => req.sessi
 const mergeTasks = tasks.mergeTaskLists;
 const mergeProfiles = tasks.mergeProfileStates;
 
+// Dirty-flag cache: tracks the last hash of tasks+profile per session ID to skip redundant cloud syncs
+// when nothing has changed (e.g. read-only polling in the kick loop). Keyed by session ID to survive
+// session recreation on the same server process (though on serverless, this is per-invocation only).
+const sessionDirtyCache = new Map<string, string>();
+
 // Persist the session AND this ACCOUNT's durable state (profile + tasks) to the cloud, keyed by the
 // account email — so it follows the account across devices and survives restarts. (Integration
 // connections live in Composio, keyed by the same account email, so there's nothing extra to store.)
@@ -223,6 +226,14 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
   const email = req.session.user;
   const localTasks = req.session.tasks || [];
   const localProfile = req.session.profile || emptyProfile();
+  
+  // Dirty-flag check: skip cloud sync if nothing changed (unless awaitCloud is true, which means this
+  // is a high-value write like a journal save or flashcard review that must always persist).
+  const currentHash = createHash(JSON.stringify(localTasks) + JSON.stringify(localProfile)).digest("hex");
+  const sessionId = req.sessionID;
+  const lastHash = sessionDirtyCache.get(sessionId);
+  const isDirty = lastHash !== currentHash;
+  
   const syncCloud = async (throwOnError?: boolean) => {
     try {
       const current = await loadState(email);
@@ -236,8 +247,17 @@ const commit = async (req: express.Request, opts?: { awaitCloud?: boolean }) => 
       await saveState(email, { profile: localProfile, tasks: localTasks }, { throwOnError });
     }
   };
-  if (opts?.awaitCloud) await syncCloud(true);
-  else void syncCloud().catch((e) => reportError("commit-sync-cloud-detached", e));
+  
+  if (opts?.awaitCloud) {
+    // High-value write: always sync to cloud and update dirty flag
+    await syncCloud(true);
+    sessionDirtyCache.set(sessionId, currentHash);
+  } else if (isDirty) {
+    // Dirty but not awaitCloud: sync in background and update dirty flag
+    void syncCloud().catch((e) => reportError("commit-sync-cloud-detached", e));
+    sessionDirtyCache.set(sessionId, currentHash);
+  }
+  // else: not dirty and not awaitCloud — skip cloud sync entirely (no-op read-only path)
 };
 
 // Simple synchronous task-mutating routes (confirm/reject/dismiss/step-done) used to just `find()` in
@@ -2682,7 +2702,7 @@ app.get("/api/usage", requireAuth, async (req, res) => {
 
 // ── Profile (who the user is) — available once logged in ───────────────────────
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
-app.get("/api/profile", requireAuth, (req, res) => { res.json(req.session.profile || emptyProfile()); });
+app.get("/api/profile", requireAuth, (req, res) => { res.json(tasks.stripProfileForResponse(req.session.profile || emptyProfile())); });
 app.post("/api/profile", requireAuth, async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());
@@ -2820,9 +2840,9 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     const sessions = (p.focusSessions ||= []);
     sessions.push(session);
     
-    // Keep only last 100 sessions to prevent unbounded growth
-    if (sessions.length > 100) {
-      p.focusSessions = sessions.slice(-100);
+    // Keep only last 20 sessions to prevent unbounded growth (reduced from 100 for egress)
+    if (sessions.length > 20) {
+      p.focusSessions = sessions.slice(-20);
     }
     
     // Recalculate aggregated stats
@@ -3099,7 +3119,7 @@ app.delete("/api/profile", requireAuth, async (req, res) => {
   try {
     req.session.profile = emptyProfile();
     await commit(req);
-    res.json(req.session.profile);
+    res.json(tasks.stripProfileForResponse(req.session.profile));
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't reset your profile — try again." }); }
 });
 app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
@@ -3114,7 +3134,7 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   try {
     (p as any)[k].splice(i, 1);
     await commit(req);
-    res.json(p);
+    res.json(tasks.stripProfileForResponse(p));
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't delete that — try again." }); }
 });
 
@@ -3124,9 +3144,10 @@ app.get("/api/study/sessions", requireAuth, async (req, res) => {
   try {
     if (req.session.user && cloudEnabled()) {
       const cloud = await loadState(req.session.user);
-      req.session.studySessions = cloud.studySessions || [];
+      res.json(cloud.studySessions || []);
+    } else {
+      res.json([]);
     }
-    res.json(req.session.studySessions || []);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't load study sessions." }); }
 });
 
@@ -3139,7 +3160,14 @@ app.post("/api/study/session", requireAuth, async (req, res) => {
       return;
     }
     
-    const sessions = (req.session.studySessions ||= []);
+    const email = req.session.user;
+    if (!email) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+    
+    const current = await loadState(email);
+    const sessions = current.studySessions || [];
     const existingIndex = sessions.findIndex((s) => s.id === sessionData.id);
     
     const session: StudySession = {
@@ -3166,11 +3194,9 @@ app.post("/api/study/session", requireAuth, async (req, res) => {
     }
     
     // Keep only last 100 sessions
-    if (sessions.length > 100) {
-      req.session.studySessions = sessions.slice(-100);
-    }
+    const trimmedSessions = sessions.length > 100 ? sessions.slice(-100) : sessions;
     
-    await commit(req);
+    await saveState(email, { profile: current.profile, tasks: current.tasks, studySessions: trimmedSessions }, { throwOnError: true });
     res.json(session);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save study session." }); }
 });
@@ -3180,9 +3206,10 @@ app.get("/api/study/profile", requireAuth, async (req, res) => {
   try {
     if (req.session.user && cloudEnabled()) {
       const cloud = await loadState(req.session.user);
-      req.session.studyProfile = cloud.studyProfile;
+      res.json(cloud.studyProfile || { userId: req.session.user, updatedAt: new Date().toISOString() });
+    } else {
+      res.json({ userId: req.session.user, updatedAt: new Date().toISOString() });
     }
-    res.json(req.session.studyProfile || { userId: req.session.user, updatedAt: new Date().toISOString() });
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't load study profile." }); }
 });
 
@@ -3190,10 +3217,17 @@ app.get("/api/study/profile", requireAuth, async (req, res) => {
 app.post("/api/study/profile", requireAuth, async (req, res) => {
   try {
     const profileData = req.body as Partial<StudyProfile>;
-    const current = req.session.studyProfile || { userId: req.session.user, updatedAt: new Date().toISOString() };
+    const email = req.session.user;
+    if (!email) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+    
+    const current = await loadState(email);
+    const existing = current.studyProfile || { userId: email, updatedAt: new Date().toISOString() };
     
     const updated: StudyProfile = {
-      userId: current.userId || req.session.user || "",
+      userId: existing.userId || email,
       preferredSessionLength: profileData.preferredSessionLength,
       preferredBreakLength: profileData.preferredBreakLength,
       prefersPomodoro: profileData.prefersPomodoro,
@@ -3215,8 +3249,7 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
       updatedAt: new Date().toISOString(),
     };
     
-    req.session.studyProfile = updated;
-    await commit(req);
+    await saveState(email, { profile: current.profile, tasks: current.tasks, studyProfile: updated }, { throwOnError: true });
     res.json(updated);
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save study profile." }); }
 });
