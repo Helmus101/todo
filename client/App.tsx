@@ -188,6 +188,28 @@ const firstName = (user?: string) => {
   return local ? local.charAt(0).toUpperCase() + local.slice(1) : "";
 };
 
+// Survives a PronoteTile remount (e.g. navigating away from Settings and back) — see its own comment on
+// `optimistic` for why plain component state wasn't enough. sessionStorage (not localStorage): this is a
+// per-tab "trust my own recent action over a possibly-lagging read" signal, not something that should
+// follow the account to a different tab/device where no such action just happened.
+const PRONOTE_OPTIMISTIC_KEY = "otto-pronote-optimistic";
+const PRONOTE_OPTIMISTIC_MAX_AGE_MS = 2 * 60_000;
+function readPronoteOptimistic(): boolean | null {
+  try {
+    const raw = sessionStorage.getItem(PRONOTE_OPTIMISTIC_KEY);
+    if (!raw) return null;
+    const { value, at } = JSON.parse(raw);
+    if (typeof at !== "number" || Date.now() - at > PRONOTE_OPTIMISTIC_MAX_AGE_MS) { sessionStorage.removeItem(PRONOTE_OPTIMISTIC_KEY); return null; }
+    return typeof value === "boolean" ? value : null;
+  } catch { return null; }
+}
+function writePronoteOptimistic(value: boolean | null): void {
+  try {
+    if (value === null) sessionStorage.removeItem(PRONOTE_OPTIMISTIC_KEY);
+    else sessionStorage.setItem(PRONOTE_OPTIMISTIC_KEY, JSON.stringify({ value, at: Date.now() }));
+  } catch { /* private browsing / storage full — falls back to the plain in-memory default */ }
+}
+
 /** Navigate the path router. "" → "/" (dashboard); otherwise "/<route>" (e.g. "task/<id>", "settings").
  *  pushState doesn't fire popstate, so we dispatch one to notify the router hook. */
 const navigate = (r: string) => {
@@ -3134,14 +3156,20 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
 
   // The server's /api/status read is now always a fresh, uncached Supabase read (see server/pronote.ts —
   // the in-memory per-instance cache that used to sit in front of it was removed after it kept serving
-  // stale readings from whichever OTHER warm Vercel instance happened to have cached one), so this is now
-  // purely a UX nicety, not a correctness patch: `optimistic` shows this tab's own just-completed
-  // connect/disconnect instantly, without waiting on the round trip a fresh mainStatus poll would take.
-  // after a connection that had already genuinely succeeded.
-  const [optimistic, setOptimistic] = useState<boolean | null>(null);
+  // stale readings from whichever OTHER warm Vercel instance happened to have cached one). Even so, a
+  // status fetch that fires IMMEDIATELY after the connect/disconnect write can still race Supabase's own
+  // connection-pooled read-after-write consistency and briefly see the pre-write value — reported live as
+  // "connect succeeds, but navigate away and back to Settings and it shows Connect again": this tile used
+  // to keep its optimistic override in plain component state, which React destroys the instant it unmounts
+  // (leaving Settings for any other page), so that one lagging background read after a navigation had
+  // nothing left to override it. Persisting the override in sessionStorage instead survives the remount —
+  // capped at 2 minutes so a genuinely wrong override (e.g. the connect actually failed downstream) can't
+  // get stuck forever, but comfortably outlives a page navigation or two.
+  const [optimistic, setOptimisticState] = useState<boolean | null>(() => readPronoteOptimistic());
+  const setOptimistic = useCallback((v: boolean | null) => { writePronoteOptimistic(v); setOptimisticState(v); }, []);
   useEffect(() => {
     if (optimistic !== null && mainStatus?.pronoteConnected === optimistic) setOptimistic(null);
-  }, [mainStatus?.pronoteConnected, optimistic]);
+  }, [mainStatus?.pronoteConnected, optimistic, setOptimistic]);
   const effectivelyConnected = optimistic ?? mainStatus?.pronoteConnected;
 
   // Load pronote username when connected — skipped while `optimistic` already set it locally (see connect()
