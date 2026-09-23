@@ -2727,7 +2727,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
             Now gated by track: the narrow Lycée-only grid stays the default for "bac"/unset (unchanged for
             existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
         <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
-        <PronoteTile />
+        <PronoteTile status={status} onStatusUpdate={loadStatus} />
         <BlackbaudTile />
         <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
       </section>
@@ -3120,10 +3120,9 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged }: {
 /** Pronote (French school portal) — no OAuth exists for it, so this is a credential form instead of a
  *  redirect link. The password is sent once to connect and never stored (see server/pronote.ts); only a
  *  rotating token comes back. Reads homework due dates into the to-do list — nothing is ever written back. */
-function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
+function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status?: ConnectionStatus | null; onStatusUpdate?: () => void; onChanged?: () => void } = {}) {
   const L = useLang();
   const notify = useNotify();
-  const [status, setStatus] = useState<{ connected: boolean; username?: string; needsReconnect?: boolean } | null>(null);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [username, setUsername] = useState("");
@@ -3131,8 +3130,19 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
   const [kind, setKind] = useState<"student" | "parent">("student");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const load = useCallback(async () => { try { setStatus(await api.pronoteStatus()); } catch { setStatus({ connected: false }); } }, []);
-  useEffect(() => { void load(); }, [load]);
+  const [pronoteUsername, setPronoteUsername] = useState<string | undefined>();
+  
+  // Load pronote username when connected
+  useEffect(() => {
+    if (mainStatus?.pronoteConnected) {
+      api.pronoteStatus().then(s => setPronoteUsername(s.username)).catch(() => {});
+    } else {
+      setPronoteUsername(undefined);
+    }
+  }, [mainStatus?.pronoteConnected]);
+  
+  // Derive pronote status from main app status
+  const status = mainStatus?.pronoteConnected ? { connected: true, username: pronoteUsername } : { connected: false };
 
   const connect = async () => {
     if (!url.trim() || !username.trim() || !password) { setErr(L("Renseigne l'URL, l'identifiant et le mot de passe.", "Fill in the URL, username, and password.")); return; }
@@ -3142,18 +3152,8 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
       console.log("[Pronote] Connect response:", r);
       if (!r.ok) { setErr(r.error || L("Connexion impossible.", "Couldn't connect.")); return; }
       setPassword(""); setOpen(false);
-      // Use the status returned from connect instead of making a separate status check
-      if (r.connected) {
-        // Update local status cache so it persists across page navigation
-        try {
-          const cachedStatus = JSON.parse(localStorage.getItem("weave-status") || "null");
-          if (cachedStatus) {
-            cachedStatus.pronoteConnected = true;
-            localStorage.setItem("weave-status", JSON.stringify(cachedStatus));
-          }
-        } catch { /* ignore */ }
-        setStatus({ connected: true, username: r.username });
-      }
+      // Trigger full status reload to update main app's pronoteConnected flag
+      onStatusUpdate?.();
       onChanged?.();
     } catch (e: any) {
       console.error("[Pronote] Connect error:", e);
@@ -3164,15 +3164,7 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
     setBusy(true);
     try {
       await api.disconnectPronote();
-      // Clear pronote status from local cache
-      try {
-        const cachedStatus = JSON.parse(localStorage.getItem("weave-status") || "null");
-        if (cachedStatus) {
-          cachedStatus.pronoteConnected = false;
-          localStorage.setItem("weave-status", JSON.stringify(cachedStatus));
-        }
-      } catch { /* ignore */ }
-      await load();
+      onStatusUpdate?.();
       onChanged?.();
     }
     catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
@@ -3181,7 +3173,7 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
 
   // A blank gap while `status` loads reads as "this section is stuck/slow" — a lightweight skeleton in the
   // exact shape of the real tile makes the wait feel instant instead of leaving Sources looking empty.
-  if (!status) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /></div></div>;
+  if (!mainStatus) return <div className="int-group"><div className="int-grid"><div className="int-tile int-tile-skel" /></div></div>;
   return (
     <div className="int-group">
       <div className="int-grid">
@@ -3190,26 +3182,19 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
               Index Éducation) — self-hosted at public/logos/pronote.png, see public/logos/ATTRIBUTION.md. */}
           <span className="int-logo pronote-logo"><img src="/logos/pronote.png" alt="" loading="lazy" /></span>
           <div className="int-info">
-            <div className="int-name">Pronote{status.connected && !status.needsReconnect && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
-            {status.needsReconnect ? (
-              <div className="int-blurb warn">{L(
-                "Ta session Pronote a expiré — reconnecte-toi pour qu'Otto continue à voir tes devoirs et contrôles.",
-                "Your Pronote session expired — reconnect so Otto can keep seeing your homework and tests."
-              )}</div>
-            ) : (
-              <div className="int-blurb">{L(
-                "Devoirs et contrôles à venir. Otto lit ces sources et prépare le travail — il ne renvoie jamais rien à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe sert une seule fois puis n'est jamais conservé ; un jeton chiffré le remplace ensuite.",
-                "Upcoming homework and tests. Otto reads these sources and preps the work — it never sends or hands anything in for you. Unofficial connection (Index Éducation has no public API) — your password is used once and never stored; an encrypted token replaces it afterwards."
-              )}</div>
-            )}
+            <div className="int-name">Pronote{status.connected && <span className="int-dot" title={L("Connecté", "Connected")} />}</div>
+            <div className="int-blurb">{L(
+              "Devoirs et contrôles à venir. Otto lit ces sources et prépare le travail — il ne renvoie jamais rien à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe sert une seule fois puis n'est jamais conservé ; un jeton chiffré le remplace ensuite.",
+              "Upcoming homework and tests. Otto reads these sources and preps the work — it never sends or hands anything in for you. Unofficial connection (Index Éducation has no public API) — your password is used once and never stored; an encrypted token replaces it afterwards."
+            )}</div>
           </div>
-          {status.connected && !status.needsReconnect
+          {status.connected
             ? <button className="btn xs" disabled={busy} onClick={() => void disconnect()}>{busy ? "…" : L("Déconnecter", "Disconnect")}</button>
-            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? L("Annuler", "Cancel") : status.needsReconnect ? L("Se reconnecter", "Reconnect") : L("Connecter", "Connect")}</button>}
+            : <button className="btn xs" disabled={busy} onClick={() => setOpen((v) => !v)}>{open ? L("Annuler", "Cancel") : L("Connecter", "Connect")}</button>}
         </div>
       </div>
-      {status.connected && !status.needsReconnect && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
-      {open && (!status.connected || status.needsReconnect) && (
+      {status.connected && <div className="int-accounts"><div className="int-acct"><span className="int-acct-email">{status.username}</span></div></div>}
+      {open && !status.connected && (
         <div className="pronote-form">
           <input className="addinput sm" placeholder={L("URL Pronote de ton établissement (ex : https://0000000a.index-education.net/pronote/eleve.html)", "Your school's Pronote URL (e.g. https://0000000a.index-education.net/pronote/eleve.html)")}
             value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
