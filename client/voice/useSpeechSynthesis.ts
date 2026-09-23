@@ -37,15 +37,16 @@ export interface UseSpeechSynthesis {
   cancel: () => void;
 }
 
-/** Text-to-speech via the browser's free, built-in `speechSynthesis` — no server round trip, no paid TTS
- *  vendor. `lang` picks a matching installed voice (fr-FR/en-US, matching the app's own language toggle) —
- *  falls back to the browser default voice if none matches (still speaks, just not guaranteed accent). */
+/** Text-to-speech via FreeTTS (freetts.org) if available, falling back to the browser's built-in
+ *  `speechSynthesis`. FreeTTS uses the "brian" voice for natural speech; the browser fallback picks a
+ *  matching voice by language (fr-FR/en-US, matching the app's own language toggle). */
 export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const supported = typeof window !== "undefined" && "speechSynthesis" in window;
   const [speaking, setSpeaking] = useState(false);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
   const queueRef = useRef<string[]>([]);
   const cancelledRef = useRef(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!supported) return;
@@ -93,22 +94,64 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     window.speechSynthesis.speak(utter);
   }, [lang, pickVoice]);
 
-  const speak = useCallback((text: string) => {
+  const useBrowserTTS = useCallback((text: string) => {
     if (!supported) return;
     const sentences = toSentences(toSpeakableText(text));
     if (!sentences.length) return;
     cancelledRef.current = false;
-    window.speechSynthesis.cancel(); // clear anything already queued/speaking before starting fresh
+    window.speechSynthesis.cancel();
     queueRef.current = sentences;
     setSpeaking(true);
     speakNext();
   }, [supported, speakNext]);
+
+  const speakViaFreeTTS = useCallback(async (text: string) => {
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!response.ok) throw new Error("FreeTTS failed");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      if (audioRef.current) URL.revokeObjectURL(audioRef.current.src);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onplay = () => setSpeaking(true);
+      audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+      audio.onerror = () => {
+        setSpeaking(false);
+        URL.revokeObjectURL(url);
+        // Fallback to browser TTS on audio error
+        useBrowserTTS(text);
+      };
+      await audio.play();
+    } catch {
+      // FreeTTS failed or endpoint unavailable — fallback to browser TTS
+      useBrowserTTS(text);
+    }
+  }, [useBrowserTTS]);
+
+  const speak = useCallback((text: string) => {
+    if (!supported) return;
+    const speakableText = toSpeakableText(text);
+    if (!speakableText.trim()) return;
+    cancelledRef.current = false;
+    // Try FreeTTS first, fallback to browser TTS
+    void speakViaFreeTTS(speakableText);
+  }, [supported, speakViaFreeTTS]);
 
   const cancel = useCallback(() => {
     if (!supported) return;
     cancelledRef.current = true;
     queueRef.current = [];
     window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      if (audioRef.current.src) URL.revokeObjectURL(audioRef.current.src);
+      audioRef.current = null;
+    }
     setSpeaking(false);
   }, [supported]);
 

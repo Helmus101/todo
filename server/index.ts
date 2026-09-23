@@ -3209,6 +3209,34 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save study profile." }); }
 });
 
+// ── Text-to-speech via FreeTTS ──────────────────────────────────────────────
+app.post("/api/tts", requireAuth, async (req, res) => {
+  const { text } = req.body;
+  if (!text || typeof text !== "string") { res.status(400).json({ error: "text is required" }); return; }
+  if (!process.env.FREETTS_API_KEY) { res.status(501).json({ error: "TTS not configured" }); return; }
+
+  try {
+    const response = await fetch("https://freetts.org/api/speech", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${process.env.FREETTS_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice: "brian", outputFormat: "audio/mp3" }),
+    });
+
+    if (!response.ok) {
+      console.error(`[tts] FreeTTS error: ${response.status}`);
+      res.status(500).json({ error: "TTS generation failed" });
+      return;
+    }
+
+    const buffer = await response.arrayBuffer();
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.send(Buffer.from(buffer));
+  } catch (e: any) {
+    console.error(`[tts] error: ${e?.message}`);
+    res.status(500).json({ error: "TTS request failed" });
+  }
+});
+
 // ── Static (production) ─────────────────────────────────────────────────────
 // On Vercel the built client is served by Vercel's static layer (see vercel.json), not Express.
 if (PROD && !process.env.VERCEL) {
