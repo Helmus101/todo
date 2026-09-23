@@ -913,7 +913,7 @@ app.get("/api/status", ah(async (req, res) => {
     // Otto Lycée: Pronote is now a first-class data source on its own, not just a Google add-on — a lycéen
     // with ONLY Pronote connected (no Gmail) must still see their dashboard, not get stuck on ConnectCard.
     req.session.user
-      ? pronoteSvc.pronoteConnectedCached(req.session.user).catch((): { connected: boolean; username?: string; needsReconnect?: boolean } => ({ connected: false }))
+      ? pronoteSvc.pronoteConnected(req.session.user).catch((): { connected: boolean; username?: string; needsReconnect?: boolean } => ({ connected: false }))
       : Promise.resolve<{ connected: boolean; username?: string; needsReconnect?: boolean }>({ connected: false }),
   ]);
   const s: ConnectionStatus = {
