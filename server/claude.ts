@@ -3049,25 +3049,18 @@ const CARD_STYLE_RULE =
   `mechanism behind a cause-effect relationship), give that — a bare "1789" or "because X" with zero mechanism ` +
   `is under-explaining, not being concise. Judge each card on its own: some backs are a single word, some are ` +
   `two sentences, and that variation is correct, not a flaw. Still ONE idea per card (rule 1) either way — ` +
-  `long or short, never padded with a second unrelated fact or a restatement of the question. EXCEPTION: a ` +
-  `practice-problem card (rule 6 below) — its back is a full worked step-by-step solution, always longer, ` +
-  `since showing the method is the point.\n` +
+  `long or short, never padded with a second unrelated fact or a restatement of the question.\n` +
   `4. YOUR OWN WORDING, not the textbook's or the student's notes verbatim — paraphrasing is itself part of ` +
   `what makes a card test understanding rather than memorized phrasing.\n` +
   `5. VARY THE CARD TYPE to fit what's actually being tested, don't force everything into one shape: a ` +
   `definition card ("what is X?") for vocabulary, a contrast card ("how does X differ from Y?") for two ideas ` +
   `students actually confuse, a cause-effect card ("why does X lead to Y?") for mechanisms, an application ` +
-  `card (a short scenario, "which principle applies here?") for problem-solving subjects, a cloze card (one ` +
+  `card (a short scenario, "which principle applies here?") for conceptual subjects, a cloze card (one ` +
   `key term blanked in an otherwise-meaningful sentence) when the surrounding context matters to the answer.\n` +
-  `6. FOR QUANTITATIVE SUBJECTS (math, physics, chemistry, econ calculations, ...), ALWAYS INCLUDE actual ` +
-  `practice problems, not just recall cards — a real exercise to solve (an equation, a computation, a short ` +
-  `word problem), front poses the problem, back is the full worked step-by-step solution ending in the final ` +
-  `answer, each step on its own line (a real newline between steps) so it reads as worked steps, not a wall ` +
-  `of text (see the rule 3 exception above). This is NOT optional for these subjects — a math/physics/science ` +
-  `deck with zero practice problems has failed this bar, no matter how good its recall cards are. Recall ` +
-  `cards for definitions/formulas still matter too, so don't make EVERY card a practice problem — but make ` +
-  `sure a real, visible chunk of the deck (roughly a third or more, when the topic supports it) is the ` +
-  `student actually DOING the math, not only reciting it.\n` +
+  `6. FLASHCARDS ARE EXCLUSIVELY FOR LEARNING DEFINITIONS AND CONCEPTS — vocabulary, core principles, laws, ` +
+  `theorems, key facts, and formula recall. NEVER put multi-step practice problems, worked calculation exercises, ` +
+  `or numerical problem-solving tasks inside flashcards. Practice problems and worked calculation exercises ` +
+  `belong in Quizzes or Practice Problem cards, NOT in flashcard decks.\n` +
   `Output STRICT JSON only.`;
 
 // Same "one idea, real discrimination, teach not just score" bar as CREATE_QUIZ_TOOL's own description
@@ -6364,8 +6357,10 @@ export async function chatAboutTask(
     `of THEIR reasoning (their words/logic, not a restatement of yours) so they can see their own thinking ` +
     `laid out. Doesn't count against the artifact cap above and isn't limited to canvas mode — reach for it ` +
     `any time in an ordinary conversation too, not just when working a problem. Each call is ONE short entry, ` +
-    `not a running document: a sentence or two, or a single formula, never a paragraph. Don't narrate that ` +
-    `you're writing it ("let me note that down") — just call the tool; the board itself is the visible part.\n\n` +
+    `not a running document: a sentence or two, or a single formula, never a paragraph. You can ONLY write/add ` +
+    `entries to the board; you MUST NEVER remove, clear, or wipe out existing items or artifacts from the ` +
+    `student's board or canvas. Don't narrate that you're writing it ("let me note that down") — just call the tool; ` +
+    `the board itself is the visible part.\n\n` +
 
     `KEEP GETTING SMARTER ABOUT THEM: use "remember" whenever they mention something durable, worth knowing ` +
     `next time — a recurring struggle with a specific topic, a professor's grading quirk or class pattern ` +

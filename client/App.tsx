@@ -4,9 +4,11 @@ import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubje
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks, clearLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } from "./localQuizzes.ts";
+import { pushError } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
+import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { 
   LayoutDashboard,
   BookOpen,
@@ -19,7 +21,9 @@ import {
   Zap,
   ShieldCheck,
   Compass,
-  BarChart3
+  BarChart3,
+  Mic,
+  MicOff
 } from "lucide-react";
 
 /** Scroll-reveal: any element with className "reveal" inside this component fades/rises into place the
@@ -292,12 +296,13 @@ export function App() {
   // being offline. Cheap: saveDeckLocally no-ops on content that's already saved, and this only runs when
   // the task list actually changes.
   useEffect(() => {
+    const userId = status?.user || null;
     for (const t of tasks) {
       const logDate = t.source === "studylog" && t.logDate && !t.logDate.includes(":") ? t.logDate : undefined;
-      for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck, logDate, status.user);
-      for (const quiz of t.quizzes || []) saveQuizLocally(t.id, t.title, quiz, logDate, status.user);
+      for (const deck of t.flashcards || []) saveDeckLocally(t.id, t.title, deck, logDate, userId);
+      for (const quiz of t.quizzes || []) saveQuizLocally(t.id, t.title, quiz, logDate, userId);
     }
-  }, [tasks, status.user]);
+  }, [tasks, status?.user]);
   const [loaded, setLoaded] = useState(false);   // server truth arrived (cached list may be stale until then)
   const [scanning, setScanning] = useState(false); // the daily background sweep is running
   const [busy, setBusy] = useState(false);
@@ -657,8 +662,9 @@ export function App() {
     // signed out; the next session starts genuinely fresh.
     try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
     // Clear user-specific local backups (decks, quizzes)
-    clearLocalDecks(status.user);
-    clearLocalQuizzes(status.user);
+    const userId = status?.user || null;
+    clearLocalDecks(userId);
+    clearLocalQuizzes(userId);
     setTasks([]); setLoaded(false); generatedOnce.current = false; navigate(""); void loadStatus();
   };
 
@@ -934,7 +940,7 @@ export function App() {
       {route === "settings" ? (
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} />
       ) : route === "log" ? (
-        <StudyLogPage lang={status?.language} tasks={tasks} />
+        <StudyLogPage lang={status?.language} tasks={tasks} status={status} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
@@ -2010,7 +2016,7 @@ function saveMonthCache(month: string, data: { weeks: WebTask[]; summary: WebTas
 // the day had nothing. A successful server response is now trusted outright; the local cache is used ONLY
 // when the fetch itself fails (see load()'s .catch() below), never merged against a response that succeeded.
 
-function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
+function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebTask[]; status?: ConnectionStatus | null }) {
   const L = useLang();
   const notify = useNotify();
   const en = lang === "en";
@@ -2029,6 +2035,24 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [genBusy, setGenBusy] = useState(false);
+
+  // Speech-to-text dictation for the Journal entry — never auto-started; explicit user tap required.
+  const speechLang = en ? "en-US" : "fr-FR";
+  const recog = useSpeechRecognition({
+    lang: speechLang,
+    onResult: (transcript) => {
+      if (transcript.trim()) {
+        setText((prev) => (prev ? `${prev} ${transcript.trim()}` : transcript.trim()));
+      }
+    },
+  });
+
+  // Stop listening whenever switching tabs, days, or unmounting (prevents stray mic active state)
+  useEffect(() => {
+    return () => {
+      if (recog.listening) recog.stop();
+    };
+  }, [selected, monday, tab, recog]);
   // Editing a day whose deck already exists — false by default so a day WITH a deck shows the deck/quiz
   // straight away, not the entry textarea again. Flipping this back to the textarea is an explicit choice
   // (the "modifier" link), never the default view once a deck exists.
@@ -2054,22 +2078,23 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
   // the Flashcards tab. That's why a Journal deck could be generated, reviewed, everything — yet never show
   // up in "Your flashcards" and not survive a sync hiccup the way an ordinary task's deck already did. Same
   // backup call, just driven off this page's own day/week/month state instead of the global task list.
+  const userId = status?.user;
   useEffect(() => {
     for (const d of days) {
       if (!d) continue;
-      for (const deck of d.flashcards || []) saveDeckLocally(d.id, d.title, deck, d.logDate, status.user);
-      for (const quiz of d.quizzes || []) saveQuizLocally(d.id, d.title, quiz, d.logDate, status.user);
+      for (const deck of d.flashcards || []) saveDeckLocally(d.id, d.title, deck, d.logDate, userId);
+      for (const quiz of d.quizzes || []) saveQuizLocally(d.id, d.title, quiz, d.logDate, userId);
     }
     if (summary) {
-      for (const deck of summary.flashcards || []) saveDeckLocally(summary.id, summary.title, deck, undefined, status.user);
-      for (const quiz of summary.quizzes || []) saveQuizLocally(summary.id, summary.title, quiz, undefined, status.user);
+      for (const deck of summary.flashcards || []) saveDeckLocally(summary.id, summary.title, deck, undefined, userId);
+      for (const quiz of summary.quizzes || []) saveQuizLocally(summary.id, summary.title, quiz, undefined, userId);
     }
-  }, [days, summary, status.user]);
+  }, [days, summary, userId]);
   useEffect(() => {
     if (!monthSummary) return;
-    for (const deck of monthSummary.flashcards || []) saveDeckLocally(monthSummary.id, monthSummary.title, deck, undefined, status.user);
-    for (const quiz of monthSummary.quizzes || []) saveQuizLocally(monthSummary.id, monthSummary.title, quiz, undefined, status.user);
-  }, [monthSummary, status.user]);
+    for (const deck of monthSummary.flashcards || []) saveDeckLocally(monthSummary.id, monthSummary.title, deck, undefined, userId);
+    for (const quiz of monthSummary.quizzes || []) saveQuizLocally(monthSummary.id, monthSummary.title, quiz, undefined, userId);
+  }, [monthSummary, userId]);
 
   const load = useCallback((m: string) => {
     const cached = loadWeekCache(m);
@@ -2217,7 +2242,7 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
           these decks actually live. */}
       <DueReviews lang={lang} tasks={tasks} />
 
-      {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status.user} /> : (
+      {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
       <>
       <div className="studylog-weeknav">
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>
@@ -2269,16 +2294,32 @@ function StudyLogPage({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] })
             </div>
           ) : (
             <>
-              {/* Quick entry for a REAL test taken at school (paper, in class) — not an in-app quiz. Just
-                  inserts a template into today's entry; saving it runs through the exact same flashcard
-                  generation as any other journal entry, so "what I got wrong on today's test" becomes a
-                  reviewable deck automatically — no separate "mistakes" system needed, this already covers
-                  what a dedicated one would do, and one save button instead of two things to remember. */}
-              <button type="button" className="btn xs ghost" onClick={() => setText((t) => `${t}${t.trim() ? "\n\n" : ""}${L("Contrôle — ", "Test — ")}${L("matière", "subject")} :\nCe que j'ai eu faux :\n- `)}>
-                {L("Noter les erreurs d'un contrôle", "Log mistakes from a test")}
-              </button>
+              <div className="studylog-editor-toolbar">
+                <button type="button" className="btn xs ghost" onClick={() => setText((t) => `${t}${t.trim() ? "\n\n" : ""}${L("Contrôle — ", "Test — ")}${L("matière", "subject")} :\nCe que j'ai eu faux :\n- `)}>
+                  {L("Noter les erreurs d'un contrôle", "Log mistakes from a test")}
+                </button>
+                {recog.supported ? (
+                  <button
+                    type="button"
+                    className={`btn xs ${recog.listening ? "danger pulse-btn" : "ghost"}`}
+                    onClick={() => {
+                      if (recog.listening) recog.stop();
+                      else recog.start();
+                    }}
+                    title={recog.listening ? L("Arrêter la dictée vocale", "Stop voice dictation") : L("Dictée vocale (STT)", "Voice dictation (STT)")}
+                  >
+                    {recog.listening ? <MicOff size={13} /> : <Mic size={13} />}
+                    <span>{recog.listening ? L("Écoute en cours…", "Listening…") : L("Dictée vocale", "Voice dictation")}</span>
+                  </button>
+                ) : null}
+              </div>
+              {recog.listening ? (
+                <div className="studylog-stt-live">
+                  <span className="stt-dot" /> {recog.interimTranscript || L("Parle maintenant, Otto note tes propos…", "Speak now, Otto is writing down your notes…")}
+                </div>
+              ) : null}
               <textarea className="studylog-textarea" rows={14}
-                placeholder={L("Aujourd'hui, j'ai appris…", "Today I learned…")}
+                placeholder={L("Aujourd'hui, j'ai appris… (ou clique sur Dictée vocale)", "Today I learned… (or click Voice dictation)")}
                 value={text} onChange={(e) => setText(e.target.value)} maxLength={4000} />
               <div className="studylog-actions">
                 <button type="button" className="btn primary" disabled={saving || !text.trim()} onClick={() => void save()}>

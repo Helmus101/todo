@@ -62,7 +62,7 @@ interface ArtifactCanvasProps {
 export function ArtifactCanvas({
   artifacts, notes, scratchpad, task, taskId, environmentId,
   onUpdateArtifact, onAddArtifact, onRemoveArtifact,
-  onNotesChange, onScratchpadChange, onToggleStep, onToggleSubstep, onCompleteTask, language = "en", backgroundImageUrl, chat, camera,
+  onNotesChange, onScratchpadChange, onToggleStep, onToggleSubstep, onCompleteTask, language = "en", backgroundImageUrl, userId = null, chat, camera,
 }: ArtifactCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
