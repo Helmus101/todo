@@ -935,7 +935,7 @@ export function App() {
         </div>
       )}
 
-      {onboard && <Onboarding onStatus={loadStatus} onDone={finishOnboard} />}
+      {onboard && <Onboarding status={status} onStatus={loadStatus} onDone={finishOnboard} />}
 
       {route === "settings" ? (
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} />
@@ -3393,7 +3393,7 @@ const OB_STEPS = 11;
  *  done. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone — every extra sign-in step is a
  *  dropout for a lycéen without a work Google account, and Pronote's connect flow (URL + identifiants,
  *  handled by PronoteTile) isn't OAuth at all, so it doesn't fit that step's "opens in a new tab" pattern. */
-function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => void }) {
+function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | null; onStatus: () => void; onDone: () => void }) {
   const L = useLang();
   // Every profile write below is deliberately non-blocking (a failed save shouldn't trap the student on
   // this screen — see saveTrack's own comment, and the copy already tells them everything here is
@@ -3519,7 +3519,7 @@ function Onboarding({ onStatus, onDone }: { onStatus: () => void; onDone: () => 
               ? L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted and never resold.")
               : L("La plupart des écoles IB n'utilisent pas Pronote — pas de souci. Connecte-le seulement si ton école le propose ; sinon, connecte Gmail/Calendar depuis les Réglages, ou ajoute tes examens/échéances toi-même.", "Most IB schools don't use Pronote — that's fine. Only connect it if your school offers it; otherwise, connect Gmail/Calendar from Settings, or log your own exams/deadlines by hand.")}</p>
             <div className="onboard-apps">
-              <PronoteTile onChanged={() => void checkPronote()} />
+              <PronoteTile status={status} onStatusUpdate={onStatus} onChanged={() => void checkPronote()} />
             </div>
             <p className="muted small">{L("Tu peux te connecter plus tard depuis les Réglages.", "You can connect later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
