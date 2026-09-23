@@ -3157,7 +3157,8 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
       await fetch("/api/status?t=" + Date.now(), { cache: "no-store" });
       const freshStatus = await api.status();
       console.log("[Pronote] Fresh status after connect:", freshStatus);
-      onStatusUpdate?.();
+      // onStatusUpdate might not be defined in onboarding context, so check before calling
+      if (onStatusUpdate) onStatusUpdate();
       onChanged?.();
     } catch (e: any) {
       console.error("[Pronote] Connect error:", e);
@@ -3168,7 +3169,7 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
     setBusy(true);
     try {
       await api.disconnectPronote();
-      onStatusUpdate?.();
+      if (onStatusUpdate) onStatusUpdate();
       onChanged?.();
     }
     catch (e: any) { notify(e?.message || L("Déconnexion impossible — réessaie.", "Couldn't disconnect — try again."), "error"); }
@@ -3519,7 +3520,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               ? L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted and never resold.")
               : L("La plupart des écoles IB n'utilisent pas Pronote — pas de souci. Connecte-le seulement si ton école le propose ; sinon, connecte Gmail/Calendar depuis les Réglages, ou ajoute tes examens/échéances toi-même.", "Most IB schools don't use Pronote — that's fine. Only connect it if your school offers it; otherwise, connect Gmail/Calendar from Settings, or log your own exams/deadlines by hand.")}</p>
             <div className="onboard-apps">
-              <PronoteTile status={status} onStatusUpdate={onStatus} onChanged={() => void checkPronote()} />
+              <PronoteTile status={status} onChanged={() => void checkPronote()} />
             </div>
             <p className="muted small">{L("Tu peux te connecter plus tard depuis les Réglages.", "You can connect later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
