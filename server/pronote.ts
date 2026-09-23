@@ -149,6 +149,7 @@ export async function connectPronote(email: string, opts: { url: string; usernam
       // to the client while nothing was actually persisted meant the tile forever showed "not connected"
       // with zero visible error, and reconnecting just burned another one-time token for nothing.
       await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored }, { throwOnError: true });
+      invalidatePronoteStatus(email);
       return { ok: true };
     } catch (e: any) {
       console.warn("[pronote] connect failed:", e?.message || e);
@@ -161,6 +162,7 @@ export async function connectPronote(email: string, opts: { url: string; usernam
 export async function disconnectPronote(email: string): Promise<void> {
   const current = await loadState(email);
   await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: undefined });
+  invalidatePronoteStatus(email);
 }
 
 export async function pronoteConnected(email: string): Promise<{ connected: boolean; username?: string; needsReconnect?: boolean }> {

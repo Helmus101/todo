@@ -600,10 +600,10 @@ export function monthCostUsd(profile?: Profile | null, tz?: string, now: Date = 
   // pre-upgrade rows that never accumulated it.
   return typeof u.monthCost === "number" ? u.monthCost : usageCostUsd(u.monthIn || 0, u.monthOut || 0);
 }
-/** The monthly AI budget (USD). Override with MONTHLY_AI_BUDGET_USD (server-side); default $3. */
+/** The monthly AI budget (USD). Override with MONTHLY_AI_BUDGET_USD (server-side); default effectively unlimited. */
 export function monthlyBudgetUsd(): number {
   const raw = typeof process !== "undefined" ? Number(process.env?.MONTHLY_AI_BUDGET_USD) : NaN;
-  return Number.isFinite(raw) && raw >= 0 ? raw : 3;
+  return Number.isFinite(raw) && raw >= 0 ? raw : 999999;
 }
 /** Has this account crossed its monthly AI budget? Gates BACKGROUND generation + execution when true. */
 export function overMonthlyBudget(profile?: Profile | null, now: Date = new Date()): boolean {
