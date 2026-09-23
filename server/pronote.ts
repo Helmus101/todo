@@ -142,8 +142,13 @@ export async function connectPronote(email: string, opts: { url: string; usernam
       // needsReconnect is deliberately omitted (not set false) — a fresh successful login has nothing to
       // carry forward from any prior dead-token flag; a full replacement object naturally clears it.
       const stored: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier, password: opts.password };
-      const current = await loadState(email);
-      await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored });
+      const current = await loadState(email, { bypassCache: true });
+      // throwOnError: without it, a real Supabase write failure here is only logged (store.ts's saveState
+      // is fire-and-forget by default for background syncs) — this call site actually NEEDS to know, since
+      // the login itself just succeeded and Pronote's token is single-use; silently reporting {ok:true} back
+      // to the client while nothing was actually persisted meant the tile forever showed "not connected"
+      // with zero visible error, and reconnecting just burned another one-time token for nothing.
+      await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored }, { throwOnError: true });
       return { ok: true };
     } catch (e: any) {
       console.warn("[pronote] connect failed:", e?.message || e);
