@@ -184,30 +184,22 @@ export async function pronoteConnected(email: string): Promise<{ connected: bool
   return { connected: true, username: stored.username, ...(stored.needsReconnect ? { needsReconnect: true } : {}) };
 }
 
-// Cached wrapper for the hot /api/status path (client/App.tsx polls it every 45s, plus on every focus/
-// visibility change) — pronoteConnected() otherwise does a full cloud state load on EVERY call, with no
-// caching at all, for a value that only ever changes on an explicit connect/disconnect.
-//
-// 10s TTL (was 60s): this Map is per-serverless-instance, and invalidatePronoteStatus() below can only
-// clear the entry on whichever instance handled the connect/disconnect request — a status poll landing on
-// a DIFFERENT warm Vercel instance right after was still serving up to 60s of a stale pre-connect "not
-// connected" from ITS OWN untouched cache, with no way to invalidate it remotely. This was reported live as
-// "I connected to Pronote but it still shows the Connect button" — the tile derives its displayed state
-// from THIS cached value (via /api/status's pronoteConnected field), not from the uncached direct read.
-// 60s made a freshly-connected account look disconnected for up to a full minute on an unlucky instance;
-// 10s isn't a real fix for the underlying per-instance locality problem, just a much smaller window for it
-// to bite — still meaningfully cuts Supabase read volume across a 45s poll cadence.
-const connectedCache = new Map<string, { at: number; data: { connected: boolean; username?: string; needsReconnect?: boolean } }>();
-export async function pronoteConnectedCached(email: string): Promise<{ connected: boolean; username?: string; needsReconnect?: boolean }> {
-  const hit = connectedCache.get(email);
-  if (hit && Date.now() - hit.at < 10_000) return hit.data;
-  const data = await pronoteConnected(email);
-  connectedCache.set(email, { at: Date.now(), data });
-  return data;
-}
-/** Invalidate after an explicit connect/disconnect so the status endpoint reflects it immediately
- *  instead of waiting out the cache TTL. */
-export function invalidatePronoteStatus(email: string): void { connectedCache.delete(email); }
+// Used to wrap pronoteConnected() in a per-instance in-memory cache for the hot /api/status path
+// (client/App.tsx polls it every 45s, plus on every focus/visibility change). Removed entirely — that
+// cache was a plain Map private to whichever single Vercel serverless instance handled a given request,
+// keyed only by email (not by session), so it was effectively shared across every tab/device that happened
+// to land on the same warm instance. A connect/disconnect could only invalidate the ONE instance that
+// handled it; any other instance kept serving its own stale reading for up to the TTL — reported live as
+// "connected but still shows Connect," and separately as "signed out of Pronote" right after logging into
+// Otto or switching tabs (either one fires a fresh /api/status poll that can land on a different, stale
+// instance). Shrinking the TTL (60s → 10s) only narrowed the window; it couldn't fix the actual problem,
+// which is that in-memory per-instance state can never be authoritative across instances. pronoteConnected()
+// below is already a single lightweight Supabase read (bypassCache) — calling it directly, uncached, trades
+// a bit more read volume for this value actually being correct every time, which matters far more for a
+// status a student is actively watching after taking an action than the read-volume savings did.
+/** Invalidate after an explicit connect/disconnect — now a no-op (see removed connectedCache above) kept
+ *  only so existing call sites don't need to change; pronoteConnected() has no cache left to invalidate. */
+export function invalidatePronoteStatus(_email: string): void {}
 
 // The rotated token is the one Pronote write where losing it means real account lockout (the OLD token
 // is already dead on Pronote's own server the moment loginToken() returns) — unlike every other read in

@@ -3132,11 +3132,11 @@ function PronoteTile({ status: mainStatus, onStatusUpdate, onChanged }: { status
   const [err, setErr] = useState("");
   const [pronoteUsername, setPronoteUsername] = useState<string | undefined>();
 
-  // `mainStatus?.pronoteConnected` is briefly unreliable right after a write on serverless (see
-  // pronoteConnectedCached's own comment in server/pronote.ts): a status poll immediately following a
-  // connect/disconnect can land on a DIFFERENT warm Vercel instance whose cache still remembers the OLD
-  // value from before. `optimistic` overrides it until mainStatus actually agrees, so the tile reflects
-  // this tab's own just-completed action immediately instead of showing "Connect" for several seconds
+  // The server's /api/status read is now always a fresh, uncached Supabase read (see server/pronote.ts —
+  // the in-memory per-instance cache that used to sit in front of it was removed after it kept serving
+  // stale readings from whichever OTHER warm Vercel instance happened to have cached one), so this is now
+  // purely a UX nicety, not a correctness patch: `optimistic` shows this tab's own just-completed
+  // connect/disconnect instantly, without waiting on the round trip a fresh mainStatus poll would take.
   // after a connection that had already genuinely succeeded.
   const [optimistic, setOptimistic] = useState<boolean | null>(null);
   useEffect(() => {
