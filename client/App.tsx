@@ -3168,8 +3168,8 @@ function PronoteTile({ onChanged }: { onChanged?: () => void } = {}) {
               )}</div>
             ) : (
               <div className="int-blurb">{L(
-                "Devoirs et contrôles à venir. Lecture seule — Otto ne coche jamais rien dans Pronote à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe sert une seule fois puis n'est jamais conservé ; un jeton chiffré le remplace ensuite.",
-                "Upcoming homework and tests. Read-only — Otto never checks anything off in Pronote for you. Unofficial connection (Index Éducation has no public API) — your password is used once and never stored; an encrypted token replaces it afterwards."
+                "Devoirs et contrôles à venir. Otto lit ces sources et prépare le travail — il ne renvoie jamais rien à ta place. Connexion non-officielle (Index Éducation n'a pas d'API publique) — ton mot de passe sert une seule fois puis n'est jamais conservé ; un jeton chiffré le remplace ensuite.",
+                "Upcoming homework and tests. Otto reads these sources and preps the work — it never sends or hands anything in for you. Unofficial connection (Index Éducation has no public API) — your password is used once and never stored; an encrypted token replaces it afterwards."
               )}</div>
             )}
           </div>
