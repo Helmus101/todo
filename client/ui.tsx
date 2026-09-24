@@ -1095,15 +1095,15 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
     <div className="practice-problem">
       <div className="practice-problem-q">{formatMath(stripStrayMarkdown(problem.problem))}</div>
       {problem.format ? <p className="practice-problem-format">{problem.format}</p> : null}
-      <div className="practice-problem-row">
-        <input
-          type="text" className="practice-problem-input" value={answer}
-          placeholder={L("Ta réponse…", "Your answer…")}
-          disabled={result !== null}
-          onChange={(e) => { setAnswer(e.target.value); setResult(null); }}
-          onKeyDown={(e) => { if (e.key === "Enter") void check(); }}
-        />
-        {result === null ? (
+  <div className="practice-problem-row">
+  <input
+  type="text" className="practice-problem-input" value={answer}
+  placeholder={L("Ta réponse…", "Your answer…")}
+  disabled={result !== null}
+  onChange={(e) => { setAnswer(e.target.value); setResult(null); }}
+  onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) void check(); }}
+  />
+  {result === null ? (
           <button type="button" className="btn primary" disabled={!answer.trim() || checking} onClick={() => void check()}>
             {checking ? L("Vérification…", "Checking…") : L("Vérifier", "Check")}
           </button>
@@ -1117,6 +1117,12 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
             ? L("✓ Correct.", "✓ Correct.")
             : L(`✗ Pas tout à fait — la bonne réponse : ${problem.answer}`, `✗ Not quite — the correct answer: ${problem.answer}`)}
         </p>
+      ) : null}
+      {taskId ? (
+        <StudyHelpPanel
+          taskId={taskId}
+          card={{ kind: "flashcard", front: problem.problem, back: problem.answer }}
+        />
       ) : null}
     </div>
   );
