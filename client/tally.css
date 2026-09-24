@@ -1,17 +1,22 @@
-/* ─── Tally-inspired UI ────────────────────────────────────────────────────
-   Clean white canvas, near-black ink, blue CTA, pink highlight.
-   Loaded AFTER styles.css so it wins the cascade. */
+/* ────────────────────────────────────────────────────────────────────────────
+   Tally-inspired UI — full application theme.
+   Clean white canvas, near-black ink, blue CTA (#0066ff), pink highlight
+   (#ff00ff), Inter typography, 10px radii, hairline borders.
+   Loaded AFTER styles.css (see main.tsx) so it wins the cascade.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* ─── Tokens ─────────────────────────────────────────────────────────────── */
 :root {
   --bg: #FFFFFF;
   --surface: #FFFFFF;
   --surface-raised: #FFFFFF;
-  --surface-glass: rgba(255, 255, 255, 0.92);
+  --surface-glass: #FFFFFF;
   --ink: #1a1a1a;
   --ink-2: #4a4a4a;
   --ink-3: #8a8a8a;
   --line: #EAEAEA;
   --line-soft: rgba(0, 0, 0, 0.06);
-  --line-glass: rgba(255, 255, 255, 0.6);
+  --line-glass: #EAEAEA;
   --accent: #0066ff;
   --accent-hover: #0052cc;
   --accent-active: #0044b3;
@@ -34,7 +39,7 @@
   --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.08);
   --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.12);
   --shadow-glow: 0 0 20px rgba(0, 102, 255, 0.2);
-  --bar: rgba(255, 255, 255, 0.92);
+  --bar: #FFFFFF;
   --hover-wash: rgba(0, 0, 0, 0.03);
   --bg-rgb: 255, 255, 255;
   --glass-border: rgba(0, 0, 0, 0.06);
@@ -44,19 +49,19 @@
   --duration-spring: 300ms;
 }
 
-/* Keep it light even in dark mode — Tally is a white canvas. */
+/* Tally is a white canvas — keep it light even if the OS prefers dark. */
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #FFFFFF;
     --surface: #FFFFFF;
     --surface-raised: #FFFFFF;
-    --surface-glass: rgba(255, 255, 255, 0.92);
+    --surface-glass: #FFFFFF;
     --ink: #1a1a1a;
     --ink-2: #4a4a4a;
     --ink-3: #8a8a8a;
     --line: #EAEAEA;
     --line-soft: rgba(0, 0, 0, 0.06);
-    --line-glass: rgba(255, 255, 255, 0.6);
+    --line-glass: #EAEAEA;
     --accent: #0066ff;
     --accent-hover: #0052cc;
     --accent-active: #0044b3;
@@ -64,13 +69,13 @@
     --accent-rgb: 0, 102, 255;
     --bg-2: #F7F7F7;
     --bg-3: #EAEAEA;
-    --bar: rgba(255, 255, 255, 0.92);
+    --bar: #FFFFFF;
     --hover-wash: rgba(0, 0, 0, 0.03);
     --bg-rgb: 255, 255, 255;
   }
 }
 
-/* ─── Pink highlight (Tally's signature squiggly underline) ──────────────── */
+/* ─── Pink highlight (Tally's signature squiggly underline) ───────────────── */
 .tally-highlight {
   position: relative;
   display: inline;
@@ -86,6 +91,124 @@
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'%3E%3Cpath d='M2 8 Q 25 2, 50 7 T 100 6 T 150 7 T 198 5' stroke='%23ff00ff' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
   pointer-events: none;
 }
+
+/* ─── Global chrome ──────────────────────────────────────────────────────── */
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+a:hover { color: var(--accent-hover); }
+
+::selection { background: rgba(0, 102, 255, 0.15); }
+
+/* Focus rings — Tally uses a soft blue ring */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+
+/* ─── Buttons (Tally: blue primary, quiet ghost, hairline outline) ──────── */
+.btn {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: #FFFFFF;
+  color: var(--ink);
+  font-weight: 500;
+  font-family: var(--sans);
+  box-shadow: none;
+  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease,
+    color var(--duration-fast) ease, transform var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease;
+}
+.btn:hover { background: var(--bg-2); border-color: #D5D5D5; }
+.btn:active { transform: scale(0.98); }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 102, 255, 0.2);
+}
+.btn.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  box-shadow: 0 2px 8px rgba(0, 102, 255, 0.25);
+}
+.btn.primary:active { background: var(--accent-active); }
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-2);
+}
+.btn.ghost:hover {
+  background: var(--bg-2);
+  color: var(--ink);
+  border-color: transparent;
+}
+.btn.big {
+  height: 48px;
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+.btn.primary.big:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0, 102, 255, 0.3);
+}
+
+/* ─── Inputs ────────────────────────────────────────────────────────────── */
+input, textarea, select {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: var(--sans);
+  color: var(--ink);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
+input::placeholder, textarea::placeholder { color: var(--ink-3); }
+
+/* Segmented control — Tally-style pill switcher */
+.segmented-control {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 2px;
+}
+.segmented-control button {
+  border-radius: var(--radius-xs);
+  color: var(--ink-2);
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+.segmented-control button:hover { color: var(--ink); }
+.segmented-control button.active {
+  background: #FFFFFF;
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+/* ─── Chips / badges — soft tinted pills ─────────────────────────────────── */
+.chip {
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.chip-muted { background: var(--bg-2); color: var(--ink-3); }
+.chip-busy { background: rgba(0, 102, 255, 0.06); color: var(--accent); }
+.chip-attention { background: var(--accent-soft); color: var(--accent); }
+.chip-bad { background: #FFF3F0; color: #C6462F; }
+.chip-good { background: rgba(0, 153, 102, 0.08); color: #009966; }
 
 /* ─── Landing page ───────────────────────────────────────────────────────── */
 .landing-simple { background: #FFFFFF; }
@@ -194,45 +317,7 @@
 }
 .foot-top-simple { justify-content: space-between; width: 100%; max-width: 720px; }
 .foot-bottom-simple { border-top: 1px solid var(--line); }
-
-/* ─── Buttons (Tally: blue primary, clean ghost) ─────────────────────────── */
-.btn {
-  border-radius: var(--radius-sm);
-  border-color: var(--line);
-  box-shadow: none;
-  font-weight: 500;
-  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease, transform var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
-}
-.btn:active { transform: scale(0.98); }
-.btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  box-shadow: 0 1px 3px rgba(0, 102, 255, 0.2);
-}
-.btn.primary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  box-shadow: 0 2px 8px rgba(0, 102, 255, 0.25);
-}
-.btn.ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--ink-2);
-}
-.btn.ghost:hover {
-  background: var(--bg-2);
-  color: var(--ink);
-}
-.btn.big {
-  height: 48px;
-  border-radius: var(--radius);
-  font-weight: 600;
-}
-.btn.primary.big:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0, 102, 255, 0.3);
-}
+.landing-foot-simple a:hover, .foot-group-simple a:hover { color: var(--accent); }
 
 /* ─── Login page ─────────────────────────────────────────────────────────── */
 .login-page { background: #FFFFFF; }
@@ -249,92 +334,6 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-
-/* ─── Dashboard (app shell) ──────────────────────────────────────────────── */
-.app { background: #FFFFFF; }
-.sidebar {
-  background: #FFFFFF;
-  border-right: 1px solid var(--line);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-.sidebar-item.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.topbar {
-  background: #FFFFFF;
-  border-bottom: 1px solid var(--line);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-/* Task list */
-.list { background: transparent; border: 0; box-shadow: none; }
-.list > * {
-  background: #FFFFFF;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  transition: box-shadow var(--duration-fast) ease, border-color var(--duration-fast) ease;
-}
-.list > *:hover {
-  border-color: #D5D5D5;
-  box-shadow: var(--shadow-card);
-}
-
-/* Cards */
-.card {
-  border-bottom: 1px solid var(--line);
-}
-.card-title { font-weight: 600; letter-spacing: -0.01em; }
-.card-check { border-color: var(--line); border-radius: 6px; }
-.card-check.checked { background: var(--accent); border-color: var(--accent); }
-
-/* Add task input */
-.add-task-row {
-  background: #FFFFFF;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-}
-.add-task-row:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-/* Hero card on dashboard */
-.dash-hero {
-  background: #FFFFFF;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-}
-.dash-hero-kicker, .focus-title { color: var(--accent); }
-
-/* Inputs */
-input, textarea, select {
-  background: #FFFFFF;
-  border-color: var(--line);
-  border-radius: var(--radius-sm);
-}
-input:focus, textarea:focus, select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-/* Modals and panels */
-.task-modal {
-  background: #FFFFFF;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop);
-}
-.step-hero, .task-chat, .walk-panel, .crash-card {
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-}
-
-/* Language toggle */
 .lang-toggle {
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
@@ -343,14 +342,529 @@ input:focus, textarea:focus, select:focus {
 }
 .lang-toggle:hover { background: var(--bg-2); }
 
-/* Links */
-a { color: var(--accent); }
-.landing-foot-simple a:hover, .foot-group-simple a:hover { color: var(--accent); }
+/* ═══════════════════════════════════════════════════════════════════════════
+   MAIN APP — app shell, dashboard, tasks, settings, journal, study
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── App shell ──────────────────────────────────────────────────────────── */
+.app { background: #FFFFFF; }
+
+/* Sidebar — Tally-style: flat white, hairline divider, compact nav */
+.sidebar {
+  width: 230px;
+  background: #FFFFFF;
+  border-right: 1px solid var(--line);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 20px 12px;
+  transition: none;
+}
+.sidebar-brand {
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  padding: 4px 12px;
+  margin-bottom: 20px;
+}
+.sidebar-nav { gap: 2px; }
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+  will-change: auto;
+}
+.sidebar-item:hover {
+  background: var(--bg-2);
+  color: var(--ink);
+}
+.sidebar-item:active { transform: none; }
+.sidebar-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.sidebar-item svg { width: 17px; height: 17px; }
+.sidebar-badge {
+  background: var(--accent);
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+}
+
+/* Topbar — flat white hairline */
+.topbar {
+  background: #FFFFFF;
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition: none;
+}
+
+/* Content column — a touch wider, Tally centers forms with generous margins */
+.list-wrap, .settings-page {
+  max-width: 720px;
+  padding-top: clamp(28px, 5vh, 64px);
+}
+
+/* ─── Toast — white card with hairline + shadow ─────────────────────────── */
+.toast {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink);
+  font-weight: 500;
+}
+.toast.error {
+  background: #1a1a1a;
+  border-color: #1a1a1a;
+  color: #fff;
+}
+
+/* ─── Dashboard header ──────────────────────────────────────────────────── */
+.dash-date {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.list-head {
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+.list-head .accent-num { color: var(--accent); }
+.dash-line { color: var(--ink-2); font-size: 15px; }
+.dash-next { color: var(--ink-2); }
+
+/* Status pills */
+.dash-late {
+  background: #FFF3F0;
+  color: #C6462F;
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+}
+.dash-working {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: var(--radius-pill);
+}
+.scan-note {
+  background: var(--bg-2);
+  color: var(--ink-2);
+  border-radius: var(--radius-pill);
+}
+.scan-dot { background: var(--accent); }
+
+/* Progress bar — slim blue track */
+.dash-progress {
+  background: var(--bg-2);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  border: none;
+}
+.dash-progress-fill {
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-slow) ease;
+}
+
+/* ─── Add task input — Tally's "type a question" bar ─────────────────────── */
+.add-task-row {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+.add-task-row:hover {
+  border-color: #D5D5D5;
+  transform: none;
+}
+.add-task-row:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.add-task-input { font-size: 15px; color: var(--ink); }
+.add-task-input::placeholder { color: var(--ink-3); }
+
+/* ─── Task hero (spotlight card) ────────────────────────────────────────── */
+.dash-hero {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+.dash-hero:hover {
+  border-color: #D5D5D5;
+  box-shadow: var(--shadow-card);
+}
+.dash-hero-kicker {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.dash-hero-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.dash-hero-why { color: var(--ink-2); line-height: 1.55; }
+.dash-hero-meta { color: var(--ink-3); font-size: 13px; }
+
+/* ─── Task list / cards ──────────────────────────────────────────────────── */
+.list { background: transparent; border: 0; box-shadow: none; }
+
+/* Each card is its own bordered row — Tally's block-list look */
+.card {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  animation: none;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease,
+    background var(--duration-fast) ease;
+}
+.card + .card { border-top: 1px solid var(--line); }
+.card:hover {
+  border-color: #D5D5D5;
+  box-shadow: var(--shadow-card);
+}
+.card:active { transform: none; }
+/* Status rail on the left edge — flat, no glow */
+.card::before {
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  box-shadow: none;
+  left: 0;
+}
+.card.running::before { box-shadow: none; }
+.card.needs-you::before { box-shadow: none; }
+.card.is-done { opacity: 0.55; }
+
+.card-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.card-sub { color: var(--ink-3); }
+.card-subject { color: var(--ink-3); font-weight: 500; }
+.card-peak-badge {
+  background: rgba(255, 0, 255, 0.08);
+  color: #cc00cc;
+  border-radius: var(--radius-pill);
+}
+
+/* Checkbox — Tally blue */
+.card-check {
+  border: 1.5px solid #D5D5D5;
+  border-radius: 6px;
+  background: #FFFFFF;
+  transition: border-color var(--duration-fast) ease, background var(--duration-fast) ease;
+}
+.card-check:hover { border-color: var(--accent); }
+.card-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.card-check:disabled { border-color: var(--line); }
+
+/* Dismiss × and study button — quiet ghost squares */
+.card-x { border-radius: var(--radius-xs); color: var(--ink-3); }
+.card-study {
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  color: var(--ink-3);
+  background: transparent;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+.card-study:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+/* "New" dot — pink, Tally's accent */
+.new-dot { background: #ff00ff; }
+
+/* Due date color */
+.when-soon { color: #C6462F; font-weight: 600; }
+
+/* ─── Focus groups ("Also today" / "Later" / "Can wait") ─────────────────── */
+.focus-group-head { margin-top: 8px; }
+.focus-title {
+  color: var(--ink-3);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.show-more-btn { color: var(--accent); font-weight: 500; }
+.show-more-btn:hover { background: var(--accent-soft); color: var(--accent); }
+
+/* ─── Completed section — checklist look ─────────────────────────────────── */
+.completed-section { border-top: 1px solid var(--line); }
+.completed-head {
+  color: var(--ink-3);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.done-row {
+  border-radius: var(--radius-xs);
+  border-bottom: 1px solid var(--line-soft);
+  transition: background var(--duration-fast) ease;
+}
+.done-row:hover { background: var(--bg-2); }
+.done-check { color: var(--accent); }
+.done-title { color: var(--ink-2); font-weight: 500; }
+.done-when { color: var(--ink-3); font-size: 12px; }
+
+/* ─── Empty states & hints ──────────────────────────────────────────────── */
+.empty-state {
+  background: #FFFFFF;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-lg);
+  padding: 32px;
+}
+.empty-state h3 { letter-spacing: -0.02em; }
+.page-info-hint {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-2);
+}
+.page-info-hint-x { color: var(--ink-3); }
+.page-info-hint-x:hover { background: rgba(0, 0, 0, 0.06); }
+
+/* ─── Task modal (detail view) ──────────────────────────────────────────── */
+.task-modal {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+.task-modal-x { color: var(--ink-3); border-radius: var(--radius-xs); }
+.task-modal-x:hover { background: var(--bg-2); color: var(--ink); }
+
+/* Focus view panels */
+.step-hero, .task-chat, .walk-panel, .crash-card, .task-plan-panel {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.step-hero-top .tf-title { font-weight: 700; letter-spacing: -0.02em; }
+.tf-why, .hero-sub, .hero-line { color: var(--ink-2); }
+.steps { color: var(--ink-2); }
+.step-text-row { color: var(--ink); }
+.step-input {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.step-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* Chat (Otto assistant) */
+.chat-msg { font-size: 14.5px; line-height: 1.55; }
+.chat-user { color: var(--ink-2); }
+.chat-assistant { color: var(--ink); }
+.chat-input {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.chat-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.chat-code-block {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+}
+
+/* ─── Settings — Tally form look: white card sections, hairline rows ────── */
+.settings-page { width: 100%; max-width: 660px; margin: 0 auto; }
+.settings-title {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-size: clamp(26px, 4vw, 32px);
+}
+.settings-sec {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 20px 24px;
+  transition: border-color var(--duration-fast) ease;
+}
+.settings-sec:hover { border-color: #D5D5D5; }
+.settings-sec h2 {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  font-size: 16px;
+}
+.settings-sec h3 { color: var(--ink-2); font-weight: 600; }
+.settings-hint { color: var(--ink-3); font-size: 13px; }
+.set-row { border-top: 1px solid var(--line-soft); }
+.set-text h3, .set-text strong { color: var(--ink); font-weight: 600; }
+.field input, .field textarea, .field select { border-radius: var(--radius-sm); }
+
+/* Connect card */
+.connect-card {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.connect-card h2 { letter-spacing: -0.025em; }
+
+/* Integration tiles */
+.int-tile, .int-acct {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+.int-tile:hover, .int-acct:hover {
+  border-color: #D5D5D5;
+  box-shadow: var(--shadow-card);
+}
+
+/* ─── Journal (studylog) ─────────────────────────────────────────────────── */
+.studylog-page .studylog-textarea,
+.studylog-textarea {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.studylog-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.studylog-tabs .segmented-control { background: var(--bg-2); }
+.studylog-day-cards {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.studylog-editor-toolbar {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.note-chip {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Error log ─────────────────────────────────────────────────────────── */
+.errorlog-entry {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.errorlog-entry-head { color: var(--ink-2); }
+
+/* ─── Flashcards & quizzes ──────────────────────────────────────────────── */
+.deck-popup, .quiz-popup, .note-popup, .materials-drawer {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+.deck-card-face, .deck-card-back {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.deck-btn-right { background: var(--accent); border-color: var(--accent); color: #fff; border-radius: var(--radius-sm); }
+.deck-btn-wrong { background: #FFFFFF; border: 1px solid var(--line); color: var(--ink); border-radius: var(--radius-sm); }
+.deck-btn-right:hover { background: var(--accent-hover); }
+.deck-btn-wrong:hover { background: var(--bg-2); }
+.deck-progress { background: var(--bg-2); border-radius: var(--radius-pill); }
+.deck-progress-fill { background: var(--accent); }
+.deck-score-ring { color: var(--accent); }
+.quiz-opt-text { color: var(--ink); }
+.quiz-why { color: var(--ink-2); }
+.quiz-mistake-textarea {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Study Mode ────────────────────────────────────────────────────────── */
+.study-mode-v2 { background: var(--bg-2); }
+.study-mode-start, .sm-modal, .sm-drawer {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+.task-goal-banner {
+  background: var(--accent-soft);
+  border: 1px solid rgba(0, 102, 255, 0.15);
+  border-radius: var(--radius);
+  color: var(--accent);
+}
+.study-help-panel {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+.study-help-input {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.study-help-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.start-duration, .start-task-info { color: var(--ink-2); }
+
+/* ─── Onboarding ────────────────────────────────────────────────────────── */
+.onboard-lead, .first-time-hint-body { color: var(--ink-2); }
+.first-action {
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.first-action:hover { border-color: #D5D5D5; }
+
+/* ─── Misc small parts ──────────────────────────────────────────────────── */
+.spinner { border-color: var(--line); border-top-color: var(--accent); }
+.milestone-bar, .milestone-segment-bar { border-radius: var(--radius-pill); background: var(--bg-3); }
+.milestone-bar > div { background: var(--accent); }
+.links a { color: var(--accent); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Modals / panels from ui.tsx */
+.modal-row { border-top: 1px solid var(--line-soft); }
+.disclosure-head { border-radius: var(--radius-xs); }
+.disclosure-head:hover { background: var(--bg-2); }
 
 /* ─── Mobile ────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .sidebar { border-right: 1px solid var(--line); }
+  .sidebar { border-right: 1px solid var(--line); width: 260px; }
+  .sidebar-toggle {
+    background: var(--accent);
+    color: #fff;
+    border-radius: 50%;
+    box-shadow: var(--shadow-pop);
+  }
   .hero-title-simple { font-size: 32px; }
   .hero-sub-simple { font-size: 16px; }
   .features-simple { gap: 28px; }
+  .card { border-radius: var(--radius); }
 }
