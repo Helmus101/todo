@@ -449,9 +449,9 @@ input:focus, textarea:focus {
 .sidebar-brand {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-4);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3);
+  margin-bottom: var(--space-5);
   font-weight: var(--weight-semibold);
   font-size: var(--text-lg);
   color: var(--ink);
@@ -461,13 +461,13 @@ input:focus, textarea:focus {
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 .sidebar-item {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3);
   border-radius: var(--radius-sm);
   color: var(--ink-2);
   font-size: var(--text-base);
@@ -578,7 +578,7 @@ input:focus, textarea:focus {
   /* Apple Design §4 — use spring for page entrance */
   animation: pageIn var(--duration-spring) var(--ease-spring) backwards; 
 }
-.dash-head { margin-bottom: var(--space-6); }
+.dash-head { margin-bottom: var(--space-5); }
 /* A small eyebrow above the greeting — today's date, so the dashboard reads as "here's where things stand
    today" at a glance, not just a generic hello. Muted, not competing with the greeting for attention. */
 .dash-date { 
@@ -893,8 +893,8 @@ input:focus, textarea:focus {
 
 /* ─── Task Goal / Definition of Done Banner ────────────────────────────────── */
 .task-goal-banner {
-  margin: 10px 0;
-  padding: 8px 12px;
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   background: var(--accent-soft);
   border: 1px solid var(--line-glass);
@@ -1029,7 +1029,7 @@ input:focus, textarea:focus {
 }
 .card {
   position: relative;
-  display: flex; align-items: center; gap: var(--space-3); padding: 14px 18px 14px 22px; min-height: 56px;
+  display: flex; align-items: center; gap: var(--space-3); padding: 16px 20px 16px 24px; min-height: 60px;
   background: transparent;
   border: none;
   /* Apple Design §4 — spring animation for entrance */
@@ -3856,8 +3856,8 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .list-focus-wrap { display: flex; flex-direction: column; gap: 40px; }
 /* 12px, not 10 — the cards carry a real shadow now (they were flat/borderless when this gap was set), and
    at 10px adjacent shadows visually bleed into each other instead of reading as separate objects. */
-.focus-group { display: flex; flex-direction: column; gap: var(--space-3); }
-.focus-group-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
+.focus-group { display: flex; flex-direction: column; gap: var(--space-4); }
+.focus-group-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px var(--space-4); border-bottom: 1px solid var(--line); }
 .focus-title { font-family: var(--display); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-2); }
 /* "Today" is the hero section — its heading carries more weight than Later/Can wait so the hierarchy is
    legible before you read a single task title. */
