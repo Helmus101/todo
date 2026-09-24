@@ -488,7 +488,20 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
     try { onTask(await api.run(task.id, reset)); }
     // A run rejection (paused / over-budget / rate-limited / still-running-elsewhere / a server error) never
     // touched the task before, so it failed silently. Surface it — the card also reflects any failed state.
-    catch (e: any) { notify(e?.message || L("Impossible de lancer cette tâche — réessaie.", "Couldn't run this task — try again."), "error"); }
+    catch (e: any) {
+      // Outran the client timeout rather than failed: the run is still going and will commit its steps, so
+      // don't call it an error (which invites a retry that just spends more AI on a run already in flight).
+      if (e?.taskStillRunning) {
+        // Reflect the status the server already set when it enqueued this ("queued") — otherwise the card
+        // keeps showing the pre-run state, and the 10s kick loop never starts, because that loop only runs
+        // while the list shows in-flight work. This makes it start, and it reconciles with real server
+        // state on its very next tick.
+        onTask({ ...task, status: "queued" });
+        notify(L("Otto travaille encore dessus — les étapes apparaîtront toutes seules.", "Otto's still working on this — the steps will appear on their own."));
+      } else {
+        notify(e?.message || L("Impossible de lancer cette tâche — réessaie.", "Couldn't run this task — try again."), "error");
+      }
+    }
     finally { setRunning(false); }
   };
 

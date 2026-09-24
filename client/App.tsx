@@ -665,7 +665,20 @@ export function App() {
         : `${fresh.length} nouvelle${fresh.length === 1 ? "" : "s"} tâche${fresh.length === 1 ? "" : "s"} trouvée${fresh.length === 1 ? "" : "s"}${queuedN ? `, ${queuedN} en préparation` : ""}${needsYou ? `, ${needsYou} ${needsYou === 1 ? "a besoin" : "ont besoin"} de toi` : ""}.`);
       void loadBudget();
     }
-    catch (e: any) { notify(en ? `Couldn't refresh: ${e?.message || "something went wrong — try again."}` : `Actualisation impossible : ${e?.message || "une erreur est survenue — réessaie."}`, "error"); }
+    catch (e: any) {
+      // A long sweep that outran the client timeout is NOT a failure — it's still running server-side and
+      // will commit its tasks. Saying "couldn't refresh" there is actively wrong (the student retries,
+      // which just spends more AI on a sweep already in flight). Say it's still working and pick the
+      // results up on our own, so the tasks appear without them having to do anything.
+      if (e?.sweepStillRunning) {
+        notify(en ? "Still checking — this one's taking a while. New tasks will appear here on their own."
+                  : "Vérification en cours — ça prend un peu de temps. Les nouvelles tâches apparaîtront toutes seules.");
+        window.setTimeout(() => { void syncTasks(); }, 20_000);
+        window.setTimeout(() => { void syncTasks(); }, 60_000);
+        return;
+      }
+      notify(en ? `Couldn't refresh: ${e?.message || "something went wrong — try again."}` : `Actualisation impossible : ${e?.message || "une erreur est survenue — réessaie."}`, "error");
+    }
     finally { setBusy(false); }
   };
   const signOut = async () => {

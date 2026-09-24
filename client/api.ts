@@ -178,6 +178,10 @@ const j = async (r: Response) => {
   }
   return r.json();
 };
+// Comfortably under the serverless function's own execution ceiling, so a slow-but-working sweep gets told
+// "still running" by US (with a follow-up re-sync) rather than by the platform killing the request and
+// handing back an error page.
+const GENERATE_TIMEOUT_MS = 120_000;
 const post = (url: string, body?: unknown) =>
   req(url, { method: "POST", headers: body ? { "content-type": "application/json" } : undefined, body: body ? JSON.stringify(body) : undefined }).then(j);
 // Auth posts surface the server's error message instead of throwing, so the form can show it. Login/signup
@@ -309,15 +313,61 @@ export const api = {
   tasks: (): Promise<WebTask[]> => req("/api/tasks").then(j),
   // Returns the fresh list + the sweep's own result line ("swept: 3 new tasks…" / "skipped: nothing
   // connected") so the UI reports what actually happened rather than inferring it.
+  // Hard client-side timeout, and NOT via plain post(): the server drains the sweep inline, so this request
+  // stays open for the whole sweep. Two things then went wrong with an unbounded post(). First, nothing ever
+  // resolved the button — it just span. Second, and worse, the platform eventually kills the function and
+  // returns a non-JSON gateway error page, which is exactly the shape req() treats as "proxy error page →
+  // retry" — so it fired the whole sweep up to 6 more times, each one a fresh unattended AI spend, and the
+  // click still never resolved. req() rethrows AbortError without retrying, so the timeout stops that dead.
+  //
+  // A timeout here does NOT mean the sweep failed — it's still running server-side and will commit its
+  // results — so this reports "still running" rather than an error, and the caller re-syncs shortly after
+  // instead of telling the student something went wrong.
   generate: async (force = false): Promise<{ tasks: WebTask[]; note: string }> => {
-    const out: any = await post("/api/tasks/generate", force ? { force: true } : undefined);
-    return Array.isArray(out) ? { tasks: out, note: "" } : { tasks: out?.tasks || [], note: String(out?.note || "") };
+    try {
+      const r = await req("/api/tasks/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(force ? { force: true } : {}),
+        signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
+      });
+      const out: any = await j(r);
+      return Array.isArray(out) ? { tasks: out, note: "" } : { tasks: out?.tasks || [], note: String(out?.note || "") };
+    } catch (e: any) {
+      if (e?.name === "AbortError" || e?.name === "TimeoutError") {
+        const err: any = new Error("The sweep is still running.");
+        err.sweepStillRunning = true; // caller shows "still checking" + re-syncs, never "couldn't refresh"
+        throw err;
+      }
+      throw e;
+    }
   },
   // `clientId` — an idempotency key (see server/index.ts): pass the caller's own local stub id so a
   // retried/double-fired request is recognized as a replay instead of creating a second task.
   add: (title: string, when?: string, clientId?: string): Promise<WebTask[]> => post("/api/tasks", { title, ...(when ? { when } : {}), ...(clientId ? { clientId } : {}) }),
   refine: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/refine`),
-  run: (id: string, reset?: boolean): Promise<WebTask> => post(`/api/tasks/${id}/run`, reset ? { reset: true } : undefined),
+  // Bounded for the same reason as generate() above — this route drains the run INLINE, so an unbounded
+  // post() left the button spinning and then let req() re-fire the whole run up to 6 times against the
+  // platform's non-JSON timeout page. A timeout means the run is still going server-side (its steps will
+  // commit), so it's reported as such rather than as a failure.
+  run: async (id: string, reset?: boolean): Promise<WebTask> => {
+    try {
+      const r = await req(`/api/tasks/${id}/run`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(reset ? { reset: true } : {}),
+        signal: AbortSignal.timeout(GENERATE_TIMEOUT_MS),
+      });
+      return await j(r);
+    } catch (e: any) {
+      if (e?.name === "AbortError" || e?.name === "TimeoutError") {
+        const err: any = new Error("This task is still running.");
+        err.taskStillRunning = true;
+        throw err;
+      }
+      throw e;
+    }
+  },
   revise: (id: string, note: string): Promise<WebTask> => post(`/api/tasks/${id}/revise`, { note }),
   confirm: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/confirm`),
   reject: (id: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reject`),
