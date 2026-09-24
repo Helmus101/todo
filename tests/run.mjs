@@ -1171,6 +1171,25 @@ section("betaFeatures gates all 7 bandit call sites + the AI theme route (source
 // EMPTY task list — for every account, on every read, including every background job's "load the account,
 // merge in new work, save it back" cycle. Two separate fixes, both pinned: the migration now exists, and a
 // missing-column error on the whole-row select no longer collapses profile+tasks to nothing.
+section("Study Mode: chat + Board always present, board write reliability (source pins)");
+{
+  const studyModeSrc = readFileSync(new URL("../client/study/StudyMode.tsx", import.meta.url), "utf8");
+  const claudeSrc2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // Direct instruction: chat + the Board must be on the desk from the FIRST moment of every session, on
+  // every workspace template — not opt-in behind a click or Otto's own first write.
+  check("defaultChatAndBoard exists and is used by buildInitialArtifacts", /function defaultChatAndBoard/.test(studyModeSrc) && /const chatAndBoard = defaultChatAndBoard/.test(studyModeSrc));
+  // Every template branch (WRITING/READING/PROBLEM_SOLVING/REVISION/RESEARCH/default) must spread it in —
+  // count the case labels vs the spread sites so a new template added later can't silently skip this.
+  const templateCases = (studyModeSrc.match(/case "(WRITING|READING|PROBLEM_SOLVING|REVISION|RESEARCH)":/g) || []).length;
+  const spreadSites = (studyModeSrc.match(/\.\.\.chatAndBoard,/g) || []).length;
+  check("every named template branch spreads chatAndBoard into its return (none silently opt out)", templateCases > 0 && spreadSites >= templateCases + 1); // +1 for the default branch
+  check("resumeSession backfills chat/board for a pre-existing saved session, without touching an already-present one", /missingTypes.*filter.*!env\.artifacts\.some/.test(studyModeSrc.replace(/\s+/g, " ")));
+
+  // The board-write prompt used to leave EVERY write entirely to the model's own per-turn judgment call —
+  // strengthened so a genuine topic resolution always leaves a "lessons learned" record, not just when it
+  // happens to occur to the model.
+  check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE BOARD WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
+}
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
   const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");

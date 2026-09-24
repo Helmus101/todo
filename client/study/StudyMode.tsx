@@ -57,6 +57,22 @@ function detectTemplate(task: WebTask): WorkspaceTemplate {
 }
 
 // ── Build initial artifact layout from template ───────────────────────────────
+// Ask Otto (chat) + the Board, at the same x/y/w/h openOrFocusChat/openOrFocusBoard use when adding either
+// on demand. Shared by buildInitialArtifacts (every session starts with both already on the desk — direct
+// instruction: they were previously opt-in, only appearing once the student clicked "Ask Otto" or once Otto
+// itself first wrote to the board, which read as two separate, easy-to-miss side features rather than the
+// tutor always being right there) and resumeSession's backfill (a session saved before this change won't
+// have them yet). zIndex 100 — comfortably above buildInitialArtifacts' template tools (zIndex 1-2), same
+// as every other artifact added post-session-start; tileWithinBounds re-tiles every freeform artifact
+// (these included) around whatever the template's own tools reserve, so they never sit on top of them.
+function defaultChatAndBoard(envId: string, taskId: string): ArtifactState[] {
+  const base = { environmentId: envId, taskId, zIndex: 100, minimized: false, maximized: false, dockSide: "none" as const, contentState: {} };
+  return [
+    { ...base, id: crypto.randomUUID(), type: "chat", title: "Ask Otto", x: 55, y: 10, width: 38, height: 78 },
+    { ...base, id: crypto.randomUUID(), type: "board", title: "Board", x: 8, y: 10, width: 34, height: 70 },
+  ];
+}
+
 function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskId: string, materials: StudyMaterial[]): ArtifactState[] {
   const base = { environmentId: envId, taskId, zIndex: 1, minimized: false, maximized: false, dockSide: "none" as const, contentState: {} };
 
@@ -64,6 +80,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
   const firstPDF = materials.find(m => m.type === "pdf");
   const firstVideo = materials.find(m => m.type === "video");
   const firstDoc = materials.find(m => m.type === "document");
+  const chatAndBoard = defaultChatAndBoard(envId, taskId);
 
   switch (template) {
     case "WRITING":
@@ -88,6 +105,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           dockSide: "left",
           zIndex: 2,
         },
+        ...chatAndBoard,
       ];
 
     case "READING":
@@ -113,6 +131,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           dockSide: "right",
           zIndex: 2,
         },
+        ...chatAndBoard,
       ];
 
     case "PROBLEM_SOLVING":
@@ -136,6 +155,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           dockSide: "right",
           zIndex: 2,
         },
+        ...chatAndBoard,
       ];
 
     case "REVISION":
@@ -148,6 +168,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           x: 20, y: 10,
           width: 60, height: 75,
         },
+        ...chatAndBoard,
       ];
 
     case "RESEARCH":
@@ -171,6 +192,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           dockSide: "right",
           zIndex: 2,
         },
+        ...chatAndBoard,
       ];
 
     default: // STANDARD, PROJECT
@@ -183,6 +205,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           x: 20, y: 10,
           width: 60, height: 75,
         },
+        ...chatAndBoard,
       ];
   }
 }
@@ -666,10 +689,16 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     setSessionStatus("active");
     setPhaseSeconds(0);
     setPhase("session"); // was missing — clicking "Resume" flipped status but left the setup screen on-screen
-    updateEnv({ sessionStatus: "active" });
+    // Backfill chat/board for a session saved before both became default-present (see buildInitialArtifacts/
+    // defaultChatAndBoard) — added ONLY if genuinely missing, and never touches an existing one (no
+    // un-minimizing, no z-index bump): this is a silent resume, not the explicit click openOrFocusChat/
+    // openOrFocusBoard are for, so it must never undo a layout the student deliberately left minimized.
+    const missingTypes = (["chat", "board"] as const).filter((t) => !env.artifacts.some((a) => a.type === t));
+    const backfill = missingTypes.length ? defaultChatAndBoard(env.id, task.id).filter((a) => missingTypes.includes(a.type as "chat" | "board")) : [];
+    updateEnv({ sessionStatus: "active", ...(backfill.length ? { artifacts: [...env.artifacts, ...backfill] } : {}) });
     enterFullscreen(); // called synchronously from the Resume button's click
     void api.recordMetric("study_session_resumed", 1);
-  }, [env, updateEnv, enterFullscreen]);
+  }, [env, updateEnv, enterFullscreen, task.id]);
 
   // ── Break ─────────────────────────────────────────────────────────────────
   const startBreak = useCallback(() => {
