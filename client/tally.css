@@ -1,5 +1,5 @@
 /* ─── Paper & Ink refresh ───────────────────────────────────────────────
-   Tally-inspired restraint: one warm page, one ink, one line, one coral cue. */
+   Tally-inspired restraint: one warm page, one ink, one line, one blue cue. */
 :root {
   --bg: #FAFAF8;
   --surface: #FFFFFF;
@@ -11,12 +11,12 @@
   --line: #E7E5E4;
   --line-soft: rgba(23, 23, 23, 0.09);
   --line-glass: #E7E5E4;
-  --accent: #FF5A3C;
-  --accent-hover: #E8492E;
-  --accent-active: #D73E25;
-  --accent-soft: rgba(255, 90, 60, 0.09);
-  --accent-rgb: 255, 90, 60;
-  --focus-ring: rgba(255, 90, 60, 0.28);
+  --accent: #1677FF;
+  --accent-hover: #0869EB;
+  --accent-active: #0058CF;
+  --accent-soft: rgba(22, 119, 255, 0.09);
+  --accent-rgb: 22, 119, 255;
+  --focus-ring: rgba(22, 119, 255, 0.28);
   --bg-2: #F2F1EE;
   --bg-3: #E7E5E4;
   --graphite: #78716C;
@@ -56,11 +56,11 @@
     --line: #E7E5E4;
     --line-soft: rgba(23, 23, 23, 0.09);
     --line-glass: #E7E5E4;
-    --accent: #FF5A3C;
-     --accent-hover: #E8492E;
-    --accent-active: #D73E25;
-    --accent-soft: rgba(255, 90, 60, 0.09);
-    --accent-rgb: 255, 90, 60;
+    --accent: #1677FF;
+     --accent-hover: #0869EB;
+    --accent-active: #0058CF;
+    --accent-soft: rgba(22, 119, 255, 0.09);
+    --accent-rgb: 22, 119, 255;
     --bg-2: #F2F1EE;
     --bg-3: #E7E5E4;
     --bar: rgba(250, 250, 248, 0.94);
