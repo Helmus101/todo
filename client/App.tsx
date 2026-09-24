@@ -137,7 +137,7 @@ function Logo({ size = 22 }: { size?: number }) {
   return (
     <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
       <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path d="M15 25 L21 31 L33 17" stroke="#2F4DE0" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M15 25 L21 31 L33 17" stroke="#0066ff" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
 }
@@ -3987,7 +3987,7 @@ export function Landing({ lang, onLangChange }: { lang: "fr" | "en"; onLangChang
       {/* Hero Section - Simplified */}
       <main className="hero-simple">
         <h1 className="hero-title-simple">
-          {L("Ton lycée, plus clair.", "Your studies, clearer.")}
+          {en ? <>Your studies, <span className="tally-highlight">clearer</span>.</> : <>Ton lycée, <span className="tally-highlight">plus clair</span>.</>}
         </h1>
 
         <p className="hero-sub-simple">
