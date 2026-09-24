@@ -441,7 +441,27 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   const [chatStep, setChatStep] = useState<number | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ block: "nearest" }); }, [task.chat?.length, chatSending]);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const userScrolledRef = useRef(false);
+  
+  // Auto-scroll to bottom only if user hasn't deliberately scrolled up
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    
+    if (isNearBottom) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [task.chat?.length, chatSending]);
+  
+  // Track user scroll intention
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    userScrolledRef.current = !isNearBottom;
+  }, []);
   // Grows up to 3 lines (CSS max-height on .chat-input) then scrolls internally — was a single-line <input>,
   // so anything longer than one line just scrolled sideways out of view while typing. Re-measured on every
   // `chatInput` change (typing AND the programmatic clear after send), so sending correctly shrinks it back.
@@ -1263,7 +1283,7 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>
       {/* role="log" so a screen reader announces replies as they arrive — the thread updates without any
           navigation, so without this a blind student would never know an answer had come back. */}
-      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")}>
+      <div className="chat-thread" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
         {!task.chat?.length && !pendingMsg ? (
           <p className="muted small">{L("Dis-lui ce qui bloque. Il explique, il ne donne pas la réponse.", "Say what's blocking you. It'll explain — not hand you the answer.")}</p>
         ) : task.chat?.map((m, i) => (

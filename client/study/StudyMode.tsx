@@ -942,6 +942,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
       if (!prev) return prev;
+      // Prevent removing the chat artifact - it should always be available
+      const chatArtifact = prev.artifacts.find(a => a.id === id && a.type === "chat");
+      if (chatArtifact) return prev;
+      
       // Closing one tool frees its share of the desk — auto-enlarge the remaining freeform ones to fill
       // it, the same tiling pass as adding one, just shrinking the tile count by one instead of growing it.
       const remaining = prev.artifacts.filter(a => a.id !== id);

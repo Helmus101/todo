@@ -1683,42 +1683,26 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
  *  whose school doesn't use it (most IB/international schools). Feeds ExamCountdown/WeekLoad via GET
  *  /api/pronote/tests and /api/workload merging manualExams server-side, so this is the ENTIRE client-side
  *  surface needed — no other component needs to know this data source exists. */
-function ExamsEditor({ profile, onChanged }: { profile: Profile | null; onChanged?: (p: Profile) => void }) {
+function ExamsEditor({ profile }: { profile: Profile | null }) {
   const L = useLang();
-  const notify = useNotify();
-  const [subject, setSubject] = useState("");
-  const [deadline, setDeadline] = useState("");
   const exams = [...(profile?.manualExams || [])].sort((a, b) => a.deadline.localeCompare(b.deadline));
-  const add = async () => {
-    const s = subject.trim();
-    if (!s || !deadline) return;
-    try { onChanged?.(await api.addExam(s, deadline)); setSubject(""); setDeadline(""); }
-    catch (e: any) { notify(e?.message || L("Impossible d'ajouter cet examen.", "Couldn't add that exam."), "error"); }
-  };
   return (
     <div className="exams-editor">
-      <p className="settings-hint">{L("Pas de Pronote ? Ajoute tes examens ici — ils comptent comme les autres.", "No Pronote? Add exams here — they count just like the rest.")}</p>
-      {exams.length > 0 && (
+      <p className="settings-hint">{L("Tes examens Pronote apparaissent ici.", "Your Pronote exams appear here.")}</p>
+      {exams.length > 0 ? (
         <ul className="grade-list">
           {exams.map((e) => (
             <li key={e.id} className="grade-row">
               <div className="grade-row-top">
                 <span className="grade-subject">{e.subject}</span>
                 <span className="grade-value">{new Date(`${e.deadline}T00:00:00`).toLocaleDateString(L("fr-FR", "en-US"), { day: "numeric", month: "short", year: "numeric" })}</span>
-                <button className="x" title={L("Supprimer", "Remove")} onClick={async () => {
-                  try { onChanged?.(await api.deleteExam(e.id)); }
-                  catch (err: any) { notify(err?.message || L("Impossible de supprimer cet examen.", "Couldn't remove that exam."), "error"); }
-                }}>×</button>
               </div>
             </li>
           ))}
         </ul>
+      ) : (
+        <p className="muted small">{L("Aucun examen à venir.", "No upcoming exams.")}</p>
       )}
-      <div className="addrow grade-addrow">
-        <input className="addinput sm" placeholder={L("Matière (ex : Maths HL)", "Subject (e.g. Math HL)")} value={subject} onChange={(e) => setSubject(e.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") void add(); }} />
-        <input className="addinput sm" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") void add(); }} />
-        <button className="btn" disabled={!subject.trim() || !deadline} onClick={() => void add()}>{L("Ajouter", "Add")}</button>
-      </div>
     </div>
   );
 }
@@ -2443,7 +2427,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
   const [showStudentModel, setShowStudentModel] = useState(false);
   const [showErrorLog, setShowErrorLog] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
-  const [showAppearance, setShowAppearance] = useState(false);
   const [showPersonalization, setShowPersonalization] = useState(false);
   const [showFocusAnalytics, setShowFocusAnalytics] = useState(false);
   const [focusStats, setFocusStats] = useState<Profile["focusStats"] | null>(null);
@@ -2696,15 +2679,8 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         </div>}
       </section>
 
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.05s" }}>
-        <button className="sec-toggle" aria-expanded={showAppearance} onClick={() => setShowAppearance((v) => !v)}>
-          <h3>{L("Apparence", "Appearance")}</h3>
-          <span className={`caret ${showAppearance ? "open" : ""}`} aria-hidden="true">›</span>
-        </button>
-        {showAppearance && <div className="settings-reveal">
-        {/* Manual override for the density bandit (DENSITY_ARMS) — Otto suggests one from real session
-            outcomes, but this always wins the moment it's touched, and never gets silently changed back.
-            Three plain buttons, not a slider or a settings wall — this is a rare, low-stakes choice. */}
+      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.055s" }}>
+        <h3>{L("Apparence", "Appearance")}</h3>
         <div className="modal-row">
           <span className="lbl">{L("Densité de l'interface", "Interface density")}</span>
           <span className="val">
@@ -2727,16 +2703,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             </div>
           </span>
         </div>
-        {/* Explicitly opt-in, rare (rate-limited server-side), never automatic — see generateThemeTokens's
-            own doc comment (server/claude.ts) for the full safety story: a small fixed allowlist of colors/
-            radii, strictly re-validated (format + contrast) before it's ever saved. One click, one small AI
-            call, reversible with Reset — not something that changes on its own. */}
-        {/* The generate button is gated on Settings' "Beta features" toggle (Preferences section) — the
-            standalone BETA badge this row used to carry is gone now that the row only offers generation
-            at all once beta is already on; a badge next to an already-opt-in control is noise. Reset stays
-            visible regardless of the toggle: a student with an existing custom theme (from before they
-            turned beta off, or from before this gate existed) must always be able to get back to the
-            default appearance, not get stranded on a theme they can no longer reach the controls for. */}
         <div className="modal-row">
           <span className="lbl">{L("Thème personnalisé (IA)", "Personalized theme (AI)")}</span>
           <span className="val">
@@ -2759,7 +2725,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             ) : null}
           </span>
         </div>
-        </div>}
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.06s" }}>
@@ -2852,7 +2817,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
         <h3>{L("Tes examens", "Your exams")}</h3>
-        <ExamsEditor profile={profile} onChanged={setProfile} />
+        <ExamsEditor profile={profile} />
       </section>
 
       {(() => {

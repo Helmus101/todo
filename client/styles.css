@@ -5600,7 +5600,7 @@ body, .app, .page, .dashboard, .dash-page { background: var(--bg); color: var(--
 
 /* The persistent tutor Board artifact (BoardArtifact.tsx) — a running log Otto writes to at its own
    discretion, styled distinctly per entry kind so a formula reads differently from an instruction or a
-   summary of the student's own reasoning at a glance. */
+   summary of the student's own reasoning at a glance. Now includes problem display (merged canvas). */
 .sm-board-empty {
   height: 100%;
   display: flex;
@@ -5621,6 +5621,7 @@ body, .app, .page, .dashboard, .dash-page { background: var(--bg); color: var(--
 .sm-board-entry-instruction { border-left-color: var(--accent); }
 .sm-board-entry-formula { border-left-color: var(--warn, #d97706); font-family: var(--mono, monospace); }
 .sm-board-entry-summary { border-left-color: var(--ok, #16a34a); }
+.sm-board-entry-problem { border-left-color: var(--ink-3); }
 .sm-board-entry-kind {
   display: block;
   font-size: 10px;
@@ -5632,6 +5633,41 @@ body, .app, .page, .dashboard, .dash-page { background: var(--bg); color: var(--
 }
 .sm-board-entry-text { font-size: var(--text-sm); color: var(--ink); line-height: 1.5; }
 .sm-board-entry-text p { margin: 0; }
+
+/* Problem display in board (merged canvas functionality) */
+.sm-board-problem {
+  flex: none;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-4);
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.sm-board-problem-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: var(--space-2);
+}
+.sm-board-problem-q { font-size: var(--text-base); font-weight: 600; color: var(--ink); line-height: 1.4; }
+.sm-board-problem-format { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--ink-3); }
+.sm-board-problem-opts { display: flex; flex-direction: column; gap: 6px; margin-top: var(--space-3); }
+.sm-board-problem-opt {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: var(--space-2);
+  background: var(--surface);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+.sm-board-problem-opt-letter { font-weight: 700; color: var(--ink-3); }
+.sm-board-problem-hint-row { margin-top: var(--space-3); }
+.sm-board-problem-hint { font-size: var(--text-sm); color: var(--ink-3); font-style: italic; }
 .sm-board-entry-text p + p { margin-top: 8px; }
 .sm-ai-msg {
   max-width: 84%;
