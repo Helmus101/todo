@@ -107,11 +107,13 @@ export function tasksToEnqueue(list: WebTask[], activeTaskIds: string[], limit =
 }
 
 /** Load the account's durable state (the job runner's ONLY source of truth — no sessions here).
- *  bypassCache: this IS the source of truth for a background job, and jobs are low-frequency (a sweep, a
- *  task run) — not worth reading up to 3min stale to save one query, when a stale task list means the job
- *  reasons about, and then persists, a snapshot that predates whatever the student just did in the app. */
+ *  Uses the normal cached read: saveState invalidates this account's entry on every write, so anything
+ *  later in the same job already reads fresh, and commitUser below merges rather than overwrites — so a
+ *  slightly old base can't drop concurrent work. (Briefly forced uncached here while chasing a Pronote
+ *  disconnect; that turned out to be a connection-column bug in saveState, not staleness, and the extra
+ *  whole-row reads — this row carries the entire task list — were a pure cost on the generate/execute path.) */
 async function loadUser(email: string): Promise<{ profile: Profile; list: WebTask[] }> {
-  const st = await store.loadState(email, { bypassCache: true });
+  const st = await store.loadState(email);
   return { profile: st.profile || emptyProfile(), list: st.tasks || [] };
 }
 
@@ -124,11 +126,11 @@ async function loadUser(email: string): Promise<{ profile: Profile; list: WebTas
  *  `google: current.google, pronote: current.pronote` straight through from the read above. When that read
  *  came from the per-instance cache and predated a connect that had landed on a DIFFERENT instance,
  *  `current.pronote` was undefined and this silently wiped a live Pronote connection out of the database
- *  on the next background job. That's a real, permanent disconnect (not a stale display), which is why it
- *  presented as "Pronote connects fine, then drops an hour later" — jobs run on their own schedule.
- *  bypassCache on the merge read for the same reason as loadUser above. */
+ *  on the next background job. (saveState now treats `undefined` as "leave this column alone" and only an
+ *  explicit `null` as "clear it", so that shape is no longer destructive either way — but this function
+ *  still has no reason to name those columns at all.) Cached read, same reasoning as loadUser above. */
 async function commitUser(email: string, profile: Profile, list: WebTask[]): Promise<void> {
-  const current = await store.loadState(email, { bypassCache: true });
+  const current = await store.loadState(email);
   const mergedTasks = tasks.mergeTaskLists(current.tasks || [], list);
   const mergedProfile = tasks.mergeProfileStates(current.profile || emptyProfile(), profile);
   await store.saveState(email, { profile: mergedProfile, tasks: mergedTasks });

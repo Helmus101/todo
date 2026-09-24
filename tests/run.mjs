@@ -1157,10 +1157,12 @@ section("Pronote connection durability — connection columns + uncached reads (
   check("commitUser body was found (pin is actually checking something)", commitUserBody.length > 0);
   check("commitUser persists profile+tasks only — never writes the google/pronote connection columns", !/\b(google|pronote):/.test(commitUserBody));
 
-  // The job runner is the ONLY source of truth for a background sweep — a stale task list there means the
-  // sweep reasons about, and then persists, a snapshot predating whatever the student just did.
-  check("jobs.ts loadUser reads durable state uncached", /bypassCache: true/.test(bodyOf(jobsSrc, "loadUser")));
-  check("jobs.ts commitUser merges against an uncached read", /bypassCache: true/.test(commitUserBody));
+  // Deliberately NOT pinning bypassCache here: the job runner's reads are the generate/execute hot path and
+  // this row carries the whole task list, so forcing them uncached was a pure cost (it was tried while
+  // chasing the disconnect, and the real cause turned out to be the connection-column semantics above).
+  // saveState invalidates on every write, and commitUser merges rather than overwrites, so a cached base
+  // here can't drop concurrent work.
+  check("jobs.ts commitUser merges rather than overwrites (a cached base can't drop concurrent work)", /mergeTaskLists|mergeProfileStates/.test(commitUserBody));
 
   // The Pronote connection is one small column asked about constantly (/api/status polls it every 45s per
   // tab) and rewritten on every token rotation. Going through loadState/saveState meant dragging the whole

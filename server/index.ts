@@ -269,7 +269,10 @@ async function findTaskOrReload(req: express.Request, id: string): Promise<WebTa
   let task = (req.session.tasks || []).find((t) => t.id === id);
   if (task || !req.session.user) return task;
   try {
-    const cloud = await loadState(req.session.user);
+    // bypassCache: this only runs when the task is MISSING from the session — i.e. it was almost certainly
+    // just written by another instance (a job that spawned a follow-up task, another tab). A cached read is
+    // the one thing guaranteed not to help here, and the miss is what makes the extra round-trip worth it.
+    const cloud = await loadState(req.session.user, { bypassCache: true });
     req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     await saveSession(req);
   } catch { /* fall through to the final lookup — a failed reload just means we still 404 below */ }
@@ -1145,7 +1148,12 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     const job = await jobs.enqueueAndDrain(user, "sweep");
     if (job.status === "succeeded") req.session.lastGenTime = new Date().toISOString();
     // The job committed to the CLOUD copy — fold it into this session so the response reflects it.
-    const cloud = await loadState(user);
+    // bypassCache is REQUIRED here, not an optimization: the sweep may well have run its commit on a
+    // different serverless instance than the one serving this request, so a cached read can return state
+    // that predates the job's own write — i.e. the tasks it just generated are simply missing, and the
+    // student sees "0 new tasks" from a sweep that actually found several. Same reasoning (and the same
+    // fix) as the post-job reads further down this file that already pass it.
+    const cloud = await loadState(user, { bypassCache: true });
     req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
     await saveSession(req);
@@ -1551,7 +1559,10 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // ALWAYS fold the cloud copy in and answer with the task's REAL state — a requeued-after-failure or
     // another-worker-owns-it job is not an error; the task's own status (queued/executing/failed_retryable)
     // tells the truth on the card and the client's kick loop keeps it moving.
-    const cloud = await loadState(user);
+    // bypassCache for the same reason as the sweep's fold-in above: the run committed its steps/results on
+    // whichever instance drained it, so a cached read here answers with the task's PRE-run state — the run
+    // looks like it did nothing. This is the execute-side twin of the "0 new tasks" generate bug.
+    const cloud = await loadState(user, { bypassCache: true });
     req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
     await saveSession(req);
