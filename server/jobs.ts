@@ -106,19 +106,32 @@ export function tasksToEnqueue(list: WebTask[], activeTaskIds: string[], limit =
   return [...ready, ...orphaned].slice(0, limit);
 }
 
-/** Load the account's durable state (the job runner's ONLY source of truth — no sessions here). */
+/** Load the account's durable state (the job runner's ONLY source of truth — no sessions here).
+ *  bypassCache: this IS the source of truth for a background job, and jobs are low-frequency (a sweep, a
+ *  task run) — not worth reading up to 3min stale to save one query, when a stale task list means the job
+ *  reasons about, and then persists, a snapshot that predates whatever the student just did in the app. */
 async function loadUser(email: string): Promise<{ profile: Profile; list: WebTask[] }> {
-  const st = await store.loadState(email);
+  const st = await store.loadState(email, { bypassCache: true });
   return { profile: st.profile || emptyProfile(), list: st.tasks || [] };
 }
 
 /** Persist after a job: merge against a FRESH cloud read (another instance/session may have committed
- *  meanwhile), so a job can never clobber concurrent progress. Same semantics as the session commit. */
+ *  meanwhile), so a job can never clobber concurrent progress. Same semantics as the session commit.
+ *
+ *  Deliberately does NOT pass google/pronote: per saveState's own contract, a key that's absent from the
+ *  payload leaves that column untouched, while a key present-but-undefined NULLS IT OUT. This function
+ *  manages profile+tasks only — it has no business writing the connection columns — but it used to pass
+ *  `google: current.google, pronote: current.pronote` straight through from the read above. When that read
+ *  came from the per-instance cache and predated a connect that had landed on a DIFFERENT instance,
+ *  `current.pronote` was undefined and this silently wiped a live Pronote connection out of the database
+ *  on the next background job. That's a real, permanent disconnect (not a stale display), which is why it
+ *  presented as "Pronote connects fine, then drops an hour later" — jobs run on their own schedule.
+ *  bypassCache on the merge read for the same reason as loadUser above. */
 async function commitUser(email: string, profile: Profile, list: WebTask[]): Promise<void> {
-  const current = await store.loadState(email);
+  const current = await store.loadState(email, { bypassCache: true });
   const mergedTasks = tasks.mergeTaskLists(current.tasks || [], list);
   const mergedProfile = tasks.mergeProfileStates(current.profile || emptyProfile(), profile);
-  await store.saveState(email, { profile: mergedProfile, tasks: mergedTasks, google: current.google, pronote: current.pronote });
+  await store.saveState(email, { profile: mergedProfile, tasks: mergedTasks });
 }
 
 async function processSweep(job: store.Job): Promise<string> {

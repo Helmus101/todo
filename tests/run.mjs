@@ -1136,6 +1136,37 @@ section("betaFeatures gates all 7 bandit call sites + the AI theme route (source
   check("StudyMode's onAddTool re-checks betaFeatures before adding a camera artifact (doesn't just trust the drawer)", /type === "camera" && !betaFeatures[\s\S]{0,60}return/.test(studyModeSrc));
   check("StudyMode withholds the camera prop from ArtifactCanvas when betaFeatures is off, so a widget placed earlier stops rendering a live camera too", /camera=\{betaFeatures \? focusCamera : undefined\}/.test(studyModeSrc));
 }
+// Two distinct silent-failure modes that both presented to the user as "Pronote connects, then drops an
+// hour later", neither of which any behavioural test could catch (both need a real second serverless
+// instance with its own warm cache to reproduce), so they're pinned at the source level.
+section("Pronote connection durability — connection columns + uncached reads (source pins)");
+{
+  const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
+  const pronoteSrc = readFileSync(new URL("../server/pronote.ts", import.meta.url), "utf8");
+  // `(?:<[^>]*>)?` — several of these are generic (e.g. runPronoteSessionOnce<T>), so the name isn't
+  // always followed directly by the parameter list.
+  const bodyOf = (src, name) => (src.match(new RegExp(`(?:export )?async function ${name}(?:<[^>]*>)?\\([\\s\\S]*?\\n\\}`)) || [""])[0];
+
+  // saveState's contract: an ABSENT key leaves that column alone, a key present-but-undefined NULLS IT OUT.
+  // commitUser manages profile+tasks only, but used to pass `google: current.google, pronote: current.pronote`
+  // straight through from a possibly-stale cached read — when that read predated a connect that landed on a
+  // different instance, the next background job wiped the live connection out of the database for good.
+  const commitUserBody = bodyOf(jobsSrc, "commitUser");
+  check("commitUser body was found (pin is actually checking something)", commitUserBody.length > 0);
+  check("commitUser persists profile+tasks only — never writes the google/pronote connection columns", !/\b(google|pronote):/.test(commitUserBody));
+
+  // The job runner is the ONLY source of truth for a background sweep — a stale task list there means the
+  // sweep reasons about, and then persists, a snapshot predating whatever the student just did.
+  check("jobs.ts loadUser reads durable state uncached", /bypassCache: true/.test(bodyOf(jobsSrc, "loadUser")));
+  check("jobs.ts commitUser merges against an uncached read", /bypassCache: true/.test(commitUserBody));
+
+  // Pronote's token is single-use/rotating: a cached read can hand back a token already rotated away by a
+  // session opened on another instance, burning an avoidable real login against Pronote on every
+  // touch/sweep/fetch — enough of those in a row trip Pronote's own rate limiter.
+  check("runPronoteSessionOnce reads the rotating token uncached", /bypassCache: true/.test(bodyOf(pronoteSrc, "runPronoteSessionOnce")));
+  check("saveRotatedToken merges profile/tasks from an uncached read", /bypassCache: true/.test(bodyOf(pronoteSrc, "saveRotatedToken")));
+  check("pronoteConnected reads uncached (the status a student watches after acting)", /bypassCache: true/.test(bodyOf(pronoteSrc, "pronoteConnected")));
+}
 section("dodLooksLikeCoordinationOutcome — DoD-wording veto for flashcards/quiz (defense in depth)");
 {
   const oslo = "A confirmed Oslo plan: purpose, dates, travellers, transport and accommodation booked, and any required documents or event prep identified — with every open question answered by Willem.";
