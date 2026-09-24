@@ -17,6 +17,15 @@ alter table weave_web_state add column if not exists google jsonb;
 alter table weave_web_state add column if not exists pronote jsonb;
 alter table weave_web_state add column if not exists plaid jsonb;         -- persisted Plaid connection (encrypted access token — see server/store.ts)
 alter table weave_web_state add column if not exists blackbaud jsonb;     -- persisted Blackbaud connection (encrypted access token — MOCK-ONLY for now, see server/blackbaud.ts)
+-- studySessions/studyProfile: shipped in server/store.ts's AccountState (and its loadState SELECT) without
+-- ever being added here — the SELECT explicitly names both columns, so on a database that never ran this,
+-- EVERY loadState() call failed outright ("column weave_web_state.studySessions does not exist") and
+-- silently fell back to an empty profile + empty task list (see loadState's own error handling). That
+-- means every background job — the sweep, task execution, the post-job "fold the cloud copy into this
+-- session" reads — was reasoning from and persisting against a permanently-empty base, which is a far
+-- better explanation for "generation doesn't work" / "tasks don't persist" than anything upstream of this.
+alter table weave_web_state add column if not exists studySessions jsonb; -- Study Mode session history (client/study/)
+alter table weave_web_state add column if not exists studyProfile jsonb; -- Study Mode's own per-account preferences
 
 -- SECURE BY DEFAULT: `weave_web_users.pass_hash` and the `google`/`profile` columns are SECRETS. This file
 -- enables RLS with NO public policy, so the anon key can read/write NOTHING. Production runs the server with

@@ -1140,6 +1140,20 @@ section("betaFeatures gates all 7 bandit call sites + the AI theme route (source
 // Two distinct silent-failure modes that both presented to the user as "Pronote connects, then drops an
 // hour later", neither of which any behavioural test could catch (both need a real second serverless
 // instance with its own warm cache to reproduce), so they're pinned at the source level.
+// A real production incident (2026-09-24, [store] load failed: column weave_web_state.studySessions does
+// not exist): the studySessions/studyProfile columns shipped in code's SELECT without a matching migration
+// ever landing in supabase.sql, so every loadState() call failed and silently returned an EMPTY profile and
+// EMPTY task list — for every account, on every read, including every background job's "load the account,
+// merge in new work, save it back" cycle. Two separate fixes, both pinned: the migration now exists, and a
+// missing-column error on the whole-row select no longer collapses profile+tasks to nothing.
+section("loadState survives a missing-column schema-drift error (source pins)");
+{
+  const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
+  const supabaseSql = readFileSync(new URL("../supabase.sql", import.meta.url), "utf8");
+  check("supabase.sql has the studySessions migration", /add column if not exists studySessions/.test(supabaseSql));
+  check("supabase.sql has the studyProfile migration", /add column if not exists studyProfile/.test(supabaseSql));
+  check("loadState retries with a narrower select on a missing-column error, instead of returning empty immediately", /does not exist.*\n[\s\S]{0,400}load-narrow/.test(storeSrc));
+}
 section("Pronote connection durability — connection columns + uncached reads (source pins)");
 {
   const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");

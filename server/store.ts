@@ -360,8 +360,21 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
   const cached = opts?.bypassCache ? undefined : stateCache.get(email);
   if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
-  const { data, error } = await withRetry("load", async () =>
+  let { data, error } = await withRetry("load", async () =>
     client!.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud,studySessions,studyProfile").eq("email", email).maybeSingle());
+  // A missing column (schema drift — a migration that shipped in code but was never run against this
+  // database; see supabase.sql's own note on studySessions/studyProfile, added after exactly this happened
+  // live) is a DIFFERENT failure than "the database is unreachable." Postgres fails the ENTIRE query when
+  // one named column doesn't exist, and this used to fall back to an EMPTY profile+tasks either way — which
+  // for a missing-column error means every account's tasks and profile looked wiped on every single read,
+  // not just degraded. Retry once without the two newest, most-likely-to-drift columns before giving up;
+  // real connectivity errors (isTransient, already retried inside withRetry) still fall through to empty.
+  if (error && /column .*(studySessions|studyProfile).* does not exist/i.test(error.message || "")) {
+    console.warn("[store] studySessions/studyProfile column missing — falling back to a narrower select. Run supabase.sql against this database to fix properly.");
+    const retry = await withRetry("load-narrow", async () =>
+      client!.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud").eq("email", email).maybeSingle());
+    data = retry.data as any; error = retry.error;
+  }
   if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
   const d = data as any;
   const google = d?.google && d.google.tokens ? (d.google as StoredGoogle) : undefined;
