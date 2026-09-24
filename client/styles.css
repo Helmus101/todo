@@ -4970,6 +4970,39 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-artifact-btn:active,
 .sm-drawer-close:active,
 .sm-mat-remove:active { transform: scale(0.94); }
+/* Tally-inspired product surface: quiet canvas, editorial hierarchy, and one clear action color. */
+:root {
+  --bg: #fbfbfa; --surface: #fff; --surface-raised: #fff; --surface-glass: rgba(255,255,255,.92);
+  --ink: #242424; --ink-2: #707070; --ink-3: #9a9a9a; --line: #e9e9e7; --line-soft: #f0f0ee; --line-glass: #e9e9e7;
+  --bg-2: #f4f4f2; --bg-3: #e9e9e7; --accent: #6557f5; --accent-hover: #5749e8; --accent-active: #4c3fda; --accent-soft: #f0efff; --accent-rgb: 101,87,245;
+  --radius-2xs: 5px; --radius-xs: 7px; --radius-sm: 9px; --radius: 12px; --radius-lg: 16px; --radius-xl: 22px;
+  --shadow-sm: 0 1px 2px rgba(24,24,24,.03); --shadow-card: 0 1px 3px rgba(24,24,24,.04), 0 6px 18px rgba(24,24,24,.025); --shadow-card-hover: 0 8px 26px rgba(24,24,24,.08);
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --display: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+body, .app, .page, .dashboard, .dash-page { background: var(--bg); color: var(--ink); }
+.topbar { height: 60px; background: rgba(251,251,250,.88); border-bottom: 1px solid var(--line-soft); box-shadow: none; }
+.sidebar { width: 224px; background: var(--bg); border-right: 1px solid var(--line-soft); box-shadow: none; padding: 22px 14px; }
+.sidebar-brand { padding: 8px 12px 24px; margin-bottom: 8px; font-size: 17px; letter-spacing: -.02em; text-transform: none; }
+.sidebar-item { border-radius: 7px; padding: 9px 11px; font-size: 13px; font-weight: 500; }
+.sidebar-item.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+.dashboard, .page-content { padding-top: 42px; padding-bottom: 72px; }
+.dash-hero { background: transparent; border: 0; box-shadow: none; padding: 0 0 30px; }
+.dash-hero-kicker { color: var(--ink-3); font-size: 11px; letter-spacing: .11em; }
+.dash-hero-title { font-size: clamp(26px, 4vw, 36px); font-weight: 600; letter-spacing: -.04em; line-height: 1.12; }
+.dash-hero-why { color: var(--ink-2); font-size: 14px; max-width: 58ch; }
+.add-task-row { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-sm); padding: 8px 12px; margin-bottom: 28px; }
+.add-task-row:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.add-task-input { height: 42px; font-size: 14px; }
+.list { background: transparent; border: 0; box-shadow: none; border-radius: 0; overflow: visible; gap: 8px; }
+.list > * { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-sm); }
+.task-goal-banner { background: var(--accent-soft); border: 0; border-radius: 8px; }
+.btn { border-radius: 7px; border-color: var(--line); box-shadow: none; font-size: 13px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.empty-state { padding-top: 72px; }
+.empty-mark { width: 46px; height: 46px; border-radius: 12px; background: var(--accent-soft); }
+@media (max-width: 760px) { .sidebar { width: min(84vw, 300px); } .topbar { height: 54px; } .dashboard, .page-content { padding: 28px 18px 56px; } .dash-hero { padding-bottom: 22px; } .dash-hero-title { font-size: 28px; } }
+
 .sm-task-title {
   min-width: 0;
   overflow: hidden;
