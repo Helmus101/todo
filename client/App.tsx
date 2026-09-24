@@ -128,16 +128,17 @@ const EXECUTION_ENABLED = false;
 
 /** The Otto mark — an "O" (for Otto) with a checkmark inside it, not a separate badge bolted onto a
  *  generic shape: the letter and the "done" meaning read as ONE mark, not two ideas glued together. The
- *  ring inherits currentColor (ink, inverts in dark mode); the checkmark is always cobalt, the one fixed
- *  accent color across the whole app — it's the one thing that never changes regardless of theme, same as
- *  every other accent-blue use elsewhere. Deliberately legible at favicon size: a checkmark stays readable
+ *  ring inherits currentColor (ink, inverts in dark mode); the checkmark is always the warm orange brand
+ *  accent (#EA580C), the one fixed accent color across the whole app — it's the one thing that never
+ *  changes regardless of theme, same as every other accent use elsewhere. Deliberately legible at
+ *  favicon size: a checkmark stays readable
  *  at 16px in a way finer geometric detail doesn't, which the previous half-moon-cut-by-a-line mark wasn't
  *  reliably (it read as a blank shape at tab-icon scale, per direct feedback). */
 function Logo({ size = 22 }: { size?: number }) {
   return (
     <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
       <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path d="M15 25 L21 31 L33 17" stroke="#0066ff" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M15 25 L21 31 L33 17" stroke="#EA580C" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
 }

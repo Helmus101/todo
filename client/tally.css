@@ -1,7 +1,7 @@
 /* ────────────────────────────────────────────────────────────────────────────
    Tally-inspired UI — full application theme.
-   Clean white canvas, near-black ink, blue CTA (#0066ff), pink highlight
-   (#ff00ff), Inter typography, 10px radii, hairline borders.
+   Clean white canvas, near-black ink, orange CTA (#EA580C), warm orange highlight
+   (#EA580C), Inter typography, 10px radii, hairline borders.
    Loaded AFTER styles.css (see main.tsx) so it wins the cascade.
    ──────────────────────────────────────────────────────────────────────────── */
 
@@ -17,12 +17,12 @@
   --line: #EAEAEA;
   --line-soft: rgba(0, 0, 0, 0.06);
   --line-glass: #EAEAEA;
-  --accent: #0066ff;
-  --accent-hover: #0052cc;
-  --accent-active: #0044b3;
-  --accent-soft: rgba(0, 102, 255, 0.08);
-  --accent-rgb: 0, 102, 255;
-  --focus-ring: rgba(0, 102, 255, 0.3);
+  --accent: #EA580C;
+  --accent-hover: #C2410C;
+  --accent-active: #9A3412;
+  --accent-soft: rgba(234, 88, 12, 0.08);
+  --accent-rgb: 234, 88, 12;
+  --focus-ring: rgba(234, 88, 12, 0.3);
   --bg-2: #F7F7F7;
   --bg-3: #EAEAEA;
   --graphite: #8a8a8a;
@@ -38,7 +38,7 @@
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06);
   --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.08);
   --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.12);
-  --shadow-glow: 0 0 20px rgba(0, 102, 255, 0.2);
+  --shadow-glow: 0 0 20px rgba(234, 88, 12, 0.2);
   --bar: #FFFFFF;
   --hover-wash: rgba(0, 0, 0, 0.03);
   --bg-rgb: 255, 255, 255;
@@ -62,11 +62,11 @@
     --line: #EAEAEA;
     --line-soft: rgba(0, 0, 0, 0.06);
     --line-glass: #EAEAEA;
-    --accent: #0066ff;
-    --accent-hover: #0052cc;
-    --accent-active: #0044b3;
-    --accent-soft: rgba(0, 102, 255, 0.08);
-    --accent-rgb: 0, 102, 255;
+    --accent: #EA580C;
+    --accent-hover: #C2410C;
+    --accent-active: #9A3412;
+    --accent-soft: rgba(234, 88, 12, 0.08);
+    --accent-rgb: 234, 88, 12;
     --bg-2: #F7F7F7;
     --bg-3: #EAEAEA;
     --bar: #FFFFFF;
@@ -75,7 +75,7 @@
   }
 }
 
-/* ─── Pink highlight (Tally's signature squiggly underline) ───────────────── */
+/* ─── Orange highlight (signature squiggly underline) ───────────────────── */
 .tally-highlight {
   position: relative;
   display: inline;
@@ -88,7 +88,7 @@
   right: -2px;
   bottom: -2px;
   height: 10px;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'%3E%3Cpath d='M2 8 Q 25 2, 50 7 T 100 6 T 150 7 T 198 5' stroke='%23ff00ff' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 12' preserveAspectRatio='none'%3E%3Cpath d='M2 8 Q 25 2, 50 7 T 100 6 T 150 7 T 198 5' stroke='%23EA580C' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
   pointer-events: none;
 }
 
@@ -102,7 +102,7 @@ body {
 a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
 
-::selection { background: rgba(0, 102, 255, 0.15); }
+::selection { background: rgba(234, 88, 12, 0.15); }
 
 /* Focus rings — Tally uses a soft blue ring */
 :focus-visible {
@@ -130,12 +130,12 @@ a:hover { color: var(--accent-hover); }
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
-  box-shadow: 0 1px 3px rgba(0, 102, 255, 0.2);
+  box-shadow: 0 1px 3px rgba(234, 88, 12, 0.2);
 }
 .btn.primary:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  box-shadow: 0 2px 8px rgba(0, 102, 255, 0.25);
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.25);
 }
 .btn.primary:active { background: var(--accent-active); }
 .btn.ghost {
@@ -155,7 +155,7 @@ a:hover { color: var(--accent-hover); }
 }
 .btn.primary.big:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0, 102, 255, 0.3);
+  box-shadow: 0 4px 16px rgba(234, 88, 12, 0.3);
 }
 
 /* ─── Inputs ────────────────────────────────────────────────────────────── */
@@ -205,7 +205,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   letter-spacing: 0;
 }
 .chip-muted { background: var(--bg-2); color: var(--ink-3); }
-.chip-busy { background: rgba(0, 102, 255, 0.06); color: var(--accent); }
+.chip-busy { background: rgba(234, 88, 12, 0.06); color: var(--accent); }
 .chip-attention { background: var(--accent-soft); color: var(--accent); }
 .chip-bad { background: #FFF3F0; color: #C6462F; }
 .chip-good { background: rgba(0, 153, 102, 0.08); color: #009966; }
@@ -560,8 +560,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 .card-sub { color: var(--ink-3); }
 .card-subject { color: var(--ink-3); font-weight: 500; }
 .card-peak-badge {
-  background: rgba(255, 0, 255, 0.08);
-  color: #cc00cc;
+  background: rgba(234, 88, 12, 0.09);
+  color: #9A3412;
   border-radius: var(--radius-pill);
 }
 
@@ -594,8 +594,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   border-color: transparent;
 }
 
-/* "New" dot — pink, Tally's accent */
-.new-dot { background: #ff00ff; }
+/* "New" dot — warm orange accent */
+.new-dot { background: #EA580C; }
 
 /* Due date color */
 .when-soon { color: #C6462F; font-weight: 600; }
@@ -815,7 +815,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 }
 .task-goal-banner {
   background: var(--accent-soft);
-  border: 1px solid rgba(0, 102, 255, 0.15);
+  border: 1px solid rgba(234, 88, 12, 0.15);
   border-radius: var(--radius);
   color: var(--accent);
 }
