@@ -160,7 +160,7 @@ export async function connectPronote(email: string, opts: { url: string; usernam
 }
 
 export async function disconnectPronote(email: string): Promise<void> {
-  const current = await loadState(email);
+  const current = await loadState(email, { bypassCache: true });
   await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: undefined });
   invalidatePronoteStatus(email);
 }
@@ -208,7 +208,13 @@ export function invalidatePronoteStatus(_email: string): void {}
 async function saveRotatedToken(email: string, rotated: StoredPronote): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
-      const current = await loadState(email);
+      // bypassCache: this fires on EVERY session open (a touch, a homework fetch, a sweep — token rotation
+      // happens constantly, not just on connect), spread-merging current.profile/tasks unchanged into the
+      // save. Reading a stale (up to 3min old) per-instance-cached profile/tasks here would silently REVERT
+      // any more-recent change to either — a task just confirmed/dismissed, a preference just saved — the
+      // instant Pronote's token next happened to rotate in the background. Same root cause as the token
+      // staleness bug below, just with data-loss stakes instead of a spurious disconnect.
+      const current = await loadState(email, { bypassCache: true });
       await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: rotated });
       return;
     } catch (e) {
@@ -258,7 +264,15 @@ async function loginAndRun<T>(
  *  at school) and truly needs the student. Never throws; a failure of both attempts returns undefined and is
  *  logged, same as before. */
 async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.SessionHandle) => Promise<T>): Promise<T | undefined> {
-  const { pronote: stored } = await loadState(email);
+  // bypassCache: the stored token is single-use/rotating — every successful login here immediately
+  // supersedes it (saveRotatedToken above). A per-instance-cached read (up to 3min old) can hand back a
+  // token that's ALREADY been rotated away by a session opened moments earlier on a different warm Vercel
+  // instance, so the very first attempt below fails with SessionExpiredError before ever touching Pronote's
+  // real current state. The credential-fallback path usually self-heals in that case, but it means a real,
+  // avoidable extra login against Pronote's own server on nearly every touch/sweep/homework fetch — enough
+  // of those in a row risk tripping Pronote's own rate limiter, which reads to the student as "it just
+  // stopped working" after it's been running a while. Reported live as "disconnects about an hour later."
+  const { pronote: stored } = await loadState(email, { bypassCache: true });
   if (!stored) return undefined;
   try {
     const session = pronote.createSessionHandle();
@@ -314,7 +328,10 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
  *  automatically, so this is a real "confirmed twice" bar, not a fixed delay. `immediate` skips this for the
  *  no-stored-password case, which has no second attempt to wait on in the first place. */
 async function flagNeedsReconnect(email: string, stored: StoredPronote, e: any, opts?: { immediate?: boolean }): Promise<void> {
-  const current = await loadState(email).catch(() => undefined);
+  // bypassCache: same profile/tasks-clobbering risk as saveRotatedToken above — this write path runs
+  // straight off the back of a failed session, so the account's cached state here could easily be minutes
+  // stale by the time this fires.
+  const current = await loadState(email, { bypassCache: true }).catch(() => undefined);
   if (current) {
     if (!opts?.immediate && !stored.firstFailedAt) {
       void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, firstFailedAt: new Date().toISOString() } }).catch(() => {});
@@ -342,7 +359,7 @@ async function flagNeedsReconnect(email: string, stored: StoredPronote, e: any, 
 // open tab doesn't hammer Pronote or burn the rotation budget for no reason.
 const TOUCH_MIN_GAP_MS = 2 * 60 * 60 * 1000; // 2h — tightened from 4h, direct instruction to make this as reliable as possible
 export async function touchPronoteSession(email: string): Promise<void> {
-  const { pronote: stored } = await loadState(email);
+  const { pronote: stored } = await loadState(email, { bypassCache: true });
   if (!stored || stored.needsReconnect) return; // nothing to renew, or already dead — only a real reconnect fixes that
   if (stored.lastTouchedAt && Date.now() - Date.parse(stored.lastTouchedAt) < TOUCH_MIN_GAP_MS) return;
   await runPronoteSessionOnce(email, async () => undefined);
