@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1020,6 +1020,31 @@ section("dropForeignEntitySteps — cross-task contamination backstop");
   check("keeps a step naming a person PRESENT in the task's own why, French phrasing intact", dropForeignEntitySteps({ title: "Répondre à Madame Kosova", why: "Suivi du professeur Kosova sur l'IEO France", sourceDetail: "" }, [], [{ text: "Envoie à Madame Kosova le brouillon du suivi" }]).length === 1);
 }
 
+section("dropForeignEntityLinks — the same contamination backstop, applied to 'links' (reported live)");
+{
+  // The exact two reported cases: a TOK Manuel-reading note carrying a "Foreign relations of India ↗" link,
+  // and a Paris-Versailles bib-pickup note carrying "Pat Cleveland ↗" / "Paris Marathon ↗" — none remotely
+  // about either task. `links` had zero content-relevance filtering before this (only URL-shape checks), so
+  // a web_search call surfacing tangential pages during broad research sailed straight through.
+  const tokSteps = [{ text: "Read Manuel pp. 111-112; note the section heading." }, { text: "Copy the exact activité 9 prompt from the Manuel." }];
+  const indiaLink = { label: "Foreign relations of India", url: "https://en.wikipedia.org/wiki/Foreign_relations_of_India" };
+  check("drops a link naming an entity absent from the TOK task's title/DoD/steps", dropForeignEntityLinks("Read Manuel pp. 111-112 and prep TOK activités 9-10", undefined, tokSteps, [indiaLink]).length === 0);
+
+  const bibSteps = [{ text: "Find bib pickup point and opening hours in Gabrielle's email" }];
+  const patCleveland = { label: "Pat Cleveland", url: "https://en.wikipedia.org/wiki/Pat_Cleveland" };
+  const parisMarathon = { label: "Paris Marathon", url: "https://en.wikipedia.org/wiki/Paris_Marathon" };
+  const droppedBib = dropForeignEntityLinks("Collect Paris-Versailles bib #715 before Sunday's race", undefined, bibSteps, [patCleveland, parisMarathon]);
+  check("drops an unrelated person's name ('Pat Cleveland') from a race-bib task", !droppedBib.some((l) => l.label === "Pat Cleveland"));
+  check("drops a different, similarly-themed event ('Paris Marathon' ≠ 'Paris-Versailles') — near-miss isn't a pass", !droppedBib.some((l) => l.label === "Paris Marathon"));
+
+  // A link that's actually ABOUT the task must survive — this is a precision check, not just a recall one.
+  const gabrielleLink = { label: "Gabrielle's email — bib pickup details", url: "https://mail.google.com/mail/u/0/#inbox/x" };
+  check("keeps a link whose label is genuinely grounded in the task's own steps", dropForeignEntityLinks("Collect Paris-Versailles bib #715 before Sunday's race", undefined, bibSteps, [gabrielleLink]).length === 1);
+  check("keeps a link naming no proper-noun entity at all", dropForeignEntityLinks("Collect Paris-Versailles bib #715 before Sunday's race", undefined, bibSteps, [{ label: "the linked page", url: "https://example.com" }]).length === 1);
+  // definitionOfDone is also trusted (unlike out.context/synthesis, where this contamination originates).
+  check("a name present in the task's definitionOfDone is NOT flagged as foreign", dropForeignEntityLinks("Prep for the trip", "Confirmed with Marie Dubois", [], [{ label: "Marie Dubois — contact confirmation", url: "https://example.com" }]).length === 1);
+}
+
 section("dropProcessComplaintSteps — Otto's own run/tool-state must never leak into the student's steps");
 {
   const complaint1 = { text: "Recreate the missing write: no document, note, deck or email was produced this run because no write/create tool was available — re-run once a creation tool is enabled" };
@@ -1150,8 +1175,11 @@ section("loadState survives a missing-column schema-drift error (source pins)");
 {
   const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
   const supabaseSql = readFileSync(new URL("../supabase.sql", import.meta.url), "utf8");
-  check("supabase.sql has the studySessions migration", /add column if not exists studySessions/.test(supabaseSql));
-  check("supabase.sql has the studyProfile migration", /add column if not exists studyProfile/.test(supabaseSql));
+  // Double-quoted specifically: an unquoted `add column ... studySessions` is silently folded to a
+  // DIFFERENT column (`studysessions`) by Postgres, which the app's camelCase PostgREST select can't find —
+  // a real mistake made and shipped once already in this exact migration. The regex requires the quotes.
+  check("supabase.sql adds studySessions double-quoted (not silently lowercased)", /add column if not exists "studySessions"/.test(supabaseSql));
+  check("supabase.sql adds studyProfile double-quoted (not silently lowercased)", /add column if not exists "studyProfile"/.test(supabaseSql));
   check("loadState retries with a narrower select on a missing-column error, instead of returning empty immediately", /does not exist.*\n[\s\S]{0,400}load-narrow/.test(storeSrc));
 }
 section("Pronote connection durability — connection columns + uncached reads (source pins)");

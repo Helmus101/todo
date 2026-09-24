@@ -24,8 +24,23 @@ alter table weave_web_state add column if not exists blackbaud jsonb;     -- per
 -- means every background job — the sweep, task execution, the post-job "fold the cloud copy into this
 -- session" reads — was reasoning from and persisting against a permanently-empty base, which is a far
 -- better explanation for "generation doesn't work" / "tasks don't persist" than anything upstream of this.
-alter table weave_web_state add column if not exists studySessions jsonb; -- Study Mode session history (client/study/)
-alter table weave_web_state add column if not exists studyProfile jsonb; -- Study Mode's own per-account preferences
+--
+-- MUST be double-quoted: Postgres silently lowercases an UNQUOTED identifier, so `add column ...
+-- studySessions` actually creates a column literally named `studysessions`. PostgREST (what the Supabase
+-- client's .select("...,studySessions,...") talks to) does NOT re-fold that — it looks up the exact string
+-- it was given. An earlier unquoted version of this migration was run against production and created the
+-- lowercase column, which the app's camelCase SELECT still couldn't find — same "column does not exist"
+-- error, now from a self-inflicted casing mismatch instead of a missing migration. Quoting preserves the
+-- case Postgres actually stores, matching what the app requests. `if not exists` treats the quoted and
+-- unquoted names as different columns (they ARE different columns to Postgres), so this is safe to run
+-- even on a database that already has the earlier lowercase mistake sitting on it — this just adds the
+-- correctly-cased one alongside it. The line right after drops that leftover lowercase column: it's empty
+-- (nothing could ever have written to a column the app never successfully found), so there's nothing to
+-- migrate out of it — safe to drop outright rather than leaving dead weight on the table.
+alter table weave_web_state add column if not exists "studySessions" jsonb; -- Study Mode session history (client/study/)
+alter table weave_web_state add column if not exists "studyProfile" jsonb; -- Study Mode's own per-account preferences
+alter table weave_web_state drop column if exists studysessions;
+alter table weave_web_state drop column if exists studyprofile;
 
 -- SECURE BY DEFAULT: `weave_web_users.pass_hash` and the `google`/`profile` columns are SECRETS. This file
 -- enables RLS with NO public policy, so the anon key can read/write NOTHING. Production runs the server with

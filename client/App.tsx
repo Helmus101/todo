@@ -2084,12 +2084,20 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
     },
   });
 
-  // Stop listening whenever switching tabs, days, or unmounting (prevents stray mic active state)
+  // Stop listening whenever switching tabs, days, or unmounting (prevents stray mic active state) — NOT on
+  // every render. useSpeechRecognition returns a fresh object literal each call (its individual functions
+  // are memoized via useCallback, but the wrapping object itself isn't), so having `recog` itself in this
+  // effect's deps meant the cleanup ran on EVERY re-render of this page, not just a real tab/day switch —
+  // any unrelated re-render while dictating (a background status poll landing, anything) silently called
+  // stop() mid-sentence. Reported live as "voice dictation turns off by itself." A ref sidesteps this: it
+  // always holds the LATEST recog for the cleanup to read, without the effect re-subscribing on every render.
+  const recogRef = useRef(recog);
+  recogRef.current = recog;
   useEffect(() => {
     return () => {
-      if (recog.listening) recog.stop();
+      if (recogRef.current.listening) recogRef.current.stop();
     };
-  }, [selected, monday, tab, recog]);
+  }, [selected, monday, tab]);
   // Editing a day whose deck already exists — false by default so a day WITH a deck shows the deck/quiz
   // straight away, not the entry textarea again. Flipping this back to the textarea is an explicit choice
   // (the "modifier" link), never the default view once a deck exists.

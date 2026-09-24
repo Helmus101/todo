@@ -1112,6 +1112,22 @@ export function dropForeignEntitySteps<T extends { text: string }>(task: { title
   });
 }
 
+/** Same cross-task-contamination backstop as dropForeignEntitySteps, applied to "links" instead of steps —
+ *  reported live: a TOK reading-prep note carrying a "Foreign relations of India ↗" link, and a Paris-
+ *  Versailles race-bib note carrying "Pat Cleveland ↗" and "Paris Marathon ↗" links, none remotely related
+ *  to either task. `links` never got this check at all — only URL-shape validation (a real Google Docs id,
+ *  no bare Gmail-drafts link) — so a web_search call that surfaced tangentially-related or outright
+ *  unrelated pages during broad research sailed straight through as long as the model dutifully followed
+ *  the "always include the URLs you found" instruction, with nothing checking those URLs were actually
+ *  ABOUT this task. Checked against the label only (a URL slug rarely contains a readable proper noun) —
+ *  and against the task's own trusted fields + its FINAL steps text, same allowlist reasoning as the step
+ *  version: never `out.context`/`synthesis`, which is where this contamination originates in the first
+ *  place and so can't vouch for itself. */
+export function dropForeignEntityLinks<T extends { text: string }>(taskTitle: string, definitionOfDone: string | undefined, steps: T[], links: TaskLink[]): TaskLink[] {
+  const allow = `${taskTitle} ${definitionOfDone || ""} ${steps.map((s) => s.text).join(" ")}`;
+  return links.filter((l) => extractEntities(l.label).every((e) => textMentionsEntity(allow, e)));
+}
+
 /** Cross-task bleed backstop #2, alongside dropForeignEntitySteps above: that check only catches steps
  *  naming a capitalized proper-noun ENTITY absent from this task's own fields — it misses bleed-in with no
  *  such entity, observed live on the SAME incident its own comment cites: a "Prep for Math HL prior
@@ -5779,21 +5795,36 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     : /calendar\.google\.com/i.test(url) ? "the calendar event"
     : "the linked page";
   const isJunkLabel = (s: string) => !s || /^(open|link|url|click here|view|here|document|doc)$/i.test(s.trim()) || /^https?:\/\//i.test(s.trim());
-  const links: TaskLink[] = (Array.isArray(out?.links) ? out.links : [])
+  const linksRaw: (TaskLink & { autoLabel: boolean })[] = (Array.isArray(out?.links) ? out.links : [])
     .map((l: any) => {
       const url = String(l?.url || "").trim();
       const raw = String(l?.label || "").slice(0, 80);
-      return { label: isJunkLabel(raw) ? kindLabel(url) : raw, url };
+      const auto = isJunkLabel(raw);
+      return { label: auto ? kindLabel(url) : raw, url, autoLabel: auto };
     })
-    .filter((l: TaskLink) => /^https?:\/\//i.test(l.url))
+    .filter((l: TaskLink & { autoLabel: boolean }) => /^https?:\/\//i.test(l.url))
     // Artifact verification: a Google Docs/Sheets/Slides link must carry a REAL document id (25+ chars of
     // id alphabet) — a made-up or truncated link would render a polished card pointing at a 404.
-    .filter((l: TaskLink) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url))
+    .filter((l: TaskLink & { autoLabel: boolean }) => !/docs\.google\.com/i.test(l.url) || /\/(document|spreadsheets|presentation)\/(d\/)?[-\w]{25,}/i.test(l.url))
     // Never a "Gmail draft" link — Gmail has no URL for one specific draft, only the generic drafts
     // folder (mail.google.com/…/#drafts), which is useless/confusing next to the real "View draft"/Send
     // UI the sendables entry already gives. Belt-and-suspenders in case the model adds one out of habit.
-    .filter((l: TaskLink) => !/mail\.google\.com.*#drafts/i.test(l.url))
-    .slice(0, 3); // max 3 open links per task — the essentials, not a link dump
+    .filter((l: TaskLink & { autoLabel: boolean }) => !/mail\.google\.com.*#drafts/i.test(l.url));
+  // Contamination filter BEFORE the top-3 cap below — so if a run returned one genuinely relevant link
+  // alongside two unrelated ones a broad web_search happened to surface, the relevant one survives the cap
+  // instead of possibly losing its slot to noise that gets dropped a moment later anyway.
+  //
+  // autoLabel links are EXEMPT: their label is kindLabel()'s own template text ("the Google Doc Otto
+  // created", "the calendar event"), never anything the model wrote — checking it for foreign entities was
+  // a real regression caught by the test suite: "Google"/"Otto" are capitalized proper nouns that will
+  // essentially never appear in a task's own title/steps, so this was wrongly dropping links to artifacts
+  // Otto had ACTUALLY JUST CREATED on this exact run, the most legitimate link there is.
+  const modelLinks = linksRaw.filter((l) => !l.autoLabel);
+  const survivingModelLinks = new Set(dropForeignEntityLinks(taskTitle || "", definitionOfDone, filteredSteps, modelLinks));
+  const cleanLinks = linksRaw
+    .filter((l) => l.autoLabel || survivingModelLinks.has(l))
+    .map(({ autoLabel, ...l }) => l)
+    .slice(0, 3); // original relative order preserved — autoLabel links aren't more/less important, just exempt from the check
   const sendables: Sendable[] = (Array.isArray(out?.sendables) ? out.sendables : [])
     .map((s: any): Sendable => ({
       app: s?.app === "gcal" ? "gcal" : "gmail",
@@ -5865,7 +5896,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // A purely dead-end synthesis ("searched … found none", "couldn't find …") is the same noise we strip from
   // did — if the run PRODUCED nothing (no did, no artifact), blank it so the card leads with "what's left"
   // instead of a report of what came up empty. (Kept when there IS a produced result to describe.)
-  if (synthesis && !did.length && !links.length && !sendables.length && (DEAD_END.test(synthesis) || INVESTIGATIVE.test(synthesis))) synthesis = "";
+  if (synthesis && !did.length && !cleanLinks.length && !sendables.length && (DEAD_END.test(synthesis) || INVESTIGATIVE.test(synthesis))) synthesis = "";
   // A synthesis that OPENS with an investigative verb ("Ran several additional Drive/Gmail queries that came
   // back empty") is meta-narration about the search PROCESS regardless of whether other work got produced
   // this run — synthesis's own tool description explicitly forbids this shape ("no explaining what you
@@ -5881,7 +5912,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   void fallbackText; // kept in the signature for call-site compatibility; intentionally unused as content
   // A completely empty result (no report, no steps, no artifacts) is a FAILED run, not a quiet success —
   // throwing routes it to the honest-failure path (task returns to ready + client auto-retries).
-  if (!synthesis && !steps.length && !links.length && !sendables.length) {
+  if (!synthesis && !steps.length && !cleanLinks.length && !sendables.length) {
     throw new Error("The run produced no output — it will retry.");
   }
   // Otto-work leak check (observed live: "Create a new Google Doc…" listed as a USER step): a step that
@@ -5913,8 +5944,8 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
   // Checklist backstop: artifacts with NO steps and NO sendable leave the user without a "what's left"
   // list — the report the card promises. Deterministically add "Review <artifact>" so the checklist can
   // never be absent when something was produced. (Sendables don't need it: the send button IS the next action.)
-  if (!filteredSteps.length && !sendables.length && links.length) {
-    for (const l of links.slice(0, 2)) filteredSteps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
+  if (!filteredSteps.length && !sendables.length && cleanLinks.length) {
+    for (const l of cleanLinks.slice(0, 2)) filteredSteps.push({ text: `Review ${l.label}`.slice(0, 80), automatable: false, url: l.url, synthetic: true });
   }
   // Follow-up tasks the run discovered — distinct new obligations that each deserve their own task. Capped
   // and validated; the run loop turns these into real tasks the sweep/kick then executes.
@@ -5946,7 +5977,7 @@ export function finalize(out: any, fallbackText: string, profileUpdates: Profile
     synthesis: synthesis || (!EXECUTION_ENABLED && filteredSteps.length ? "Gathered context and broke this into steps." : filteredSteps.some((s) => !s.done) ? "" : "Done."),
     did,
     steps: filteredSteps,
-    links,
+    links: cleanLinks,
     sendables,
     profileUpdates,
     ...(followUps.length ? { followUps } : {}),
