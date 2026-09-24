@@ -295,7 +295,12 @@ export async function deleteAuthUser(email: string): Promise<void> {
   } catch (e) { console.warn("[store] deleteAuthUser threw:", (e as any)?.message || e); }
 }
 
-export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle; pronote?: StoredPronote; plaid?: StoredPlaid; blackbaud?: StoredBlackbaud; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
+/** Connection fields accept `null` to mean "clear this connection" — see saveState: `undefined` (or absent)
+ *  leaves the column untouched, only an explicit `null` wipes it. That distinction exists because the
+ *  natural way to write one connection is `saveState(email, { ...loadedState, plaid })`, and a loaded state
+ *  ALWAYS carries the other connection keys — as `undefined` when they aren't set. Under the old
+ *  "key present ⇒ write it" rule, that spread nulled every OTHER connection the account had. */
+export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle | null; pronote?: StoredPronote | null; plaid?: StoredPlaid | null; blackbaud?: StoredBlackbaud | null; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
 
 // A transient network drop (undici "terminated"/"fetch failed", a reset socket) is NOT the same as "no
 // data" — but Supabase surfaces it both as a thrown error AND, sometimes, as a returned {error}. Treating
@@ -374,35 +379,50 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   return result;
 }
 
+/** Decide which connection columns a save should actually write. Only touch one when the caller explicitly
+ *  means to: `undefined`/absent = leave the column exactly as it is; an explicit `null` = clear it. A key
+ *  that's absent from the returned object is absent from the upsert payload, which leaves the stored value
+ *  alone.
+ *
+ *  This USED to key off `"pronote" in state`, i.e. "the key is present, so write it." That looked safe but
+ *  wasn't: a loaded AccountState always CONTAINS every connection key (as `undefined` when unset), so the
+ *  completely natural `saveState(email, { ...state, blackbaud: updated })` — the shape used by plaid.ts,
+ *  blackbaud.ts and the account-import route — silently wrote `pronote: null` and `google: null` alongside
+ *  the one connection it meant to update. Blackbaud's SKY token refreshes roughly hourly, so that path alone
+ *  quietly wiped a live Pronote connection about once an hour, which is exactly how this was reported:
+ *  "Pronote connects fine, then disconnects after a while." Making the safe reading the default kills the
+ *  whole bug class instead of patching each call site and hoping the next one remembers.
+ *
+ *  Exported (and pure) so this is covered by a real behavioural test rather than a source-grep pin — it has
+ *  now silently destroyed live connections in three different ways, so "it looks right" isn't good enough. */
+export function connectionColumnUpdates(state: AccountState): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (state.google !== undefined) out.google = state.google === null ? null : state.google;
+  if (state.pronote !== undefined) {
+    out.pronote = state.pronote === null ? null
+      : { ...state.pronote, token: encryptSecret(state.pronote.token), ...(state.pronote.password ? { password: encryptSecret(state.pronote.password) } : {}) };
+  }
+  if (state.plaid !== undefined) {
+    out.plaid = state.plaid === null ? null : { ...state.plaid, accessToken: encryptSecret(state.plaid.accessToken) };
+  }
+  if (state.blackbaud !== undefined) {
+    out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) };
+  }
+  if (state.studySessions !== undefined) out.studySessions = state.studySessions;
+  if (state.studyProfile !== undefined) out.studyProfile = state.studyProfile;
+  return out;
+}
+
 /** Persist an account's profile + tasks + Google/Pronote connection (best-effort; never throws into the
  *  request path). Transient network failures are retried so a blip doesn't silently drop a write. */
 export async function saveState(email: string | undefined, state: AccountState, opts?: { throwOnError?: boolean }): Promise<void> {
   if (!client || !email) return;
   const row: Record<string, unknown> = { email, profile: state.profile || emptyProfile(), tasks: state.tasks || [], updated_at: new Date().toISOString() };
-  // Only touch google/pronote when the CALLER explicitly manages that connection. Most callers (commit()
-  // on every confirm/dismiss/run/revise) only ever deal with profile+tasks and never pass these — including
-  // them unconditionally as `?? null` would silently NULL OUT a live connection on the very next unrelated
-  // save. Omitting the key from the upsert payload leaves the existing column value alone.
-  if ("google" in state) row.google = state.google ?? null;
-  if ("pronote" in state) {
-    row.pronote = state.pronote ? { ...state.pronote, token: encryptSecret(state.pronote.token), ...(state.pronote.password ? { password: encryptSecret(state.pronote.password) } : {}) } : null;
-  }
-  if ("plaid" in state) {
-    row.plaid = state.plaid ? { ...state.plaid, accessToken: encryptSecret(state.plaid.accessToken) } : null;
-  }
-  if ("blackbaud" in state) {
-    row.blackbaud = state.blackbaud ? { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) } : null;
-  }
-  if ("studySessions" in state) {
-    row.studySessions = state.studySessions;
-  }
-  if ("studyProfile" in state) {
-    row.studyProfile = state.studyProfile;
-  }
+  Object.assign(row, connectionColumnUpdates(state));
   // Invalidate rather than try to update-in-place: `state` here often omits google/pronote entirely (see
-  // comment above), so overwriting the cached entry with it would wrongly blank out fields this save never
-  // touched. A plain delete costs one extra real read on the next loadState() for this email — cheap and
-  // safe compared to reconstructing the merged shape by hand.
+  // connectionColumnUpdates), so overwriting the cached entry with it would wrongly blank out fields this
+  // save never touched. A plain delete costs one extra real read on the next loadState() for this email —
+  // cheap and safe compared to reconstructing the merged shape by hand.
   stateCache.delete(email);
   const { error } = await withRetry("save", async () =>
     client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
@@ -415,6 +435,49 @@ export async function saveState(email: string | undefined, state: AccountState, 
     // Supabase error here (past withRetry's retries) looked IDENTICAL to success: 200 response, nothing
     // actually saved, gone on the next reload. That was reported live as journal entries + flashcards
     // vanishing right after being created.
+    if (opts?.throwOnError) throw new Error(error.message || "Cloud save failed.");
+  }
+}
+
+// ── Pronote connection: narrow, single-column read/write ───────────────────────────────────────────────
+// loadState/saveState above are whole-row operations: the SELECT pulls profile+tasks+studySessions+every
+// connection blob, and the write ALWAYS rewrites profile+tasks (they're unconditional in `row` above, since
+// most callers do own them). That's the wrong shape for Pronote's connection, which is one small column
+// asked about constantly (/api/status polls it every 45s per tab) and rewritten on every token rotation:
+//   - reading it via loadState meant dragging the entire task blob across the wire to answer one boolean,
+//     which is why that read got cached in the first place — and the cache is what made it go stale and
+//     report a live connection as disconnected (see server/pronote.ts). Narrow enough not to need a cache.
+//   - writing it via saveState meant a read-modify-write of the WHOLE row, so a stale or racing read could
+//     clobber profile/tasks, and a caller that forgot to pass the connection through nulled it out. A
+//     single-column update makes both failure modes structurally impossible rather than merely avoided.
+/** Read ONLY the Pronote connection. Deliberately uncached — it's a single small column, and this is the
+ *  value a student watches change right after acting, where staleness is far more expensive than a query. */
+export async function loadPronoteConnection(email?: string): Promise<StoredPronote | undefined> {
+  if (!client || !email) return undefined;
+  const { data, error } = await withRetry("load-pronote", async () =>
+    client!.from(TABLE).select("pronote").eq("email", email).maybeSingle());
+  if (error) { console.warn("[store] pronote load failed:", error.message); reportError("load-pronote", error, { email }); return undefined; }
+  const p = (data as any)?.pronote;
+  if (!p || !p.token) return undefined;
+  return { ...(p as StoredPronote), token: decryptSecret(p.token), ...(p.password ? { password: decryptSecret(p.password) } : {}) };
+}
+
+/** Write ONLY the Pronote connection (pass undefined to disconnect). Touches no other column, so it can
+ *  never clobber profile/tasks — upsert so a first-ever connect on an account with no state row yet still
+ *  creates one (profile/tasks then take their NOT NULL column defaults, see supabase.sql). */
+export async function savePronoteConnection(email: string | undefined, pronote: StoredPronote | undefined, opts?: { throwOnError?: boolean }): Promise<void> {
+  if (!client || !email) return;
+  const row = {
+    email,
+    pronote: pronote ? { ...pronote, token: encryptSecret(pronote.token), ...(pronote.password ? { password: encryptSecret(pronote.password) } : {}) } : null,
+    updated_at: new Date().toISOString(),
+  };
+  stateCache.delete(email); // the whole-row cache holds a copy of this column too
+  const { error } = await withRetry("save-pronote", async () =>
+    client!.from(TABLE).upsert(row, { onConflict: "email" }).then((r) => ({ data: null, error: r.error })));
+  if (error) {
+    console.warn("[store] pronote save failed:", error.message);
+    reportError("save-pronote", error, { email });
     if (opts?.throwOnError) throw new Error(error.message || "Cloud save failed.");
   }
 }

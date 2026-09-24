@@ -141,7 +141,7 @@ export async function connectMock(email: string): Promise<{ ok: true } | { ok: f
 
 export async function disconnectBlackbaud(email: string): Promise<void> {
   const state = await loadState(email);
-  await saveState(email, { ...state, blackbaud: undefined });
+  await saveState(email, { ...state, blackbaud: null }); // explicit null = clear it (undefined now means "leave alone")
 }
 
 export interface BlackbaudAssignment {

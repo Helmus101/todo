@@ -151,7 +151,7 @@ export async function disconnectPlaid(email: string): Promise<void> {
   if (state.plaid && state.plaid.accessToken !== MOCK_ACCESS_TOKEN) {
     try { await client().itemRemove({ access_token: state.plaid.accessToken }); } catch { /* best-effort — still forget it locally either way */ }
   }
-  await saveState(email, { ...state, plaid: undefined });
+  await saveState(email, { ...state, plaid: null }); // explicit null = clear it (undefined now means "leave alone")
 }
 
 export interface PlaidTransaction { id: string; name: string; amount: number; date: string; pending: boolean; }

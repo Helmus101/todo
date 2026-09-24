@@ -9,6 +9,7 @@ import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWith
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml } from "../server/pronote.ts";
+import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
 
@@ -1143,6 +1144,7 @@ section("Pronote connection durability — connection columns + uncached reads (
 {
   const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
   const pronoteSrc = readFileSync(new URL("../server/pronote.ts", import.meta.url), "utf8");
+  const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
   // `(?:<[^>]*>)?` — several of these are generic (e.g. runPronoteSessionOnce<T>), so the name isn't
   // always followed directly by the parameter list.
   const bodyOf = (src, name) => (src.match(new RegExp(`(?:export )?async function ${name}(?:<[^>]*>)?\\([\\s\\S]*?\\n\\}`)) || [""])[0];
@@ -1160,12 +1162,41 @@ section("Pronote connection durability — connection columns + uncached reads (
   check("jobs.ts loadUser reads durable state uncached", /bypassCache: true/.test(bodyOf(jobsSrc, "loadUser")));
   check("jobs.ts commitUser merges against an uncached read", /bypassCache: true/.test(commitUserBody));
 
-  // Pronote's token is single-use/rotating: a cached read can hand back a token already rotated away by a
-  // session opened on another instance, burning an avoidable real login against Pronote on every
-  // touch/sweep/fetch — enough of those in a row trip Pronote's own rate limiter.
-  check("runPronoteSessionOnce reads the rotating token uncached", /bypassCache: true/.test(bodyOf(pronoteSrc, "runPronoteSessionOnce")));
-  check("saveRotatedToken merges profile/tasks from an uncached read", /bypassCache: true/.test(bodyOf(pronoteSrc, "saveRotatedToken")));
-  check("pronoteConnected reads uncached (the status a student watches after acting)", /bypassCache: true/.test(bodyOf(pronoteSrc, "pronoteConnected")));
+  // The Pronote connection is one small column asked about constantly (/api/status polls it every 45s per
+  // tab) and rewritten on every token rotation. Going through loadState/saveState meant dragging the whole
+  // profile+tasks blob both ways for each — the cost that motivated caching it, which is what then went
+  // stale and reported live connections as disconnected. These must stay narrow single-column operations:
+  // cheap enough to never need a cache, and structurally unable to clobber profile/tasks.
+  const narrow = (name) => {
+    const body = bodyOf(pronoteSrc, name);
+    check(`${name} body was found (pin is actually checking something)`, body.length > 0);
+    check(`${name} does not read/write the whole account row`, body.length > 0 && !/\b(loadState|saveState)\(/.test(body));
+  };
+  ["pronoteConnected", "runPronoteSessionOnce", "saveRotatedToken", "touchPronoteSession", "disconnectPronote"].forEach(narrow);
+  // The real protection, tested behaviourally rather than by grep: a save that means to update ONE
+  // connection must never quietly clear the others. `{ ...loadedState, blackbaud }` is the shape that did
+  // this — a loaded state carries every connection key, as undefined when unset.
+  const loadedWithPronoteOnly = { profile: {}, tasks: [], pronote: { url: "u", username: "n", kind: 6, token: "t", deviceUUID: "d" }, google: undefined, plaid: undefined, blackbaud: undefined };
+  const hourlyBlackbaudRefresh = connectionColumnUpdates({ ...loadedWithPronoteOnly, blackbaud: { accessToken: "a", connectedAt: "now" } });
+  check("updating one connection does not clear an unrelated one (the hourly-wipe bug)", !("google" in hourlyBlackbaudRefresh) && !("plaid" in hourlyBlackbaudRefresh));
+  check("...and still writes the connection it actually meant to update", hourlyBlackbaudRefresh.blackbaud?.accessToken === "a");
+  check("...while leaving the live Pronote connection intact, not nulled", hourlyBlackbaudRefresh.pronote !== null && hourlyBlackbaudRefresh.pronote?.username === "n");
+  // The exact reported failure: the cached read predates a connect that landed on another instance, so
+  // `pronote` comes back undefined. The hourly Blackbaud token refresh then spreads that stale state and,
+  // under the old rule, wrote pronote: null — permanently disconnecting a connection that was actually live.
+  const staleRead = { profile: {}, tasks: [], pronote: undefined, google: undefined, plaid: undefined, blackbaud: { accessToken: "old", connectedAt: "then" } };
+  const refreshOnStaleRead = connectionColumnUpdates({ ...staleRead, blackbaud: { accessToken: "new", connectedAt: "then" } });
+  check("a stale read's undefined pronote is never written as null (the reported hourly disconnect)", !("pronote" in refreshOnStaleRead));
+  // A plain profile/tasks save (commit()'s shape, ~20 call sites) must touch no connection column at all.
+  check("a profile+tasks-only save writes no connection columns", Object.keys(connectionColumnUpdates({ profile: {}, tasks: [] })).length === 0);
+  // Disconnecting still has to work — that's what the explicit null is for.
+  check("an explicit null clears the connection (disconnect still works)", connectionColumnUpdates({ profile: {}, tasks: [], pronote: null }).pronote === null);
+  check("undefined is 'leave alone', NOT 'clear' — the distinction the whole fix rests on", !("pronote" in connectionColumnUpdates({ profile: {}, tasks: [], pronote: undefined })));
+
+  check("store.ts exposes a single-column Pronote read", /export async function loadPronoteConnection/.test(storeSrc));
+  check("the narrow Pronote read selects only that column", /\.select\("pronote"\)/.test(storeSrc));
+  check("store.ts exposes a single-column Pronote write", /export async function savePronoteConnection/.test(storeSrc));
+  check("the narrow Pronote write never sends profile/tasks", !/\b(profile|tasks):/.test(bodyOf(storeSrc, "savePronoteConnection")));
 }
 section("dodLooksLikeCoordinationOutcome — DoD-wording veto for flashcards/quiz (defense in depth)");
 {

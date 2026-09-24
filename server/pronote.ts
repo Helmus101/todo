@@ -31,7 +31,7 @@ import { randomUUID } from "node:crypto";
 // below is now sufficient again (no response-transform/HTML-patch hacks needed).
 import * as pronote from "@blockshub/pawnote-lts";
 import type { Profile } from "../shared/types.ts";
-import { loadState, saveState, type StoredPronote } from "./store.ts";
+import { loadState, loadPronoteConnection, savePronoteConnection, type StoredPronote } from "./store.ts";
 import { credentialEncryptionConfigured } from "./crypto.ts";
 import { reportError } from "./sentry.ts";
 import { connectionStatusesCached, sendSystemEmail } from "./integrations.ts";
@@ -142,13 +142,12 @@ export async function connectPronote(email: string, opts: { url: string; usernam
       // needsReconnect is deliberately omitted (not set false) — a fresh successful login has nothing to
       // carry forward from any prior dead-token flag; a full replacement object naturally clears it.
       const stored: StoredPronote = { url: refresh.url, username: refresh.username, kind: refresh.kind, token: refresh.token, deviceUUID, navigatorIdentifier: refresh.navigatorIdentifier, password: opts.password };
-      const current = await loadState(email, { bypassCache: true });
-      // throwOnError: without it, a real Supabase write failure here is only logged (store.ts's saveState
-      // is fire-and-forget by default for background syncs) — this call site actually NEEDS to know, since
+      // throwOnError: without it, a real Supabase write failure here is only logged (store.ts's writes are
+      // fire-and-forget by default for background syncs) — this call site actually NEEDS to know, since
       // the login itself just succeeded and Pronote's token is single-use; silently reporting {ok:true} back
       // to the client while nothing was actually persisted meant the tile forever showed "not connected"
       // with zero visible error, and reconnecting just burned another one-time token for nothing.
-      await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: stored }, { throwOnError: true });
+      await savePronoteConnection(email, stored, { throwOnError: true });
       invalidatePronoteStatus(email);
       return { ok: true, connected: true, username: stored.username };
     } catch (e: any) {
@@ -160,25 +159,23 @@ export async function connectPronote(email: string, opts: { url: string; usernam
 }
 
 export async function disconnectPronote(email: string): Promise<void> {
-  const current = await loadState(email, { bypassCache: true });
-  await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: undefined });
+  await savePronoteConnection(email, undefined);
   invalidatePronoteStatus(email);
 }
 
 export async function pronoteConnected(email: string): Promise<{ connected: boolean; username?: string; needsReconnect?: boolean }> {
-  // bypassCache: this is the direct "did my connect attempt register" read (called once on page load, once
-  // right after connect/disconnect — never a tight poll), so the extra Supabase read is cheap. Without it, a
-  // connect that landed on one Vercel lambda instance stayed invisible for up to 3min to a status check that
-  // landed on a DIFFERENT warm instance still serving its own stale stateCache entry — same root cause as the
-  // "flashcards saved but not showing" bug loadState's own comment describes, just for Pronote's connect flow.
-  const current = await loadState(email, { bypassCache: true });
-  const stored = current.pronote;
+  // Single-column read (store.loadPronoteConnection), NOT loadState: /api/status polls this every 45s per
+  // open tab, and pulling the account's whole profile+tasks blob to answer one boolean is what made this
+  // worth caching in the first place — and that cache is what went stale across serverless instances and
+  // reported live connections as disconnected. Narrow read = always fresh AND cheaper than the cached
+  // whole-row version ever was, so there's nothing left to trade off.
+  const stored = await loadPronoteConnection(email);
   if (!stored) return { connected: false };
   // Purge a leftover mock connection from before PRONOTE_MOCK was removed — an account that got seeded
   // with fake demo data (e.g. the env var mistakenly left on) must never keep reporting "connected" with
   // no real school behind it; clear it here so the student sees "not connected" and can do a real connect.
   if (stored.url === LEGACY_MOCK_URL) {
-    await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: undefined });
+    await savePronoteConnection(email, undefined);
     return { connected: false };
   }
   return { connected: true, username: stored.username, ...(stored.needsReconnect ? { needsReconnect: true } : {}) };
@@ -208,14 +205,13 @@ export function invalidatePronoteStatus(_email: string): void {}
 async function saveRotatedToken(email: string, rotated: StoredPronote): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try {
-      // bypassCache: this fires on EVERY session open (a touch, a homework fetch, a sweep — token rotation
-      // happens constantly, not just on connect), spread-merging current.profile/tasks unchanged into the
-      // save. Reading a stale (up to 3min old) per-instance-cached profile/tasks here would silently REVERT
-      // any more-recent change to either — a task just confirmed/dismissed, a preference just saved — the
-      // instant Pronote's token next happened to rotate in the background. Same root cause as the token
-      // staleness bug below, just with data-loss stakes instead of a spurious disconnect.
-      const current = await loadState(email, { bypassCache: true });
-      await saveState(email, { profile: current.profile, tasks: current.tasks, pronote: rotated });
+      // Single-column write: this fires on EVERY session open (a touch, a homework fetch, a sweep — token
+      // rotation happens constantly, not just on connect). It used to read the whole row and write
+      // profile+tasks back unchanged, which meant every rotation dragged the entire task blob through
+      // Supabase in both directions AND could revert a task the student had just confirmed to whatever the
+      // read happened to return. Touching only the pronote column is both far cheaper and incapable of
+      // clobbering anything else.
+      await savePronoteConnection(email, rotated);
       return;
     } catch (e) {
       if (attempt >= 2) throw e;
@@ -264,15 +260,15 @@ async function loginAndRun<T>(
  *  at school) and truly needs the student. Never throws; a failure of both attempts returns undefined and is
  *  logged, same as before. */
 async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.SessionHandle) => Promise<T>): Promise<T | undefined> {
-  // bypassCache: the stored token is single-use/rotating — every successful login here immediately
-  // supersedes it (saveRotatedToken above). A per-instance-cached read (up to 3min old) can hand back a
-  // token that's ALREADY been rotated away by a session opened moments earlier on a different warm Vercel
-  // instance, so the very first attempt below fails with SessionExpiredError before ever touching Pronote's
-  // real current state. The credential-fallback path usually self-heals in that case, but it means a real,
-  // avoidable extra login against Pronote's own server on nearly every touch/sweep/homework fetch — enough
-  // of those in a row risk tripping Pronote's own rate limiter, which reads to the student as "it just
-  // stopped working" after it's been running a while. Reported live as "disconnects about an hour later."
-  const { pronote: stored } = await loadState(email, { bypassCache: true });
+  // Narrow, uncached read: the stored token is single-use/rotating — every successful login here
+  // immediately supersedes it (saveRotatedToken above). A per-instance-cached read (up to 3min old) can
+  // hand back a token that's ALREADY been rotated away by a session opened moments earlier on a different
+  // warm Vercel instance, so the very first attempt below fails with SessionExpiredError before ever
+  // touching Pronote's real current state. The credential-fallback path usually self-heals in that case,
+  // but it means a real, avoidable extra login against Pronote's own server on nearly every
+  // touch/sweep/homework fetch — enough of those in a row risk tripping Pronote's own rate limiter, which
+  // reads to the student as "it just stopped working." Reported live as "disconnects about an hour later."
+  const stored = await loadPronoteConnection(email);
   if (!stored) return undefined;
   try {
     const session = pronote.createSessionHandle();
@@ -328,23 +324,23 @@ async function runPronoteSessionOnce<T>(email: string, fn: (session: pronote.Ses
  *  automatically, so this is a real "confirmed twice" bar, not a fixed delay. `immediate` skips this for the
  *  no-stored-password case, which has no second attempt to wait on in the first place. */
 async function flagNeedsReconnect(email: string, stored: StoredPronote, e: any, opts?: { immediate?: boolean }): Promise<void> {
-  // bypassCache: same profile/tasks-clobbering risk as saveRotatedToken above — this write path runs
-  // straight off the back of a failed session, so the account's cached state here could easily be minutes
-  // stale by the time this fires.
-  const current = await loadState(email, { bypassCache: true }).catch(() => undefined);
-  if (current) {
-    if (!opts?.immediate && !stored.firstFailedAt) {
-      void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, firstFailedAt: new Date().toISOString() } }).catch(() => {});
-      console.warn("[pronote] session failed once (token + credential fallback) — waiting for a second failure before flagging reconnect:", e?.message || e);
-      return;
-    }
-    void saveState(email, { profile: current.profile, tasks: current.tasks, pronote: { ...stored, needsReconnect: true } }).catch(() => {});
-    // Direct instruction: don't just leave this as a passive Settings badge the student has to notice on
-    // their own — actively tell them. Only on the FALSE→true transition (stored.needsReconnect was not
-    // already set) so a broken connection doesn't re-email on every single sweep attempt while it stays
-    // broken; the next successful reconnect clears needsReconnect entirely, so this fires again if it ever
-    // breaks a second time, same as the first.
-    if (!stored.needsReconnect) void notifyPronoteReconnectNeeded(email, current.profile).catch(() => {});
+  // Single-column writes, and no whole-row read at all on the common path: this only ever needs to flip a
+  // flag on the connection itself. It used to read the full account state first and write profile+tasks
+  // back alongside — which also meant that if that read failed, the flag silently never got recorded.
+  if (!opts?.immediate && !stored.firstFailedAt) {
+    void savePronoteConnection(email, { ...stored, firstFailedAt: new Date().toISOString() }).catch(() => {});
+    console.warn("[pronote] session failed once (token + credential fallback) — waiting for a second failure before flagging reconnect:", e?.message || e);
+    return;
+  }
+  void savePronoteConnection(email, { ...stored, needsReconnect: true }).catch(() => {});
+  // Direct instruction: don't just leave this as a passive Settings badge the student has to notice on
+  // their own — actively tell them. Only on the FALSE→true transition (stored.needsReconnect was not
+  // already set) so a broken connection doesn't re-email on every single sweep attempt while it stays
+  // broken; the next successful reconnect clears needsReconnect entirely, so this fires again if it ever
+  // breaks a second time, same as the first. The profile is loaded lazily HERE rather than up front
+  // because it's needed for exactly one thing — the email's language — on this one rare transition.
+  if (!stored.needsReconnect) {
+    void loadState(email).then((s) => notifyPronoteReconnectNeeded(email, s.profile)).catch(() => {});
   }
   console.warn("[pronote] session failed (token + credential fallback both dead):", e?.message || e);
   if (!isExpectedPronoteError(e)) reportError("pronote-session", e, { email });
@@ -359,7 +355,7 @@ async function flagNeedsReconnect(email: string, stored: StoredPronote, e: any, 
 // open tab doesn't hammer Pronote or burn the rotation budget for no reason.
 const TOUCH_MIN_GAP_MS = 2 * 60 * 60 * 1000; // 2h — tightened from 4h, direct instruction to make this as reliable as possible
 export async function touchPronoteSession(email: string): Promise<void> {
-  const { pronote: stored } = await loadState(email, { bypassCache: true });
+  const stored = await loadPronoteConnection(email);
   if (!stored || stored.needsReconnect) return; // nothing to renew, or already dead — only a real reconnect fixes that
   if (stored.lastTouchedAt && Date.now() - Date.parse(stored.lastTouchedAt) < TOUCH_MIN_GAP_MS) return;
   await runPronoteSessionOnce(email, async () => undefined);
