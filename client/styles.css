@@ -28,11 +28,11 @@
   --line-glass: rgba(255, 255, 255, 0.6); /* Edge light highlight on glass */
   
   /* Accent: Apple System Blue */
-  --accent: #0071E3;
-  --accent-hover: #0077ED;
-  --accent-active: #0062C4;
-  --accent-soft: rgba(0, 113, 227, 0.08);
-  --accent-rgb: 0, 113, 227;
+  --accent: #EA580C;
+  --accent-hover: #C2410C;
+  --accent-active: #9A3412;
+  --accent-soft: rgba(234, 88, 12, 0.08);
+  --accent-rgb: 234, 88, 12;
   --focus-ring: var(--accent);
   
   --bg-2: #E8E8ED;          /* Subtle control fills & tags */
@@ -101,7 +101,7 @@
   --shadow-card: 0 2px 8px -2px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
   --shadow-card-hover: 0 4px 20px -4px rgba(0, 0, 0, 0.08), 0 12px 28px -8px rgba(0, 0, 0, 0.06);
   --shadow-pop: 0 8px 32px -4px rgba(0, 0, 0, 0.12), 0 24px 64px -16px rgba(0, 0, 0, 0.18);
-  --shadow-glow: 0 0 24px rgba(0, 113, 227, 0.28);
+  --shadow-glow: 0 0 24px rgba(234, 88, 12, 0.28);
   
   /* Glass Material Tokens - per §12 materials & depth */
   --bar: rgba(245, 245, 247, 0.82);
@@ -1613,10 +1613,10 @@ input:focus, textarea:focus {
 .chat-msg-toggle:hover { opacity: 1; }
 .chat-user {
   align-self: flex-end;
-  background: linear-gradient(180deg, #0077ED 0%, #0066D6 100%);
+  background: linear-gradient(180deg, #F2691D 0%, #EA580C 100%);
   color: #fff;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 113, 227, 0.25);
+  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.25);
 }
 .chat-assistant {
   align-self: flex-start;
@@ -2602,7 +2602,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.demo-sub-tag.maths   { background: rgba(0, 113, 227, 0.12); color: var(--accent); }
+.demo-sub-tag.maths   { background: rgba(234, 88, 12, 0.12); color: var(--accent); }
 .demo-sub-tag.physics { background: rgba(255, 149, 0, 0.12); color: var(--amber); }
 .demo-sub-tag.philo   { background: rgba(52, 199, 89, 0.12); color: var(--ok); }
 .demo-task-name {

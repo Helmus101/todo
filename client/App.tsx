@@ -128,16 +128,17 @@ const EXECUTION_ENABLED = false;
 
 /** The Otto mark — an "O" (for Otto) with a checkmark inside it, not a separate badge bolted onto a
  *  generic shape: the letter and the "done" meaning read as ONE mark, not two ideas glued together. The
- *  ring inherits currentColor (ink, inverts in dark mode); the checkmark is always cobalt, the one fixed
- *  accent color across the whole app — it's the one thing that never changes regardless of theme, same as
- *  every other accent-blue use elsewhere. Deliberately legible at favicon size: a checkmark stays readable
+ *  ring inherits currentColor (ink, inverts in dark mode); the checkmark is always the warm orange brand
+ *  accent (#EA580C), the one fixed accent color across the whole app — it's the one thing that never
+ *  changes regardless of theme, same as every other accent use elsewhere. Deliberately legible at
+ *  favicon size: a checkmark stays readable
  *  at 16px in a way finer geometric detail doesn't, which the previous half-moon-cut-by-a-line mark wasn't
  *  reliably (it read as a blank shape at tab-icon scale, per direct feedback). */
 function Logo({ size = 22 }: { size?: number }) {
   return (
     <svg className="logo" width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
       <circle cx="24" cy="24" r="18" stroke="currentColor" strokeWidth="4" fill="none" />
-      <path d="M15 25 L21 31 L33 17" stroke="#0066ff" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M15 25 L21 31 L33 17" stroke="#EA580C" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
 }
@@ -3448,7 +3449,7 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
  *  welcome + name → how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
  *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
  *  finishing (or "Skip") clears the otto-onboard flag. */
-const OB_STEPS = 11;
+const OB_STEPS = 12;
 /** Otto Lycée v1: onboarding is now just name → what Otto does → connect Pronote (the ONE data source) →
  *  done. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone — every extra sign-in step is a
  *  dropout for a lycéen without a work Google account, and Pronote's connect flow (URL + identifiants,
@@ -3622,28 +3623,11 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
           </div>
         )}
 
-        {step === 4 && (
-          <div className="onboard-step">
-            <h2>{L("Ta langue", "Your language")}</h2>
-            <div className="set-list onboard-prefs">
-              {/* onChanged MUST call onStatus — PreferencesFields.saveLang persists server-side, but
-                  status.language (which drives the whole app's LangContext) only updates when something
-                  calls loadStatus. Without this, a new signup's language pick in onboarding silently never
-                  applied to the actual UI — the dashboard kept rendering in the account default. */}
-              <PreferencesFields profile={null} onChanged={() => void onStatus()} />
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(5)}>{L("Suivant", "Next")}</button>
-            </div>
-          </div>
-        )}
-
         {/* A short map of the sidebar — the app's biggest "confusing at first" complaint wasn't the concept
             (step 2 already covers that), it was landing on the dashboard with 6 unexplained tabs and no
             idea what each one is for. One line per tab, not a full feature tour — enough to remove the
             "where do I even click" hesitation without turning onboarding into a chore. */}
-        {step === 5 && (
+        {step === 6 && (
           <div className="onboard-step">
             <h2>{L("Où trouver quoi", "Where to find things")}</h2>
             <p className="onboard-lead">{L("Un rapide topo de la barre latérale — tu peux toujours revenir ici plus tard.", "A quick map of the sidebar — you can always come back to this later.")}</p>
@@ -3655,13 +3639,13 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Connexions (Pronote, Gmail…), langue, et tout ce qu'Otto sait sur toi.", "Connections (Pronote, Gmail…), language, and everything Otto knows about you.")}</span></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(4)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(6)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(5)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(7)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 6 && (
+        {step === 7 && (
           <div className="onboard-step">
             <h2>{L("Mode Étude", "Study Mode")}</h2>
             <p className="onboard-lead">{L("Un espace de concentration avec tout ce qu'il faut pour travailler efficacement.", "A focus workspace with everything you need to work effectively.")}</p>
@@ -3678,7 +3662,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
           </div>
         )}
 
-        {step === 7 && (
+        {step === 8 && (
           <div className="onboard-step">
             <h2>{L("Otto t'aide à comprendre", "Otto helps you understand")}</h2>
             <p className="onboard-lead">{L("Otto est un tuteur, pas un solutionnaire. Il t'explique, te guide, mais ne fait jamais le travail à ta place.", "Otto is a tutor, not a solution key. It explains, guides, but never does the work for you.")}</p>
@@ -3689,13 +3673,13 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Tu comprends", "You understand")}</b><span>{L("La compréhension reste la tienne — Otto t'aide à y arriver.", "Understanding stays yours — Otto helps you get there.")}</span></div></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(6)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(8)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(7)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(9)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 8 && (
+        {step === 9 && (
           <div className="onboard-step">
             <h2>{L("Fiches, Quiz et Notes", "Flashcards, Quizzes & Notes")}</h2>
             <p className="onboard-lead">{L("Otto crée automatiquement des supports de révision basés sur tes tâches et ton journal.", "Otto automatically creates study materials based on your tasks and journal.")}</p>
@@ -3705,13 +3689,13 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <div className="ob-tour-row"><b>{L("Notes synthétiques", "Synthetic Notes")}</b><span>{L("Résumés clairs et structurés pour réviser efficacement.", "Clear, structured summaries for effective revision.")}</span></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(7)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(9)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(8)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(10)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 9 && (
+        {step === 10 && (
           <div className="onboard-step">
             <h2>{L("Automatisation quotidienne", "Daily Automation")}</h2>
             <p className="onboard-lead">{L("Otto travaille pour toi tous les jours — pas besoin de lui demander.", "Otto works for you every day — no need to ask.")}</p>
@@ -3722,13 +3706,13 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Personnalisation", "Personalization")}</b><span>{L("Plus tu l'utilises, plus Otto s'ajuste à ta façon de travailler.", "The more you use it, the more Otto adjusts to how you work.")}</span></div></div>
             </div>
             <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(8)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(10)}>{L("Suivant", "Next")}</button>
+              <button className="btn ghost" onClick={() => setStep(9)}>{L("Retour", "Back")}</button>
+              <button className="btn primary big" onClick={() => setStep(11)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
-        {step === 10 && (
+        {step === 11 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
