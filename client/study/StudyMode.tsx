@@ -45,7 +45,31 @@ interface StudyModeProps {
 }
 
 // ── Detect task type from task title/description ──────────────────────────────
-function detectTemplate(task: WebTask): WorkspaceTemplate {
+// task.taskType is the AI's OWN classification of this exact task (server/claude.ts's 5-step pipeline
+// assigns it from the real title + why + context, not a handful of keywords) — it's already sitting on the
+// task, so using it here means Study Mode's desk is generated per-task by the AI, not re-guessed locally.
+// Reported live as "no templates, AI should generate based on task name" — the old version only ever ran a
+// fixed regex over the title and fell into the same few buckets ("always does the same thing"), which
+// missed a lot (no English/French synonym could cover everything) and never improved as the pipeline's own
+// classification did. The regex survives ONLY as a fallback for a task saved before taskType existed.
+const TASK_TYPE_TEMPLATE: Partial<Record<NonNullable<WebTask["taskType"]>, WorkspaceTemplate>> = {
+  write: "WRITING",
+  learn_understand: "READING",
+  practice: "PROBLEM_SOLVING",
+  homework_problem_set: "PROBLEM_SOLVING",
+  problem_solve: "PROBLEM_SOLVING",
+  review: "REVISION",
+  prepare_assessment: "REVISION",
+  research: "RESEARCH",
+  analyze: "RESEARCH",
+  create: "PROJECT",
+  project: "PROJECT",
+  administrative: "STANDARD",
+  decide: "STANDARD",
+  logistics: "STANDARD",
+  maintain: "STANDARD",
+};
+function detectTemplateFromKeywords(task: WebTask): WorkspaceTemplate {
   const text = `${task.title} ${task.why || ""} ${task.context || ""}`.toLowerCase();
   if (/essay|write|rédiger|rédaction|écrire|writing/.test(text)) return "WRITING";
   if (/read|lecture|chapter|textbook|pdf|article|lire/.test(text)) return "READING";
@@ -54,6 +78,10 @@ function detectTemplate(task: WebTask): WorkspaceTemplate {
   if (/research|recherche|study|source|investigate/.test(text)) return "RESEARCH";
   if (/project|projet|presentation|présentation/.test(text)) return "PROJECT";
   return "STANDARD";
+}
+function detectTemplate(task: WebTask): WorkspaceTemplate {
+  if (task.taskType && TASK_TYPE_TEMPLATE[task.taskType]) return TASK_TYPE_TEMPLATE[task.taskType]!;
+  return detectTemplateFromKeywords(task);
 }
 
 // ── Build initial artifact layout from template ───────────────────────────────
@@ -88,78 +116,86 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
   switch (template) {
     case "WRITING":
       return [
-        {
+        // Only open the document viewer when there's an actual document to show — with no material,
+        // `source` was left `undefined` and the artifact still opened, taking up the primary pane just to
+        // show "no document attached". Reported live as "auto-adding tools always does the same thing...
+        // shouldn't open a blank source". Same fix applied to every template's pdf/document tile below.
+        ...(firstDoc ? [{
           ...base,
           id: `${envId}-doc`,
-          type: "document",
-          title: firstDoc?.label || "Document",
+          type: "document" as const,
+          title: firstDoc.label || "Document",
           x: 60, y: 10,
           width: 65, height: 80,
-          source: firstDoc?.url,
-          sourceLabel: firstDoc?.label,
-        },
+          source: firstDoc.url,
+          sourceLabel: firstDoc.label,
+        }] : []),
         {
           ...base,
           id: `${envId}-notes`,
           type: "notes",
           title: "Notes",
-          x: 0, y: 10,
-          width: 25, height: 80,
-          dockSide: "left",
+          x: firstDoc ? 0 : 20, y: 10,
+          width: firstDoc ? 25 : 60, height: firstDoc ? 80 : 75,
+          dockSide: firstDoc ? "left" : "none",
           zIndex: 2,
         },
         ...chatAndBoard,
       ];
 
-    case "READING":
+    case "READING": {
+      const source = firstPDF?.objectUrl || firstPDF?.url;
       return [
-        {
+        ...(source ? [{
           ...base,
           id: `${envId}-pdf`,
-          type: "pdf",
-          title: firstPDF?.label || (lang === "en" ? "Reading" : "Lecture"),
+          type: "pdf" as const,
+          title: firstPDF!.label || (lang === "en" ? "Reading" : "Lecture"),
           x: 10, y: 5,
           width: 80, height: 88,
-          source: firstPDF?.objectUrl || firstPDF?.url,
-          sourceLabel: firstPDF?.label,
+          source,
+          sourceLabel: firstPDF!.label,
           maximized: !firstVideo,
-        },
+        }] : []),
         {
           ...base,
           id: `${envId}-notes`,
           type: "notes",
           title: "Notes",
-          x: 70, y: 5,
-          width: 28, height: 88,
-          dockSide: "right",
+          x: source ? 70 : 20, y: source ? 5 : 10,
+          width: source ? 28 : 60, height: source ? 88 : 75,
+          dockSide: source ? "right" : "none",
           zIndex: 2,
         },
         ...chatAndBoard,
       ];
+    }
 
-    case "PROBLEM_SOLVING":
+    case "PROBLEM_SOLVING": {
+      const source = firstPDF?.objectUrl || firstPDF?.url;
       return [
-        {
+        ...(source ? [{
           ...base,
           id: `${envId}-pdf`,
-          type: "pdf",
-          title: firstPDF?.label || (lang === "en" ? "Problem Set" : "Exercices"),
+          type: "pdf" as const,
+          title: firstPDF!.label || (lang === "en" ? "Problem Set" : "Exercices"),
           x: 2, y: 5,
           width: 57, height: 85,
-          source: firstPDF?.objectUrl || firstPDF?.url,
-        },
+          source,
+        }] : []),
         {
           ...base,
           id: `${envId}-scratch`,
           type: "scratchpad",
           title: lang === "en" ? "Scratchpad" : "Brouillon",
-          x: 61, y: 5,
-          width: 36, height: 85,
-          dockSide: "right",
+          x: source ? 61 : 20, y: source ? 5 : 10,
+          width: source ? 36 : 60, height: source ? 85 : 75,
+          dockSide: source ? "right" : "none",
           zIndex: 2,
         },
         ...chatAndBoard,
       ];
+    }
 
     case "REVISION":
       return [
@@ -174,29 +210,31 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
         ...chatAndBoard,
       ];
 
-    case "RESEARCH":
+    case "RESEARCH": {
+      const source = firstPDF?.objectUrl || firstPDF?.url;
       return [
-        {
+        ...(source ? [{
           ...base,
           id: `${envId}-pdf`,
-          type: "pdf",
-          title: firstPDF?.label || "Source",
+          type: "pdf" as const,
+          title: firstPDF!.label || "Source",
           x: 2, y: 5,
           width: 60, height: 85,
-          source: firstPDF?.objectUrl || firstPDF?.url,
-        },
+          source,
+        }] : []),
         {
           ...base,
           id: `${envId}-notes`,
           type: "notes",
           title: "Notes",
-          x: 64, y: 5,
-          width: 34, height: 85,
-          dockSide: "right",
+          x: source ? 64 : 20, y: source ? 5 : 10,
+          width: source ? 34 : 60, height: source ? 85 : 75,
+          dockSide: source ? "right" : "none",
           zIndex: 2,
         },
         ...chatAndBoard,
       ];
+    }
 
     default: // STANDARD, PROJECT
       return [
@@ -1397,6 +1435,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
               playing={env.audioPlaying}
               customAudioName={env.customAudioName}
               spotifyEmbedUrl={env.spotifyEmbedUrl}
+              open={openPanel === "audio"}
               onClose={() => setOpenPanel(null)}
               onChange={setAudio}
               onUploadAudio={(file) => void uploadAudio(file)}

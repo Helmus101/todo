@@ -1263,9 +1263,22 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
  *  instantly on close) — asymmetric with their slide/scale entrance, the exact thing TaskModal's own history
  *  (see its comment above) already called out as reading unpolished. `exitMs` should match the `duration`
  *  passed to SmSurface below for the same `variant`. */
-export function useSmClose(onClose: () => void, exitMs: number): { closing: boolean; doClose: () => void } {
+// `reopenKey` is for the RARE surface that stays mounted across its own open/close cycle instead of being
+// unmounted by the parent when closed (AudioPanel, kept alive so a live Spotify iframe never gets destroyed
+// — see StudyMode.tsx's own comment on that). For every other drawer/modal here, closing unmounts the
+// component entirely, so `closing`/`closingRef` naturally start fresh next open — no reset needed. But a
+// surface that stays mounted keeps its OWN internal `closing` latched `true` forever after its first close
+// (doClose is intentionally a one-shot guard), so simply toggling the wrapper's visibility back on left the
+// drawer permanently stuck mid-exit-animation (translated off-screen) — reported live as "audio doesn't open
+// the second time". Passing the parent's "am I open" flag as `reopenKey` resets the latch whenever it flips.
+export function useSmClose(onClose: () => void, exitMs: number, reopenKey?: unknown): { closing: boolean; doClose: () => void } {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
+  useEffect(() => {
+    if (reopenKey === undefined) return;
+    closingRef.current = false;
+    setClosing(false);
+  }, [reopenKey]);
   const doClose = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;

@@ -49,35 +49,11 @@ export function PDFArtifact({ artifact, onChange }: PDFArtifactProps) {
   }, [autoZoom]);
 
   return (
+    // The Page/Zoom row used to duplicate controls Chrome's own built-in PDF viewer already shows in its
+    // native toolbar (visible right inside the iframe) — a second, redundant "Page 1 / Zoom 100%" strip
+    // above it. Auto-fit-on-resize (the effect above) still runs and still feeds the iframe's #zoom= hash,
+    // just with no manual slider exposed; the native viewer's own zoom control still works for the student.
     <div className="sm-pdf-body" ref={containerRef}>
-      <div className="sm-artifact-toolbar">
-        <label>
-          Page
-          <input
-            className="sm-toolbar-number"
-            type="number"
-            min={1}
-            value={page}
-            onChange={(e) => onChange({ ...artifact.contentState, page: Math.max(1, Number(e.target.value) || 1) })}
-          />
-        </label>
-        <label>
-          Zoom
-          <input
-            className="sm-toolbar-range"
-            type="range"
-            min={AUTO_ZOOM_MIN}
-            max={AUTO_ZOOM_MAX}
-            step={10}
-            value={zoom}
-            // Any manual drag of the slider is the student overriding auto-fit on purpose — stop re-fitting
-            // this pane until it's resized again well past this size (autoZoom flips back on naturally only
-            // via a fresh artifact; simplest, least-surprising rule: manual once, manual for the session).
-            onChange={(e) => onChange({ ...artifact.contentState, zoom: Number(e.target.value), autoZoom: false })}
-          />
-        </label>
-        <span className="sm-toolbar-value">{zoom}%</span>
-      </div>
       {url ? (
         <>
           {/* NO sandbox here — Chrome's own built-in PDF viewer refuses to render at all inside a sandboxed
