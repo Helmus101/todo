@@ -231,6 +231,7 @@ export const api = {
   blackbaudDisconnect: (): Promise<{ ok: boolean }> => post("/api/integrations/blackbaud/disconnect"),
   pronoteTests: (): Promise<{ tests: { subject: string; deadline: string }[] }> => req("/api/pronote/tests").then(j),
   pronoteGrades: (): Promise<{ grades: { subject: string; average: number; outOf: number }[] }> => req("/api/pronote/grades").then(j),
+  syncPronoteGrades: (): Promise<{ grades: { subject: string; average: number; outOf: number }[]; synced: boolean }> => post("/api/pronote/grades/sync"),
   workload: (): Promise<{ days: { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number }[] }> =>
     req("/api/workload").then(j),
   rescheduleTask: (id: string, when: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reschedule`, { when }),
