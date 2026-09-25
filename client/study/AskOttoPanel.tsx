@@ -118,17 +118,10 @@ export function AskOttoPanel({
     el.style.height = `${el.scrollHeight}px`;
   }, [input]);
 
-  // Auto-scroll to bottom only if user hasn't deliberately scrolled up
+  // Auto-scroll to bottom — always. The chat should never hide the latest message.
   useEffect(() => {
-    const container = chatContainerRef.current;
-    if (!container) return;
-    
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
-    
-    if (isNearBottom) {
-      endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [task.chat?.length, sending]);
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [task.chat?.length, sending, pendingMsg]);
   
   // Track user scroll intention
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { ArtifactState } from "../StudyTypes.ts";
+import { useLang } from "../../ui.tsx";
 
 interface PDFArtifactProps {
   artifact: ArtifactState;
@@ -13,6 +14,7 @@ const REFERENCE_PAGE_WIDTH = 800;
 const AUTO_ZOOM_MIN = 60, AUTO_ZOOM_MAX = 180;
 
 export function PDFArtifact({ artifact, onChange }: PDFArtifactProps) {
+  const L = useLang();
   const page = Number(artifact.contentState?.page || 1);
   const zoom = Number(artifact.contentState?.zoom || 100);
   // Undefined counts as true (auto-zoom is the default) — only an explicit manual zoom-slider touch turns
@@ -88,11 +90,11 @@ export function PDFArtifact({ artifact, onChange }: PDFArtifactProps) {
               refuse to be framed via its own X-Frame-Options/CSP — invisible to JS (no onError fires), so
               the student would otherwise be stuck looking at a blank/blocked pane with no way out. */}
           <a className="sm-pdf-fallback-link" href={url} target="_blank" rel="noopener noreferrer">
-            Not loading? Open in a new tab ↗
+            {L("Ça ne s'affiche pas ? Ouvre dans un nouvel onglet ↗", "Not loading? Open in a new tab ↗")}
           </a>
         </>
       ) : (
-        <div className="sm-artifact-empty">No PDF attached.</div>
+        <div className="sm-artifact-empty">{L("Aucun PDF joint.", "No PDF attached.")}</div>
       )}
     </div>
   );

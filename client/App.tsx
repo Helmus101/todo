@@ -1685,14 +1685,53 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
  *  surface needed — no other component needs to know this data source exists. */
 function ExamsEditor({ profile }: { profile: Profile | null }) {
   const L = useLang();
-  const exams = [...(profile?.manualExams || [])].sort((a, b) => a.deadline.localeCompare(b.deadline));
+  const [exams, setExams] = useState<{ subject: string; deadline: string }[]>([]);
+  const [grades, setGrades] = useState<{ subject: string; average: number; outOf: number }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.pronoteTests(), api.pronoteGrades()])
+      .then(([testsRes, gradesRes]) => {
+        if (cancelled) return;
+        setExams([...testsRes.tests].sort((a, b) => a.deadline.localeCompare(b.deadline)));
+        setGrades(gradesRes.grades);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const pronoteGrades = (profile?.grades || []).filter((g) => g.source === "pronote").map((g) => ({ subject: g.subject, average: g.grade, outOf: g.scale }));
+  const allGrades = grades.length > 0 ? grades : pronoteGrades;
+
   return (
     <div className="exams-editor">
-      <p className="settings-hint">{L("Tes examens Pronote apparaissent ici.", "Your Pronote exams appear here.")}</p>
-      {exams.length > 0 ? (
+      {/* Grades by subject from Pronote */}
+      {allGrades.length > 0 ? (
+        <>
+          <p className="settings-hint" style={{ marginBottom: "8px" }}>{L("Moyennes par matière (Pronote)", "Averages by subject (Pronote)")}</p>
+          <ul className="grade-list" style={{ marginBottom: "16px" }}>
+            {allGrades.map((g, i) => (
+              <li key={i} className="grade-row">
+                <div className="grade-row-top">
+                  <span className="grade-subject">{g.subject}</span>
+                  <span className="grade-value">{g.average}/{g.outOf}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {/* Upcoming exams from Pronote */}
+      <p className="settings-hint" style={{ marginBottom: "8px" }}>{L("Prochains examens (Pronote)", "Upcoming exams (Pronote)")}</p>
+      {loading ? (
+        <p className="muted small">{L("Chargement…", "Loading…")}</p>
+      ) : exams.length > 0 ? (
         <ul className="grade-list">
-          {exams.map((e) => (
-            <li key={e.id} className="grade-row">
+          {exams.map((e, i) => (
+            <li key={i} className="grade-row">
               <div className="grade-row-top">
                 <span className="grade-subject">{e.subject}</span>
                 <span className="grade-value">{new Date(`${e.deadline}T00:00:00`).toLocaleDateString(L("fr-FR", "en-US"), { day: "numeric", month: "short", year: "numeric" })}</span>
@@ -2749,38 +2788,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
           Not published to the Chrome Web Store (no listing exists) — Chrome still allows a manually
           unpacked extension via chrome://extensions' developer-mode "Load unpacked", which is what these
           steps walk through. */}
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.075s" }}>
-        <h3>{L("Extension Chrome Otto Tabs", "Otto Tabs Chrome extension")}</h3>
-        <p className="settings-hint">
-          {L(
-            "Optionnel. Regroupe les onglets qu'Otto ouvre pour toi, et bloque les autres sites pendant une session Study Mode active.",
-            "Optional. Groups the tabs Otto opens for you, and blocks other sites during an active Study Mode session.",
-          )}
-        </p>
-        <div className="modal-row">
-          <span className="lbl">{L("Télécharger", "Download")}</span>
-          <span className="val"><a href="/otto-tabs-extension.zip" download>{L("otto-tabs-extension.zip", "otto-tabs-extension.zip")}</a></span>
-        </div>
-        <p className="settings-hint">
-          {L(
-            "Pas encore sur le Chrome Web Store : dézippe le fichier, ouvre chrome://extensions, active le mode développeur, puis « Charger l'extension non empaquetée » et choisis le dossier dézippé.",
-            "Not on the Chrome Web Store yet: unzip the file, open chrome://extensions, turn on Developer mode, then \"Load unpacked\" and pick the unzipped folder.",
-          )}
-        </p>
-        {/* The single most common "I installed it but it still doesn't work" cause: Chrome's own "Reload"
-            button on an already-loaded unpacked extension reloads from the SAME folder path it was
-            originally pointed at — re-downloading a newer zip to a different location (or even the same
-            Downloads folder with " (1)" appended) silently leaves the OLD files running. Called out
-            explicitly rather than assumed obvious, since it's invisible from the chrome://extensions list
-            (it just shows "Otto Tabs, enabled" either way). */}
-        <p className="settings-hint">
-          {L(
-            "Déjà installée et ça ne bloque toujours rien ? Retire-la complètement dans chrome://extensions puis recharge-la depuis le dossier fraîchement dézippé — cliquer sur « Actualiser » seule recharge parfois encore les anciens fichiers si le dossier a changé. Le popup de l'extension (clique sur son icône) affiche l'état réel du blocage.",
-            "Already installed and still not blocking anything? Remove it completely in chrome://extensions, then load it again from the freshly-unzipped folder — clicking \"Reload\" alone can still reuse the old files if the folder location changed. The extension's popup (click its icon) shows the real blocking status.",
-          )}
-        </p>
-      </section>
-
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.09s" }}>
         <h3>{L("Préférences", "Preferences")}</h3>
         <div className="set-list">
@@ -2988,10 +2995,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
           </div>
         ) : null}
         </div>}
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.17s" }}>
-
       </section>
 
       {/* "How Otto sees you" — full visibility + one-click reset for profile.studentModel, the AI-synthesized

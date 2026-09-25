@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { StudyMaterial } from "./StudyTypes.ts";
-import { useSmClose, SmSurface } from "../ui.tsx";
+import { useSmClose, SmSurface, useLang } from "../ui.tsx";
 
 interface MaterialsDrawerProps {
   materials: StudyMaterial[];
@@ -13,18 +13,8 @@ interface MaterialsDrawerProps {
   onAddLink: (url: string, label: string) => void;
 }
 
-const typeIcon = (type: StudyMaterial["type"]) => {
-  if (type === "pdf") return "PDF";
-  if (type === "video") return "▶";
-  if (type === "image") return "▨";
-  if (type === "document") return "▤";
-  if (type === "note") return "▤";
-  if (type === "flashcard") return "❏";
-  if (type === "quiz") return "?";
-  return "Link";
-};
-
 export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles, onAddLink }: MaterialsDrawerProps) {
+  const L = useLang();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [linkInput, setLinkInput] = useState("");
   const submitLink = () => {
@@ -33,15 +23,27 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
     setLinkInput("");
   };
   const { closing, doClose } = useSmClose(onClose, 240);
+
+  const typeIcon = (type: StudyMaterial["type"]) => {
+    if (type === "pdf") return "PDF";
+    if (type === "video") return "▶";
+    if (type === "image") return "▨";
+    if (type === "document") return "▤";
+    if (type === "note") return "▤";
+    if (type === "flashcard") return "❏";
+    if (type === "quiz") return "?";
+    return L("Lien", "Link");
+  };
+
   return (
     <SmSurface variant="drawer" closing={closing} className="sm-drawer">
       <div className="sm-drawer-header">
-        <span>MATERIALS</span>
+        <span>{L("MATÉRIEL", "MATERIALS")}</span>
         <button className="sm-drawer-close" onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
         {materials.length === 0 ? (
-          <p className="sm-drawer-empty">No materials for this session.</p>
+          <p className="sm-drawer-empty">{L("Aucun matériel pour cette session.", "No materials for this session.")}</p>
         ) : (
           <ul className="sm-material-list">
             {materials.map(m => (
@@ -51,9 +53,9 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
                 <button
                   className="sm-mat-open"
                   onClick={() => onOpenArtifact(m)}
-                  title="Open on canvas"
+                  title={L("Ouvrir sur le bureau", "Open on canvas")}
                 >
-                  Open ↗
+                  {L("Ouvrir ↗", "Open ↗")}
                 </button>
               </li>
             ))}
@@ -63,7 +65,7 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
             used to mean closing out and starting over just to reattach it. */}
         <div className="sm-material-add">
           <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => fileInputRef.current?.click()}>
-            + Add a file
+            {L("+ Ajouter un fichier", "+ Add a file")}
           </button>
           <input
             ref={fileInputRef}
@@ -78,9 +80,9 @@ export function MaterialsDrawer({ materials, onClose, onOpenArtifact, onAddFiles
               value={linkInput}
               onChange={(e) => setLinkInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submitLink()}
-              placeholder="Paste a link (or YouTube URL)…"
+              placeholder={L("Colle un lien (ou une URL YouTube)…", "Paste a link (or YouTube URL)…")}
             />
-            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkInput.trim()}>Add</button>
+            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkInput.trim()}>{L("Ajouter", "Add")}</button>
           </div>
         </div>
       </div>

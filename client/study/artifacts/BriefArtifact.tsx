@@ -1,4 +1,4 @@
-import { renderNoteBody } from "../../ui.tsx";
+import { renderNoteBody, useLang } from "../../ui.tsx";
 
 interface BriefArtifactProps {
   value: string;
@@ -9,9 +9,10 @@ interface BriefArtifactProps {
 // dumping raw "## ..."/"| a | b |" markdown into the sticky note's plain-text textarea (StickyNoteArtifact
 // is for the student's OWN quick scrawled note, never meant to render markdown).
 export function BriefArtifact({ value }: BriefArtifactProps) {
+  const L = useLang();
   return (
     <div className="sm-brief-body">
-      {value.trim() ? renderNoteBody(value) : <p className="muted">No content.</p>}
+      {value.trim() ? renderNoteBody(value) : <p className="muted">{L("Aucun contenu.", "No content.")}</p>}
     </div>
   );
 }
