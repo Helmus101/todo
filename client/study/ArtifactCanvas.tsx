@@ -5,7 +5,7 @@ import { FlashcardArtifact } from "./artifacts/FlashcardArtifact.tsx";
 import { QuizArtifact } from "./artifacts/QuizArtifact.tsx";
 import { NotesArtifact } from "./artifacts/NotesArtifact.tsx";
 import { ScratchpadArtifact } from "./artifacts/ScratchpadArtifact.tsx";
-import { WhiteboardArtifact } from "./artifacts/WhiteboardArtifact.tsx";
+
 import { CalculatorArtifact } from "./artifacts/CalculatorArtifact.tsx";
 import { DesmosArtifact } from "./artifacts/DesmosArtifact.tsx";
 import { DictionaryArtifact } from "./artifacts/DictionaryArtifact.tsx";
@@ -170,8 +170,6 @@ export function ArtifactCanvas({
         return <NotesArtifact value={notes} onChange={onNotesChange} />;
       case "scratchpad":
         return <ScratchpadArtifact value={scratchpad} onChange={onScratchpadChange} onSaveToNotes={(t) => onNotesChange(notes + "\n\n" + t)} />;
-      case "whiteboard":
-        return <WhiteboardArtifact {...contentProps} />;
       case "calculator":
         return <CalculatorArtifact />;
       case "desmos":

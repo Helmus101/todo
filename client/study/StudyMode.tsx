@@ -957,6 +957,18 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     });
   }, [persistEnv]);
 
+  // Ensure the chat artifact is always present during a session — it should never randomly disappear.
+  // If a background sync or re-tile somehow removes it, re-create it immediately.
+  useEffect(() => {
+    if (!env || phase !== "session") return;
+    const hasChat = env.artifacts.some((a) => a.type === "chat");
+    if (!hasChat) {
+      const base = { environmentId: env.id, taskId: task.id, zIndex: 100, minimized: false, maximized: false, dockSide: "none" as const, contentState: {} };
+      const chatArtifact: ArtifactState = { ...base, id: crypto.randomUUID(), type: "chat", title: "Ask Otto", x: 55, y: 10, width: 38, height: 78 };
+      updateEnv({ artifacts: [...env.artifacts, chatArtifact] });
+    }
+  }, [env?.artifacts.length, phase]);
+
   // A PDF uploaded in StudySetup gets its text extracted asynchronously (pdfText.ts — can take a moment for
   // a longer file) WHILE the student is still on the setup screen; if "Start Studying" is clicked before
   // that resolves, the material this session actually starts with has no `.text` yet, and — since nothing
@@ -1345,10 +1357,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
               const newArtifact: ArtifactState = {
                 id: crypto.randomUUID(),
                 type,
-                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "whiteboard" ? "Whiteboard" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : type === "citation" ? "Citation" : type === "camera" ? "Private camera" : type === "task" ? task.title : "Notes",
+                title: type === "calculator" ? "Calculator" : type === "desmos" ? "Desmos" : type === "dictionary" ? "Dictionary" : type === "sticky" ? "Sticky Note" : type === "scratchpad" ? "Scratchpad" : type === "citation" ? "Citation" : type === "camera" ? "Private camera" : type === "task" ? task.title : "Notes",
                 x: 20, y: 15,
-width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "whiteboard" ? 65 : type === "citation" ? 40 : type === "camera" ? 38 : type === "task" ? 45 : 40,
-  height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "whiteboard" ? 65 : type === "citation" ? 65 : type === "camera" ? 58 : type === "task" ? 70 : 50,
+                width: type === "calculator" ? 25 : type === "dictionary" ? 32 : type === "desmos" ? 55 : type === "citation" ? 40 : type === "camera" ? 38 : type === "task" ? 45 : 40,
+                height: type === "calculator" ? 45 : type === "dictionary" ? 58 : type === "desmos" ? 65 : type === "citation" ? 65 : type === "camera" ? 58 : type === "task" ? 70 : 50,
                 zIndex: 100,
                 minimized: false,
                 maximized: false,
