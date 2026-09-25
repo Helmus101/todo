@@ -7,25 +7,25 @@
 
 /* ─── Tokens ─────────────────────────────────────────────────────────────── */
 :root {
-  --bg: #FFFFFF;
+  --bg: #FAFAFA;
   --surface: #FFFFFF;
   --surface-raised: #FFFFFF;
   --surface-glass: #FFFFFF;
-  --ink: #1a1a1a;
-  --ink-2: #4a4a4a;
-  --ink-3: #8a8a8a;
-  --line: #EAEAEA;
-  --line-soft: rgba(0, 0, 0, 0.06);
-  --line-glass: #EAEAEA;
-  --accent: #EA580C;
-  --accent-hover: #C2410C;
-  --accent-active: #9A3412;
-  --accent-soft: rgba(234, 88, 12, 0.08);
-  --accent-rgb: 234, 88, 12;
-  --focus-ring: rgba(234, 88, 12, 0.3);
-  --bg-2: #F7F7F7;
-  --bg-3: #EAEAEA;
-  --graphite: #8a8a8a;
+  --ink: #18181B;
+  --ink-2: #52525B;
+  --ink-3: #A1A1AA;
+  --line: #E4E4E7;
+  --line-soft: #F4F4F5;
+  --line-glass: #E4E4E7;
+  --accent: #6366F1;
+  --accent-hover: #4F46E5;
+  --accent-active: #4338CA;
+  --accent-soft: rgba(99, 102, 241, 0.06);
+  --accent-rgb: 99, 102, 241;
+  --focus-ring: rgba(99, 102, 241, 0.3);
+  --bg-2: #F4F4F5;
+  --bg-3: #E4E4E7;
+  --graphite: #71717A;
   --radius-2xs: 4px;
   --radius-xs: 6px;
   --radius-sm: 8px;
@@ -35,43 +35,56 @@
   --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06);
-  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.12);
-  --shadow-glow: 0 0 20px rgba(234, 88, 12, 0.2);
-  --bar: #FFFFFF;
-  --hover-wash: rgba(0, 0, 0, 0.03);
-  --bg-rgb: 255, 255, 255;
-  --glass-border: rgba(0, 0, 0, 0.06);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --shadow-glow: 0 0 0 3px var(--accent-soft);
+  --bar: #FAFAFA;
+  --hover-wash: #F4F4F5;
+  --bg-rgb: 250, 250, 250;
+  --glass-border: #E4E4E7;
   --duration-fast: 150ms;
   --duration-base: 200ms;
   --duration-slow: 280ms;
   --duration-spring: 300ms;
+  --vermilion: #EF4444;
+  --ok: #22C55E;
+  --warn: #F59E0B;
+  --amber: #F59E0B;
 }
 
-/* Tally is a white canvas — keep it light even if the OS prefers dark. */
+/* Dark mode — clean, minimal dark palette */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #FFFFFF;
-    --surface: #FFFFFF;
-    --surface-raised: #FFFFFF;
-    --surface-glass: #FFFFFF;
-    --ink: #1a1a1a;
-    --ink-2: #4a4a4a;
-    --ink-3: #8a8a8a;
-    --line: #EAEAEA;
-    --line-soft: rgba(0, 0, 0, 0.06);
-    --line-glass: #EAEAEA;
-    --accent: #EA580C;
-    --accent-hover: #C2410C;
-    --accent-active: #9A3412;
-    --accent-soft: rgba(234, 88, 12, 0.08);
-    --accent-rgb: 234, 88, 12;
-    --bg-2: #F7F7F7;
-    --bg-3: #EAEAEA;
-    --bar: #FFFFFF;
-    --hover-wash: rgba(0, 0, 0, 0.03);
-    --bg-rgb: 255, 255, 255;
+    --bg: #0A0A0B;
+    --surface: #18181B;
+    --surface-raised: #27272A;
+    --surface-glass: #18181B;
+    --ink: #FAFAFA;
+    --ink-2: #A1A1AA;
+    --ink-3: #71717A;
+    --line: #27272A;
+    --line-soft: #1F1F23;
+    --line-glass: #27272A;
+    --accent: #818CF8;
+    --accent-hover: #6366F1;
+    --accent-active: #4F46E5;
+    --accent-soft: rgba(129, 140, 248, 0.1);
+    --accent-rgb: 129, 140, 248;
+    --bg-2: #27272A;
+    --bg-3: #3F3F46;
+    --bar: #0A0A0B;
+    --hover-wash: #27272A;
+    --bg-rgb: 10, 10, 11;
+    --glass-border: #27272A;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.4);
+    --shadow-pop: 0 4px 24px rgba(0, 0, 0, 0.5);
+    --vermilion: #F87171;
+    --ok: #4ADE80;
+    --warn: #FBBF24;
+    --amber: #FBBF24;
   }
 }
 
@@ -102,7 +115,7 @@ body {
 a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
 
-::selection { background: rgba(234, 88, 12, 0.15); }
+::selection { background: rgba(99, 102, 241, 0.12); }
 
 /* Focus rings — Tally uses a soft blue ring */
 :focus-visible {
@@ -130,12 +143,11 @@ a:hover { color: var(--accent-hover); }
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
-  box-shadow: 0 1px 3px rgba(234, 88, 12, 0.2);
+  box-shadow: none;
 }
 .btn.primary:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
-  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.25);
 }
 .btn.primary:active { background: var(--accent-active); }
 .btn.ghost {
@@ -154,8 +166,8 @@ a:hover { color: var(--accent-hover); }
   font-weight: 600;
 }
 .btn.primary.big:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(234, 88, 12, 0.3);
+  background: var(--accent-hover);
+  box-shadow: none;
 }
 
 /* ─── Inputs ────────────────────────────────────────────────────────────── */
