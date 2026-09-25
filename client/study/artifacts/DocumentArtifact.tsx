@@ -1,3 +1,5 @@
+import { useLang } from "../../ui.tsx";
+
 interface DocumentArtifactProps {
   url?: string;
   title: string;
@@ -44,6 +46,7 @@ function isHttpUrl(url: string): boolean {
 const GOOGLE_DOCS_HOST_RE = /^https:\/\/(docs|drive)\.google\.com\//i;
 
 export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
+  const L = useLang();
   const canEmbed = !!url && isHttpUrl(url);
   const isGoogleDocsHost = !!url && GOOGLE_DOCS_HOST_RE.test(url);
 
@@ -71,7 +74,7 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
           ) : (
             <div className="sm-document-reference">
               <strong>{title}</strong>
-              <p>This material is attached to the task. A native preview is not available for this file type yet.</p>
+              <p>{L("Ce matériel est rattaché à la tâche. Aucun aperçu n'est encore disponible pour ce type de fichier.", "This material is attached to the task. A native preview is not available for this file type yet.")}</p>
             </div>
           )}
           {/* Real, clickable fallback — always rendered, not conditional on the embed failing. A site that
@@ -80,12 +83,12 @@ export function DocumentArtifact({ url, title }: DocumentArtifactProps) {
               onError fires) — the student would otherwise be stuck staring at a dead pane with no way out.
               Same pattern PDFArtifact already uses for the same reason. */}
           <a className="sm-document-fallback-link" href={url} target="_blank" rel="noopener noreferrer">
-            {canEmbed ? "Not loading? Open in a new tab ↗" : `Open ${title} in a new tab ↗`}
+            {canEmbed ? L("Ça ne s'affiche pas ? Ouvre dans un nouvel onglet ↗", "Not loading? Open in a new tab ↗") : L(`Ouvrir ${title} dans un nouvel onglet ↗`, `Open ${title} in a new tab ↗`)}
           </a>
         </>
       ) : (
         <div className="sm-document-editor">
-          <textarea placeholder="Start writing here." />
+          <textarea placeholder={L("Commence à écrire ici.", "Start writing here.")} />
         </div>
       )}
     </div>

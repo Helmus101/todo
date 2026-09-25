@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLang } from "../ui.tsx";
 
 function WallClock() {
   const [now, setNow] = useState(() => new Date());
@@ -19,18 +20,19 @@ interface BreakScreenProps {
 }
 
 export function BreakScreen({ elapsed, formatTime, onResume, onEnd, countdownRemaining }: BreakScreenProps) {
+  const L = useLang();
   return (
     <div className="sm-break-screen">
       <div className="sm-break-inner">
         <WallClock />
-        <p className="sm-break-label">BREAK</p>
+        <p className="sm-break-label">{L("PAUSE", "BREAK")}</p>
         <div className="sm-break-timer">{formatTime(elapsed)}</div>
         {countdownRemaining !== undefined && (
-          <p className="sm-break-countdown">Back to work in {formatTime(countdownRemaining)}</p>
+          <p className="sm-break-countdown">{L(`Retour au travail dans ${formatTime(countdownRemaining)}`, `Back to work in ${formatTime(countdownRemaining)}`)}</p>
         )}
-        <p className="sm-break-hint">Step away from your screen.</p>
-        <button className="sm-btn sm-btn-primary" onClick={onResume}>Resume studying</button>
-        <button className="sm-btn sm-btn-ghost" onClick={onEnd} style={{ marginTop: "8px" }}>End session</button>
+        <p className="sm-break-hint">{L("Éloigne-toi de l'écran.", "Step away from your screen.")}</p>
+        <button className="sm-btn sm-btn-primary" onClick={onResume}>{L("Reprendre", "Resume studying")}</button>
+        <button className="sm-btn sm-btn-ghost" onClick={onEnd} style={{ marginTop: "8px" }}>{L("Terminer la session", "End session")}</button>
       </div>
     </div>
   );

@@ -20,6 +20,7 @@ import { ChatArtifact } from "./artifacts/ChatArtifact.tsx";
 import { TaskInfoArtifact } from "./artifacts/TaskInfoArtifact.tsx";
 import { CameraArtifact } from "./artifacts/CameraArtifact.tsx";
 import { BoardArtifact } from "./artifacts/BoardArtifact.tsx";
+import { useLang } from "../ui.tsx";
 
 interface ArtifactCanvasProps {
   artifacts: ArtifactState[];
@@ -64,6 +65,7 @@ export function ArtifactCanvas({
   onUpdateArtifact, onAddArtifact, onRemoveArtifact,
   onNotesChange, onScratchpadChange, onToggleStep, onToggleSubstep, onCompleteTask, language = "en", backgroundImageUrl, userId = null, chat, camera,
 }: ArtifactCanvasProps) {
+  const L = useLang();
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number; width: number; height: number } | null>(null);
   const resizeRef = useRef<{
@@ -256,27 +258,27 @@ export function ArtifactCanvas({
               <div className="sm-artifact-controls" onPointerDown={(e) => e.stopPropagation()}>
                 <button
                   className="sm-artifact-btn"
-                  title={art.dockSide === "left" ? "Undock" : "Dock left"}
+                  title={art.dockSide === "left" ? L("Détacher", "Undock") : L("Ancrer à gauche", "Dock left")}
                   onClick={e => { e.stopPropagation(); onUpdateArtifact(art.id, { dockSide: art.dockSide === "left" ? "none" : "left" }); }}
                 >⊟</button>
                 <button
                   className="sm-artifact-btn"
-                  title={art.dockSide === "right" ? "Undock" : "Dock right"}
+                  title={art.dockSide === "right" ? L("Détacher", "Undock") : L("Ancrer à droite", "Dock right")}
                   onClick={e => { e.stopPropagation(); onUpdateArtifact(art.id, { dockSide: art.dockSide === "right" ? "none" : "right" }); }}
                 >⊞</button>
                 <button
                   className="sm-artifact-btn"
-                  title={art.maximized ? "Restore" : "Maximize"}
+                  title={art.maximized ? L("Restaurer", "Restore") : L("Agrandir", "Maximize")}
                   onClick={e => { e.stopPropagation(); onUpdateArtifact(art.id, { maximized: !art.maximized, dockSide: "none" }); }}
                 >{art.maximized ? "⊡" : "□"}</button>
                 <button
                   className="sm-artifact-btn"
-                  title="Minimize"
+                  title={L("Réduire", "Minimize")}
                   onClick={e => { e.stopPropagation(); onUpdateArtifact(art.id, { minimized: true }); }}
                 >−</button>
                 <button
                   className="sm-artifact-btn sm-artifact-close"
-                  title="Close"
+                  title={L("Fermer", "Close")}
                   onClick={e => { e.stopPropagation(); onRemoveArtifact(art.id); }}
                 >×</button>
               </div>

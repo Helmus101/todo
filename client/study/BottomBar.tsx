@@ -1,3 +1,5 @@
+import { useLang } from "../ui.tsx";
+
 interface BottomBarProps {
   openPanel: string | null;
   onPanelToggle: (panel: "materials" | "tools" | "audio" | "task") => void;
@@ -11,6 +13,7 @@ interface BottomBarProps {
 }
 
 export function BottomBar({ openPanel, onPanelToggle, onAskOtto, chatOpen, onBreak, onEnd, audioPlaying }: BottomBarProps) {
+  const L = useLang();
   return (
     <nav className="sm-bottombar">
       <div className="sm-bottombar-left">
@@ -18,25 +21,25 @@ export function BottomBar({ openPanel, onPanelToggle, onAskOtto, chatOpen, onBre
           className={`sm-bar-btn ${openPanel === "task" ? "active" : ""}`}
           onClick={() => onPanelToggle("task")}
         >
-          Task
+          {L("Tâche", "Task")}
         </button>
         <button
           className={`sm-bar-btn ${openPanel === "materials" ? "active" : ""}`}
           onClick={() => onPanelToggle("materials")}
         >
-          Materials
+          {L("Matériel", "Materials")}
         </button>
         <button
           className={`sm-bar-btn ${openPanel === "tools" ? "active" : ""}`}
           onClick={() => onPanelToggle("tools")}
         >
-          Tools
+          {L("Outils", "Tools")}
         </button>
         <button
           className={`sm-bar-btn ${openPanel === "audio" ? "active" : ""}`}
           onClick={() => onPanelToggle("audio")}
         >
-          Audio{audioPlaying ? " · playing" : ""}
+          {L("Audio", "Audio")}{audioPlaying ? L(" · en lecture", " · playing") : ""}
         </button>
         <button
           className={`sm-bar-btn ${chatOpen ? "active" : ""}`}
@@ -47,10 +50,10 @@ export function BottomBar({ openPanel, onPanelToggle, onAskOtto, chatOpen, onBre
       </div>
       <div className="sm-bottombar-right">
         <button className="sm-bar-btn" onClick={onBreak}>
-          Break
+          {L("Pause", "Break")}
         </button>
         <button className="sm-bar-btn sm-bar-btn-end" onClick={onEnd}>
-          End
+          {L("Fin", "End")}
         </button>
       </div>
     </nav>

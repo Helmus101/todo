@@ -1,5 +1,5 @@
 import type { WebTask } from "../../shared/types.ts";
-import { withInlineLinks, stripStrayMarkdown, stripHtml, useSmClose, SmSurface, openTab } from "../ui.tsx";
+import { withInlineLinks, stripStrayMarkdown, stripHtml, useSmClose, SmSurface, useLang, openTab } from "../ui.tsx";
 
 interface TaskDetailDrawerProps {
   task: WebTask;
@@ -16,6 +16,7 @@ interface TaskDetailDrawerProps {
 // Steps/substeps are real checkboxes (not read-only text) and there's a "mark task complete" action, so a
 // student can actually finish a task from inside the session instead of leaving Study Mode to do it.
 export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep, onComplete }: TaskDetailDrawerProps) {
+  const L = useLang();
   const steps = task.steps || [];
   const doneCount = steps.filter(s => s.done).length;
   const isHandled = task.status === "done" || task.status === "dismissed";
@@ -24,7 +25,7 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
   return (
     <SmSurface variant="drawer" closing={closing} className="sm-drawer sm-drawer-task">
       <div className="sm-drawer-header">
-        <span>TASK</span>
+        <span>{L("TÂCHE", "TASK")}</span>
         <button className="sm-drawer-close" onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
@@ -32,19 +33,19 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
         {task.why && <p className="sm-task-detail-why">{stripStrayMarkdown(task.why)}</p>}
         {task.sourceDetail && (
           <div className="sm-task-detail-section">
-            <h4>Instructions</h4>
+            <h4>{L("Consignes", "Instructions")}</h4>
             <p>{stripStrayMarkdown(stripHtml(task.sourceDetail))}</p>
           </div>
         )}
         {task.context && (
           <div className="sm-task-detail-section">
-            <h4>Context</h4>
+            <h4>{L("Contexte", "Context")}</h4>
             <p>{stripStrayMarkdown(task.context)}</p>
           </div>
         )}
         {task.links?.length ? (
           <div className="sm-task-detail-section">
-            <h4>Links</h4>
+            <h4>{L("Liens", "Links")}</h4>
             <ul className="sm-task-detail-links">
               {task.links.map((l, i) => (
                 // A plain <a target="_blank"> opens a tab the extension's Study Mode site-block then
@@ -61,11 +62,11 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
         ) : null}
         {steps.length > 0 && (
           <div className="sm-task-detail-section">
-            <h4>Steps ({doneCount}/{steps.length})</h4>
+            <h4>{L(`Étapes (${doneCount}/${steps.length})`, `Steps (${doneCount}/${steps.length})`)}</h4>
             <ol className="sm-task-detail-steps">
               {steps.map((s, i) => (
                 <li key={i} className={s.done ? "done" : ""}>
-                  <button type="button" className="sm-task-detail-step-mark" aria-label={s.done ? "Mark step not done" : "Mark step done"}
+                  <button type="button" className="sm-task-detail-step-mark" aria-label={s.done ? L("Marquer l'étape comme non faite", "Mark step not done") : L("Marquer l'étape comme faite", "Mark step done")}
                     onClick={() => onToggleStep?.(i, !s.done)} disabled={!onToggleStep}>
                     {s.done ? "✓" : i + 1}
                   </button>
@@ -90,7 +91,7 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
         )}
         {onComplete && !isHandled ? (
           <button type="button" className="sm-btn sm-btn-primary sm-task-detail-complete" onClick={onComplete}>
-            Mark task complete
+            {L("Marquer la tâche comme terminée", "Mark task complete")}
           </button>
         ) : null}
       </div>

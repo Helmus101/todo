@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ArtifactType, WorkspaceTemplate } from "./StudyTypes.ts";
-import { useSmClose, SmSurface } from "../ui.tsx";
+import { useSmClose, SmSurface, useLang } from "../ui.tsx";
 
 interface ToolsDrawerProps {
   template: WorkspaceTemplate;
@@ -17,20 +17,23 @@ interface ToolsDrawerProps {
   betaFeatures?: boolean;
 }
 
-const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: WorkspaceTemplate[] }[] = [
-  { type: "task", label: "Task info", icon: "☰", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+// label is [fr, en] — resolved through useLang at render time (module-level, so the hook can't be used
+// directly on this const). Tool labels should stay in sync with the titles StudyMode.tsx gives the
+// artifacts it creates for each type (see buildInitialArtifacts/openOrFocus*).
+const ALL_TOOLS: { type: ArtifactType; label: [string, string]; icon: string; templates: WorkspaceTemplate[] }[] = [
+  { type: "task", label: ["Infos tâche", "Task info"], icon: "☰", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
   // Recommended everywhere — unlike the other tools, this one isn't something the student reaches for; it's
   // where Otto writes unprompted (formulas, instructions, summaries), so it should always be one click away
   // regardless of what kind of task this is.
-  { type: "board", label: "Board", icon: "▦", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "camera", label: "Private camera", icon: "◉", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "notes", label: "Notes", icon: "▤", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "scratchpad", label: "Scratchpad", icon: "✎", templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },
-  { type: "calculator", label: "Calculator", icon: "123", templates: ["PROBLEM_SOLVING", "STANDARD"] },
-  { type: "desmos", label: "Desmos Graph", icon: "f(x)", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "dictionary", label: "Dictionary", icon: "Aa", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
-  { type: "sticky", label: "Sticky Note", icon: "❏", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD", "PROBLEM_SOLVING"] },
-  { type: "citation", label: "Citation", icon: "❞", templates: ["WRITING", "RESEARCH", "PROJECT"] },
+  { type: "board", label: ["Tableau", "Board"], icon: "▦", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "camera", label: ["Caméra privée", "Private camera"], icon: "◉", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "notes", label: ["Notes", "Notes"], icon: "▤", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "scratchpad", label: ["Brouillon", "Scratchpad"], icon: "✎", templates: ["PROBLEM_SOLVING", "WRITING", "RESEARCH", "STANDARD", "PROJECT"] },
+  { type: "calculator", label: ["Calculatrice", "Calculator"], icon: "123", templates: ["PROBLEM_SOLVING", "STANDARD"] },
+  { type: "desmos", label: ["Graphique Desmos", "Desmos Graph"], icon: "f(x)", templates: ["WRITING", "READING", "PROBLEM_SOLVING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "dictionary", label: ["Dictionnaire", "Dictionary"], icon: "Aa", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD"] },
+  { type: "sticky", label: ["Pense-bête", "Sticky Note"], icon: "❏", templates: ["WRITING", "READING", "RESEARCH", "REVISION", "PROJECT", "STANDARD", "PROBLEM_SOLVING"] },
+  { type: "citation", label: ["Citation", "Citation"], icon: "❞", templates: ["WRITING", "RESEARCH", "PROJECT"] },
 ];
 
 // Only real Google Docs/Sheets/Slides documents — not an arbitrary-URL opener. Anything else (a random
@@ -40,6 +43,7 @@ const ALL_TOOLS: { type: ArtifactType; label: string; icon: string; templates: W
 const GSUITE_DOC_RE = /^https:\/\/docs\.google\.com\/(document|spreadsheets|presentation)\//i;
 
 export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroundImageName, onSetBackground, onClearBackground, betaFeatures = false }: ToolsDrawerProps) {
+  const L = useLang();
   const availableTools = betaFeatures ? ALL_TOOLS : ALL_TOOLS.filter(t => t.type !== "camera");
   const recommended = availableTools.filter(t => t.templates.includes(template));
   const others = availableTools.filter(t => !t.templates.includes(template));
@@ -51,7 +55,7 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
     const url = linkUrl.trim();
     if (!url) return;
     if (!GSUITE_DOC_RE.test(url)) {
-      setLinkError("Only Google Docs, Sheets, or Slides links can be opened here.");
+      setLinkError(L("Seuls les liens Google Docs, Sheets ou Slides peuvent être ouverts ici.", "Only Google Docs, Sheets, or Slides links can be opened here."));
       return;
     }
     setLinkError("");
@@ -63,25 +67,25 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
   return (
     <SmSurface variant="drawer" closing={closing} className="sm-drawer">
       <div className="sm-drawer-header">
-        <span>TOOLS</span>
+        <span>{L("OUTILS", "TOOLS")}</span>
         <button className="sm-drawer-close" onClick={doClose}>×</button>
       </div>
       <div className="sm-drawer-body">
-        <div className="sm-tools-divider">Open a Google Doc, Sheet, or Slides</div>
+        <div className="sm-tools-divider">{L("Ouvrir un Google Doc, Sheet ou Slides", "Open a Google Doc, Sheet, or Slides")}</div>
         <div className="sm-bg-row">
           <input
             type="text"
             className="sm-link-input"
-            placeholder="Paste a docs.google.com link…"
+            placeholder={L("Colle un lien docs.google.com…", "Paste a docs.google.com link…")}
             value={linkUrl}
             onChange={(e) => { setLinkUrl(e.target.value); setLinkError(""); }}
             onKeyDown={(e) => { if (e.key === "Enter") submitLink(); }}
           />
-          <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkUrl.trim()}>Open</button>
+          <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={submitLink} disabled={!linkUrl.trim()}>{L("Ouvrir", "Open")}</button>
         </div>
         {linkError && <p className="sm-bg-filename" style={{ color: "var(--danger, #c0392b)" }}>{linkError}</p>}
 
-        <div className="sm-tools-divider">Add a tool</div>
+        <div className="sm-tools-divider">{L("Ajouter un outil", "Add a tool")}</div>
         <div className="sm-tools-grid">
           {recommended.map(tool => (
             <button
@@ -90,12 +94,12 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
               onClick={() => { onAddTool(tool.type); doClose(); }}
             >
               <span className="sm-tool-icon">{tool.icon}</span>
-              <span className="sm-tool-label">{tool.label}</span>
+              <span className="sm-tool-label">{L(tool.label[0], tool.label[1])}</span>
             </button>
           ))}
           {others.length > 0 && (
             <>
-              <div className="sm-tools-divider">Other tools</div>
+              <div className="sm-tools-divider">{L("Autres outils", "Other tools")}</div>
               {others.map(tool => (
                 <button
                   key={tool.type}
@@ -103,20 +107,20 @@ export function ToolsDrawer({ template, onClose, onAddTool, onAddLink, backgroun
                   onClick={() => { onAddTool(tool.type); doClose(); }}
                 >
                   <span className="sm-tool-icon">{tool.icon}</span>
-                  <span className="sm-tool-label">{tool.label}</span>
+                  <span className="sm-tool-label">{L(tool.label[0], tool.label[1])}</span>
                 </button>
               ))}
             </>
           )}
         </div>
 
-        <div className="sm-tools-divider">Desk background</div>
+        <div className="sm-tools-divider">{L("Fond du bureau", "Desk background")}</div>
         <div className="sm-bg-row">
           <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => bgInputRef.current?.click()}>
-            {backgroundImageName ? "Replace image" : "Upload image"}
+            {backgroundImageName ? L("Remplacer l'image", "Replace image") : L("Ajouter une image", "Upload image")}
           </button>
           {backgroundImageName && (
-            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onClearBackground}>Reset to default</button>
+            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onClearBackground}>{L("Rétablir le fond par défaut", "Reset to default")}</button>
           )}
         </div>
         {backgroundImageName && <p className="sm-bg-filename">{backgroundImageName}</p>}

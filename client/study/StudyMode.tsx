@@ -65,22 +65,25 @@ function detectTemplate(task: WebTask): WorkspaceTemplate {
 // have them yet). zIndex 100 — comfortably above buildInitialArtifacts' template tools (zIndex 1-2), same
 // as every other artifact added post-session-start; tileWithinBounds re-tiles every freeform artifact
 // (these included) around whatever the template's own tools reserve, so they never sit on top of them.
-function defaultChatAndBoard(envId: string, taskId: string): ArtifactState[] {
+// lang ("fr" | "en") localizes the window titles created here; titles persist in the saved environment,
+// so they're resolved once at creation time (a mid-session language switch keeps the existing titles —
+// same as every other deliberately-placed desk state).
+function defaultChatAndBoard(envId: string, taskId: string, lang: "fr" | "en"): ArtifactState[] {
   const base = { environmentId: envId, taskId, zIndex: 100, minimized: false, maximized: false, dockSide: "none" as const, contentState: {} };
   return [
     { ...base, id: crypto.randomUUID(), type: "chat", title: "Ask Otto", x: 55, y: 10, width: 38, height: 78 },
-    { ...base, id: crypto.randomUUID(), type: "board", title: "Board", x: 8, y: 10, width: 34, height: 70 },
+    { ...base, id: crypto.randomUUID(), type: "board", title: lang === "en" ? "Board" : "Tableau", x: 8, y: 10, width: 34, height: 70 },
   ];
 }
 
-function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskId: string, materials: StudyMaterial[]): ArtifactState[] {
+function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskId: string, materials: StudyMaterial[], lang: "fr" | "en"): ArtifactState[] {
   const base = { environmentId: envId, taskId, zIndex: 1, minimized: false, maximized: false, dockSide: "none" as const, contentState: {} };
 
   // Find first real material
   const firstPDF = materials.find(m => m.type === "pdf");
   const firstVideo = materials.find(m => m.type === "video");
   const firstDoc = materials.find(m => m.type === "document");
-  const chatAndBoard = defaultChatAndBoard(envId, taskId);
+  const chatAndBoard = defaultChatAndBoard(envId, taskId, lang);
 
   switch (template) {
     case "WRITING":
@@ -114,7 +117,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           ...base,
           id: `${envId}-pdf`,
           type: "pdf",
-          title: firstPDF?.label || "Reading",
+          title: firstPDF?.label || (lang === "en" ? "Reading" : "Lecture"),
           x: 10, y: 5,
           width: 80, height: 88,
           source: firstPDF?.objectUrl || firstPDF?.url,
@@ -140,7 +143,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           ...base,
           id: `${envId}-pdf`,
           type: "pdf",
-          title: firstPDF?.label || "Problem Set",
+          title: firstPDF?.label || (lang === "en" ? "Problem Set" : "Exercices"),
           x: 2, y: 5,
           width: 57, height: 85,
           source: firstPDF?.objectUrl || firstPDF?.url,
@@ -149,7 +152,7 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
           ...base,
           id: `${envId}-scratch`,
           type: "scratchpad",
-          title: "Scratchpad",
+          title: lang === "en" ? "Scratchpad" : "Brouillon",
           x: 61, y: 5,
           width: 36, height: 85,
           dockSide: "right",
@@ -214,10 +217,12 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
 // Synthesized in-browser (see noise.ts) instead of streaming third-party MP3s — the previous pixabay CDN
 // hotlinks were observed live returning 403 (expired/hotlink-blocked) for at least one track, so "audio"
 // silently failed depending on which one was picked. A generated waveform can never fail to load.
-export const AUDIO_OPTIONS: { id: NoiseType; label: string }[] = [
-  { id: "brown", label: "Brown noise" },
-  { id: "pink", label: "Pink noise" },
-  { id: "white", label: "White noise" },
+// label is [fr, en] — resolved at render time by AudioPanel through useLang (module-level const, so the
+// hook can't be used directly here).
+export const AUDIO_OPTIONS: { id: NoiseType; label: [string, string] }[] = [
+  { id: "brown", label: ["Bruit brun", "Brown noise"] },
+  { id: "pink", label: ["Bruit rose", "Pink noise"] },
+  { id: "white", label: ["Bruit blanc", "White noise"] },
 ];
 
 // ── Main StudyMode component ───────────────────────────────────────────────────
@@ -356,7 +361,16 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const totalSteps = task.steps?.length ?? 0;
 
   // ── Check if device is phone ──────────────────────────────────────────────
-  const isPhone = typeof window !== "undefined" && window.innerWidth < 768;
+  // Reactive (matchMedia listener), not a one-time innerWidth read at mount — a student rotating a phone
+  // or resizing a desktop window past the 768px line otherwise kept the stale verdict until the next
+  // unrelated re-render.
+  const [isPhone, setIsPhone] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const onChange = () => setIsPhone(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
 
   // ── Load or create environment ────────────────────────────────────────────
   useEffect(() => {
@@ -628,7 +642,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const startSession = useCallback((materials: StudyMaterial[], pomodoro: PomodoroChoice, audio: AudioChoice) => {
     const envId = crypto.randomUUID();
     const template = detectTemplate(task);
-    const rawArtifacts = buildInitialArtifacts(template, envId, task.id, materials);
+    const rawArtifacts = buildInitialArtifacts(template, envId, task.id, materials, language);
     // buildInitialArtifacts's per-template x/y/w/h are hand-picked and, on at least a couple of templates,
     // actually overlap (or overflow the canvas) once you account for both panes' real width — re-tile the
     // freeform ones the same way adding a tool later does, so the very first thing a student sees is
@@ -681,7 +695,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     });
     persistEnv(newEnv);
     void api.recordMetric("study_session_started", 1, template);
-  }, [task, doneSteps, persistEnv, enterFullscreen]);
+  }, [task, doneSteps, persistEnv, enterFullscreen, language]);
 
   // ── Resume saved session ──────────────────────────────────────────────────
   const resumeSession = useCallback(() => {
@@ -694,11 +708,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     // un-minimizing, no z-index bump): this is a silent resume, not the explicit click openOrFocusChat/
     // openOrFocusBoard are for, so it must never undo a layout the student deliberately left minimized.
     const missingTypes = (["chat", "board"] as const).filter((t) => !env.artifacts.some((a) => a.type === t));
-    const backfill = missingTypes.length ? defaultChatAndBoard(env.id, task.id).filter((a) => missingTypes.includes(a.type as "chat" | "board")) : [];
+    const backfill = missingTypes.length ? defaultChatAndBoard(env.id, task.id, language).filter((a) => missingTypes.includes(a.type as "chat" | "board")) : [];
     updateEnv({ sessionStatus: "active", ...(backfill.length ? { artifacts: [...env.artifacts, ...backfill] } : {}) });
     enterFullscreen(); // called synchronously from the Resume button's click
     void api.recordMetric("study_session_resumed", 1);
-  }, [env, updateEnv, enterFullscreen, task.id]);
+  }, [env, updateEnv, enterFullscreen, task.id, language]);
 
   // ── Break ─────────────────────────────────────────────────────────────────
   const startBreak = useCallback(() => {
@@ -932,12 +946,12 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       return;
     }
     addArtifact({
-      id: crypto.randomUUID(), type: "board", title: "Board",
+      id: crypto.randomUUID(), type: "board", title: language === "en" ? "Board" : "Tableau",
       x: 8, y: 10, width: 34, height: 70, zIndex: 100,
       minimized: false, maximized: false, dockSide: "none", contentState: {},
       taskId: task.id, environmentId: env.id,
     });
-  }, [env, task.id, addArtifact, updateArtifact]);
+  }, [env, task.id, addArtifact, updateArtifact, language]);
 
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
@@ -1057,7 +1071,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
         const hasScratchpad = env.artifacts.some((a) => a.type === "scratchpad");
         if (!hasScratchpad) {
           addArtifact({
-            id: crypto.randomUUID(), type: "scratchpad", title: "Brouillon",
+            id: crypto.randomUUID(), type: "scratchpad", title: language === "en" ? "Scratchpad" : "Brouillon",
             x: 5, y: 10, width: 40, height: 60, zIndex: 90,
             minimized: false, maximized: false, dockSide: "left", contentState: {},
             taskId: task.id, environmentId: env.id,
@@ -1080,7 +1094,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       setChatSending(false);
       setPendingMsg(null);
     }
-  }, [chatInput, chatSending, env, task, onTaskUpdate, openArtifactByKind, addArtifact, openOrFocusBoard]);
+  }, [chatInput, chatSending, env, task, onTaskUpdate, openArtifactByKind, addArtifact, openOrFocusBoard, language]);
 
   // ── Task checklist, right from the desk ─────────────────────────────────────
   // Previously Study Mode could only READ steps (TaskDetailDrawer/TaskInfoArtifact were plain text) — ticking
@@ -1120,9 +1134,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   if (isPhone) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", padding: "32px", textAlign: "center", backgroundColor: "#0f0f0f", color: "#e0e0e0" }}>
-        <h2 style={{ marginBottom: "12px", fontWeight: 600 }}>Study Mode requires a larger screen</h2>
-        <p style={{ color: "#888", lineHeight: 1.6, maxWidth: "300px" }}>Study Mode is designed for laptop and iPad. Continue using Otto on this device, and switch to a larger screen to start a study session.</p>
-        <button onClick={onExit} style={{ marginTop: "24px", padding: "12px 24px", borderRadius: "8px", border: "1px solid #333", background: "none", color: "#e0e0e0", cursor: "pointer" }}>← Back to tasks</button>
+        <h2 style={{ marginBottom: "12px", fontWeight: 600 }}>{language === "en" ? "Study Mode requires a larger screen" : "Le mode révision demande un écran plus grand"}</h2>
+        <p style={{ color: "#888", lineHeight: 1.6, maxWidth: "300px" }}>{language === "en"
+          ? "Study Mode is designed for laptop and iPad. Continue using Otto on this device, and switch to a larger screen to start a study session."
+          : "Le mode révision est conçu pour l'ordinateur et l'iPad. Continue d'utiliser Otto sur cet appareil, et passe à un écran plus grand pour lancer une session."}</p>
+        <button onClick={onExit} style={{ marginTop: "24px", padding: "12px 24px", borderRadius: "8px", border: "1px solid #333", background: "none", color: "#e0e0e0", cursor: "pointer" }}>{language === "en" ? "← Back to tasks" : "← Retour aux tâches"}</button>
       </div>
     );
   }
@@ -1163,7 +1179,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     <div className={`sm-shell ${chromeIdle ? "sm-chrome-idle" : ""}`} data-status={sessionStatus} ref={rootRef}>
       {/* ── Save indicator ── */}
       {saveIndicator && (
-        <div className="sm-save-indicator">{saveIndicator === "saving" ? "Saving…" : "Saved"}</div>
+        <div className="sm-save-indicator">{saveIndicator === "saving" ? (language === "en" ? "Saving…" : "Sauvegarde…") : (language === "en" ? "Saved" : "Sauvegardé")}</div>
       )}
 
       {/* ── Session header ── */}
