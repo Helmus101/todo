@@ -504,15 +504,21 @@ export async function pronoteGrades(email: string): Promise<PronoteGradeItem[]> 
     const periods = session.instance.periods;
     if (!periods.length) return [];
     const now = Date.now();
-    const period = periods.find((p) => p.startDate.getTime() <= now && now <= p.endDate.getTime()) || periods[periods.length - 1];
-    const overview = await pronote.gradesOverview(session, period);
-    return overview.subjectsAverages
-      .filter((s) => s.student && s.outOf?.points)
-      .map((s): PronoteGradeItem => ({
-        subject: s.subject?.name || "Matière",
-        average: Math.round((s.student!.points / (s.outOf!.points || 20)) * 20 * 10) / 10,
-        outOf: 20,
-      }));
+    const current = periods.find((p) => p.startDate.getTime() <= now && now <= p.endDate.getTime());
+    const orderedPeriods = [...periods].sort((a, b) => b.endDate.getTime() - a.endDate.getTime());
+    const periodsToTry = current ? [current, ...orderedPeriods.filter((p) => p !== current)] : orderedPeriods;
+    for (const period of periodsToTry) {
+      const overview = await pronote.gradesOverview(session, period);
+      const grades = (overview.subjectsAverages || [])
+        .filter((s) => s.student && s.outOf?.points)
+        .map((s): PronoteGradeItem => ({
+          subject: s.subject?.name || "Matière",
+          average: Math.round((s.student!.points / (s.outOf!.points || 20)) * 20 * 10) / 10,
+          outOf: 20,
+        }));
+      if (grades.length) return grades;
+    }
+    return [];
   });
   return out || [];
 }

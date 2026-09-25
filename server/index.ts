@@ -769,8 +769,20 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect Pronote — try again." }); }
 });
-// Read-only: the raw Pronote grade averages, for anything that just wants to display them.
-app.get("/api/pronote/grades", requireAuth, async (req, res) => {
+  // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
+  app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
+  try {
+  const live = await pronoteSvc.pronoteGrades(req.session.user!);
+  if (!live.length) { res.status(502).json({ error: "Pronote connected successfully, but returned no subject averages in any available period. Check that grades are published for this account." }); return; }
+  const profile = (req.session.profile ||= emptyProfile());
+  pronoteSvc.applyPronoteGrades(profile, live);
+  await commit(req);
+  res.json({ grades: live, synced: true });
+  } catch (e: any) {
+  res.status(502).json({ error: e?.message || "Could not pull grades from Pronote." });
+  }
+  });
+  app.get("/api/pronote/grades", requireAuth, async (req, res) => {
   const cached = (req.session.profile?.grades || [])
   .filter((grade) => grade.source === "pronote")
   .map((grade) => ({ subject: grade.subject, average: grade.grade, outOf: grade.scale }));
@@ -2720,7 +2732,7 @@ app.get("/api/usage", requireAuth, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e?.message || "usage failed" }); }
 });
 
-// ── Profile (who the user is) — available once logged in ───────────────────────
+// ── Profile (who the user is) — available once logged in ────────────��──────────
 const listKey = (c: string) => (c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "");
 app.get("/api/profile", requireAuth, (req, res) => { res.json(tasks.stripProfileForResponse(req.session.profile || emptyProfile())); });
 app.post("/api/profile", requireAuth, async (req, res) => {
