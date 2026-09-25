@@ -770,32 +770,32 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect Pronote — try again." }); }
 });
 // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
-  app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
-    try {
-      const live = await pronoteSvc.pronoteGrades(req.session.user!);
-      if (!live.length) { res.status(502).json({ error: "Pronote returned no subject grades. Check the current period and connection." }); return; }
-      const profile = (req.session.profile ||= emptyProfile());
-      pronoteSvc.applyPronoteGrades(profile, live);
-      await commit(req);
-      res.json({ grades: live, synced: true });
-    } catch (e: any) {
-      res.status(502).json({ error: e?.message || "Could not pull grades from Pronote." });
-    }
-  });
-  app.get("/api/pronote/grades", requireAuth, async (req, res) => {
-  const cached = (req.session.profile?.grades || [])
-  .filter((grade) => grade.source === "pronote")
-  .map((grade) => ({ subject: grade.subject, average: grade.grade, outOf: grade.scale }));
+app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
   try {
-    const conn = await pronoteSvc.pronoteConnected(req.session.user!);
-  if (!conn.connected) { res.json({ grades: cached }); return; }
-  const live = await pronoteSvc.pronoteGrades(req.session.user!);
-  if (live.length) {
+    const live = await pronoteSvc.pronoteGrades(req.session.user!);
+    if (!live.length) { res.status(502).json({ error: "Pronote returned no subject grades. Check the current period and connection." }); return; }
     const profile = (req.session.profile ||= emptyProfile());
     pronoteSvc.applyPronoteGrades(profile, live);
     await commit(req);
+    res.json({ grades: live, synced: true });
+  } catch (e: any) {
+    res.status(502).json({ error: e?.message || "Could not pull grades from Pronote." });
   }
-  res.json({ grades: live.length ? live : cached });
+});
+app.get("/api/pronote/grades", requireAuth, async (req, res) => {
+  const cached = (req.session.profile?.grades || [])
+    .filter((grade) => grade.source === "pronote")
+    .map((grade) => ({ subject: grade.subject, average: grade.grade, outOf: grade.scale }));
+  try {
+    const conn = await pronoteSvc.pronoteConnected(req.session.user!);
+    if (!conn.connected) { res.json({ grades: cached }); return; }
+    const live = await pronoteSvc.pronoteGrades(req.session.user!);
+    if (live.length) {
+      const profile = (req.session.profile ||= emptyProfile());
+      pronoteSvc.applyPronoteGrades(profile, live);
+      await commit(req);
+    }
+    res.json({ grades: live.length ? live : cached });
   } catch { res.json({ grades: cached }); }
 });
 
