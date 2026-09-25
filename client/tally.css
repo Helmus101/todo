@@ -17,12 +17,15 @@
   --line: #E4E4E7;
   --line-soft: #F4F4F5;
   --line-glass: #E4E4E7;
-  --accent: #6366F1;
-  --accent-hover: #4F46E5;
-  --accent-active: #4338CA;
-  --accent-soft: rgba(99, 102, 241, 0.06);
-  --accent-rgb: 99, 102, 241;
-  --focus-ring: rgba(99, 102, 241, 0.3);
+  --accent: #2563EB;
+  --accent-hover: #1D4ED8;
+  --accent-active: #1E40AF;
+  --accent-soft: rgba(37, 99, 235, 0.06);
+  --accent-rgb: 37, 99, 235;
+  --accent-2: #EA580C;
+  --accent-2-soft: rgba(234, 88, 12, 0.08);
+  --accent-2-rgb: 234, 88, 12;
+  --focus-ring: rgba(37, 99, 235, 0.3);
   --bg-2: #F4F4F5;
   --bg-3: #E4E4E7;
   --graphite: #71717A;
@@ -66,11 +69,14 @@
     --line: #27272A;
     --line-soft: #1F1F23;
     --line-glass: #27272A;
-    --accent: #818CF8;
-    --accent-hover: #6366F1;
-    --accent-active: #4F46E5;
-    --accent-soft: rgba(129, 140, 248, 0.1);
-    --accent-rgb: 129, 140, 248;
+    --accent: #60A5FA;
+    --accent-hover: #2563EB;
+    --accent-active: #1D4ED8;
+    --accent-soft: rgba(96, 165, 250, 0.1);
+    --accent-rgb: 96, 165, 250;
+    --accent-2: #FB923C;
+    --accent-2-soft: rgba(251, 146, 60, 0.1);
+    --accent-2-rgb: 251, 146, 60;
     --bg-2: #27272A;
     --bg-3: #3F3F46;
     --bar: #0A0A0B;
@@ -115,7 +121,7 @@ body {
 a { color: var(--accent); }
 a:hover { color: var(--accent-hover); }
 
-::selection { background: rgba(99, 102, 241, 0.12); }
+::selection { background: rgba(37, 99, 235, 0.12); }
 
 /* Focus rings — Tally uses a soft blue ring */
 :focus-visible {
@@ -217,7 +223,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   letter-spacing: 0;
 }
 .chip-muted { background: var(--bg-2); color: var(--ink-3); }
-.chip-busy { background: rgba(234, 88, 12, 0.06); color: var(--accent); }
+.chip-busy { background: var(--accent-2-soft); color: var(--accent-2); }
 .chip-attention { background: var(--accent-soft); color: var(--accent); }
 .chip-bad { background: #FFF3F0; color: #C6462F; }
 .chip-good { background: rgba(0, 153, 102, 0.08); color: #009966; }
@@ -572,8 +578,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 .card-sub { color: var(--ink-3); }
 .card-subject { color: var(--ink-3); font-weight: 500; }
 .card-peak-badge {
-  background: rgba(234, 88, 12, 0.09);
-  color: #9A3412;
+  background: var(--accent-2-soft);
+  color: var(--accent-2);
   border-radius: var(--radius-pill);
 }
 
@@ -607,7 +613,7 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 }
 
 /* "New" dot — warm orange accent */
-.new-dot { background: #EA580C; }
+.new-dot { background: var(--accent-2); }
 
 /* Due date color */
 .when-soon { color: #C6462F; font-weight: 600; }
@@ -826,10 +832,10 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
   box-shadow: var(--shadow-pop);
 }
 .task-goal-banner {
-  background: var(--accent-soft);
-  border: 1px solid rgba(234, 88, 12, 0.15);
+  background: var(--accent-2-soft);
+  border: 1px solid rgba(var(--accent-2-rgb), 0.15);
   border-radius: var(--radius);
-  color: var(--accent);
+  color: var(--accent-2);
 }
 .study-help-panel {
   background: #FFFFFF;

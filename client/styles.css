@@ -27,12 +27,15 @@
   --line-soft: #F4F4F5;
   --line-glass: #E4E4E7;
   
-  /* Accent: single restrained indigo */
-  --accent: #6366F1;
-  --accent-hover: #4F46E5;
-  --accent-active: #4338CA;
-  --accent-soft: rgba(99, 102, 241, 0.06);
-  --accent-rgb: 99, 102, 241;
+  /* Accent: blue primary, orange secondary */
+  --accent: #2563EB;
+  --accent-hover: #1D4ED8;
+  --accent-active: #1E40AF;
+  --accent-soft: rgba(37, 99, 235, 0.06);
+  --accent-rgb: 37, 99, 235;
+  --accent-2: #EA580C;
+  --accent-2-soft: rgba(234, 88, 12, 0.08);
+  --accent-2-rgb: 234, 88, 12;
   --focus-ring: var(--accent);
   
   --bg-2: #F4F4F5;
@@ -131,11 +134,14 @@
     --line-soft: #1F1F23;
     --line-glass: #27272A;
     
-    --accent: #818CF8;
-    --accent-hover: #6366F1;
-    --accent-active: #4F46E5;
-    --accent-soft: rgba(129, 140, 248, 0.1);
-    --accent-rgb: 129, 140, 248;
+    --accent: #60A5FA;
+    --accent-hover: #2563EB;
+    --accent-active: #1D4ED8;
+    --accent-soft: rgba(96, 165, 250, 0.1);
+    --accent-rgb: 96, 165, 250;
+    --accent-2: #FB923C;
+    --accent-2-soft: rgba(251, 146, 60, 0.1);
+    --accent-2-rgb: 251, 146, 60;
     
     --bg-2: #27272A;
     --bg-3: #3F3F46;
@@ -1558,10 +1564,10 @@ input:focus, textarea:focus {
 .chat-msg-toggle:hover { opacity: 1; }
 .chat-user {
   align-self: flex-end;
-  background: linear-gradient(180deg, #F2691D 0%, #EA580C 100%);
+  background: linear-gradient(180deg, #FB923C 0%, var(--accent-2) 100%);
   color: #fff;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 2px 8px rgba(234, 88, 12, 0.25);
+  box-shadow: 0 2px 8px rgba(var(--accent-2-rgb), 0.25);
 }
 .chat-assistant {
   align-self: flex-start;
@@ -2548,7 +2554,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.demo-sub-tag.maths   { background: rgba(234, 88, 12, 0.12); color: var(--accent); }
+.demo-sub-tag.maths   { background: var(--accent-2-soft); color: var(--accent-2); }
 .demo-sub-tag.physics { background: rgba(255, 149, 0, 0.12); color: var(--amber); }
 .demo-sub-tag.philo   { background: rgba(52, 199, 89, 0.12); color: var(--ok); }
 .demo-task-name {
