@@ -1694,7 +1694,10 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
     Promise.all([api.pronoteTests(), api.pronoteGrades()])
       .then(([testsRes, gradesRes]) => {
         if (cancelled) return;
-        setExams([...testsRes.tests].sort((a, b) => a.deadline.localeCompare(b.deadline)));
+        const today = new Date().toISOString().slice(0, 10);
+        setExams([...testsRes.tests]
+          .filter((exam) => exam.deadline >= today)
+          .sort((a, b) => a.deadline.localeCompare(b.deadline)));
         setGrades(gradesRes.grades);
       })
       .catch(() => {})
@@ -1740,7 +1743,9 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
           ))}
         </ul>
       ) : (
-        <p className="muted small">{L("Aucun examen à venir.", "No upcoming exams.")}</p>
+        <p className="muted small">{allGrades.length > 0
+          ? L("Aucun examen à venir — tes notes sont affichées ci-dessus.", "No upcoming exams — your grades are shown above.")
+          : L("Aucun examen à venir.", "No upcoming exams.")}</p>
       )}
     </div>
   );

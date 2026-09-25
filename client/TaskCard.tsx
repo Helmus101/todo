@@ -9,7 +9,7 @@
  * ui.tsx — progress bar, one big thing, one primary button — because that's a pattern the student has
  * already met inside this app, so there's nothing new to learn.
  */
-import { useEffect, useState, useRef, useContext, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
+import { useEffect, useState, useRef, useContext, useCallback, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
 import { api } from "./api.ts";
@@ -1226,6 +1226,12 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   const en = L("fr", "en") === "en";
   const thinkingWord = useThinkingWord(sending);
   const speechLang = en ? "en-US" : "fr-FR";
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
+  const userScrolledRef = useRef(false);
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    userScrolledRef.current = container.scrollHeight - container.scrollTop - container.clientHeight >= 100;
+  }, []);
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
   const sendingRef = useRef(sending);
