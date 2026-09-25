@@ -956,10 +956,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
       if (!prev) return prev;
-      // Prevent removing the chat artifact - it should always be available
-      const chatArtifact = prev.artifacts.find(a => a.id === id && a.type === "chat");
-      if (chatArtifact) return prev;
-      
+      // Chat (Ask Otto) used to be permanently pinned — its × button did nothing, which read as broken
+      // ("user should be able to close Otto in study mode"). It's closable like any other artifact now;
+      // the BottomBar's "Ask Otto" button (openOrFocusChat) still brings it right back on demand, so
+      // closing it isn't a dead end.
       // Closing one tool frees its share of the desk — auto-enlarge the remaining freeform ones to fill
       // it, the same tiling pass as adding one, just shrinking the tile count by one instead of growing it.
       const remaining = prev.artifacts.filter(a => a.id !== id);
@@ -970,18 +970,6 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       return updated;
     });
   }, [persistEnv]);
-
-  // Ensure the chat artifact is always present during a session — it should never randomly disappear.
-  // If a background sync or re-tile somehow removes it, re-create it immediately.
-  useEffect(() => {
-    if (!env || phase !== "session") return;
-    const hasChat = env.artifacts.some((a) => a.type === "chat");
-    if (!hasChat) {
-      const base = { environmentId: env.id, taskId: task.id, zIndex: 100, minimized: false, maximized: false, dockSide: "none" as const, contentState: {} };
-      const chatArtifact: ArtifactState = { ...base, id: crypto.randomUUID(), type: "chat", title: "Ask Otto", x: 55, y: 10, width: 38, height: 78 };
-      updateEnv({ artifacts: [...env.artifacts, chatArtifact] });
-    }
-  }, [env?.artifacts.length, phase]);
 
   // A PDF uploaded in StudySetup gets its text extracted asynchronously (pdfText.ts — can take a moment for
   // a longer file) WHILE the student is still on the setup screen; if "Start Studying" is clicked before
