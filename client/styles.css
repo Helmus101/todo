@@ -242,6 +242,20 @@ input:focus, textarea:focus {
   transition-duration: var(--duration-instant);
 }
 
+/* Cross-fade for route swaps (Tasks ↔ Journal ↔ Study ↔ Settings, App.tsx's navigate()) via the native View
+   Transitions API — a plain opacity fade, not a slide/zoom, since the old and new sections have completely
+   different layouts and a positional transform between them would look like a glitch, not a polish. Skipped
+   entirely for prefers-reduced-motion (navigate() itself doesn't call startViewTransition in that case), so
+   nothing here needs its own reduced-motion guard. */
+::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: var(--duration-slow);
+  animation-timing-function: var(--ease-out);
+}
+::view-transition-old(root) { animation-name: otto-fade-out; }
+::view-transition-new(root) { animation-name: otto-fade-in; }
+@keyframes otto-fade-out { to { opacity: 0; } }
+@keyframes otto-fade-in { from { opacity: 0; } }
+
 /* Apple Design §14 — reduced-motion ≠ no feedback. Replace vestibular slides/springs with short
    opacity crossfades so the UI still communicates state changes without triggering motion sensitivity.
    Keep opacity/color changes that aid comprehension. */
@@ -311,12 +325,15 @@ input:focus, textarea:focus {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
+  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease), transform var(--duration-instant) var(--ease-spring);
   white-space: nowrap; text-decoration: none; user-select: none;
   -webkit-touch-callout: none;
 }
 .btn:hover { background: var(--bg-2); }
-.btn:active { background: var(--bg-3); }
+/* Apple Design §1 — instant tactile feedback on press. Previously this scale-down only existed inside the
+   prefers-reduced-motion block below (meant to stay as the one motion reduced-motion users keep), which
+   left everyone else with NO press feedback at all on the single most-clicked element in the app. */
+.btn:active { background: var(--bg-3); transform: scale(0.97); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .btn.primary {

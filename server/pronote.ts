@@ -506,13 +506,40 @@ export async function pronoteGrades(email: string): Promise<PronoteGradeItem[]> 
     const now = Date.now();
     const period = periods.find((p) => p.startDate.getTime() <= now && now <= p.endDate.getTime()) || periods[periods.length - 1];
     const overview = await pronote.gradesOverview(session, period);
-    return overview.subjectsAverages
-      .filter((s) => s.student && s.outOf?.points)
-      .map((s): PronoteGradeItem => ({
-        subject: s.subject?.name || "Matière",
+    // GradeKind.Grade === 0: an actual numeric grade, as opposed to Absent/Exempted/NotGraded/etc (see the
+    // GradeKind enum in pawnote's types) — those other kinds still carry a `points` number (often 0), which
+    // made the old `s.outOf?.points` truthiness check alone insufficient to tell "no real value" apart from
+    // "a real value of 0".
+    const isRealGrade = (g?: pronote.GradeValue) => !!g && g.kind === 0;
+    const bySubject = new Map<string, PronoteGradeItem>();
+    for (const s of overview.subjectsAverages) {
+      if (!isRealGrade(s.student) || !isRealGrade(s.outOf)) continue;
+      const name = s.subject?.name || "Matière";
+      bySubject.set(name, {
+        subject: name,
         average: Math.round((s.student!.points / (s.outOf!.points || 20)) * 20 * 10) / 10,
         outOf: 20,
-      }));
+      });
+    }
+    // A subject often has individual grades logged well before Pronote (or the teacher) computes a
+    // per-subject AVERAGE — many schools only publish that average partway through the term. Reported live
+    // as "I have a grade but it isn't showing" — subjectsAverages was empty/filtered for that subject while
+    // overview.grades (the raw per-grade list) already had entries. Fall back to averaging the raw grades
+    // ourselves for any subject that didn't get a real value from subjectsAverages above.
+    const rawBySubject = new Map<string, { pts: number; outOf: number }[]>();
+    for (const g of overview.grades) {
+      if (!isRealGrade(g.value)) continue;
+      const outOf = isRealGrade(g.outOf) ? g.outOf.points : (isRealGrade(g.defaultOutOf) ? g.defaultOutOf!.points : 20);
+      if (!outOf) continue;
+      const name = g.subject?.name || "Matière";
+      if (bySubject.has(name)) continue; // already have a real published average for this subject
+      (rawBySubject.get(name) || rawBySubject.set(name, []).get(name)!).push({ pts: g.value.points, outOf });
+    }
+    for (const [name, entries] of rawBySubject) {
+      const scaledAvg = entries.reduce((sum, e) => sum + (e.pts / e.outOf) * 20, 0) / entries.length;
+      bySubject.set(name, { subject: name, average: Math.round(scaledAvg * 10) / 10, outOf: 20 });
+    }
+    return [...bySubject.values()];
   });
   return out || [];
 }

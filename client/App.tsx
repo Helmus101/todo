@@ -212,10 +212,26 @@ function writePronoteOptimistic(value: boolean | null): void {
 }
 
 /** Navigate the path router. "" → "/" (dashboard); otherwise "/<route>" (e.g. "task/<id>", "settings").
- *  pushState doesn't fire popstate, so we dispatch one to notify the router hook. */
+ *  pushState doesn't fire popstate, so we dispatch one to notify the router hook.
+ *
+ *  Every route swap (Tasks ↔ Journal ↔ Study ↔ Settings) is a hard ternary re-render in App() — the DOM for
+ *  the old section unmounts and the new one mounts in the same tick, with no transition of any kind. That's
+ *  the "ui isn't really smooth" complaint: the content area visibly snaps/flashes on every sidebar click,
+ *  unlike the spring-driven overlays (TaskModal, Study Mode drawers) already using `motion`. Restructuring
+ *  every branch of that ternary into an AnimatePresence-friendly shape is a much bigger, riskier change for
+ *  what's a purely cosmetic cross-fade — the native View Transitions API gets the same "old fades out, new
+ *  fades in" result with zero JSX changes, by snapshotting the DOM immediately before/after the mutation
+ *  React already performs. `prefers-reduced-motion` is respected by simply not opting in below (falling back
+ *  to the instant swap) rather than fighting the API's own reduced-motion handling. */
 const navigate = (r: string) => {
-  window.history.pushState({}, "", r ? `/${r}` : "/");
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  const go = () => {
+    window.history.pushState({}, "", r ? `/${r}` : "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const vtDocument = document as Document & { startViewTransition?: (cb: () => void) => void };
+  if (reduceMotion || typeof vtDocument.startViewTransition !== "function") { go(); return; }
+  vtDocument.startViewTransition(go);
 };
 
 // Last-known task list — hydrates the dashboard INSTANTLY on open (server truth replaces it right after).
