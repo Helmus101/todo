@@ -1688,6 +1688,21 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
   const [exams, setExams] = useState<{ subject: string; deadline: string }[]>([]);
   const [grades, setGrades] = useState<{ subject: string; average: number; outOf: number }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
+
+  const syncGrades = async () => {
+    setSyncing(true);
+    setSyncError("");
+    try {
+      const result = await api.syncPronoteGrades();
+      setGrades(result.grades);
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : L("Impossible de récupérer les notes Pronote.", "Could not pull grades from Pronote."));
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -1714,7 +1729,13 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
 
   return (
     <div className="exams-editor">
-      <p className="settings-hint" style={{ marginBottom: "8px" }}>{L("Notes d&apos;examen par matière (Pronote)", "Exam grades by subject (Pronote)")}</p>
+      <div className="exam-grades-heading">
+        <p className="settings-hint">{L("Notes d&apos;examen par matière (Pronote)", "Exam grades by subject (Pronote)")}</p>
+        <button type="button" className="btn xs ghost" onClick={() => void syncGrades()} disabled={syncing}>
+          {syncing ? L("Récupération…", "Pulling…") : L("Récupérer depuis Pronote", "Pull from Pronote")}
+        </button>
+      </div>
+      {syncError ? <p className="error small" role="alert">{syncError}</p> : null}
       {loading ? (
         <p className="muted small">{L("Chargement…", "Loading…")}</p>
       ) : allGrades.length > 0 ? (
