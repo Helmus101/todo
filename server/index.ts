@@ -771,11 +771,20 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
 });
 // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
 app.get("/api/pronote/grades", requireAuth, async (req, res) => {
+  const cached = (req.session.profile?.grades || [])
+  .filter((grade) => grade.source === "pronote")
+  .map((grade) => ({ subject: grade.subject, average: grade.grade, outOf: grade.scale }));
   try {
     const conn = await pronoteSvc.pronoteConnected(req.session.user!);
-    if (!conn.connected) { res.json({ grades: [] }); return; }
-    res.json({ grades: await pronoteSvc.pronoteGrades(req.session.user!) });
-  } catch { res.json({ grades: [] }); }
+  if (!conn.connected) { res.json({ grades: cached }); return; }
+  const live = await pronoteSvc.pronoteGrades(req.session.user!);
+  if (live.length) {
+    const profile = (req.session.profile ||= emptyProfile());
+    pronoteSvc.applyPronoteGrades(profile, live);
+    await commit(req);
+  }
+  res.json({ grades: live.length ? live : cached });
+  } catch { res.json({ grades: cached }); }
 });
 
 // ── /finance (Plaid) — an ADDITIONAL proactive source, same shape as Pronote above: no OAuth redirect (Plaid
@@ -1764,7 +1773,7 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   if (!Number.isInteger(total) || total <= 0 || !Number.isInteger(score) || score < 0 || score > total) { res.status(400).json({ error: "Invalid score." }); return; }
   const task = await findTaskOrReload(req, id);
   const quiz = task?.quizzes?.find((q) => q.id === quizId);
-  if (!task || !quiz) { res.status(404).json({ error: "Quiz not found — it may have already changed elsewhere." }); return; }
+  if (!task || !quiz) { res.status(404).json({ error: "Quiz not found �� it may have already changed elsewhere." }); return; }
   quiz.attempts = [...(quiz.attempts || []), { at: new Date().toISOString(), score, total, ...(wrong?.length ? { wrong } : {}) }].slice(-QUIZ_ATTEMPT_CAP);
   task.updatedAt = new Date().toISOString();
   // Every other activity site (flashcard review, chat, journal save) feeds bumpActivityHour — a quiz attempt
