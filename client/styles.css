@@ -1490,6 +1490,18 @@ input:focus, textarea:focus {
 /* No longer a collapsed disclosure — a calm, always-visible chip row directly below the hero/first-action,
    same quiet chip styling as before, just not hidden behind a click. */
 .tf-prepared-inline { margin-top: var(--space-3); }
+/* BoardArtifact.tsx reused outside Study Mode (see TaskCard.tsx) — its own .sm-board-body assumes a fixed-
+   height artifact window (height: 100%, which is simply ignored/auto here since this parent has no explicit
+   height, so it just sizes to content — no clipping), styled here to read as a normal card on the page
+   instead of a borderless full-bleed panel. */
+.tf-board-inline {
+  margin-top: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  max-height: 360px;
+  overflow: auto;
+}
 .tf-panels { display: flex; flex-direction: column; margin-top: var(--space-3); }
 .disclosure { border-top: 1px solid var(--line-soft); }
 .disclosure:last-child { border-bottom: 1px solid var(--line-soft); }
@@ -1585,10 +1597,10 @@ input:focus, textarea:focus {
 .chat-msg-toggle:hover { opacity: 1; }
 .chat-user {
   align-self: flex-end;
-  background: linear-gradient(180deg, #FB923C 0%, var(--accent-2) 100%);
+  background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 100%);
   color: #fff;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 2px 8px rgba(var(--accent-2-rgb), 0.25);
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.25);
 }
 .chat-assistant {
   align-self: flex-start;

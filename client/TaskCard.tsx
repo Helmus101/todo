@@ -22,6 +22,7 @@ import {
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
+import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
 /**
@@ -621,6 +622,17 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
           </Disclosure>
         ) : null}
       </div>
+
+      {/* The tutor's Board (WRITE_TO_BOARD, server/claude.ts) was already persisted onto task.board/
+          task.problems by every chat turn — but outside Study Mode, nothing ever RENDERED it. A student
+          asking a question in the plain task chat (not Study Mode) who got told "look at the board above"
+          saw nothing at all, because there was no "above" for it to be. Same component Study Mode's desk
+          uses; only shown once there's actually something on it, same "count > 0" gating as PreparedPanel. */}
+      {(task.board?.length || task.problems?.length) ? (
+        <div className="tf-board-inline">
+          <BoardArtifact task={task} />
+        </div>
+      ) : null}
 
       {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away.
           Hidden entirely for a /finance (Plaid) task — the server refuses this call anyway (no AI ever

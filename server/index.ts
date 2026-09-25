@@ -1419,13 +1419,22 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
         if (signal) subjectSignal = { correctRate: signal.correctRate, attempts: signal.attempts, trend: signal.trend };
       }
     } catch { /* best-effort */ }
+    // Recent "what I learned today" journal entries — same list the Journal tab reads/writes (studylog
+    // tasks), not a separate store, so nothing new to keep in sync. Real daily entries only (a `week:`/
+    // `month:` logDate is a rolled-up summary task, not something the student wrote themselves this chat
+    // should quote back). Newest first, capped generously since recentJournalLine itself narrows further.
+    const recentJournal = (req.session.tasks || [])
+      .filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:") && x.logText?.trim())
+      .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
+      .slice(0, 14)
+      .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, source: t.source, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, recentJournal },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);

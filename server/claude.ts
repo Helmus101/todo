@@ -506,6 +506,23 @@ export function errorLogLine(p: Profile | undefined, subject: string | undefined
     `logged about X" — never just recite the list).${trendLine}\n` +
     recent.map((e) => `- Q: "${e.question}" — mistake: "${e.mistake}"${e.fix ? ` — fix they noted: "${e.fix}"` : ""}`).join("\n") + "\n";
 }
+/** Recent "what I learned today" journal entries (Study journal — server/index.ts's studylog tasks), so the
+ *  tutor actually knows what the student has already covered lately instead of treating every chat as a
+ *  blank slate. Direct request: "the chat should get context from what you put in your journal, so there's
+ *  context about everything you're learning... precisely known what you're working on in each subject."
+ *  Journal entries aren't tagged by subject (they're one free-text entry per day, often spanning several
+ *  subjects) — a plain case-insensitive mention of the task's subject name is enough of a filter to be useful
+ *  without a whole extra AI classification call; when nothing matches by name, the few most recent entries
+ *  still go in (a same-week entry is usually relevant context even without an exact subject-name mention). */
+export function recentJournalLine(entries: { date: string; text: string }[] | undefined, subject: string | undefined): string {
+  if (!entries?.length) return "";
+  const bySubject = subject ? entries.filter((e) => e.text.toLowerCase().includes(subject.toLowerCase())) : [];
+  const picked = (bySubject.length ? bySubject : entries).slice(0, 4);
+  if (!picked.length) return "";
+  return `\nTHEIR RECENT STUDY JOURNAL${subject && bySubject.length ? ` (mentions ${subject})` : ""} — what they've told ` +
+    `Otto they've actually been studying/learning lately; use it to know where they already are, not to quote it back:\n` +
+    picked.map((e) => `- ${e.date}: "${e.text.slice(0, 300)}"`).join("\n") + "\n";
+}
 /** Flashcards on THIS task sitting at Leitner box 1 (gotten wrong / never advanced) — weakCardFronts
  *  (server/tasks.ts) already computes this exact signal for the study-journal week/month summaries; this is
  *  the same logic inlined here (not imported — tasks.ts already imports FROM claude.ts, so importing tasks.ts
@@ -4734,7 +4751,11 @@ export async function runTask(
       `Context:\n${context || "(no external context)"}\n\n` +
       `For this task, what artifact(s) would genuinely help the student achieve the definition of done?\n` +
       `Available types:\n` +
-      `- "flashcards": a drillable deck for discrete facts (vocab, definitions, formulas, dates, equations).\n` +
+      `- "flashcards": a drillable deck for discrete SUBJECT-MATTER facts (vocab, definitions, formulas, dates, ` +
+      `equations) the student must memorize. NEVER for methodology/format/how-to-write-it rules of an essay, ` +
+      `commentaire, notice, or any other written deliverable (e.g. "what must a notice biographique contain" is ` +
+      `a rule about the assignment, not a fact to drill) — that belongs in a "note" instead, as a structure/ ` +
+      `checklist the student references while writing.\n` +
       `- "quiz": multiple-choice self-check with NEW questions (for checking understanding before a test).\n` +
       `- "note": a short in-app document — an academic reference sheet (formulas, key concepts, a study ` +
       `checklist, a worked example structure) OR a COMPILED RESEARCH OUTPUT: if the definition of done asks ` +
@@ -4812,6 +4833,22 @@ export async function runTask(
       if (vetoed.length) {
         console.log(`${new Date().toISOString()} [ai] step 5: vetoed ${vetoed.length} flashcards/quiz request(s) — DoD reads as a coordination outcome, not memorizable content`);
         audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: vetoed flashcards/quiz — DoD is a coordination outcome, not memorizable content` });
+        for (const v of vetoed) requestedArtifacts.splice(requestedArtifacts.indexOf(v), 1);
+      }
+    }
+
+    // A WRITING task (an essay, a literary "notice biographique", a commentaire) never has real
+    // front→back facts to drill — the only thing to know about it is HOW to write it (structure, required
+    // elements, length), and that's methodology, not knowledge. Reported live: a "write two 4-line author
+    // notices" task got a flashcard deck asking "what must a notice biographique contain / not contain" —
+    // that's a rule about the FORMAT, not a fact about Fanon or Baldwin, and belongs in a note (a structure/
+    // checklist), never a drillable card. The step 5 prompt already tells the model this in prose; this is
+    // the hard backstop for when it asks for one anyway.
+    if (task.taskType === "write") {
+      const vetoed = requestedArtifacts.filter((a) => a.type === "flashcards" || a.type === "flashcard");
+      if (vetoed.length) {
+        console.log(`${new Date().toISOString()} [ai] step 5: vetoed ${vetoed.length} flashcards request(s) — a writing task's own methodology isn't drillable knowledge`);
+        audit.push({ at: new Date().toISOString(), kind: "guardrail", label: `artifact: vetoed flashcards — writing tasks need a structure note, not a methodology deck` });
         for (const v of vetoed) requestedArtifacts.splice(requestedArtifacts.indexOf(v), 1);
       }
     }
@@ -6073,7 +6110,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[] },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -6128,7 +6165,7 @@ export async function chatAboutTask(
       `few attempts. If it comes up naturally (don't force it into an unrelated reply), acknowledge that ` +
       `genuinely — a tutor who's watched them improve, not one meeting them for the first time.\n`
     : "";
-  const sys = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + weakCardLine(task) + styleLine +
+  const sys = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + styleLine +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
