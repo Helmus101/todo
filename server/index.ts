@@ -16,7 +16,7 @@ import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, Fo
 import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, peekTaskChat } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
@@ -1373,7 +1373,27 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     .filter((m: any) => m && typeof m.label === "string" && typeof m.text === "string" && m.text.trim())
     .slice(0, 8)
     .map((m: any) => ({ label: String(m.label).trim().slice(0, 120), text: String(m.text).trim().slice(0, 6000) }));
-  const history = t.chat || [];
+  // Chat history is now CLIENT-OWNED, not read from the task (t.chat is never written server-side anymore
+  // — see this route's own end-of-handler comment). The browser sends its own local thread with every
+  // message, same shape/pattern /api/tasks/:id/study-help already used for its (always-local) hint chat.
+  const historyRaw = Array.isArray(req.body?.history) ? req.body.history : [];
+  const history = historyRaw
+    .filter((h: any) => h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
+    .map((h: any) => ({ role: h.role as "user" | "assistant", text: String(h.text).slice(0, 4000) }))
+    .slice(-CHAT_CAP);
+  // Same client-owned pattern for what's CURRENTLY on the board — without this the model can write to the
+  // board but has no idea what's already there (reported live: it referenced "that triangle" and had no
+  // answer when the student said they couldn't see what it meant — it had never been told).
+  const currentBoardRaw = Array.isArray(req.body?.board) ? req.body.board : [];
+  const currentBoard = currentBoardRaw
+    .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
+    .slice(-60)
+    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}) }));
+  const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
+  const currentProblems = currentProblemsRaw
+    .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
+    .slice(-12)
+    .map((p: any) => ({ id: "", createdAt: "", question: String(p.question).slice(0, 600), ...(Array.isArray(p.options) ? { options: p.options.map((o: any) => String(o).slice(0, 300)).slice(0, 6) } : {}) }));
   try {
     let academic: { homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>>; tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> } | undefined;
     try {
@@ -1434,7 +1454,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, recentJournal },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, recentJournal, currentBoard, currentProblems },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
@@ -1491,34 +1511,24 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.notes.length) t.notes = [...(t.notes || []), ...out.notes].slice(-tasks.ARTIFACT_CAP);
     if (out.flashcards.length) t.flashcards = [...(t.flashcards || []), ...out.flashcards].slice(-tasks.ARTIFACT_CAP);
     if (out.quizzes.length) t.quizzes = [...(t.quizzes || []), ...out.quizzes].slice(-tasks.ARTIFACT_CAP);
-    if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
-    // Not part of `artifacts` above — board entries aren't per-message chips, they're a persistent surface
-    // (see BoardArtifact.tsx) always accessible regardless of which chat message wrote them. A much higher
-    // cap than ARTIFACT_CAP (12): each entry is meant to be short and frequent (a formula, an instruction, a
-    // recap), so a real tutoring session can easily produce more of these than it would whole notes/decks.
-    if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-60);
     if (out.audit.length) t.audit = [...(t.audit || []), ...out.audit].slice(-tasks.AUDIT_CAP);
-    // Guard against the cross-instance session-cache staleness race (see store.ts's peekTaskChat comment):
-    // `history` above was read from this request's `req.session.tasks`, which can be up to 3min stale on a
-    // serverless deploy — reported live as chat messages appearing to vanish mid-conversation. Bypass-read
-    // this task's REAL chat directly from the account row and union it in before appending the new turn, so
-    // a stale instance can never respond with (or persist) a thread that's missing another instance's writes.
-    let freshHistory = history;
-    if (req.session.user) {
-      const fresh = await peekTaskChat(req.session.user, t.id);
-      if (fresh && fresh.length > history.length) freshHistory = tasks.unionChat(history, fresh, CHAT_CAP) as typeof history;
-    }
-    t.chat = [
-      ...freshHistory,
+    // Chat, board entries, and practice problems (created via chat/board — see BoardArtifact.tsx) are
+    // LOCAL-ONLY now, by direct request: never written onto `t`, never part of what commit() persists to
+    // the cloud account row. The browser sent its own `history` above and is what appends this turn's new
+    // messages/board writes to ITS OWN local storage (client/localChatBoard.ts) — this response just hands
+    // back the delta for it to store. `t.updatedAt` still bumps (notes/flashcards/quizzes/audit above are
+    // still real cloud changes worth reflecting), but t.chat/t.board/t.problems are deliberately left alone
+    // — untouched here, so any legacy cloud copy just stops growing rather than being force-cleared.
+    t.updatedAt = now;
+    await commit(req);
+    const newChat = [
       { role: "user" as const, text: message, at: now, ...(stepIndex != null ? { stepIndex, stepText: t.steps![stepIndex].text.slice(0, 80) } : {}) },
       { role: "assistant" as const, text: out.reply, at: now,
         ...(artifacts.length ? { artifacts } : {}),
         ...(t.evidence?.length ? { sources: t.evidence.slice(0, 8).map((source) => ({ label: source.label, url: source.url })) } : {}),
         ...(out.guardrailTripped ? { guardrail: true } : {}) },
-    ].slice(-CHAT_CAP);
-    t.updatedAt = now;
-    await commit(req);
-    res.json({ chat: t.chat, task: t });
+    ];
+    res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, guardrailTripped: out.guardrailTripped, task: t });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "chat failed" });
   }

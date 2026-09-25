@@ -4,6 +4,11 @@ import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubje
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks, clearLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } from "./localQuizzes.ts";
+// Deliberately NOT cleared on sign-out like localDecks/localQuizzes below — those are backup CACHES of data
+// the cloud still owns, safe to drop; chat/board are the ONLY copy (local-only, by direct request), so
+// clearing them on sign-out would permanently destroy conversation history the moment someone logs out.
+// Keyed by userId same as the others, so a different account signing in on the same browser never sees it.
+import { hydrateLocalThreads } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
@@ -478,6 +483,10 @@ export function App() {
     // function) — which, from the outside, looked exactly like "my task got deleted" when the error
     // boundary reset the tree. Treat anything non-array as "no update," never crash the app over it.
     if (!Array.isArray(incoming)) return prev;
+    // Chat/board/problems are local-only now (never sent to the cloud account — see localChatBoard.ts's
+    // own comment) — overlay this browser's local copy onto every server-fetched task here, the one choke
+    // point every "fresh list from the server" path (initial load, polling, sync) already runs through.
+    incoming = hydrateLocalThreads(incoming, status?.user || null);
     const now = Date.now();
     // Prune opportunistically so this Map can't grow unbounded over a long session — every entry is either
     // reconciled well within the grace window or genuinely stale and safe to forget.
@@ -1242,6 +1251,7 @@ export function App() {
                   onConfirmed={flagJustDone}
                   onLeft={() => navigate("")}
                   onEnterStudyMode={() => { setStudyModeTask(openTask); navigate(`study/${openTask.id}`); }}
+                  userId={status?.user || null}
                 />
               </TaskModal>
             );

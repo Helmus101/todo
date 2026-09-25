@@ -1,4 +1,4 @@
-import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, BoardEntry, TaskProblem } from "../shared/types.ts";
 import { normalizeProfile } from "../shared/types.ts";
 
 export interface IntegrationItem { key: string; name: string; blurb: string; category: string; logo: string; connected: boolean; accounts?: ConnectedAccount[]; }
@@ -413,9 +413,22 @@ export const api = {
   usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> }> => req("/api/usage").then(j),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
   // stepIndex: set by the per-step "Aide" button (see F) — the server validates the range itself.
-  // Returns the WHOLE updated task, not just `chat` — a tutor turn can now create notes/decks/quizzes,
-  // and the chat entries reference them by id, so the client needs task.notes/flashcards/quizzes too.
-  chat: (id: string, message: string, stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean): Promise<{ chat: WebTask["chat"]; task: WebTask }> => post(`/api/tasks/${id}/chat`, { message, stepIndex, materials, voiceMode, canvasMode }),
+  // `history` is THIS BROWSER's own local chat thread (client/localChatBoard.ts) — chat/board/problems are
+  // local-only now (direct request: never sent to the cloud account), so the server has nothing of its own
+  // to read the conversation from and needs it passed in every time, same pattern study-help already used.
+  // `task` in the response still carries the real cloud-synced fields (steps/notes/flashcards/quizzes) a
+  // tutor turn can change; `chatDelta`/`board`/`problems` are this turn's new local-only content for the
+  // caller to append to its own local store (see localChatBoard.ts's append* functions).
+  // `board`/`problems`: THIS turn's local copy of what's currently on the board — sent so the tutor can see
+  // what it's already written (see chatAboutTask's boardBlock) instead of writing blind, which read live as
+  // Otto asking the student to describe its own board back to it.
+  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; guardrailTripped: boolean; task: WebTask }> =>
+    post(`/api/tasks/${id}/chat`, {
+      message, history: history.map((h) => ({ role: h.role, text: h.text })),
+      board: board.map((b) => ({ text: b.text, kind: b.kind })),
+      problems: problems.map((p) => ({ question: p.question, options: p.options })),
+      stepIndex, materials, voiceMode, canvasMode,
+    }),
   // The flashcard/quiz "ask for a hint" sidebar — stateless server-side, so the client passes its own
   // short local history each turn. No client-side timeout (matches `chat`): the server's own 2-minute
   // deadline is the real backstop, and a hint arriving late still beats a hard-cut error mid-drill.

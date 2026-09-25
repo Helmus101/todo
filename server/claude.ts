@@ -1698,9 +1698,9 @@ const CREATE_PROBLEM_TOOL = {
 // the student's own reasoning once they've worked through something. Not scoped to practice problems.
 const WRITE_TO_BOARD_TOOL = {
   name: "WRITE_TO_BOARD",
-  description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. Use it when writing something down genuinely helps: a formula or fact worth keeping visible, a short instruction to kick off a working session ('start working through part a'), or — once they've actually worked through something — a plain summary of THEIR reasoning (not yours) so they can see their own thinking laid out. Keep each entry SHORT and focused, one idea per call — this is a board, not a document; call it again later for the next thing rather than writing a wall of text in one entry. Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
+  description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. Use it when writing something down genuinely helps: a formula or fact worth keeping visible, a short instruction to kick off a working session ('start working through part a'), a diagram/sketch, or — once they've actually worked through something — a plain summary of THEIR reasoning (not yours) so they can see their own thinking laid out. Keep each entry SHORT and focused, one idea per call — this is a board, not a document; call it again later for the next thing rather than writing a wall of text in one entry. Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
   input_schema: { type: "object", properties: {
-    text: { type: "string", description: "the entry itself — plain text/light markdown, one focused idea, short (a sentence or two, or a single formula/fact — not a paragraph)" },
+    text: { type: "string", description: "the entry itself — plain text/light markdown, one focused idea, short (a sentence or two, or a single formula/fact — not a paragraph). ANY diagram/ASCII sketch/labeled shape (a triangle, a timeline, a table drawn with dashes and slashes) MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left. If it needs to line up visually, it needs the fence." },
     kind: { type: "string", enum: ["note", "instruction", "formula", "summary"], description: "loose styling hint: 'instruction' for a directive to start/try something, 'formula' for a fact/equation worth keeping visible, 'summary' for a recap of the STUDENT's reasoning, 'note' for anything else. Defaults to 'note' if omitted." },
   }, required: ["text"] },
 };
@@ -6120,7 +6120,7 @@ export async function chatAboutTask(
   message: string,
   profile?: Profile,
   academic?: AcademicContext,
-  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[] },
+  opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[] },
 ): Promise<ChatResult> {
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
@@ -6132,6 +6132,21 @@ export async function chatAboutTask(
     ? `\nSteps (${steps.filter((s) => s.done).length}/${steps.length} done):\n` +
       steps.map((s, i) => `- [${s.done ? "x" : " "}] ${s.text}${opts?.stepIndex === i ? "  ← THEY TAPPED \"HELP\" ON THIS ONE" : ""}` +
         (s.substeps?.length ? "\n" + s.substeps.map((sub) => `  - [${sub.done ? "x" : " "}] ${sub.text}`).join("\n") : "")).join("\n")
+    : "";
+  // WHAT'S ALREADY ON THE BOARD — this used to not exist at all: the model could WRITE to the board but had
+  // no idea what was already there, so it would reference "that triangle" or "the formula above" purely
+  // from its own imagined context, then have no way to answer when the student said "I can't see what
+  // you're pointing at". Oldest first (reading order, matches how the board itself renders).
+  const boardEntries = opts?.currentBoard || [];
+  const currentProblems = opts?.currentProblems || [];
+  const boardBlock = (boardEntries.length || currentProblems.length)
+    ? `\nWHAT'S CURRENTLY ON THE BOARD (the visible surface next to this chat — you can see it, the student ` +
+      `can see it, don't ask them to describe it back to you; a NEW WRITE_TO_BOARD call adds to this, it ` +
+      `never replaces it):\n` +
+      boardEntries.map((e) => `- [${e.kind || "note"}] ${e.text}`).join("\n") +
+      (currentProblems.length ? (boardEntries.length ? "\n" : "") +
+        currentProblems.map((p) => `- [problem] ${p.question}${p.options?.length ? ` (options: ${p.options.join(" / ")})` : ""}`).join("\n") : "") +
+      "\n"
     : "";
   const stepHint = (opts?.stepIndex != null && steps[opts.stepIndex])
     ? `\nThey just asked for help specifically on "${steps[opts.stepIndex].text}" (marked above) — start FROM THERE, don't re-open the whole task or restate the step back at them. Still diagnose before explaining (rule 1).\n`
@@ -6522,7 +6537,10 @@ export async function chatAboutTask(
     `table, the sub-goal they're working toward right now, the one line of their own setup you want them ` +
     `looking at. Talking is the conversation; the board is what they can still see while they think. When a ` +
     `visual would help (rule: DIAGRAMS AND EXAMPLES above), prefer putting it on the BOARD over burying it in ` +
-    `a chat bubble.\n` +
+    `a chat bubble. ANY diagram/shape/ASCII sketch on the board MUST be inside a triple-backtick fence — ` +
+    `unfenced, every leading space gets stripped and a carefully-drawn triangle becomes one flat unreadable ` +
+    `line. Fenced, it renders exactly as typed, like a terminal — draw it accordingly (plain dashes/slashes/ ` +
+    `pipes/labels, monospace-aligned, nothing fancier than ASCII needs).\n` +
     `AND NEVER POINT AT AN EMPTY BOARD. Do not write "look above", "it's on your screen", "check the board", ` +
     `"regarde au tableau", or anything else that sends them to look at something — unless you ACTUALLY called ` +
     `WRITE_TO_BOARD (or CREATE_PROBLEM) this same turn with that exact content. Saying a thing is there does ` +
@@ -6538,7 +6556,23 @@ export async function chatAboutTask(
     `where it happens to occur to you. Skip it ONLY when nothing was actually resolved this turn (they're still ` +
     `stuck, or you're just chatting) — never skip it because you already covered the same ground in your chat ` +
     `reply; the board entry is what stays visible after the reply scrolls away, so it still needs to exist on ` +
-    `its own even when it overlaps what you just said.\n\n` +
+    `its own even when it overlaps what you just said.\n` +
+    `STRUCTURE A SUMMARY LIKE NOTES, NOT A PARAGRAPH. A kind:"summary" entry is read later, out of context, ` +
+    `by a student skimming back through the session — write it the way you'd write revision notes, not the ` +
+    `way you'd write a sentence in chat: short dash-bulleted lines, one idea per line, in the order they were ` +
+    `actually worked out. "- started by isolating x on one side\\n- realized the sign flips when dividing by ` +
+    `a negative\\n- checked the answer by substituting back in" beats one run-on sentence saying the same ` +
+    `thing — it's SCANNABLE, which is the whole point of something meant to be looked back at. This is THEIR ` +
+    `reasoning trace, in the order they actually did it (including a wrong turn they corrected, if that's ` +
+    `what happened) — not a cleaned-up "ideal" derivation they never actually produced.\n` +
+    `PUT THE ACTUAL EXERCISE ON THE BOARD TOO, NOT JUST THE ANSWER TO IT. When you walk through a parallel ` +
+    `worked example, write the problem itself onto the board first (kind:"formula" or "note" — the setup, ` +
+    `the given values, the equation as posed) BEFORE working it with them in chat, so it's sitting there for ` +
+    `them to look at and return to instead of scrolling back through your messages to find it. Same for a ` +
+    `multi-step exercise you're building up together — the full statement goes on the board once, then chat ` +
+    `handles the back-and-forth about it. A practice problem specifically for THEM to answer inline still ` +
+    `goes through CREATE_PROBLEM (it needs the answer-checking that gives), not WRITE_TO_BOARD — this rule is ` +
+    `about reference material and worked examples you're walking through together, not about testing them.\n\n` +
 
     `KEEP GETTING SMARTER ABOUT THEM: use "remember" whenever they mention something durable, worth knowing ` +
     `next time — a recurring struggle with a specific topic, a professor's grading quirk or class pattern ` +
@@ -6614,7 +6648,7 @@ export async function chatAboutTask(
         `that's not what these are here for; just look something up when it genuinely helps, e.g. "did the ` +
         `teacher already reply about the deadline?"): ${opts.extras.connected.join(", ")}.\n`
       : "") +
-    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}` +
+    `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}` +
     assignmentBlock(task) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials);
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn
   // tool-loop round (up to CHAT_MAX_ROUNDS) — a long-running chat's cost scales with this window, not just

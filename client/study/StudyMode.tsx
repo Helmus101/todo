@@ -24,6 +24,7 @@ import { BreakScreen } from "./BreakScreen.tsx";
 import { EndSessionModal } from "./EndSessionModal.tsx";
 import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
 import { api } from "../api.ts";
+import { appendLocalChat, appendLocalBoard, appendLocalProblems } from "../localChatBoard.ts";
 import { NoisePlayer, type NoiseType } from "./noise.ts";
 import { tileWithinBounds } from "./tileLayout.ts";
 import { extractPdfText } from "./pdfText.ts";
@@ -1085,8 +1086,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     const materials = env.materials.filter((m) => m.text?.trim()).map((m) => ({ label: m.label, text: m.text! }));
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try {
-      const { task: updated } = await api.chat(task.id, message, stepIndex, materials.length ? materials : undefined, voiceMode, canvasMode);
-      onTaskUpdate({ ...task, ...updated });
+      const { task: updated, chatDelta, board, problems } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex, materials.length ? materials : undefined, voiceMode, canvasMode);
+      const chat = appendLocalChat(task.id, chatDelta, userId ?? null);
+      const newBoard = appendLocalBoard(task.id, board, userId ?? null);
+      const newProblems = appendLocalProblems(task.id, problems, userId ?? null);
+      onTaskUpdate({ ...task, ...updated, chat, board: newBoard, problems: newProblems });
       // Auto-open new quizzes on the canvas — when the tutor creates a quiz mid-conversation, pop it open
       // on the desk immediately (the student doesn't have to find and click the chip). Also opens a
       // scratchpad alongside so they can work through problems by hand, like a real exam desk.

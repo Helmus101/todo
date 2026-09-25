@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep } from "../shared/types.ts";
+import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
 import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
@@ -529,23 +529,37 @@ export const AUDIT_CAP = 20;
  *  Distinct from `unionArtifacts` below, which tracks EXTERNAL artifacts (Google doc/draft/event ids) for
  *  rerun de-duplication — different lists, different purpose. Returns only the keys that actually changed
  *  so an unchanged winner can be returned as-is (avoids a pointless object clone). */
-function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebTask, "notes" | "flashcards" | "quizzes">> | null {
-  const merge = <T extends { id: string; createdAt: string }>(a?: T[], b?: T[]): T[] | undefined => {
+// Board entries (kept separate from ARTIFACT_CAP-limited note/flashcard/quiz chips) — a real tutoring
+// session can rack up a couple dozen short board writes, and this is the ONE running record of what Otto
+// actually wrote/summarized during a session, so it gets a more generous cap than the other artifact types.
+const BOARD_MERGE_CAP = 60;
+function unionStudyArtifacts(winner: WebTask, loser: WebTask): Partial<Pick<WebTask, "notes" | "flashcards" | "quizzes" | "board" | "problems">> | null {
+  const merge = <T extends { id: string }>(a: T[] | undefined, b: T[] | undefined, atOf: (x: T) => string, cap: number): T[] | undefined => {
     if (!b?.length) return undefined;                       // nothing on the losing side → keep winner's
     const seen = new Set((a || []).map((x) => x.id));
     const extra = b.filter((x) => !seen.has(x.id));
     if (!extra.length) return undefined;
     // Chronological, so the chips read in the order they were made on BOTH devices (a plain concat puts
-    // the loser's older artifact last) — and so `slice(-CAP)` evicts the genuinely oldest, not the loser's.
+    // the loser's older artifact last) — and so `slice(-cap)` evicts the genuinely oldest, not the loser's.
     return [...(a || []), ...extra]
-      .sort((x, y) => (Date.parse(x.createdAt) || 0) - (Date.parse(y.createdAt) || 0))
-      .slice(-ARTIFACT_CAP);
+      .sort((x, y) => (Date.parse(atOf(x)) || 0) - (Date.parse(atOf(y)) || 0))
+      .slice(-cap);
   };
-  const notes = merge(winner.notes, loser.notes);
-  const flashcards = merge(winner.flashcards, loser.flashcards);
-  const quizzes = merge(winner.quizzes, loser.quizzes);
-  if (!notes && !flashcards && !quizzes) return null;
-  return { ...(notes ? { notes } : {}), ...(flashcards ? { flashcards } : {}), ...(quizzes ? { quizzes } : {}) };
+  const createdAtOf = <T extends { createdAt: string }>(x: T) => x.createdAt;
+  const notes = merge(winner.notes, loser.notes, createdAtOf, ARTIFACT_CAP);
+  const flashcards = merge(winner.flashcards, loser.flashcards, createdAtOf, ARTIFACT_CAP);
+  const quizzes = merge(winner.quizzes, loser.quizzes, createdAtOf, ARTIFACT_CAP);
+  // Board entries and practice problems used to be left OUT of this union entirely — a whole-task "winner"
+  // pick (by status rank/updatedAt) silently dropped the LOSING device's board writes and problems, same
+  // failure class chat/notes/flashcards/quizzes were already fixed for. Reported live as "sometimes chat
+  // and board delete" — chat already had its own union (see mergeTaskLists), board/problems never did.
+  const board = merge(winner.board, loser.board, (x: BoardEntry) => x.at, BOARD_MERGE_CAP);
+  const problems = merge(winner.problems, loser.problems, createdAtOf, ARTIFACT_CAP);
+  if (!notes && !flashcards && !quizzes && !board && !problems) return null;
+  return {
+    ...(notes ? { notes } : {}), ...(flashcards ? { flashcards } : {}), ...(quizzes ? { quizzes } : {}),
+    ...(board ? { board } : {}), ...(problems ? { problems } : {}),
+  };
 }
 
 /** Cross-device profile merge: entity-level fact dedupe; `paused` follows the most RECENT toggle. */

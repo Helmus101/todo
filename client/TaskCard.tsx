@@ -23,6 +23,7 @@ import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
+import { appendLocalChat, appendLocalBoard, appendLocalProblems } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
 /**
@@ -316,9 +317,12 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
 
 /* ─────────────────────────────── the focused task view ─────────────────────────────── */
 
-export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode }: {
+export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode, userId }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean;
   onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onEnterStudyMode?: () => void;
+  /** Scopes the local-only chat/board/problems store (client/localChatBoard.ts) to this account, so a
+   *  shared browser can't leak one student's conversations into another's after a sign-out/sign-in. */
+  userId?: string | null;
 }) {
   const L = useLang();
   const notify = useNotify();
@@ -488,9 +492,17 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
     if (!message || chatSending) return;
     const stepIndex = chatStep; // captured before clearing
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message); setChatStep(null);
-    // Merge the WHOLE returned task, not just `chat` — a tutor turn can create notes/decks/quizzes, and the
-    // assistant's chat entry references them by id (task.notes/flashcards/quizzes).
-    try { const { task: updated } = await api.chat(task.id, message, stepIndex ?? undefined, undefined, voiceMode); onTask({ ...task, ...updated }); }
+    // Merge the WHOLE returned task (steps/notes/decks/quizzes are still cloud-synced), then layer this
+    // turn's chat/board/problems on top from LOCAL storage — those three are local-only now (never sent to
+    // the cloud account, see localChatBoard.ts), so the server response only carries this turn's delta,
+    // not the full arrays.
+    try {
+      const { task: updated, chatDelta, board, problems } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex ?? undefined, undefined, voiceMode);
+      const chat = appendLocalChat(task.id, chatDelta, userId ?? null);
+      const newBoard = appendLocalBoard(task.id, board, userId ?? null);
+      const newProblems = appendLocalProblems(task.id, problems, userId ?? null);
+      onTask({ ...task, ...updated, chat, board: newBoard, problems: newProblems });
+    }
     catch (e: any) { setChatError(e?.message || L("Envoi impossible — réessaie.", "Couldn't send that — try again.")); setChatInput(message); }
     finally { setChatSending(false); setPendingMsg(null); }
   };
@@ -1287,15 +1299,6 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
     spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.chat?.length, voiceModeOn]);
-  const spokenFillerRef = useRef(false);
-  useEffect(() => {
-    if (sending && voiceModeOn && !spokenFillerRef.current) {
-      synth.speak(en ? "Let me think about that." : "Laisse-moi réfléchir.");
-      spokenFillerRef.current = true;
-    }
-    if (!sending) spokenFillerRef.current = false;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sending, voiceModeOn]);
   return (
     <section className="task-chat">
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>

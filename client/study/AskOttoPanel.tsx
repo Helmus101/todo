@@ -92,21 +92,6 @@ export function AskOttoPanel({
     spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.chat?.length, voiceModeOn]);
-  // A one-shot spoken filler for the wait — NOT the cycling thinking-word text (that changes every 1.4s;
-  // speaking a new phrase every 1.4s would be unusable), just a single line so a voice-mode student isn't
-  // sitting in total silence during the 15-20s+ a multi-step tutor turn can take (see runTask's own latency
-  // notes in server/claude.ts — this app has no streaming yet, so the reply arrives as one block). Real
-  // replies in voice mode are also told server-side (the `voiceMode` flag sent with the message) to answer
-  // in 2-3 short spoken sentences, so this filler is covering seconds, not the old worst-case full length.
-  const spokenFillerRef = useRef(false);
-  useEffect(() => {
-    if (sending && voiceModeOn && !spokenFillerRef.current) {
-      synth.speak(en ? "Let me think about that." : "Laisse-moi réfléchir.");
-      spokenFillerRef.current = true;
-    }
-    if (!sending) spokenFillerRef.current = false;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sending, voiceModeOn]);
   // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
   // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
   // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a

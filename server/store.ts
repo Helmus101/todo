@@ -117,24 +117,6 @@ export async function peekSessionCsrfToken(sid: string): Promise<string | null> 
   } catch { return null; }
 }
 
-/** Bypass-cache read of ONE task's chat thread, straight from the account row (TABLE, not the session
- *  store) — same self-heal posture as peekSessionCsrfToken above, for the same underlying race but on a
- *  DIFFERENT cache: loadState's own stateCache (also 3min, per-instance) can leave `req.session.tasks`
- *  (itself sourced from the ALSO-cached session store) missing chat entries another instance already wrote.
- *  Reported live as chat messages appearing to "delete themselves" mid-conversation — the /chat route was
- *  building its response from stale local history, not from a genuine loss (mergeTasks's chat union means
- *  nothing is ever actually dropped from the DB — see tasks.ts's unionChat), but the STALE instance kept
- *  rendering an incomplete thread back to the client for the rest of its cache window. Returns null (never
- *  throws) on any failure — callers must treat that as "can't confirm," never as "genuinely empty". */
-export async function peekTaskChat(email: string, taskId: string): Promise<{ role: string; text: string; at: string }[] | null> {
-  if (!client) return null;
-  try {
-    const { data } = await client.from(TABLE).select("tasks").eq("email", email).maybeSingle();
-    const t = (data?.tasks as any[])?.find((x) => x?.id === taskId);
-    return Array.isArray(t?.chat) ? t.chat : null;
-  } catch { return null; }
-}
-
 /**
  * A persistent express-session store backed by Supabase, so logins AND working state (tasks/profile)
  * survive server restarts + deploys — not just the cloud account row, but the live session. Without this,
