@@ -1132,7 +1132,7 @@ export function App() {
               )}
             </div>
 
-            <WeekRailFab lang={status.language} pronoteConnected={!!status.pronoteConnected} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} tasks={tasks} />
+            <WeekRailFab lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} tasks={tasks} />
 
             <div className="dash-more">
               {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
@@ -1304,56 +1304,11 @@ function Milestones({ tasks }: { tasks: WebTask[] }) {
   );
 }
 
-/** A horizontal strip of upcoming Pronote tests with a day-countdown — separate from the task list so
- *  crunch weeks are visible at a glance, not buried inside individual task cards. Reads straight from
- *  Pronote (not the task pipeline) so it shows the raw subject+date list. */
-function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
-  const en = lang === "en";
-  const [tests, setTests] = useState<{ subject: string; deadline: string }[] | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  // A failed fetch used to render identically to "genuinely no tests" (both `setTests([])`) — the widget
-  // just silently vanished either way, which reads as "nothing coming up" when it might actually mean the
-  // load broke. Track the two cases separately so a real failure says so instead of going quiet.
-  const [error, setError] = useState(false);
-  useEffect(() => { void api.pronoteTests().then((r) => setTests(r.tests)).catch(() => { setTests([]); setError(true); }); }, []);
-  if (error) return <div className="exam-strip-wrap"><p className="rewrite-error small">{en ? "Couldn't load upcoming tests." : "Impossible de charger les contrôles à venir."}</p></div>;
-  if (!tests?.length) return null;
-  const all = [...tests].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline));
-  const sorted = showAll ? all : all.slice(0, 4);
-  const daysLeft = (iso: string) => Math.ceil((Date.parse(iso) - Date.now()) / 86_400_000);
-  return (
-    // No .reveal fade here — this used to pop in as its own late "second wave" after the rest of the
-    // dashboard had already settled; it now just appears with its panel, no separate animation.
-    <div className="exam-strip-wrap">
-      <div className="exam-strip-label">{en ? "Upcoming tests" : "Contrôles à venir"}</div>
-      <div className="exam-strip">
-        {sorted.map((t, i) => {
-          const d = daysLeft(t.deadline);
-          const soon = d <= 3;
-          const when = new Date(t.deadline).toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "short", day: "numeric", month: "short" });
-          return (
-            <div key={i} className={`exam-chip ${soon ? "soon" : ""}`}>
-              <span className="exam-days">{d <= 0 ? (en ? "Today" : "Aujourd'hui") : `J-${d}`}</span>
-              <span className="exam-subject">{t.subject}</span>
-              <span className="exam-when">{when}</span>
-            </div>
-          );
-        })}
-        {!showAll && all.length > 4 && (
-          <button type="button" className="btn xs ghost exam-more" onClick={() => setShowAll(true)}>
-            {en ? `+${all.length - 4} more` : `+${all.length - 4} de plus`}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /** Always-on-screen entry point for the exam/week ambient context. Used to render inline in the task
  *  list (splitting it in two), then as a full-screen modal (too heavy for what's basically a glance-and-
  *  close panel) — this is a small floating button, fixed to the same spot at every scroll position, that
  *  opens a compact anchored popover instead of taking over the whole screen. */
-function WeekRailFab({ lang, pronoteConnected, onTask, tasks }: { lang?: "fr" | "en"; pronoteConnected: boolean; onTask: (t: WebTask) => void; tasks: WebTask[] }) {
+function WeekRailFab({ lang, onTask, tasks }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void; tasks: WebTask[] }) {
   const en = lang === "en";
   const [open, setOpen] = useState(false);
 
@@ -1373,7 +1328,6 @@ function WeekRailFab({ lang, pronoteConnected, onTask, tasks }: { lang?: "fr" | 
             {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
                 (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
             <DueReviews lang={lang} tasks={tasks} />
-            {pronoteConnected && <ExamCountdown lang={lang} />}
             <WeekLoad lang={lang} onTask={onTask} />
           </div>
         </TaskModal>
@@ -1449,7 +1403,7 @@ type WorkloadDay = { date: string; items: { kind: "homework" | "test" | "task"; 
 /** Deterministic "this week" strip — no AI call, just real Pronote homework/tests + open tasks bucketed
  *  by day. Answers the 4 workload gaps in one glance: what's on each day, how heavy it actually is (bar
  *  height, relative to the week — never presented as minutes), which day is a pile-up (accent chip, same
- *  visual language as ExamCountdown's "soon"), and — once expanded — a way to nudge a movable task off an
+ *  visual language for a heavy day), and — once expanded — a way to nudge a movable task off an
  *  overloaded day onto the lightest one, without any AI round-trip. */
 function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void }) {
   const en = lang === "en";
@@ -1695,13 +1649,11 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   );
 }
 
-/** Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test sync, for a student
- *  whose school doesn't use it (most IB/international schools). Feeds ExamCountdown/WeekLoad via GET
- *  /api/pronote/tests and /api/workload merging manualExams server-side, so this is the ENTIRE client-side
- *  surface needed — no other component needs to know this data source exists. */
-function ExamsEditor({ profile }: { profile: Profile | null }) {
+/** Per-subject grade averages pulled from Pronote (server/pronote.ts's pronoteGrades). Was previously
+ *  labeled "Tes examens"/"Your exams" and also fetched (but never rendered) upcoming test dates — that dead
+ *  fetch is gone and the section is honestly named for what it actually shows: grades, not exam dates. */
+function GradesPanel({ profile }: { profile: Profile | null }) {
   const L = useLang();
-  const [exams, setExams] = useState<{ subject: string; deadline: string }[]>([]);
   const [grades, setGrades] = useState<{ subject: string; average: number; outOf: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -1722,17 +1674,8 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([api.pronoteTests(), api.pronoteGrades()])
-      .then(([testsResult, gradesResult]) => {
-        if (cancelled) return;
-        const today = new Date().toISOString().slice(0, 10);
-        if (testsResult.status === "fulfilled") {
-          setExams([...testsResult.value.tests]
-            .filter((exam) => exam.deadline >= today)
-            .sort((a, b) => a.deadline.localeCompare(b.deadline)));
-        }
-        if (gradesResult.status === "fulfilled") setGrades(gradesResult.value.grades);
-      })
+    api.pronoteGrades()
+      .then((result) => { if (!cancelled) setGrades(result.grades); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
@@ -1746,7 +1689,7 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
   return (
     <div className="exams-editor">
       <div className="exam-grades-heading">
-        <p className="settings-hint">{L("Notes d&apos;examen par matière (Pronote)", "Exam grades by subject (Pronote)")}</p>
+        <p className="settings-hint">{L("Notes par matière (Pronote)", "Grades by subject (Pronote)")}</p>
         <button type="button" className="btn xs ghost" onClick={() => void syncGrades()} disabled={syncing}>
           {syncing ? L("Récupération…", "Pulling…") : L("Récupérer depuis Pronote", "Pull from Pronote")}
         </button>
@@ -1766,7 +1709,7 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
           ))}
         </ul>
       ) : (
-        <p className="muted small">{L("Aucune note d&apos;examen par matière disponible.", "No exam grades by subject available.")}</p>
+        <p className="muted small">{L("Aucune note disponible.", "No grades available.")}</p>
       )}
     </div>
   );
@@ -2849,8 +2792,8 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
       </section>
 
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
-        <h3>{L("Tes examens", "Your exams")}</h3>
-        <ExamsEditor profile={profile} />
+        <h3>{L("Tes notes", "Your grades")}</h3>
+        <GradesPanel profile={profile} />
       </section>
 
       {(() => {

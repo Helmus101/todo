@@ -557,11 +557,15 @@ input:focus, textarea:focus {
    further in the min-width:641px block below. */
 /* Matches Settings' own max-width (680px) — one consistent "single centered column" width across the
    app at every screen size, instead of the dashboard uniquely stretching wide on a big screen. */
+/* Anchored near the sidebar with a generous but bounded gutter, NOT dead-centered in the whole remaining
+   viewport — `margin: 0 auto` on a wide screen (the content area starts at 220px, the sidebar's width, and
+   can run to 2000px+) left a huge, unbalanced dead-space gap that made the column look like it was floating
+   disconnected from the rest of the app instead of sitting in it. */
 .list-wrap {
   width: 100%;
   max-width: 680px;
-  margin: 0 auto;
-  padding: clamp(32px, 6vh, 72px) var(--space-5) var(--space-8);
+  margin: 0;
+  padding: clamp(32px, 6vh, 72px) clamp(var(--space-5), 5vw, 64px) var(--space-8);
   animation: pageIn var(--duration-spring) var(--ease) backwards;
 }
 .dash-head { margin-bottom: var(--space-5); }
@@ -1901,8 +1905,9 @@ input:focus, textarea:focus {
 .settings-page {
   width: 100%;
   max-width: 660px;
-  margin: 0 auto;
-  padding: clamp(32px, 6vh, 88px) 16px 120px;
+  margin: 0;
+  /* Same fix as .list-wrap above: anchored near the sidebar, not dead-centered in the whole viewport. */
+  padding: clamp(32px, 6vh, 88px) clamp(16px, 5vw, 64px) 120px;
   /* Apple Design §4 — spring animation for entrance */
   animation: appleRise var(--duration-spring) var(--ease-spring) backwards;
 }
@@ -2080,11 +2085,14 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .int-cat { font-size: 11px; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; margin: 20px 0 8px; }
 .int-count { margin-bottom: 10px; }
 .int-grid { display: flex; flex-direction: column; }
+/* Vertical gap does the job of separating tiles — a border-top on every single one (stacked with the
+   Sources card's own outer border, plus each connected-account row's own border below) read as "too many
+   borders" nested inside each other. One outer border per card is enough. */
 .int-tile { display: flex; align-items: center; gap: var(--space-3); padding: 11px 0; }
-.int-tile + .int-tile { border-top: 1px solid var(--line-soft); }
+.int-tile + .int-tile { margin-top: 4px; }
 .int-tile-skel { height: 46px; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3, var(--line-soft)) 37%, var(--bg-2) 63%); background-size: 400% 100%; animation: int-skel-shine 1.4s ease infinite; }
 @keyframes int-skel-shine { 0% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-.int-tile-block + .int-tile-block .int-tile { border-top: 1px solid var(--line-soft); }
+.int-tile-block + .int-tile-block .int-tile { margin-top: 4px; }
 .int-logo { width: 24px; height: 24px; border-radius: var(--radius-sm); flex: none; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
 /* PRONOTE's logo is a wide wordmark (not a square icon like the others) — contain + a white backing so
    it stays legible regardless of theme, instead of stretching to fill a square box. */
@@ -2097,7 +2105,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .int-blurb.warn { color: var(--warn); -webkit-line-clamp: 3; }
 /* Multi-Gmail: the connected accounts under the Gmail tile */
 .int-accounts { display: flex; flex-direction: column; margin: 2px 0 8px 36px; }
-.int-acct { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 7px 0; border-top: 1px solid var(--line-soft); }
+.int-acct { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 5px 0; }
 .int-acct-email { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .int-acct-actions { flex: none; display: flex; align-items: center; gap: var(--space-2); }
 
