@@ -8,7 +8,7 @@ import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToIt
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
-import { stripHtml } from "../server/pronote.ts";
+import { stripHtml, applyPronoteGrades } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
@@ -916,6 +916,41 @@ check("the plain 2-digit numeric entity still works", stripHtml("group&#39;s doc
 check("hex numeric entity decodes", stripHtml("group&#x27;s document") === "group's document");
 check("common named entities still decode", stripHtml("&quot;quoted&quot; &amp; &lt;tag&gt;") === "\"quoted\" & <tag>");
 check("br/block tags become a space, not glued text", stripHtml("<div>Line one<br>Line two</div>").trim() === "Line one Line two");
+
+section("applyPronoteGrades — merges Pronote averages into profile.grades in place");
+{
+  const p1 = { grades: [] };
+  applyPronoteGrades(p1, [{ subject: "Maths", average: 15, outOf: 20 }, { subject: "Physique-Chimie", average: 12, outOf: 20 }]);
+  check("creates one row per subject", p1.grades.length === 2);
+  check("row is marked source: pronote", p1.grades.every((g) => g.source === "pronote"));
+  check("deterministic id keyed by lowercased subject", p1.grades.find((g) => g.subject === "Maths")?.id === "pronote:maths");
+
+  // The exact live-reported bug this function exists to close: a second sync for the SAME subject must
+  // overwrite the existing row in place, never append a duplicate (previously observed as "Anglais · 40
+  // grades" after ~40 days of daily syncs — see the id comment in applyPronoteGrades itself).
+  applyPronoteGrades(p1, [{ subject: "Maths", average: 17, outOf: 20 }]);
+  check("re-syncing the same subject overwrites in place, no duplicate row", p1.grades.filter((g) => g.subject === "Maths").length === 1);
+  check("the overwritten row carries the new average", p1.grades.find((g) => g.subject === "Maths")?.grade === 17);
+  check("an unrelated subject from the first sync survives untouched", p1.grades.some((g) => g.subject === "Physique-Chimie" && g.grade === 12));
+
+  // Subject matching must be case-insensitive — Pronote's own casing for a subject name isn't guaranteed
+  // stable across two overview fetches.
+  const p2 = { grades: [{ id: "pronote:anglais", subject: "Anglais", grade: 10, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "pronote" }] };
+  applyPronoteGrades(p2, [{ subject: "ANGLAIS", average: 14, outOf: 20 }]);
+  check("case-insensitive subject match overwrites the existing row instead of duplicating", p2.grades.length === 1 && p2.grades[0].grade === 14);
+
+  // A manually-logged grade for the same subject is a separate historical data point (source: "manual")
+  // and must never be touched or merged by a Pronote sync.
+  const p3 = { grades: [{ id: "m1", subject: "Maths", grade: 9, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "manual" }] };
+  applyPronoteGrades(p3, [{ subject: "Maths", average: 15, outOf: 20 }]);
+  check("a manual entry for the same subject is left untouched", p3.grades.some((g) => g.id === "m1" && g.grade === 9 && g.source === "manual"));
+  check("a separate pronote row is added alongside it, not merged into the manual one", p3.grades.some((g) => g.source === "pronote" && g.grade === 15) && p3.grades.length === 2);
+
+  // An empty Pronote result (e.g. connection error swallowed upstream) must never wipe existing grades.
+  const p4 = { grades: [{ id: "pronote:svt", subject: "SVT", grade: 16, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "pronote" }] };
+  applyPronoteGrades(p4, []);
+  check("an empty grade list is a no-op — never clears existing grades", p4.grades.length === 1);
+}
 
 section("hasAssignmentText — real énoncé vs synthesized placeholder");
 check("real assignment text passes", hasAssignmentText("Exercices 12 à 15 p.87 — mécanique du point"));

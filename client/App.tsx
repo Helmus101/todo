@@ -1706,26 +1706,26 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
 
   useEffect(() => {
     let cancelled = false;
-  Promise.allSettled([api.pronoteTests(), api.pronoteGrades()])
-  .then(([testsResult, gradesResult]) => {
-  if (cancelled) return;
-  const today = new Date().toISOString().slice(0, 10);
-  if (testsResult.status === "fulfilled") {
-    setExams([...testsResult.value.tests]
-    .filter((exam) => exam.deadline >= today)
-    .sort((a, b) => a.deadline.localeCompare(b.deadline)));
-  }
-  if (gradesResult.status === "fulfilled") setGrades(gradesResult.value.grades);
-  })
-  .finally(() => { if (!cancelled) setLoading(false); });
+    Promise.allSettled([api.pronoteTests(), api.pronoteGrades()])
+      .then(([testsResult, gradesResult]) => {
+        if (cancelled) return;
+        const today = new Date().toISOString().slice(0, 10);
+        if (testsResult.status === "fulfilled") {
+          setExams([...testsResult.value.tests]
+            .filter((exam) => exam.deadline >= today)
+            .sort((a, b) => a.deadline.localeCompare(b.deadline)));
+        }
+        if (gradesResult.status === "fulfilled") setGrades(gradesResult.value.grades);
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   const pronoteGrades = (profile?.grades || [])
-  .filter((g) => g.source === "pronote")
-  .map((g) => ({ subject: g.subject, average: g.grade, outOf: g.scale }));
+    .filter((g) => g.source === "pronote")
+    .map((g) => ({ subject: g.subject, average: g.grade, outOf: g.scale }));
   const allGrades = [...(grades.length > 0 ? grades : pronoteGrades)]
-  .filter((grade, index, list) => index === list.findIndex((candidate) => candidate.subject.toLowerCase() === grade.subject.toLowerCase()));
+    .filter((grade, index, list) => index === list.findIndex((candidate) => candidate.subject.toLowerCase() === grade.subject.toLowerCase()));
 
   return (
     <div className="exams-editor">
