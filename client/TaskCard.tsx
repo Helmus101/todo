@@ -23,7 +23,7 @@ import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
-import { appendLocalChat, appendLocalBoard, appendLocalProblems } from "./localChatBoard.ts";
+import { appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
 /**
@@ -317,13 +317,26 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
 
 /* ─────────────────────────────── the focused task view ─────────────────────────────── */
 
-export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode, userId }: {
+export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode, userId }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean;
   onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onEnterStudyMode?: () => void;
   /** Scopes the local-only chat/board/problems store (client/localChatBoard.ts) to this account, so a
    *  shared browser can't leak one student's conversations into another's after a sign-out/sign-in. */
   userId?: string | null;
 }) {
+  // Defensive read-through, independent of whether the `tasks` list upstream (App.tsx) already hydrated
+  // this task from local storage: chat/board/problems are local-only now, and this is the actual place
+  // they're displayed, so read them straight from local storage here rather than trust every upstream path
+  // to have already merged it in. Reported live as "chat still deletes" — this can't fix a bug in how a
+  // message got lost from storage, but it does close off "the message IS in storage but this render is
+  // looking at a stale/un-hydrated copy of the task" as a way for it to look deleted.
+  const local = getLocalThread(taskProp.id, userId ?? null);
+  const task = (local.chat.length || local.board.length || local.problems.length)
+    ? { ...taskProp,
+        ...(local.chat.length ? { chat: local.chat } : {}),
+        ...(local.board.length ? { board: local.board } : {}),
+        ...(local.problems.length ? { problems: local.problems } : {}) }
+    : taskProp;
   const L = useLang();
   const notify = useNotify();
   const cardEn = useContext(LangContext) === "en";

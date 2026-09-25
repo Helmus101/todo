@@ -20,9 +20,12 @@ interface LocalTaskThread {
 }
 
 const BASE_KEY = "otto-local-chat-board";
-// Same caps the (formerly cloud-side) fields used — CHAT_CAP/board-cap/ARTIFACT_CAP mirrors in tasks.ts —
-// so behavior (how much history survives) doesn't change just because the storage location did.
-const CHAT_CAP = 40;
+// Same caps the (formerly cloud-side) fields used (server/index.ts's own CHAT_CAP=60, the old board cap of
+// 60, tasks.ts's ARTIFACT_CAP=12 for problems) — how much history survives shouldn't shrink just because
+// the storage location did. CHAT_CAP here was briefly 40 (a copy-paste guess, never actually matched the
+// server's 60) — a real regression that trimmed more aggressively than before and read as "chat deletes
+// itself" on any longer-running conversation.
+const CHAT_CAP = 60;
 const BOARD_CAP = 60;
 const PROBLEMS_CAP = 12;
 

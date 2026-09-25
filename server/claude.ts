@@ -6190,7 +6190,19 @@ export async function chatAboutTask(
       `few attempts. If it comes up naturally (don't force it into an unrelated reply), acknowledge that ` +
       `genuinely — a tutor who's watched them improve, not one meeting them for the first time.\n`
     : "";
-  const sys = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + styleLine +
+  // Everything that changes from one call to the next (the clock, the student's profile facts, their error
+  // log, journal, weak cards, the bandit's style pick) is assembled SEPARATELY and appended at the very END
+  // of `sys`, not the front. It used to lead the prompt — with `nowBlock()` (changes every MINUTE) as
+  // literally the first token — which broke prefix-based prompt caching for the ENTIRE ~4000-token
+  // instruction block that follows: a cache hit requires an identical prefix from character 1, so a
+  // per-minute-changing preamble meant DeepSeek re-processed (and re-billed, at full non-cached input-token
+  // price) the whole methodology block on every single call, every tool-loop round, every message, with no
+  // caching benefit ever available. The instruction block below is 100% static — identical for every
+  // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
+  // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
+  // anyway.
+  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + styleLine;
+  const sys =
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
     `in them actually understanding the material — not in getting the assignment off their plate. Ground ` +
@@ -6648,6 +6660,7 @@ export async function chatAboutTask(
         `that's not what these are here for; just look something up when it genuinely helps, e.g. "did the ` +
         `teacher already reply about the deadline?"): ${opts.extras.connected.join(", ")}.\n`
       : "") +
+    dynamicContext +
     `\n\nTASK: ${task.title}\nWHY IT MATTERS: ${task.why}${task.context ? `\nCONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardBlock}` +
     assignmentBlock(task) + profileBlock(profile) + academicBlock(academic) + materialsBlock(opts?.materials);
   // 10, not the whole thread: every one of these is resent verbatim on every turn AND every intra-turn

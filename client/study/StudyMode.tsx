@@ -24,7 +24,7 @@ import { BreakScreen } from "./BreakScreen.tsx";
 import { EndSessionModal } from "./EndSessionModal.tsx";
 import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
 import { api } from "../api.ts";
-import { appendLocalChat, appendLocalBoard, appendLocalProblems } from "../localChatBoard.ts";
+import { appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
 import { NoisePlayer, type NoiseType } from "./noise.ts";
 import { tileWithinBounds } from "./tileLayout.ts";
 import { extractPdfText } from "./pdfText.ts";
@@ -265,7 +265,17 @@ export const AUDIO_OPTIONS: { id: NoiseType; label: [string, string] }[] = [
 ];
 
 // ── Main StudyMode component ───────────────────────────────────────────────────
-export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr", betaFeatures = false }: StudyModeProps) {
+export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, language = "fr", betaFeatures = false }: StudyModeProps) {
+  // Same defensive read-through as TaskCard.tsx's TaskFocus (see its own comment) — chat/board/problems are
+  // local-only now, so read them straight from local storage here rather than trust the `task` prop to
+  // already carry the latest copy.
+  const local = getLocalThread(taskProp.id, userId ?? null);
+  const task = (local.chat.length || local.board.length || local.problems.length)
+    ? { ...taskProp,
+        ...(local.chat.length ? { chat: local.chat } : {}),
+        ...(local.board.length ? { board: local.board } : {}),
+        ...(local.problems.length ? { problems: local.problems } : {}) }
+    : taskProp;
   const [phase, setPhase] = useState<"setup" | "session">("setup");
   const [env, setEnv] = useState<StudyEnvironment | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
