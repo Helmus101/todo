@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { useSmClose, SmSurface, SmBackdrop } from "../ui.tsx";
+import { useSmClose, SmSurface, SmBackdrop, useLang } from "../ui.tsx";
 import { hasExtension } from "./extensionBridge.ts";
 
 // How long the End button must be held before it actually fires. Only meaningfully enforced (as a real
@@ -28,6 +28,7 @@ interface EndSessionModalProps {
 // installed (hasExtension()) — consistent behavior either way is better than the button's whole interaction
 // model silently changing depending on an install the student may not even know exists.
 export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTime, onContinue, onEnd }: EndSessionModalProps) {
+  const L = useLang();
   const [finished, setFinished] = useState("");
   const [confusing, setConfusing] = useState("");
   const [nextStep, setNextStep] = useState("");
@@ -78,39 +79,39 @@ export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTim
   return (
     <SmBackdrop closing={closing} className="sm-modal-backdrop">
       <SmSurface variant="modal" closing={closing} className="sm-modal">
-        <h2>End study session?</h2>
-        <p className="sm-modal-sub">Your environment will be saved exactly as it is.</p>
+        <h2>{L("Terminer la session de révision ?", "End study session?")}</h2>
+        <p className="sm-modal-sub">{L("Ton bureau sera sauvegardé exactement comme il est.", "Your environment will be saved exactly as it is.")}</p>
 
         <div className="sm-modal-stats">
           <div className="sm-modal-stat">
             <span className="sm-modal-stat-value">{formatTime(elapsed)}</span>
-            <span className="sm-modal-stat-label">Time studied</span>
+            <span className="sm-modal-stat-label">{L("Temps de travail", "Time studied")}</span>
           </div>
           {totalSteps > 0 && (
             <div className="sm-modal-stat">
               <span className="sm-modal-stat-value">{completedSteps} / {totalSteps}</span>
-              <span className="sm-modal-stat-label">Steps completed</span>
+              <span className="sm-modal-stat-label">{L("Étapes terminées", "Steps completed")}</span>
             </div>
           )}
         </div>
 
         <div className="sm-modal-review">
           <label>
-            What did you finish?
-            <input value={finished} onChange={(e) => setFinished(e.target.value)} placeholder="Optional" />
+            {L("Qu'as-tu terminé ?", "What did you finish?")}
+            <input value={finished} onChange={(e) => setFinished(e.target.value)} placeholder={L("Facultatif", "Optional")} />
           </label>
           <label>
-            What confused you?
-            <input value={confusing} onChange={(e) => setConfusing(e.target.value)} placeholder="Optional" />
+            {L("Qu'est-ce qui t'a bloqué ?", "What confused you?")}
+            <input value={confusing} onChange={(e) => setConfusing(e.target.value)} placeholder={L("Facultatif", "Optional")} />
           </label>
           <label>
-            What's the next smallest step?
-            <input value={nextStep} onChange={(e) => setNextStep(e.target.value)} placeholder="Optional" />
+            {L("Quelle est la prochaine petite étape ?", "What's the next smallest step?")}
+            <input value={nextStep} onChange={(e) => setNextStep(e.target.value)} placeholder={L("Facultatif", "Optional")} />
           </label>
         </div>
 
         <div className="sm-modal-actions">
-          <button className="sm-btn sm-btn-ghost" onClick={doContinue}>Continue studying</button>
+          <button className="sm-btn sm-btn-ghost" onClick={doContinue}>{L("Continuer à travailler", "Continue studying")}</button>
           <button
             type="button"
             className={`sm-btn sm-btn-danger sm-btn-hold ${holding ? "sm-btn-holding" : ""}`}
@@ -122,12 +123,14 @@ export function EndSessionModal({ completedSteps, totalSteps, elapsed, formatTim
           >
             <span className="sm-btn-hold-fill" aria-hidden="true" />
             <span className="sm-btn-hold-label">
-              {holding ? (hasExtension() ? "Keep holding to unblock & end…" : "Keep holding to end…") : "Hold to end session"}
+              {holding
+                ? (hasExtension() ? L("Continue d'appuyer pour débloquer et terminer…", "Keep holding to unblock & end…") : L("Continue d'appuyer pour terminer…", "Keep holding to end…"))
+                : L("Maintenir pour terminer", "Hold to end session")}
             </span>
           </button>
         </div>
         {hasExtension() && (
-          <p className="sm-modal-hold-hint">Other sites stay blocked until you hold this button to end.</p>
+          <p className="sm-modal-hold-hint">{L("Les autres sites restent bloqués tant que ce bouton n'est pas maintenu.", "Other sites stay blocked until you hold this button to end.")}</p>
         )}
       </SmSurface>
     </SmBackdrop>

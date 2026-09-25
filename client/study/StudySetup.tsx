@@ -3,7 +3,7 @@ import type { WebTask } from "../../shared/types.ts";
 import type { StudyEnvironment, StudyMaterial } from "./StudyTypes.ts";
 import { extractPdfText } from "./pdfText.ts";
 import { api } from "../api.ts";
-import { stripHtml } from "../ui.tsx";
+import { stripHtml, useLang } from "../ui.tsx";
 
 export interface PomodoroChoice { enabled: boolean; workMinutes: number; breakMinutes: number; armId: string }
 export interface AudioChoice { audioType: "silence" | "brown" | "pink" | "white"; armId?: string }
@@ -109,6 +109,7 @@ function buildTaskMaterials(task: WebTask): StudyMaterial[] {
 }
 
 export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: StudySetupProps) {
+  const L = useLang();
   const initialMaterials = useMemo(() => existingEnv?.materials || buildTaskMaterials(task), [existingEnv, task]);
   const [materials, setMaterials] = useState<StudyMaterial[]>(initialMaterials);
   const [linkInput, setLinkInput] = useState("");

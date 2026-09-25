@@ -1,3 +1,5 @@
+import { useLang } from "../../ui.tsx";
+
 interface ScratchpadArtifactProps {
   value: string;
   onChange: (v: string) => void;
@@ -5,13 +7,14 @@ interface ScratchpadArtifactProps {
 }
 
 export function ScratchpadArtifact({ value, onChange, onSaveToNotes }: ScratchpadArtifactProps) {
+  const L = useLang();
   return (
     <div className="sm-scratch-body">
       <textarea
         className="sm-notes-textarea sm-scratch-textarea"
         value={value}
         onChange={e => onChange(e.target.value)}
-        placeholder="Temporary working space — cleared between sessions."
+        placeholder={L("Espace de travail temporaire — effacé entre les sessions.", "Temporary working space — cleared between sessions.")}
         spellCheck={false}
       />
       {value.trim() && (
@@ -19,7 +22,7 @@ export function ScratchpadArtifact({ value, onChange, onSaveToNotes }: Scratchpa
           className="sm-scratch-save"
           onClick={() => { onSaveToNotes(value); onChange(""); }}
         >
-          Save to notes
+          {L("Sauver dans les notes", "Save to notes")}
         </button>
       )}
     </div>

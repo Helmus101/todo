@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
+import { useLang } from "../ui.tsx";
 
 // Fullscreen hides the OS clock/menu bar — genuinely full-screen (see StudyMode's requestFullscreen) means
 // there's no other way to see the wall-clock time while studying. Self-contained (ticks on its own) so no
@@ -50,22 +51,23 @@ export function SessionHeader({
   taskTitle, currentStep, stepIndex, totalSteps, progress, elapsed, formatTime, onBack, onSubmitStep,
   isFullscreen, onToggleFullscreen, pomodoroRemaining, pomodoroPhaseTotal, pomodoroCycle,
 }: SessionHeaderProps) {
+  const L = useLang();
   return (
     <header className="sm-header">
       <div className="sm-header-top">
-        <button className="sm-back-btn" onClick={onBack} title="Exit study mode">←</button>
+        <button className="sm-back-btn" onClick={onBack} title={L("Quitter le mode révision", "Exit study mode")}>←</button>
         <span className="sm-task-title">{taskTitle}</span>
         <div className="sm-header-right">
           <WallClock />
           {pomodoroRemaining !== undefined && (
-            <span className="sm-pomodoro-badge" title={`Cycle ${(pomodoroCycle || 0) + 1}`}>
+            <span className="sm-pomodoro-badge" title={L(`Cycle ${(pomodoroCycle || 0) + 1}`, `Cycle ${(pomodoroCycle || 0) + 1}`)}>
               {pomodoroPhaseTotal ? <ProgressRing fraction={1 - pomodoroRemaining / pomodoroPhaseTotal} /> : null}
               🍅 {formatTime(pomodoroRemaining)}
             </span>
           )}
           <span className="sm-timer">{formatTime(elapsed)}</span>
           {onToggleFullscreen && (
-            <button className="sm-fullscreen-btn" onClick={onToggleFullscreen} title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}>
+            <button className="sm-fullscreen-btn" onClick={onToggleFullscreen} title={isFullscreen ? L("Quitter le plein écran", "Exit fullscreen") : L("Passer en plein écran", "Enter fullscreen")}>
               {isFullscreen ? "⤡" : "⤢"}
             </button>
           )}
@@ -76,13 +78,13 @@ export function SessionHeader({
         <div className="sm-header-step">
           <div className="sm-step-row">
             <div>
-              <span className="sm-step-label">CURRENTLY</span>
+              <span className="sm-step-label">{L("EN COURS", "CURRENTLY")}</span>
               <p className="sm-step-text">{currentStep.text}</p>
               {totalSteps > 0 && (
-                <span className="sm-step-meta">Step {stepIndex + 1} of {totalSteps}</span>
+                <span className="sm-step-meta">{L(`Étape ${stepIndex + 1} sur ${totalSteps}`, `Step ${stepIndex + 1} of ${totalSteps}`)}</span>
               )}
             </div>
-            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onSubmitStep}>Mark done</button>
+            <button className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onSubmitStep}>{L("Terminée", "Mark done")}</button>
           </div>
 
           {totalSteps > 0 && (
