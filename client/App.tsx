@@ -1694,7 +1694,10 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
     Promise.all([api.pronoteTests(), api.pronoteGrades()])
       .then(([testsRes, gradesRes]) => {
         if (cancelled) return;
-        setExams([...testsRes.tests].sort((a, b) => a.deadline.localeCompare(b.deadline)));
+        const today = new Date().toISOString().slice(0, 10);
+        setExams([...testsRes.tests]
+          .filter((exam) => exam.deadline >= today)
+          .sort((a, b) => a.deadline.localeCompare(b.deadline)));
         setGrades(gradesRes.grades);
       })
       .catch(() => {})
@@ -1707,40 +1710,22 @@ function ExamsEditor({ profile }: { profile: Profile | null }) {
 
   return (
     <div className="exams-editor">
-      {/* Grades by subject from Pronote */}
-      {allGrades.length > 0 ? (
-        <>
-          <p className="settings-hint" style={{ marginBottom: "8px" }}>{L("Moyennes par matière (Pronote)", "Averages by subject (Pronote)")}</p>
-          <ul className="grade-list" style={{ marginBottom: "16px" }}>
-            {allGrades.map((g, i) => (
-              <li key={i} className="grade-row">
-                <div className="grade-row-top">
-                  <span className="grade-subject">{g.subject}</span>
-                  <span className="grade-value">{g.average}/{g.outOf}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
-
-      {/* Upcoming exams from Pronote */}
-      <p className="settings-hint" style={{ marginBottom: "8px" }}>{L("Prochains examens (Pronote)", "Upcoming exams (Pronote)")}</p>
+      <p className="settings-hint" style={{ marginBottom: "8px" }}>{L("Notes d&apos;examen par matière (Pronote)", "Exam grades by subject (Pronote)")}</p>
       {loading ? (
         <p className="muted small">{L("Chargement…", "Loading…")}</p>
-      ) : exams.length > 0 ? (
+      ) : allGrades.length > 0 ? (
         <ul className="grade-list">
-          {exams.map((e, i) => (
-            <li key={i} className="grade-row">
+          {allGrades.map((g, i) => (
+            <li key={`${g.subject}-${i}`} className="grade-row">
               <div className="grade-row-top">
-                <span className="grade-subject">{e.subject}</span>
-                <span className="grade-value">{new Date(`${e.deadline}T00:00:00`).toLocaleDateString(L("fr-FR", "en-US"), { day: "numeric", month: "short", year: "numeric" })}</span>
+                <span className="grade-subject">{g.subject}</span>
+                <span className="grade-value">{g.average}/{g.outOf}</span>
               </div>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="muted small">{L("Aucun examen à venir.", "No upcoming exams.")}</p>
+        <p className="muted small">{L("Aucune note d&apos;examen par matière disponible.", "No exam grades by subject available.")}</p>
       )}
     </div>
   );
