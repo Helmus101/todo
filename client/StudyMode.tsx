@@ -677,8 +677,12 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language }: Stud
     setAiInput("");
     
     try {
-      const response = await api.chat(task.id, message);
-      const assistantText = response.chat?.[response.chat.length - 1]?.text || "I couldn't process that request.";
+      const response = await api.chat(
+        task.id, message,
+        aiChat.map((m) => ({ role: m.role, text: m.text, at: "" })),
+        [], [],
+      );
+      const assistantText = response.reply || "I couldn't process that request.";
       setAiChat((prev) => [...prev, { role: "assistant" as const, text: assistantText }]);
     } catch (e: any) {
       // Keep the user's message — never delete chat history on error.
