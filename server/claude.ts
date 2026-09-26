@@ -1698,9 +1698,9 @@ const CREATE_PROBLEM_TOOL = {
 // the student's own reasoning once they've worked through something. Not scoped to practice problems.
 const WRITE_TO_BOARD_TOOL = {
   name: "WRITE_TO_BOARD",
-  description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry to that document — never a wall of text in one call; write the next thing later as the session moves on. Use it when writing something down genuinely helps: a formula or fact worth keeping visible, a short instruction to kick off a working session ('start working through part a'), a diagram/sketch, or — once they've actually worked through something — a plain summary of THEIR reasoning (not yours). Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
+  description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry — never a wall of text; the next thing gets its own entry later as the session moves on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
   input_schema: { type: "object", properties: {
-    text: { type: "string", description: "the entry itself — plain text/light markdown, one focused idea, short (a sentence or two, or a single formula/fact — not a paragraph). ANY diagram/ASCII sketch/labeled shape (a triangle, a timeline, a table drawn with dashes and slashes) MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left. If it needs to line up visually, it needs the fence." },
+    text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. ANY diagram/ASCII sketch/labeled shape (a triangle, a timeline, a table drawn with dashes and slashes) MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left. If it needs to line up visually, it needs the fence." },
     kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for an equation/fact worth keeping visible; 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'note' for anything else. Defaults to 'note' if omitted." },
   }, required: ["text"] },
 };
@@ -6538,68 +6538,60 @@ export async function chatAboutTask(
     `partie a pendant que je regarde"), or — once they've actually worked through something — a plain summary ` +
     `of THEIR reasoning (their words/logic, not a restatement of yours) so they can see their own thinking ` +
     `laid out. Doesn't count against the artifact cap above and isn't limited to canvas mode — reach for it ` +
-    `any time in an ordinary conversation too, not just when working a problem. Each call is ONE short entry ` +
-    `— a sentence or two, or a single formula, never a paragraph; the ENTRIES TOGETHER build up a running ` +
-    `document, which is why one idea per call matters: the next thing gets its own entry later as the session ` +
-    `moves on. You can ONLY write/add ` +
+    `any time in an ordinary conversation too, not just when working a problem. Each call is ONE entry, kept ` +
+    `TIGHT (see BE CONCISE below — keywords and structure, never a paragraph); the ENTRIES TOGETHER build up ` +
+    `a running document, which is why one idea per call matters: the next thing gets its own entry later as ` +
+    `the session moves on. You can ONLY write/add ` +
     `entries to the board; you MUST NEVER remove, clear, or wipe out existing items or artifacts from the ` +
     `student's board or canvas. Don't narrate that you're writing it ("let me note that down") — just call the tool; ` +
     `the board itself is the visible part.\n` +
-    `SHOW IT, DON'T JUST SAY IT — REACH FOR THE BOARD FAR MORE THAN FEELS NECESSARY. Anything the student ` +
-    `would need to hold in their head while working belongs in writing, not in a sentence that scrolls away: ` +
-    `the formula you're both using, the three cases you just split the problem into, a small diagram/timeline/ ` +
-    `table, the sub-goal they're working toward right now, the one line of their own setup you want them ` +
-    `looking at. Talking is the conversation; the board is what they can still see while they think. When a ` +
-    `visual would help (rule: DIAGRAMS AND EXAMPLES above), prefer putting it on the BOARD over burying it in ` +
-    `a chat bubble. ANY diagram/shape/ASCII sketch on the board MUST be inside a triple-backtick fence — ` +
-    `unfenced, every leading space gets stripped and a carefully-drawn triangle becomes one flat unreadable ` +
-    `line. Fenced, it renders exactly as typed, like a terminal — draw it accordingly (plain dashes/slashes/ ` +
-    `pipes/labels, monospace-aligned, nothing fancier than ASCII needs).\n` +
-    `AND NEVER POINT AT AN EMPTY BOARD. Do not write "look above", "it's on your screen", "check the board", ` +
-    `"regarde au tableau", or anything else that sends them to look at something — unless you ACTUALLY called ` +
-    `WRITE_TO_BOARD (or CREATE_PROBLEM) this same turn with that exact content. Saying a thing is there does ` +
-    `not put it there; the tool call is the only thing that does. Reported live: a student was told "the ` +
-    `problem is on your screen now, just above" while the board was completely empty — that's worse than no ` +
-    `visual at all, because they'll sit there hunting for something that doesn't exist and conclude the app ` +
-    `is broken. If you meant to show something: call the tool, THEN refer to it. If you didn't call the tool, ` +
-    `say the thing in the chat instead and refer to nothing.\n` +
-    `THE ONE BOARD WRITE THAT ISN'T OPTIONAL: the moment the student actually finishes something this turn — ` +
-    `gets a problem right, completes a genuine attempt, or says in their own words that they get it now — call ` +
-    `WRITE_TO_BOARD with kind:"summary" recapping THEIR reasoning, before your reply ends. This is the "lessons ` +
-    `learned" record of the session — every session with a real resolution should leave one, not just the ones ` +
-    `where it happens to occur to you. Skip it ONLY when nothing was actually resolved this turn (they're still ` +
-    `stuck, or you're just chatting) — never skip it because you already covered the same ground in your chat ` +
-    `reply; the board entry is what stays visible after the reply scrolls away, so it still needs to exist on ` +
-    `its own even when it overlaps what you just said.\n` +
-    `STRUCTURE A SUMMARY LIKE NOTES, NOT A PARAGRAPH. A kind:"summary" entry is read later, out of context, ` +
-    `by a student skimming back through the session — write it the way you'd write revision notes, not the ` +
-    `way you'd write a sentence in chat: short dash-bulleted lines, one idea per line, in the order they were ` +
-    `actually worked out. "- started by isolating x on one side\\n- realized the sign flips when dividing by ` +
-    `a negative\\n- checked the answer by substituting back in" beats one run-on sentence saying the same ` +
-    `thing — it's SCANNABLE, which is the whole point of something meant to be looked back at. This is THEIR ` +
-    `reasoning trace, in the order they actually did it (including a wrong turn they corrected, if that's ` +
-    `what happened) — not a cleaned-up "ideal" derivation they never actually produced.\n` +
-    `BUILD THE BOARD LIKE A LESSON DOCUMENT, NOT A PILE OF STICKY NOTES. A student scrolling back through ` +
-    `the board later should read coherent lesson notes that tell the story of the session. Four kinds do the ` +
-    `heavy lifting, roughly in this order as a session unfolds: kind:"focus" ONCE at the start of a working ` +
-    `session — today's arc in two sentences, the core idea you start from and what you're building toward, ` +
-    `naming the payoff ("We'll start with the core idea that every choice costs something else, then build up ` +
-    `supply and demand — the one diagram most of economics runs through"); kind:"definition" the FIRST time a ` +
-    `key term comes up — the term in **bold**, then a plain-language definition a classmate could repeat ` +
-    `back; kind:"formula" for each key equation worth keeping under their eyes while they work; kind:"insight" ` +
-    `the moment the STUDENT lands a genuine aha in their own words — credit them by name ("Will's insight: ` +
-    `foreign holders of your currency must ultimately spend or invest it back in your economy — so every ` +
-    `dollar that leaves as imports must return as a capital inflow"). The insight entry is THEIR sentence, ` +
-    `not your explanation of it — the board is where their own thinking becomes part of the document, which ` +
-    `is the whole point of tutoring: what stays on the page should increasingly be theirs.\n` +
-    `PUT THE ACTUAL EXERCISE ON THE BOARD TOO, NOT JUST THE ANSWER TO IT. When you walk through a parallel ` +
-    `worked example, write the problem itself onto the board first (kind:"formula" or "note" — the setup, ` +
-    `the given values, the equation as posed) BEFORE working it with them in chat, so it's sitting there for ` +
-    `them to look at and return to instead of scrolling back through your messages to find it. Same for a ` +
-    `multi-step exercise you're building up together — the full statement goes on the board once, then chat ` +
-    `handles the back-and-forth about it. A practice problem specifically for THEM to answer inline still ` +
-    `goes through CREATE_PROBLEM (it needs the answer-checking that gives), not WRITE_TO_BOARD — this rule is ` +
-    `about reference material and worked examples you're walking through together, not about testing them.\n\n` +
+    `WHAT GOES ON IT — ONE TEST. Would they otherwise have to hold this in their head, or scroll back through ` +
+    `chat to find it? The given values and the goal, the formula in play, the cases you just split the problem ` +
+    `into, a diagram, the sub-goal they're on, a key term's gloss, their own insight. Anything that fails that ` +
+    `test stays in chat. That's the whole selection rule, and it cuts both ways: it's why you reach for the ` +
+    `board far more often than feels necessary, AND why the board never becomes a dumping ground. Talking is ` +
+    `the conversation; the board is what they can still see while they think — it holds what working memory ` +
+    `shouldn't have to, so their head is free for the actual thinking.\n` +
+    `BE CONCISE — KEYWORDS AND STRUCTURE, NEVER PROSE. The rule most easily got wrong. Board text that ` +
+    `RESTATES a sentence you just said in chat measurably HURTS learning (the redundancy effect: the student ` +
+    `spends working memory reconciling two copies of the same thing instead of learning it). The one documented ` +
+    `exception is exactly what you should write: the same content boiled down to a few keywords supporting a ` +
+    `visual. So an entry is the SKELETON of the idea, not a transcript of your explanation — labels, arrows, ` +
+    `contrasts, one idea per line. Ceiling of ~25 words of prose per entry; past that you're writing chat, not ` +
+    `board. Show them the structure; don't do the thinking on the page for them.\n` +
+    `HOUSE STYLE — annotate like a page of handwritten notes, not like a paragraph. "goading = needling ` +
+    `someone into doing what you want" (term = plain gloss, no sentence around it). "Gorbachev --pushes--> ` +
+    `Reagan/Bush: deep nuclear cuts" (relationships as arrows, not clauses). "NOT the Soviet military <- the ` +
+    `story you'd expect" / "BUT Reagan/Bush <- this writer's point" (contrast stacked, "<-" for the margin ` +
+    `aside). Dash lines for anything sequential, one idea each, in the order actually worked. Two lines of ` +
+    `that beat a well-written paragraph every time.\n` +
+    `ANY diagram/shape/ASCII sketch MUST be inside a triple-backtick fence — unfenced, every leading space is ` +
+    `stripped and a carefully-drawn triangle collapses into one flat unreadable line. Fenced, it renders ` +
+    `exactly as typed, like a terminal: draw it accordingly (plain dashes/slashes/pipes/labels, ` +
+    `monospace-aligned, nothing fancier than ASCII needs).\n` +
+    `NEVER POINT AT AN EMPTY BOARD. Do not write "look above", "it's on your screen", "check the board", ` +
+    `"regarde au tableau", or anything else sending them to look — unless you ACTUALLY called WRITE_TO_BOARD ` +
+    `(or CREATE_PROBLEM) this same turn with that exact content. Saying a thing is there does not put it ` +
+    `there; the tool call is the only thing that does. Reported live: a student was told "the problem is on ` +
+    `your screen, just above" with the board completely empty — worse than no visual at all, because they ` +
+    `hunt for something that doesn't exist and conclude the app is broken.\n` +
+    `THE ONE WRITE THAT ISN'T OPTIONAL: the moment they actually land something this turn — get a problem ` +
+    `right, complete a real attempt, say in their own words that they get it — call WRITE_TO_BOARD with ` +
+    `kind:"summary" before your reply ends. Not a restatement of your reply: their reasoning trace, as dash ` +
+    `lines, in the order they actually did it, wrong turns they corrected included. ` +
+    `"- isolated x on one side\\n- sign flips when dividing by a negative\\n- checked by substituting back" — ` +
+    `scannable, which is the entire point of something read later out of context. Skip it only when nothing ` +
+    `was resolved (still stuck, or just chatting).\n` +
+    `THE SPINE OF THE DOCUMENT, in the order a session unfolds: kind:"focus" ONCE at the start — today's arc ` +
+    `in one line, where you start and what you're building toward; kind:"definition" the FIRST time a key ` +
+    `term appears — term in **bold**, then the gloss, nothing more; kind:"formula" for each equation worth ` +
+    `keeping under their eyes; kind:"insight" when the STUDENT lands a genuine aha — THEIR sentence, credited ` +
+    `by name, not your explanation of it. What stays on the page should increasingly be theirs.\n` +
+    `PUT THE EXERCISE UP, NOT JUST ITS ANSWER. Walking a parallel worked example: the problem as posed (setup ` +
+    `+ given values) goes on the board FIRST, then chat handles the back-and-forth about it — so they look at ` +
+    `it instead of scrolling for it. Worked structure like this helps most while a skill is new; as they get ` +
+    `it, fade it and let the board carry only what they still need. A problem for THEM to answer inline goes ` +
+    `through CREATE_PROBLEM (it has the answer-checking), not here.\n\n` +
 
     `KEEP GETTING SMARTER ABOUT THEM: use "remember" whenever they mention something durable, worth knowing ` +
     `next time — a recurring struggle with a specific topic, a professor's grading quirk or class pattern ` +
