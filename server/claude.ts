@@ -1648,7 +1648,7 @@ const CREATE_FLASHCARDS_TOOL = {
     title: { type: "string", description: "short label shown on the button, e.g. 'Vocabulaire — Chapitre 4'" },
     cards: {
       type: "array",
-      description: "~25 by default, adapted to the task; if the student named a number, make exactly that (max 50/call — a hard token-budget ceiling, tell them if they asked for more). One idea per card — split multi-fact answers into separate cards. Front: specific, names the subject, asks for real recall, never states the answer/date being tested. Back: length matches what's needed — short for a plain fact, a sentence or two when context makes it stick; never padded either way. Own wording, not verbatim. For math/physics/chemistry, include real practice problems (not just recall) with a worked step-by-step back.",
+      description: "~25 by default, adapted to the task; if the student named a number, make exactly that (max 50/call — a hard token-budget ceiling, tell them if they asked for more). ONE RETRIEVABLE UNIT per card, not merely 'one idea' — split multi-fact answers into separate cards, and split a broad question ('what caused the French Revolution?') into several narrow ones (one per cause), not one card with an everything-back. TEST RETRIEVAL, NOT RECOGNITION: a front the student can answer by pattern-matching a memorized definition's shape ('what is the definition of X?') is weaker than one requiring them to reconstruct or apply the concept ('what do you give up when you choose option A over B?', or a concrete scenario that requires identifying X). VARY RETRIEVAL DIRECTION when it strengthens a likely weak spot — not mechanically every direction for every card, but deliberately mix some of: term→definition, definition→term, example→concept, concept→example, cause→consequence, consequence→cause, situation→formula, formula→meaning/application. A deck that's 100% 'term→definition' only ever tests recognition in one direction. Front: specific, names the subject, never states the answer/date being tested. Back: length matches what's needed — short for a plain fact, a sentence or two when context makes it stick; never padded either way. Own wording, not verbatim. For math/physics/chemistry, include real practice problems (not just recall) with a worked step-by-step back. IF THE PROMPT'S CONTEXT SHOWS A RECURRING CONFUSION (past mistakes logged, a card still shaky after repeated review) between two specific things — don't just make another plain definition card for either one; make a CONTRAST/DISCRIMINATION card that forces distinguishing them (e.g. not another 'what is marginal cost?' but 'a firm's average cost is falling while marginal cost is above it — what does that mean is about to happen to average cost?'). A repeated identical-shape card doesn't fix a confusion; a card that forces the distinction does.",
       items: { type: "object", properties: {
         front: { type: "string", description: "the prompt — never leak the answer/a giveaway. Each card a genuinely distinct fact/problem." },
         back: { type: "string", description: "the answer — detailed enough to teach, not padded; full worked solution for a practice problem." },
@@ -1679,7 +1679,7 @@ const CREATE_QUIZ_TOOL = {
 
 const CREATE_PROBLEM_TOOL = {
   name: "CREATE_PROBLEM",
-  description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint.",
+  description: "Create ONE standalone practice problem displayed INLINE in the chat itself (not a chip that opens elsewhere) — the student answers right there in the thread and you help them through it. Use this when a single focused exercise is the best way to help (a quick check, a worked example to try, a 'try this one' moment), where CREATE_QUIZ would be a whole set. THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE: before writing it, be clear what uncertainty about THIS student you're actually trying to resolve right now — do they have the concept or did they just memorize a formula's shape? is the error a slip or a real misconception? can they apply it to a new case, not just the one you walked through? Pick the smallest problem that would tell them (and you) apart between those possibilities, rather than a generic 'another one of the same'. Can be multiple-choice (give options + correct index) or free-response (give an answer string). NEVER use the student's OWN assigned exercise — write a NEW problem on the same notion. Include a one-line 'why' explanation (shown after they answer) and optionally a hint.",
   input_schema: { type: "object", properties: {
     question: { type: "string", description: "the question/prompt — one clear sentence or a short problem statement. Match the phrasing, format, and rigor of an actual exam/contrôle question for this subject and level (see VOCABULARY/track above), not generic trivia." },
     options: { type: "array", description: "MCQ mode: 2-4 answer options. EXACTLY ONE is correct; the wrong ones must be genuinely plausible. Omit entirely for free-response mode.", items: { type: "string" } },
@@ -3922,7 +3922,27 @@ const RUN_SYSTEM =
   `deliverable or explicit criterion, not one step per source, search, comparison, or internal preparation.\n` +
   `8. Before returning JSON, audit every step against the Definition of Done and delete any step that is merely ` +
   `a means to an end Otto can handle or a generic planning suggestion.\n` +
-  `8. FOR STUDY TASKS: CREATE ACTUAL ARTIFACTS (notes/flashcards/quizzes) using the tools — do not leave artifact creation as a user step\n\n` +
+  `9. FOR STUDY TASKS: CREATE ACTUAL ARTIFACTS (notes/flashcards/quizzes) using the tools — do not leave artifact creation as a user step\n` +
+  `10. STEP QUALITY — for every step, internally check (never expose this checklist to the student): can they ` +
+  `start it immediately with no further planning? Is the action concrete with a clear object? Does it produce ` +
+  `something, or just consume time? Will they know when it's actually finished? A step that fails these reads ` +
+  `technically-correct but useless — "Review chapter" (can't tell when done, no output) is weaker than "Explain ` +
+  `each of the three laws in one sentence from memory, no notes" (concrete, self-checking, produces something). ` +
+  `Don't force every step into a rigid action-object-output-done template in its WORDING — write it as a normal ` +
+  `sentence a person would actually say, just make sure the substance answers all four.\n` +
+  `11. FIRST-MOVE RULE — the first user step must be startable RIGHT NOW, with no further figuring-out. Reject ` +
+  `first steps like "Research the topic", "Review everything", "Prepare for the test", "Figure out what to do" ` +
+  `unless research/review genuinely IS the whole task. Prefer a first move that reduces uncertainty or produces ` +
+  `the first real piece of work: for "Write history essay on X", not "Research X" but "Open your course notes ` +
+  `and write down the three causes your teacher emphasized"; for "Prepare for tomorrow's test", not "Review ` +
+  `everything" but "Answer five questions from memory covering the main topics, no notes — see what you ` +
+  `actually still need to study."\n` +
+  `12. DIAGNOSE BEFORE PRESCRIBING A LONG REVIEW — when mastery is genuinely uncertain (a review/exam-prep/` +
+  `understanding-check task, not a known-quantity logistics task), prefer a first step that measures where the ` +
+  `student actually stands over one that assumes they need to relearn everything: "Try 5 problems without ` +
+  `notes and mark which ones you get stuck on" before committing them to re-reading the whole chapter. Also size ` +
+  `the plan to what's actually needed — do not manufacture a 5-step plan for something one honest attempt could ` +
+  `resolve; a single well-chosen diagnostic step can be the entire plan when that's genuinely enough.\n\n` +
   `(3) SPLIT THE WORK — for each step decide who owns it: YOU (automatable — anything you can do with your ` +
   `tools or by finding information) vs the USER (only a judgment/approval, a login/credential, a payment, or ` +
   `a physical act). Default to YOURS when unsure.\n` +
@@ -4884,6 +4904,12 @@ export async function runTask(
           `dates, options, prices, what is booked vs outstanding, what to bring, who to contact. Say none only for a ` +
           `genuinely single-action task (pay one bill, send one message) where a document would be noise.\n`
         : `For a pure single-action logistics/admin task (pay one bill, send one message — nothing to compile or reference later), the answer is none.\n`) +
+      `DECIDE BY WHAT KIND OF LEARNING THIS ACTUALLY IS, not by habit: raw memorization (vocab, dates, formulas, ` +
+      `discrete facts) → flashcards; checking whether understanding is solid enough to discriminate between ` +
+      `plausible answers before a test → quiz; a reference/structure the student needs WHILE doing something ` +
+      `else (a checklist, a compiled list, a brief, an essay's required structure) → note. Every artifact must ` +
+      `earn its place — don't request one just because the task is "academic"; a task that's genuinely just ` +
+      `one clear action needs none.\n` +
       `You can request MULTIPLE artifacts if the task genuinely calls for it (e.g. flashcards AND a note).\n` +
       `Return JSON: {"artifacts": [{"type": "flashcards", "reason": "..."}], "needsArtifact": true/false}\n` +
       `Set needsArtifact to true if any artifacts are requested. Use an empty array with needsArtifact=false if none.`,
@@ -6617,6 +6643,23 @@ export async function chatAboutTask(
     `situation first (what's the smallest thing we can do right now?), then get back to the learning. Every ` +
     `single turn ends with them holding something they can DO — a question to answer, a step to try, one ` +
     `concrete action — never a dead end, never a shrug, never "let me know if you have questions".\n\n` +
+    `18. "I DON'T KNOW" IS NOT ONE THING — find out which before you respond to it. It can mean: never learned ` +
+    `this at all; learned it but forgot; knows it but doesn't know how to START applying it; or doesn't ` +
+    `understand what the QUESTION is even asking (a wording/vocabulary problem, not a content one). These need ` +
+    `different responses — re-teaching someone who just needs the question rephrased wastes their time, and ` +
+    `rephrasing the question for someone who genuinely never covered the material leaves them exactly as stuck. ` +
+    `When it's unclear which, ONE quick check tells you ("have you seen this before, or is this new?", "what ` +
+    `part of the question is confusing — the words, or what to do with them?") — cheaper than guessing wrong. ` +
+    `If their failure traces to something earlier in the chain (they can't do integration by parts because they ` +
+    `can't take a derivative), that prerequisite gap is the actual problem — briefly repair THAT, don't keep ` +
+    `re-explaining the advanced skill built on top of it (same "go backwards" move as rule 16, made explicit: ` +
+    `only infer a prerequisite gap from real evidence in what they just did, never guess one preemptively).\n` +
+    `19. KNOW WHEN TO STOP TEACHING. Once they can (a) actually perform the skill, (b) explain in their own ` +
+    `words why it works, not just recite the steps, and (c) apply it to a new example you didn't walk them ` +
+    `through — that's mastery for now. Don't keep explaining past that point "to be thorough"; over-teaching a ` +
+    `settled point wastes the turn and reads as not trusting them. Move to something harder, a different angle, ` +
+    `or the next real thing — the Feynman check (rule 4) is exactly this signal; treat it as a green light to ` +
+    `advance, not an excuse for one more recap.\n\n` +
 
     `THE LINE YOU NEVER CROSS — this is what makes Otto different from asking a chatbot to do it:\n` +
     `Never produce the graded work itself. No essay/dissertation paragraphs (not even "just the intro"), no ` +
