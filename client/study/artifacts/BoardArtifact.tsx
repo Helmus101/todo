@@ -7,10 +7,13 @@ interface BoardArtifactProps {
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
+  focus: ["Objectif du jour", "Today's focus"],
   instruction: ["Consigne", "Instruction"],
   formula: ["Formule", "Formula"],
   summary: ["Résumé", "Summary"],
   problem: ["Problème", "Problem"],
+  insight: ["Déclic", "Insight"],
+  definition: ["Définition", "Definition"],
 };
 
 /** The persistent tutor Board (WRITE_TO_BOARD, server/claude.ts) — a general-purpose surface Otto writes
@@ -33,8 +36,8 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
       id="board"
       title={L("Le tableau d'Otto", "Otto's board")}
       body={L(
-        "Otto écrit ici de sa propre initiative — une formule à garder sous les yeux, une consigne pour démarrer, un résumé de ton raisonnement une fois un exercice fait, et des problèmes à résoudre. Toujours accessible, pas besoin de le rouvrir à chaque fois.",
-        "Otto writes here on its own — a formula worth keeping visible, an instruction to get started, a summary of your own reasoning once you've worked through something, and problems to solve. Always accessible, no need to reopen it each time.",
+        "Otto construit ici un document de séance, entrée par entrée : l'objectif du jour, les définitions et formules clés, tes propres déclics, un résumé de ton raisonnement — et des problèmes à résoudre. Toujours accessible, pas besoin de le rouvrir à chaque fois.",
+        "Otto builds a session document here, entry by entry: today's focus, key definitions and formulas, your own insights, a summary of your reasoning — and problems to solve. Always accessible, no need to reopen it each time.",
       )}
     />
   );
@@ -47,8 +50,8 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
         {hint}
         <div className="sm-board-empty">
           {L(
-            "Otto écrira ici — formules, consignes, résumés, problèmes — dès que ce sera utile.",
-            "Otto will write here — formulas, instructions, summaries, problems — whenever it's useful.",
+            "Le document de séance se construira ici — objectif du jour, définitions, formules, déclics, résumés — dès que ce sera utile.",
+            "The session document will build here — today's focus, definitions, formulas, insights, summaries — whenever it's useful.",
           )}
         </div>
       </div>

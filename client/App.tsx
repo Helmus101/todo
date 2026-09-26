@@ -2715,7 +2715,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
         <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
-        <BlackbaudTile />
         <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
       </section>
 
