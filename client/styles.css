@@ -828,11 +828,10 @@ input:focus, textarea:focus {
   padding: var(--space-6);
   margin: var(--space-5) 0 var(--space-6);
   border-radius: var(--radius);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--bg-2);
+  border: none;
   box-shadow: none;
   animation: appleRise var(--duration-spring) var(--ease) 0.05s backwards;
-  transition: border-color var(--duration-base) var(--ease);
 }
 .dash-hero-kicker {
   font-size: 11.5px;
@@ -872,6 +871,9 @@ input:focus, textarea:focus {
   gap: var(--space-2);
   margin-top: var(--space-3);
 }
+/* Minimalist meta line — the subject + due date carry the context; the quadrant label is
+   noise on top of them, so it doesn't render at any width. */
+.dash-hero-meta .card-quadrant { display: none; }
 .dash-hero-cta {
   margin-top: var(--space-5);
 }
@@ -882,7 +884,7 @@ input:focus, textarea:focus {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   background: var(--accent-soft);
-  border: 1px solid var(--line-glass);
+  border: none;
   font-size: 13px;
   line-height: 1.45;
   color: var(--ink-2);
@@ -899,7 +901,7 @@ input:focus, textarea:focus {
 .chip-tasktype {
   background: var(--surface-glass);
   color: var(--ink-2);
-  border: 1px solid var(--line-glass);
+  border: none;
   text-transform: capitalize;
   font-size: 11px;
   font-weight: 600;
@@ -973,17 +975,12 @@ input:focus, textarea:focus {
 /* ─── Apple Add Task Bar ──────────────────────────────────────────────────── */
 .add-task-row {
   display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); margin-bottom: var(--space-6);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--bg-2);
+  border: none;
   border-radius: var(--radius);
   box-shadow: none;
-  transition: border-color var(--duration-fast) var(--ease);
-}
-@media (hover: hover) {
-  .add-task-row:hover { border-color: var(--ink-3); }
 }
 .add-task-row:focus-within {
-  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .add-plus { color: var(--ink-3); font-size: var(--text-xl); font-weight: 300; line-height: 1; flex: none; transition: color var(--duration-fast) var(--ease-spring); }
@@ -1439,6 +1436,10 @@ input:focus, textarea:focus {
 .tf-title { font-size: var(--text-xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; line-height: 1.3; margin: 0 34px 0 0; }
 .tf-why { font-size: var(--text-base); color: var(--ink-2); line-height: 1.45; margin: -2px 34px 0 0; }
 .tf-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+/* Minimalist meta line — the subject + due date carry the context; the task-type chip and
+   quadrant label are noise on top of them, so they don't render at any width. */
+.tf-meta .chip-tasktype,
+.tf-meta .card-quadrant { display: none; }
 .tf-study-btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--line);
@@ -1455,10 +1456,10 @@ input:focus, textarea:focus {
    cluster above — see .task-focus's comment. */
 .step-hero {
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3);
-  background: var(--bg-2); border: 1px solid var(--line-glass);
+  background: var(--bg-2); border: none;
   border-radius: var(--radius-lg, 22px); padding: var(--space-5) var(--space-5);
   margin-top: var(--space-3);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   /* Apple Design §4 — spring transitions for interactive elements */
   transition: box-shadow var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease-spring);
 }
@@ -1474,7 +1475,7 @@ input:focus, textarea:focus {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
   font-size: var(--text-sm); color: var(--ink-2); line-height: 1.45;
   margin: -2px 0 0; padding: 10px 14px; background: var(--accent-soft); border-radius: var(--radius-sm);
-  border: 1px solid rgba(var(--accent-rgb), 0.16);
+  border: none;
 }
 .first-action-label { flex: none; font-weight: var(--weight-semibold); color: var(--accent); }
 .first-action-minutes { flex: none; color: var(--ink-3); margin-left: auto; }
@@ -1496,9 +1497,9 @@ input:focus, textarea:focus {
    instead of a borderless full-bleed panel. */
 .tf-board-inline {
   margin-top: var(--space-3);
-  border: 1px solid var(--line);
+  border: none;
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--bg-2);
   max-height: 360px;
   overflow: auto;
 }
@@ -1940,9 +1941,9 @@ input:focus, textarea:focus {
   padding: 22px 24px;
   margin-bottom: var(--space-5);
   background: var(--surface-glass);
-  border: 1px solid var(--line-glass);
+  border: none;
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   /* Apple Design §12 — glass material */
   backdrop-filter: blur(var(--blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
@@ -3806,6 +3807,16 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .hero-cta { flex-direction: column; width: 100%; }
 .hero-cta .btn { width: 100%; }
 .landing-sec { padding: 40px 20px; }
+
+/* ─── Mobile sizing trims ────────────────────────────────────────────────────
+   The minimalist border removal (tints + spacing instead of nested boxes, quiet meta lines) lives
+   with each component's base rule above and applies at EVERY width — it is not a phone-only look.
+   All that remains phone-specific here is tighter sizing around the one thing that matters. */
+@media (max-width: 640px) {
+  /* Tighter step-hero padding on mobile — less air around the one thing that matters. */
+  .step-hero { padding: var(--space-4); border-radius: var(--radius); }
+  .hero-step { font-size: 18px; }
+}
 
 /* ─── Desktop / tablet upgrades ────────────────────────────────────────────────
    Everything above is the phone layout. Controls stay touch-sized at every width now — this is meant to
