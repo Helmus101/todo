@@ -1352,6 +1352,45 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   // Total-outage detection: every ask() call failing used to silently return a normal-looking RunOutput
   // instead of throwing, bypassing server/tasks.ts's actual retry/backoff machinery entirely.
   check("runTask throws when every AI call in the run failed (total-outage detection)", /askCalls > 0 && askFailures === askCalls/.test(runTaskBody));
+
+  // Human-judgment layer added this round (step quality, first-move, diagnose-before-prescribing) — pinned
+  // so a future prompt edit can't silently drop them the way the flashcard-veto/board-write rules almost
+  // did earlier this session. These are prompt-only additions (deliberately NOT new typed state — see the
+  // "implementation discipline" reasoning this round: prefer prompt judgment over speculative abstractions
+  // for behavior an LLM can already reason about directly).
+  // NOTE: these live in runTask's OWN "STEP 4" ask() prompt (the RULES: bullet list), NOT in the separate
+  // RUN_SYSTEM constant (server/claude.ts) — RUN_SYSTEM looks like it should be runTask's step-generation
+  // system prompt (its own doc comments reference it as such) but is DEAD CODE: declared, never passed to
+  // any chat.completions.create call anywhere in the file (confirmed: grepping "RUN_SYSTEM" across the
+  // whole file finds only its own declaration and two comments naming it, zero actual usages). A first pass
+  // at this round's rules was added there and silently had ZERO effect until caught by this exact test
+  // failing — pinned here specifically so that mistake can't recur.
+  check("runTask's real step-4 prompt has the STEP QUALITY rule (start-immediately/concrete/produces-output/self-checking-done)", /STEP QUALITY.{0,60}for every step, internally check/.test(runTaskBody));
+  check("runTask's real step-4 prompt has the FIRST-MOVE rule with its example", /FIRST STEP MUST BE STARTABLE RIGHT NOW/.test(runTaskBody));
+  check("runTask's real step-4 prompt has the diagnose-before-assuming-relearn rule for uncertain-mastery tasks", /WHEN MASTERY IS GENUINELY UNCERTAIN/.test(runTaskBody));
+}
+section("Flashcard/artifact-selection prompts carry the retrieval-quality and error-targeting rules (source pins)");
+{
+  const src2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const cardsToolIdx = src2.indexOf("const CREATE_FLASHCARDS_TOOL = {");
+  const cardsToolBody = src2.slice(cardsToolIdx, src2.indexOf("\n};", cardsToolIdx));
+  check("flashcard tool description requires ONE RETRIEVABLE UNIT per card, not just 'one idea'", /ONE RETRIEVABLE UNIT per card/.test(cardsToolBody));
+  check("flashcard tool description requires testing retrieval over recognition", /TEST RETRIEVAL, NOT RECOGNITION/.test(cardsToolBody));
+  check("flashcard tool description asks for varied retrieval direction", /VARY RETRIEVAL DIRECTION/.test(cardsToolBody));
+  check("flashcard tool description asks for a contrast/discrimination card on a recurring confusion, not a duplicate definition card", /CONTRAST\/DISCRIMINATION card/.test(cardsToolBody));
+
+  const problemToolIdx = src2.indexOf("const CREATE_PROBLEM_TOOL = {");
+  const problemToolBody = src2.slice(problemToolIdx, src2.indexOf("\n};", problemToolIdx));
+  check("practice-problem tool frames the problem as a measurement of the student's understanding, not just practice", /THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE/.test(problemToolBody));
+}
+section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosis + mastery-stop rules (source pins)");
+{
+  const src3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const chatStart = src3.indexOf("export async function chatAboutTask(");
+  const chatBody = src3.slice(chatStart, src3.indexOf("\nexport async function", chatStart + 10));
+  check("tutor prompt distinguishes never-learned/forgot/cant-start/dont-understand-the-question before responding to 'I don't know'", /"I DON'T KNOW" IS NOT ONE THING/.test(chatBody));
+  check("tutor prompt repairs a prerequisite gap instead of re-explaining the advanced skill built on it", /that prerequisite gap is the actual problem/.test(chatBody));
+  check("tutor prompt has an explicit mastery-stop rule (perform + explain-why + transfer → move on)", /KNOW WHEN TO STOP TEACHING/.test(chatBody));
 }
 // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
 // source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification

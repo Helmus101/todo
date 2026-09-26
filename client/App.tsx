@@ -234,9 +234,13 @@ const navigate = (r: string) => {
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
   const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const vtDocument = document as Document & { startViewTransition?: (cb: () => void) => void };
+  const vtDocument = document as Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready: Promise<void>; updateCallbackDone: Promise<void> } };
   if (reduceMotion || typeof vtDocument.startViewTransition !== "function") { go(); return; }
-  vtDocument.startViewTransition(go);
+  // A transition's `finished` (and `ready`) promise REJECTS with AbortError when a newer transition starts
+  // before it settles — expected/benign on a fast double-click or rapid sidebar navigation, but with no
+  // handler attached it surfaced as a real "Unhandled promise rejection" in production (Sentry/console).
+  // The transition itself still runs/cross-fades correctly; only the settlement promise is ever rejected.
+  vtDocument.startViewTransition(go).finished.catch(() => {});
 };
 
 // Last-known task list — hydrates the dashboard INSTANTLY on open (server truth replaces it right after).

@@ -65,7 +65,7 @@ function isExpectedPronoteError(e: unknown): boolean {
   return e instanceof pronote.BadCredentialsError || e instanceof pronote.AccountDisabledError ||
     e instanceof pronote.SuspendedIPError || e instanceof pronote.RateLimitedError ||
     e instanceof pronote.SecurityError || e instanceof pronote.SessionExpiredError ||
-    e instanceof pronote.PageUnavailableError;
+    e instanceof pronote.PageUnavailableError || e instanceof pronote.ServerSideError;
 }
 
 /** Turn pawnote's typed errors into something a user can actually act on. */
@@ -79,6 +79,7 @@ function humanizeError(e: unknown): string {
   if (e instanceof pronote.PageUnavailableError) {
     return "Impossible de contacter Pronote à cette adresse — vérifie l'URL (ex : https://0000000a.index-education.net/pronote/eleve.html), copiée depuis la page de connexion de ton établissement.";
   }
+  if (e instanceof pronote.ServerSideError) return "Le serveur Pronote de ton établissement a rencontré une erreur — réessaie dans un instant.";
   const msg = (e as any)?.message || String(e);
   return `Impossible de contacter Pronote : ${msg}`.slice(0, 200);
 }
