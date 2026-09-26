@@ -1675,72 +1675,6 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
   );
 }
 
-/** Per-subject grade averages pulled from Pronote (server/pronote.ts's pronoteGrades). Was previously
- *  labeled "Tes examens"/"Your exams" and also fetched (but never rendered) upcoming test dates — that dead
- *  fetch is gone and the section is honestly named for what it actually shows: grades, not exam dates. */
-function GradesPanel({ profile }: { profile: Profile | null }) {
-  const L = useLang();
-  const [grades, setGrades] = useState<{ subject: string; average: number; outOf: number }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState("");
-
-  const syncGrades = async () => {
-    setSyncing(true);
-    setSyncError("");
-    try {
-      const result = await api.syncPronoteGrades();
-      setGrades(result.grades);
-    } catch (error) {
-      setSyncError(error instanceof Error ? error.message : L("Impossible de récupérer les notes Pronote.", "Could not pull grades from Pronote."));
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    api.pronoteGrades()
-      .then((result) => { if (!cancelled) setGrades(result.grades); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
-
-  const pronoteGrades = (profile?.grades || [])
-    .filter((g) => g.source === "pronote")
-    .map((g) => ({ subject: g.subject, average: g.grade, outOf: g.scale }));
-  const allGrades = [...(grades.length > 0 ? grades : pronoteGrades)]
-    .filter((grade, index, list) => index === list.findIndex((candidate) => candidate.subject.toLowerCase() === grade.subject.toLowerCase()));
-
-  return (
-    <div className="exams-editor">
-      <div className="exam-grades-heading">
-        <p className="settings-hint">{L("Notes par matière (Pronote)", "Grades by subject (Pronote)")}</p>
-        <button type="button" className="btn xs ghost" onClick={() => void syncGrades()} disabled={syncing}>
-          {syncing ? L("Récupération…", "Pulling…") : L("Récupérer depuis Pronote", "Pull from Pronote")}
-        </button>
-      </div>
-      {syncError ? <p className="error small" role="alert">{syncError}</p> : null}
-      {loading ? (
-        <p className="muted small">{L("Chargement…", "Loading…")}</p>
-      ) : allGrades.length > 0 ? (
-        <ul className="grade-list">
-          {allGrades.map((g, i) => (
-            <li key={`${g.subject}-${i}`} className="grade-row">
-              <div className="grade-row-top">
-                <span className="grade-subject">{g.subject}</span>
-                <span className="grade-value">{g.average}/{g.outOf}</span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="muted small">{L("Aucune note disponible.", "No grades available.")}</p>
-      )}
-    </div>
-  );
-}
-
 // Monday (YYYY-MM-DD) of the week containing `dateStr` — mirrors mondayOf in server/index.ts exactly
 // (same simple, year-boundary-safe scheme, not a formal ISO week number). MUST do the arithmetic in UTC,
 // not local time: parsing "T00:00:00" (no Z) reads it as LOCAL midnight, but then calling .toISOString()
@@ -2825,11 +2759,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
           </label>
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
-        <h3>{L("Tes notes", "Your grades")}</h3>
-        <GradesPanel profile={profile} />
       </section>
 
       {(() => {
