@@ -297,7 +297,7 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
       <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
       <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
       {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
-      {task.why ? <p className="dash-hero-why">{stripStrayMarkdown(task.why)}</p> : null}
+      {(task.nudgeLine || task.why) ? <p className="dash-hero-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
       {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
       {(task.sourceSubject || w || showChip || task.taskType) ? (
         <div className="dash-hero-meta">
@@ -571,7 +571,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
             <span className="task-goal-tag">{L("Objectif de fin", "Definition of Done")}:</span> {stripStrayMarkdown(task.goal)}
           </div>
         ) : null}
-        {task.why ? <p className="tf-why">{stripStrayMarkdown(task.why)}</p> : null}
+        {(task.nudgeLine || task.why) ? <p className="tf-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
         {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
         <div className="tf-meta">
           {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
@@ -850,7 +850,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     const autoStarting = isInFlight(task.status);
     return (
       <div className="step-hero hero-empty">
-        <p className="hero-line">{stripStrayMarkdown(subtitle(task) || task.why || "")}</p>
+        <p className="hero-line">{stripStrayMarkdown(subtitle(task) || task.nudgeLine || task.why || "")}</p>
         {autoStarting ? (
           <p className="hero-sub">{L("Otto prépare ça…", "Otto is getting this ready…")}</p>
         ) : (

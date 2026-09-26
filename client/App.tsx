@@ -287,6 +287,20 @@ export function App() {
       try { localStorage.setItem("otto-density-arm", d.manual ? "" : d.density); } catch { /* ignore */ }
     }).catch(() => {});
   }, [!!status]);
+  // Momentum callout — "you've kept up with math four days running" — surfaced on the dashboard itself,
+  // not buried in Settings' quiet "what Otto's learned" panel (the ONLY place subjectMastery's trend was
+  // rendered before this). A genuine, already-computed "up" trend is real rapport-building at the app level
+  // (same reasoning as chatAboutTask's growthLine in server/claude.ts, just surfaced here instead of only
+  // mid-conversation) — fetched once per load, same one-shot posture as the density suggestion above; a
+  // trend can't meaningfully change within a single session, so no need to re-poll.
+  const [momentumSubject, setMomentumSubject] = useState<string | null>(null);
+  useEffect(() => {
+    if (!status?.loggedIn) return;
+    void api.patternsSummary().then((p) => {
+      const up = p.subjectMastery.find((s) => s.trend === "up");
+      setMomentumSubject(up ? up.subject : null);
+    }).catch(() => {});
+  }, [status?.loggedIn]);
   // AI-personalized theme (opt-in, see Settings) — applied as inline custom-property overrides on <html>,
   // never a stylesheet swap. Re-applies whenever status refreshes so a change made in one tab/device shows
   // up here too, and clears cleanly (removeProperty) when customTheme is unset — e.g. after Reset.
@@ -1036,6 +1050,11 @@ export function App() {
           <div className="dash-head">
             <p className="dash-date">{todayLong(status?.language)}</p>
             <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span className="accent-num">{status.name || firstName(status.user)}</span></> : null}.</h1>
+            {momentumSubject ? (
+              <p className="dash-momentum">
+                {en ? `You've been genuinely improving in ${momentumSubject} lately — keep it up.` : `Tu progresses vraiment en ${momentumSubject} en ce moment — continue comme ça.`}
+              </p>
+            ) : null}
             {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
                 that read like debug output, not like something written for a stressed 17-year-old. A second
                 sentence names what's actually next (the hero task) rather than just a count, so the line
