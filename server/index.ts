@@ -19,7 +19,7 @@ import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, study
 import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
-import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
+import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -1078,9 +1078,15 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
     }
   }
+  // Spark-vs-facilitator nudge (patterns.ts's stallNudgeLine) — computed fresh on every request, never
+  // stored: it depends on "how many days since shown", which changes on its own even with nothing else
+  // touched. Attached only to the OUTGOING copy, never written back onto req.session.tasks, so it can never
+  // leak into cloud storage or a cross-device merge.
+  const withNudge = (req.session.tasks || []).map((t) =>
+    !isHandled(t.status) ? { ...t, nudgeLine: stallNudgeLine(t, req.session.profile) || undefined } : t);
   // ETag: 4-second poll loops hit this on every tick — a hash-gated 304 means 0 bytes egress on the
   // overwhelming-majority of polls where nothing actually changed since the last fetch.
-  const tasksJson = JSON.stringify(req.session.tasks || []);
+  const tasksJson = JSON.stringify(withNudge);
   const etag = `"${createHash("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);
   if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }

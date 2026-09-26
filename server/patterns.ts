@@ -166,3 +166,44 @@ export function weakSubjectBoost(task: { sourceSubject?: string }, weakSubjects:
 export function twoMinuteRuleBoost(task: { firstAction?: { minutes?: number } }): number {
   return (task.firstAction?.minutes ?? Infinity) <= 2 ? 0.15 : 0;
 }
+
+/** Fogg's Spark-vs-Facilitator split, applied to nudge copy. Otto's step breakdown/firstAction is a
+ *  FACILITATOR strategy (make the behavior easier) — the only one in the toolbox. It's the wrong tool when
+ *  a task is ALREADY a single easy action and it's still sitting untouched days later: that's a MOTIVATION
+ *  problem (the student has full ability, they're avoiding it), and repeating the same reminder/step just
+ *  repeats the thing that isn't working. Detected purely from data already on the task (shownAt/
+ *  firstActionAt — see shared/types.ts's own doc comment — plus each step's own difficulty) — no new
+ *  field, no AI call, same "plain, inspectable score" posture as the rest of this file.
+ *  Returns a SPARK line (a reframe, lower the stakes) to show INSTEAD of task.why on the dashboard; null
+ *  means "no override" — let the existing why/firstAction stand, which IS the facilitator path already
+ *  in place for anything that genuinely still needs structure. */
+export function stallNudgeLine(
+  task: {
+    why: string;
+    firstAction?: { text: string; minutes?: number };
+    steps?: { difficulty?: string; done?: boolean; automatable?: boolean }[];
+    shownAt?: string; firstActionAt?: string; when?: string; whenApprox?: boolean;
+  },
+  profile?: Profile,
+  now: Date = new Date(),
+): string | null {
+  if (task.firstActionAt) return null; // already acted on once — no motivation problem left to speak to
+  if (!task.shownAt) return null; // never actually shown yet — too early to call this "stalled"
+  const idleDays = (now.getTime() - Date.parse(task.shownAt)) / 86_400_000;
+  if (!(idleDays >= 3)) return null; // NaN-safe: a bad/missing timestamp also skips, same as "too soon"
+  // A real, firm, near deadline is its own motivator — don't reframe genuine urgency as a motivation problem.
+  if (task.when && !task.whenApprox) {
+    const daysToDeadline = (Date.parse(task.when) - now.getTime()) / 86_400_000;
+    if (daysToDeadline < 3) return null;
+  }
+  const remaining = (task.steps || []).filter((s) => !s.done && !s.automatable);
+  // "Already a single, easy action" — no ability gap left to close, so more structure isn't the fix.
+  const isSimple = remaining.length <= 1 && remaining.every((s) => (s.difficulty || "easy") === "easy");
+  if (!isSimple) return null;
+  const fr = profile?.language === "fr";
+  const smallest = (task.firstAction?.text || task.why || "").trim().replace(/[.!]+$/, "");
+  if (!smallest) return null;
+  return fr
+    ? `Toujours là — mais c'est petit : ${smallest}. Pas un projet, juste un truc de deux minutes.`
+    : `Still there — but it's small: ${smallest}. Not a project, just a two-minute thing.`;
+}
