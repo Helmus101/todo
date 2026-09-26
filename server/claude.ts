@@ -1698,10 +1698,10 @@ const CREATE_PROBLEM_TOOL = {
 // the student's own reasoning once they've worked through something. Not scoped to practice problems.
 const WRITE_TO_BOARD_TOOL = {
   name: "WRITE_TO_BOARD",
-  description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. Use it when writing something down genuinely helps: a formula or fact worth keeping visible, a short instruction to kick off a working session ('start working through part a'), a diagram/sketch, or — once they've actually worked through something — a plain summary of THEIR reasoning (not yours) so they can see their own thinking laid out. Keep each entry SHORT and focused, one idea per call — this is a board, not a document; call it again later for the next thing rather than writing a wall of text in one entry. Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
+  description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry to that document — never a wall of text in one call; write the next thing later as the session moves on. Use it when writing something down genuinely helps: a formula or fact worth keeping visible, a short instruction to kick off a working session ('start working through part a'), a diagram/sketch, or — once they've actually worked through something — a plain summary of THEIR reasoning (not yours). Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry itself — plain text/light markdown, one focused idea, short (a sentence or two, or a single formula/fact — not a paragraph). ANY diagram/ASCII sketch/labeled shape (a triangle, a timeline, a table drawn with dashes and slashes) MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left. If it needs to line up visually, it needs the fence." },
-    kind: { type: "string", enum: ["note", "instruction", "formula", "summary"], description: "loose styling hint: 'instruction' for a directive to start/try something, 'formula' for a fact/equation worth keeping visible, 'summary' for a recap of the STUDENT's reasoning, 'note' for anything else. Defaults to 'note' if omitted." },
+    kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for an equation/fact worth keeping visible; 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'note' for anything else. Defaults to 'note' if omitted." },
   }, required: ["text"] },
 };
 
@@ -1815,7 +1815,7 @@ export function makeProblem(input: any): { problem: TaskProblem } | { error: str
   };
 }
 
-const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary"]);
+const BOARD_KINDS = new Set(["note", "instruction", "formula", "summary", "focus", "insight", "definition"]);
 export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: string } {
   const text = String(input?.text || "").trim().slice(0, 600);
   if (!text) return { error: "ERROR: a board entry needs non-empty text." };
@@ -6538,8 +6538,10 @@ export async function chatAboutTask(
     `partie a pendant que je regarde"), or — once they've actually worked through something — a plain summary ` +
     `of THEIR reasoning (their words/logic, not a restatement of yours) so they can see their own thinking ` +
     `laid out. Doesn't count against the artifact cap above and isn't limited to canvas mode — reach for it ` +
-    `any time in an ordinary conversation too, not just when working a problem. Each call is ONE short entry, ` +
-    `not a running document: a sentence or two, or a single formula, never a paragraph. You can ONLY write/add ` +
+    `any time in an ordinary conversation too, not just when working a problem. Each call is ONE short entry ` +
+    `— a sentence or two, or a single formula, never a paragraph; the ENTRIES TOGETHER build up a running ` +
+    `document, which is why one idea per call matters: the next thing gets its own entry later as the session ` +
+    `moves on. You can ONLY write/add ` +
     `entries to the board; you MUST NEVER remove, clear, or wipe out existing items or artifacts from the ` +
     `student's board or canvas. Don't narrate that you're writing it ("let me note that down") — just call the tool; ` +
     `the board itself is the visible part.\n` +
@@ -6577,6 +6579,19 @@ export async function chatAboutTask(
     `thing — it's SCANNABLE, which is the whole point of something meant to be looked back at. This is THEIR ` +
     `reasoning trace, in the order they actually did it (including a wrong turn they corrected, if that's ` +
     `what happened) — not a cleaned-up "ideal" derivation they never actually produced.\n` +
+    `BUILD THE BOARD LIKE A LESSON DOCUMENT, NOT A PILE OF STICKY NOTES. A student scrolling back through ` +
+    `the board later should read coherent lesson notes that tell the story of the session. Four kinds do the ` +
+    `heavy lifting, roughly in this order as a session unfolds: kind:"focus" ONCE at the start of a working ` +
+    `session — today's arc in two sentences, the core idea you start from and what you're building toward, ` +
+    `naming the payoff ("We'll start with the core idea that every choice costs something else, then build up ` +
+    `supply and demand — the one diagram most of economics runs through"); kind:"definition" the FIRST time a ` +
+    `key term comes up — the term in **bold**, then a plain-language definition a classmate could repeat ` +
+    `back; kind:"formula" for each key equation worth keeping under their eyes while they work; kind:"insight" ` +
+    `the moment the STUDENT lands a genuine aha in their own words — credit them by name ("Will's insight: ` +
+    `foreign holders of your currency must ultimately spend or invest it back in your economy — so every ` +
+    `dollar that leaves as imports must return as a capital inflow"). The insight entry is THEIR sentence, ` +
+    `not your explanation of it — the board is where their own thinking becomes part of the document, which ` +
+    `is the whole point of tutoring: what stays on the page should increasingly be theirs.\n` +
     `PUT THE ACTUAL EXERCISE ON THE BOARD TOO, NOT JUST THE ANSWER TO IT. When you walk through a parallel ` +
     `worked example, write the problem itself onto the board first (kind:"formula" or "note" — the setup, ` +
     `the given values, the equation as posed) BEFORE working it with them in chat, so it's sitting there for ` +

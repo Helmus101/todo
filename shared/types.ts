@@ -1161,8 +1161,11 @@ export interface BoardEntry {
    *  since a formula, an instruction, and a summary all need different shapes. */
   text: string;
   /** Loose styling hint only, not a hard schema — lets the UI render a formula differently from an
-   *  instruction without forcing Otto into a rigid structure for what's meant to be a free-form board. */
-  kind?: "note" | "instruction" | "formula" | "summary";
+   *  instruction without forcing Otto into a rigid structure for what's meant to be a free-form board.
+   *  "focus" opens a session's document (today's arc), "definition" records a key term the first time it
+   *  comes up, "insight" credits the STUDENT's own aha by name — together with formula/summary these make
+   *  the board read like a document being built entry by entry, not a pile of disconnected notes. */
+  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition";
   at: string;
 }
 

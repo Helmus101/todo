@@ -5580,16 +5580,42 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   font-size: var(--text-sm);
 }
 .sm-board-body { height: 100%; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+/* Each new entry eases in under the last one, so the board FEELS like a document being written onto —
+   Otto adds the next line and the page grows, rather than a card popping into a grid. Keyed by entry id,
+   so the animation only runs when an entry first mounts, never when older entries re-render. */
+@keyframes sm-board-entry-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .sm-board-entry {
   padding: var(--space-3);
   background: var(--bg-2);
   border-radius: var(--radius-xs);
   border-left: 3px solid var(--line);
+  animation: sm-board-entry-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .sm-board-entry-instruction { border-left-color: var(--accent); }
 .sm-board-entry-formula { border-left-color: var(--warn, #d97706); font-family: var(--mono, monospace); }
 .sm-board-entry-summary { border-left-color: var(--ok, #16a34a); }
 .sm-board-entry-problem { border-left-color: var(--ink-3); }
+/* The session document's OPENING heading — "Today's focus". Not a card: a title sitting on the page, so the
+   board reads like a document that starts somewhere rather than a list of floating notes. */
+.sm-board-entry-focus {
+  background: transparent;
+  border-left: none;
+  padding: var(--space-1) 0 var(--space-3) 0;
+}
+.sm-board-entry-focus .sm-board-entry-kind { color: var(--accent); margin-bottom: 6px; }
+.sm-board-entry-focus .sm-board-entry-text { font-size: var(--text-base); font-weight: 600; line-height: 1.45; color: var(--ink); }
+/* The STUDENT's own aha, credited by name — the one entry kind that's theirs, so it reads as a highlight
+   of the document rather than another note from the tutor. */
+.sm-board-entry-insight {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.sm-board-entry-insight .sm-board-entry-kind { color: var(--accent); }
+/* A key term's first appearance — glossary voice, keeps the orange "reference material" border used by formulas. */
+.sm-board-entry-definition { border-left-color: var(--accent-2); }
 .sm-board-entry-kind {
   display: block;
   font-size: 10px;
