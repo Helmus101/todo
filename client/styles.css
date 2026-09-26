@@ -3807,6 +3807,40 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .hero-cta .btn { width: 100%; }
 .landing-sec { padding: 40px 20px; }
 
+/* ─── Mobile minimalism — fewer borders, calmer surfaces ─────────────────────
+   On a phone, nested borders (a card inside a section inside a page) stack up into visual noise that
+   reads as cluttered, not structured. Background tints + spacing separate the same sections just as
+   clearly with less ink on the screen — the "minimalist" ask. Desktop keeps the borders (below) since a
+   wider screen has room for them to read as structure rather than noise. */
+@media (max-width: 640px) {
+  /* The dashboard spotlight doesn't need a box — its size and position already say "look here first." */
+  .dash-hero { border: none; background: var(--bg-2); }
+  /* Settings sections: spacing separates them, not borders. */
+  .settings-sec { border: none; background: var(--surface); box-shadow: none; }
+  .settings-sec + .settings-sec { margin-top: var(--space-4); }
+  /* The "Do this now" hero — a background tint alone, no border-in-border. */
+  .step-hero { border: none; background: var(--bg-2); box-shadow: none; }
+  /* The goal/definition-of-done banner — tint only, no outline. */
+  .task-goal-banner { border: none; }
+  /* The anti-procrastination first-action nudge — tint only. */
+  .first-action { border: none; }
+  /* The board inline — no border, just the surface tint. */
+  .tf-board-inline { border: none; background: var(--bg-2); }
+  /* The add-task bar — blend into the page, the focus ring still draws the eye when active. */
+  .add-task-row { border: none; background: var(--bg-2); }
+  /* The task-type chip — drop its border on mobile, the tint is enough. */
+  .chip-tasktype { border: none; }
+  /* The task page meta line: hide the task-type and quadrant labels on mobile — the subject + due date
+     already carry the context, and a phone row can't afford four chips without wrapping noisily. */
+  .tf-meta .chip-tasktype,
+  .tf-meta .card-quadrant { display: none; }
+  /* The hero meta on the dashboard spotlight: same trim — subject + date is enough on a phone. */
+  .dash-hero-meta .card-quadrant { display: none; }
+  /* Tighter step-hero padding on mobile — less air around the one thing that matters. */
+  .step-hero { padding: var(--space-4); border-radius: var(--radius); }
+  .hero-step { font-size: 18px; }
+}
+
 /* ─── Desktop / tablet upgrades ────────────────────────────────────────────────
    Everything above is the phone layout. Controls stay touch-sized at every width now — this is meant to
    read as a mobile app, not a layout that quietly re-optimizes its hit targets for a mouse — so this
