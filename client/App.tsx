@@ -966,6 +966,15 @@ export function App() {
             {status?.language === "en" ? "Settings" : "Réglages"}
           </a>
         </nav>
+        <div className="sidebar-footer">
+          <a className="sidebar-user" href="/settings" onClick={() => setSidebarOpen(false)}>
+            <span className="sidebar-user-avatar">{(status.name || firstName(status.user) || "O").charAt(0).toUpperCase()}</span>
+            <span className="sidebar-user-info">
+              <span className="sidebar-user-name">{status.name || firstName(status.user) || (en ? "Account" : "Compte")}</span>
+              <span className="sidebar-user-email">{status.user || ""}</span>
+            </span>
+          </a>
+        </div>
       </aside>
 
       {/* Mobile sidebar toggle */}
@@ -980,6 +989,13 @@ export function App() {
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <header className="topbar">
+          <div className="topbar-title">{(() => {
+            if (route === "settings") return en ? "Settings" : "Réglages";
+            if (route === "log") return en ? "Journal" : "Journal";
+            if (route === "study") return en ? "Study" : "Réviser";
+            if (route === "errorlog") return en ? "Error log" : "Erreurs";
+            return en ? "Tasks" : "Tâches";
+          })()}</div>
           <div className="spacer" />
           {(route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
         </header>
