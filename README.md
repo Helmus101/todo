@@ -27,7 +27,7 @@ Notion est supporté côté serveur mais volontairement caché de l'interface po
 
 ## Mode Étude
 
-Un bureau de travail plein écran, sans navigateur ni onglets à jongler : clique "Étudier" sur une tâche et tout ce qu'il faut pour l'avancer arrive sur un seul bureau — matériaux (PDF, liens, fiches/decks/quiz qu'Otto a déjà préparés), notes, brouillon libre, minuteur (dont Pomodoro auto), fond d'écran perso, et une petite sélection d'outils ouverts à la demande (calculatrice, Desmos, dictionnaire bilingue, tableau blanc, post-it, générateur de citations APA/MLA/Chicago). "Demander à Otto" y fonctionne exactement comme sur la carte de tâche — même tuteur, mêmes garde-fous ("il explique, il ne donne pas la réponse"). Tout est sauvegardé en local (IndexedDB) par tâche, donc tu retrouves ton bureau exactement comme tu l'as laissé.
+Un bureau de travail plein écran, sans navigateur ni onglets à jongler : clique "Étudier" sur une tâche et tout ce qu'il faut pour l'avancer arrive sur un seul bureau — matériaux (PDF, liens, fiches/decks/quiz qu'Otto a déjà préparés), notes, brouillon libre, minuteur (dont Pomodoro auto), fond d'écran perso, et une petite sélection d'outils ouverts à la demande (calculatrice, Desmos, dictionnaire bilingue, tableau blanc, post-it, générateur de citations APA/MLA/Chicago). "Demander à Otto" y fonctionne comme un vrai tuteur socratique — il pose des questions, s'adapte quand une approche ne marche pas, jamais la réponse directe (mêmes garde-fous que sur la carte de tâche) — et écrit à l'occasion sur le **Tableau**, une surface toujours visible où se construit, entrée par entrée, un vrai document de séance : objectif du jour, définitions et formules clés, tes propres déclics, résumé de ton raisonnement une fois un exercice résolu. Tout est sauvegardé en local (IndexedDB pour le bureau, `localStorage` pour la conversation et le tableau — jamais envoyés au cloud) par tâche, donc tu retrouves ton bureau exactement comme tu l'as laissé, sur cet appareil.
 
 ## Journal d'apprentissage
 
@@ -130,7 +130,7 @@ Marche sur n'importe quel hébergeur Node (Render, Railway, Fly, une VM, ou Dock
 - 🔒 Jamais irréversible sans toi : envoyer un mail, inviter à un événement, supprimer → toujours un tap d'approbation.
 - 🎓 Ne fait jamais le travail noté à ta place : pas de dissertation rédigée, pas d'exercice corrigé, pas de réponse de contrôle — les documents créés sont des guides, et l'exercice reste toujours une étape pour toi.
 - 🧠 Passe au crible Pronote/Gmail/Calendar/Drive pour les faits ; seul ce qui a *vraiment besoin de toi* remonte.
-- 🗂️ Données stockées par compte, chiffrées au repos (Postgres/Supabase par défaut, plus AES-256-GCM applicatif sur le seul identifiant qu'on stocke nous-mêmes) ; rien n'est partagé, revendu, ou utilisé pour entraîner des modèles.
+- 🗂️ Données stockées par compte, chiffrées au repos (Postgres/Supabase par défaut, plus AES-256-GCM applicatif sur le seul identifiant qu'on stocke nous-mêmes) ; rien n'est partagé, revendu, ou utilisé pour entraîner des modèles. La conversation avec Otto et le Tableau du Mode Étude restent en local sur l'appareil (`localStorage`, jamais synchronisés) — ils ne suivent pas d'un appareil à l'autre, par choix.
 - 📤 RGPD intégré : consentement explicite à l'inscription, export complet de tes données en un clic (`/api/account/export` — tâches, jobs, connexions, jamais les jetons/mots de passe), et suppression de compte instantanée et définitive depuis Réglages.
 
 ## Extension Chrome Otto Tabs (optionnelle)
