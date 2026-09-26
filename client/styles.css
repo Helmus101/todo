@@ -5579,43 +5579,35 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-3);
   font-size: var(--text-sm);
 }
-.sm-board-body { height: 100%; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+/* No gap here — entries are separated by their own border-bottom hairline now (see .sm-board-entry below),
+   so the page reads as one continuous document flowing downward, not a stack of individually-spaced cards. */
+.sm-board-body { height: 100%; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; }
 /* Each new entry eases in under the last one, so the board FEELS like a document being written onto —
-   Otto adds the next line and the page grows, rather than a card popping into a grid. Keyed by entry id,
-   so the animation only runs when an entry first mounts, never when older entries re-render. */
+   Otto adds the next line and the page grows. Keyed by entry id, so the animation only runs when an entry
+   first mounts, never when older entries re-render. */
 @keyframes sm-board-entry-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* Deliberately NOT a boxed card (no background, no border-radius, no colored left rule) — a per-entry card
+   made the board read as a pile of separate clippings instead of one document you scroll down through. A
+   thin bottom hairline is the only separator, same as a section break on a page of notes; the "kind" label
+   still names what the section is without needing its own visual container. */
 .sm-board-entry {
-  padding: var(--space-3);
-  background: var(--bg-2);
-  border-radius: var(--radius-xs);
-  border-left: 3px solid var(--line);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
   animation: sm-board-entry-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.sm-board-entry-instruction { border-left-color: var(--accent); }
-.sm-board-entry-formula { border-left-color: var(--warn, #d97706); font-family: var(--mono, monospace); }
-.sm-board-entry-summary { border-left-color: var(--ok, #16a34a); }
-.sm-board-entry-problem { border-left-color: var(--ink-3); }
-/* The session document's OPENING heading — "Today's focus". Not a card: a title sitting on the page, so the
-   board reads like a document that starts somewhere rather than a list of floating notes. */
-.sm-board-entry-focus {
-  background: transparent;
-  border-left: none;
-  padding: var(--space-1) 0 var(--space-3) 0;
-}
+.sm-board-entry:last-child { border-bottom: none; }
+.sm-board-entry-formula { font-family: var(--mono, monospace); }
+/* The session document's OPENING heading — "Today's focus". Slightly larger/bolder, like a page title, but
+   still just text sitting on the page — nothing about it is boxed differently from any other entry. */
 .sm-board-entry-focus .sm-board-entry-kind { color: var(--accent); margin-bottom: 6px; }
 .sm-board-entry-focus .sm-board-entry-text { font-size: var(--text-base); font-weight: 600; line-height: 1.45; color: var(--ink); }
-/* The STUDENT's own aha, credited by name — the one entry kind that's theirs, so it reads as a highlight
-   of the document rather than another note from the tutor. */
-.sm-board-entry-insight {
-  background: var(--accent-soft);
-  border-left-color: var(--accent);
-}
+/* The STUDENT's own aha, credited by name — reads as a highlight on the page (accent-colored label + a soft
+   inline background strictly behind the text, not a separate boxed container) rather than another note. */
 .sm-board-entry-insight .sm-board-entry-kind { color: var(--accent); }
-/* A key term's first appearance — glossary voice, keeps the orange "reference material" border used by formulas. */
-.sm-board-entry-definition { border-left-color: var(--accent-2); }
+.sm-board-entry-insight .sm-board-entry-text { background: var(--accent-soft); border-radius: var(--radius-xs); padding: 2px 6px; margin: -2px -6px; display: inline; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .sm-board-entry-kind {
   display: block;
   font-size: 10px;
