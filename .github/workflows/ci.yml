@@ -20,7 +20,15 @@ jobs:
         run: npm run typecheck
       - name: Tests (pure-function, no network/AI)
         run: npm test
+      - name: Smoke tests (real HTTP against the Express app — auth gating, error handling, no Supabase/AI needed)
+        run: npm run test:smoke
       - name: Build
         run: npm run build
-      - name: Dependency audit (report only — advisory noise shouldn't block merges)
-        run: npm audit --audit-level=high || true
+      # Blocking at high/critical (verified clean at this threshold as of writing — only pre-existing
+      # moderate-severity transitive advisories, e.g. googleapis' uuid dependency, which don't gate this).
+      # Was report-only (`|| true`) — a high/critical CVE could ship silently forever with no PR ever
+      # actually blocked on it. If a future high/critical advisory is a known false positive or has no fix
+      # yet, allowlist it explicitly (`npm audit --audit-level=high --omit-audit-...`/a `.nsprc`-style
+      # exception) rather than reintroducing `|| true` here.
+      - name: Dependency audit (blocking on high/critical)
+        run: npm audit --audit-level=high

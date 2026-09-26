@@ -4387,12 +4387,22 @@ export async function runTask(
     goal?: string;
     infoRequirement?: InfoRequirement;
     unknowns?: string[];
+    // Existing flashcards on this task (a re-run/revision, not a first pass) — lets weakCardLine flag cards
+    // this student is still shaky on, same signal chat already gets. Empty/absent on a genuinely first run.
+    flashcards?: TaskFlashcards[];
   },
   profile?: Profile,
   focus?: string,
   extras?: AgentTools,
   academic?: AcademicContext,
   siblingTasks?: { title: string; why?: string }[],
+  // Same personalization signals chatAboutTask's dynamicContext already assembles (learningStyleLine,
+  // errorLogLine, weakCardLine, recentJournalLine) — until this was wired in, ONLY a conversation the
+  // student initiated got the full picture; the notes/steps/flashcards/quizzes Otto generates unprompted
+  // (the actual output of the "proactive" mission) knew none of it. Optional/best-effort: every one of
+  // these lines degrades to "" silently when the signal isn't available (cold start, no sibling-task list
+  // to compute a trend from, etc.), matching how chat already treats them.
+  personalization?: { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string }[] },
 ): Promise<RunOutput> {
   // ── 5-STEP EXECUTION PIPELINE ──────────────────────────────────────────────
   // Once we have the task + definition of done, execution follows this order:
@@ -4431,7 +4441,9 @@ export async function runTask(
   const audit: AuditEvent[] = [];
 
   const baseCtx = profileBlock(profile) + assignmentBlock(task) + academicBlock(academic);
-  const langLine = languageLine(profile) + trackLine(profile) + personalContextLine(profile) + studentModelLine(profile);
+  const langLine = languageLine(profile) + trackLine(profile) + personalContextLine(profile) + studentModelLine(profile) +
+    learningStyleLine(profile) + errorLogLine(profile, task.sourceSubject, personalization?.subjectSignal) +
+    recentJournalLine(personalization?.recentJournal, task.sourceSubject) + weakCardLine(task);
   const nowLine = nowBlock();
 
   /** Helper: one JSON chat call, accumulates tokens. Retries ONCE on truncation (finish_reason "length" OR
@@ -6133,7 +6145,12 @@ export const DOES_STUDENT_WORK = /\b(wrote|completed|finished|did|solved|answere
 // intro paragraph for me", which is exactly the failure mode this guards against).
 // Both languages — the app defaults to FRENCH, so an English-only guard left the actual default path
 // unprotected ("Voici l'introduction :" would have sailed straight through).
-export const CHAT_DOES_WORK = /\bhere('s| is)?\s+(the|your|an?)\s+(essay|paragraph|answer|solution|response)\b|\bwrote (?:it|the|your) (essay|paragraph|answer|solution)\b|\bvoici\s+(?:donc\s+)?(?:l['’]|la |le |ta |ton |une |un )?(introduction|conclusion|dissertation|paragraphe|réponse|solution|corrigé|traduction|rédaction)\b|\bje (?:l['’]ai|t['’]ai) (?:rédigé|écrit)\b/i;
+// "corrigé" ends the noun list with a trailing \b — but JS's \b is ASCII-only ([A-Za-z0-9_]), so `corrigé\b`
+// silently NEVER matches: "é" isn't a "word" char to \b, and neither is the space/punctuation after it, so
+// no boundary exists between them. Confirmed live via this regex's own test (tests/run.mjs) — "Voici le
+// corrigé" slipped straight through the guardrail. Fixed with a lookahead instead of \b for that one word;
+// every other noun in the list ends in a plain ASCII letter and is unaffected.
+export const CHAT_DOES_WORK = /\bhere('s| is)?\s+(the|your|an?)\s+(essay|paragraph|answer|solution|response)\b|\bwrote (?:it|the|your) (essay|paragraph|answer|solution)\b|\bvoici\s+(?:donc\s+)?(?:l['’]|la |le |ta |ton |une |un )?(introduction|conclusion|dissertation|paragraphe|réponse|solution|traduction|rédaction)\b|\bvoici\s+(?:donc\s+)?(?:l['’]|la |le |ta |ton |une |un )?corrigé(?![a-zà-öø-ÿ])|\bje (?:l['’]ai|t['’]ai) (?:rédigé|écrit)\b/i;
 
 // Distinct from CHAT_DOES_WORK above: that one catches Otto handing over WRITTEN WORK ("here's the essay");
 // this one catches Otto directly ANNOUNCING A CONCLUSION — the exact thing rule 3 ("HAND BACK THE THINKING
@@ -6158,7 +6175,13 @@ export const CHAT_CLAIMS_BOARD = /\b(?:on|to) (?:the|your) (?:board|canvas|scree
 // sentence that doesn't use a board/screen anchor word (CHAT_CLAIMS_BOARD's own required-anchor scoping
 // would miss it) — the correction loop in runRounds uses this to require a real diagram-kind entry
 // specifically, not just any board write, since a text note doesn't make a claimed drawing true.
-export const CHAT_CLAIMS_DIAGRAM = /\b(?:the |that |this )?(?:graph|diagram|figure|drawing|sketch|triangle|shape)\b.{0,20}\b(?:i(?:'ve| just)? (?:drew|sketched|drawn)|drew|sketched)\b|\b(?:i(?:'ve| just)? (?:drew|sketched|drawn))\b.{0,20}\b(?:graph|diagram|figure|drawing|sketch|triangle|shape)\b|\b(?:le|la) (?:graphique|diagramme|figure|schéma|triangle|dessin) (?:que (?:je|j')(?:'ai)? (?:dessiné|tracé)|ci-dessus)\b|\bje (?:viens de |)(?:dessiner|dessiné|tracer|tracé)\b/i;
+// NOTE on the French branches below: they deliberately end in a lookahead `(?![a-zà-öø-ÿ])` rather than `\b`
+// — JS's `\b` is ASCII-only ("word" = [A-Za-z0-9_]), so a plain `\bdessiné\b` silently NEVER matches (the
+// boundary check fails right after the accented "é", since neither "é" nor the following space count as
+// "word" chars to `\b`, so no boundary exists between them). Caught by this regex's own test in
+// tests/run.mjs — a real bug, not a hypothetical one. `drew`/`sketched`/`dessine`/`trace` above are unaffected
+// since they end in plain ASCII letters.
+export const CHAT_CLAIMS_DIAGRAM = /\b(?:the |that |this )?(?:graph|diagram|figure|drawing|sketch|triangle|shape)\b.{0,20}\b(?:i(?:'ve| just)? (?:drew|sketched|drawn)|drew|sketched)\b|\b(?:i(?:'ve| just)? (?:drew|sketched|drawn))\b.{0,20}\b(?:graph|diagram|figure|drawing|sketch|triangle|shape)\b|\b(?:le|la) (?:graphique|diagramme|figure|schéma|triangle|dessin) (?:que (?:j['’]ai (?:dessiné|tracé)|je (?:dessine|trace))|ci-dessus)(?![a-zà-öø-ÿ])|\bje (?:viens de |)(?:dessiner|dessiné|tracer|tracé)(?![a-zà-öø-ÿ])/i;
 
 /** What `chatAboutTask` returns: the spoken reply, plus any artifacts the tutor made this turn (empty
  *  arrays, never undefined — the route accumulates these straight onto the task). */

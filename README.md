@@ -12,7 +12,7 @@ Les to-do lists classiques te demandent de tout retaper toi-même. Les IA qui "f
 
 ## Ce que fait Otto
 
-Otto tourne même quand ton ordi est fermé — un job queue durable (Supabase) le fait travailler en arrière-plan. Par défaut il vérifie Pronote une fois par jour ; réglable jusqu'à 4x/jour (soit toutes les 6h) dans Réglages, et un rafraîchissement manuel marche à tout moment.
+Otto tourne même quand ton ordi est fermé — un job queue durable (Supabase) le fait travailler en arrière-plan. La vérification automatique (Pronote + Gmail + Calendar + Drive) est fixée à une fois par jour, 16h heure locale ; un rafraîchissement manuel marche à tout moment. **En pratique, cette fois par jour est garantie par le cron serveur** (`server/jobs.ts`) — sur le plan gratuit ("Hobby") de Vercel, un cron ne peut tourner qu'une fois par 24h, donc c'est la seule exécution garantie quel que soit l'appareil ; ouvrir l'app dans la journée déclenche aussi ce check si ce n'est pas déjà fait, et une extension Chrome/Android installée peut occasionnellement en obtenir une de plus via l'API Periodic Background Sync du navigateur (best-effort, non garanti, absent sur iOS). Pour une vérification plus fréquente que 1x/jour en production, passe au plan Vercel Pro (cron plus fin) ou héberge ailleurs avec ton propre planificateur.
 
 **4 intégrations, 4 seulement :**
 
@@ -120,6 +120,7 @@ Marche sur n'importe quel hébergeur Node (Render, Railway, Fly, une VM, ou Dock
 - `CREDENTIAL_ENCRYPTION_KEY` renseignée si tu veux que Pronote fonctionne — sinon la connexion Pronote refuse poliment plutôt que de stocker en clair.
 - `supabase.sql` exécuté ; `SUPABASE_SERVICE_KEY` renseignée ; clés anon/service jamais envoyées au client.
 - `CRON_SECRET` renseignée (Vercel Cron vide la file d'attente — une fois par jour sur le plan Hobby, plus souvent sur Pro).
+- **`SENTRY_DSN` (+ `VITE_SENTRY_DSN` côté client) renseignées.** Documentées comme optionnelles dans `.env.example`, elles ne devraient pas l'être en pratique : sans elles, un sweep/job qui échoue en silence (le job queue avale l'erreur pour ne jamais bloquer le pipeline) ne remonte NULLE PART — pas de log consulté, pas d'alerte. C'est le scénario exact qui casse "proactif" sans que personne ne le remarque. Gratuit jusqu'à un volume correct sur [sentry.io](https://sentry.io) ou auto-hébergeable.
 - Sécurité en place : CSP + headers de sécurité, rate-limiting sur l'auth, mots de passe bcrypt, cookies `httpOnly`/`secure`, aucun secret dans le bundle client, RLS verrouillée par défaut, AES-256-GCM sur le seul identifiant qu'on stocke nous-mêmes (jeton Pronote), plus le chiffrement au repos par défaut de Postgres/Supabase sur chaque table.
 - `/privacy` et `/terms` publiées dans l'app — **requis pour la vérification OAuth Google.**
 - **Google OAuth :** Gmail/Calendar/Drive sont des scopes sensibles. Soumets l'écran de consentement OAuth avec ton URL de politique de confidentialité + ta page d'accueil ; tant que ce n'est pas vérifié, Google plafonne l'app à 100 utilisateurs et affiche un écran "app non vérifiée".

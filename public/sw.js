@@ -15,6 +15,20 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Best-effort extra coverage for "proactive on a closed tab": Periodic Background Sync (Chrome/Android,
+// installed PWA only — no iOS Safari support), and the browser decides real firing frequency from a site
+// engagement score, so this is a bonus for engaged users on a supported browser, NOT a replacement for the
+// server cron (server/jobs.ts's sweepDue) which is the only actually-guaranteed daily trigger on every
+// platform. Registered from the client (see registerPeriodicSync in client/main.tsx) only where the
+// browser supports it; this handler simply no-ops (never registered, never fires) everywhere else.
+// Calls the SAME endpoint the open-tab sweep uses — the server's own once/day gate (lastGenTime,
+// server/index.ts) makes an extra/early call here harmless, so no client-side dedup logic is needed here.
+self.addEventListener("periodicsync", (event) => {
+  if (event.tag === "otto-sweep") {
+    event.waitUntil(fetch("/api/tasks/generate", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(() => {}));
+  }
+});
+
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;

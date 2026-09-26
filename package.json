@@ -18,7 +18,8 @@
     "build": "vite build && tsx scripts/prerender-landing.tsx",
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/run.mjs"
+    "test": "tsx tests/run.mjs",
+    "test:smoke": "tsx tests/smoke.mjs"
   },
   "dependencies": {
     "@blockshub/pawnote-lts": "^1.6.4",

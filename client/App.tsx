@@ -1637,6 +1637,18 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("track", v)); }
     catch (e: any) { setTrackState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
   };
+  // Learning style — fully read by the tutor prompt (learningStyleLine, server/claude.ts) since it was
+  // built, but had NO write path anywhere until now: the field was architecturally complete and permanently
+  // empty. Same optimistic-save pattern as track/language above. "mixed"/unset both mean "no preference" —
+  // offered as an explicit choice so a student can consciously opt out, not just leave it blank.
+  const [learningStyle, setLearningStyleState] = useState<"visual" | "auditory" | "reading" | "kinesthetic" | "mixed" | undefined>(profile?.learningStyle);
+  useEffect(() => { setLearningStyleState(profile?.learningStyle); }, [profile?.learningStyle]);
+  const saveLearningStyle = async (v: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed") => {
+    const prev = learningStyle;
+    setLearningStyleState(v);
+    try { onChanged?.(await api.setProfilePreference("learningStyle", v)); }
+    catch (e: any) { setLearningStyleState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+  };
   // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
   // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
   const [yearLevel, setYearLevelState] = useState(profile?.yearLevel || "");
@@ -1671,6 +1683,16 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
+      <div className="set-row">
+        <span className="set-text"><b>{L("Comment tu apprends le mieux", "How you learn best")}</b><span className="settings-hint">{L("Otto adapte comment il explique — jamais ce qu'il explique.", "Otto adapts how it explains — never what it explains.")}</span></span>
+        <select className="addinput sm" style={{ maxWidth: 180 }} value={learningStyle || "mixed"} onChange={(e) => void saveLearningStyle(e.target.value as any)}>
+          <option value="mixed">{L("Pas de préférence", "No preference")}</option>
+          <option value="visual">{L("Visuel", "Visual")}</option>
+          <option value="auditory">{L("Auditif", "Auditory")}</option>
+          <option value="reading">{L("Lecture/écriture", "Reading/writing")}</option>
+          <option value="kinesthetic">{L("En pratiquant", "Hands-on")}</option>
+        </select>
+      </div>
     </>
   );
 }

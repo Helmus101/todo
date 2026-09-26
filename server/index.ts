@@ -2813,6 +2813,10 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
       p.languageSetAt = new Date().toISOString();
     } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {
       p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "learningStyle" && ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(value)) {
+      // Fully wired for a while on the READ side (learningStyleLine, claude.ts) but had no write path at
+      // all until now — a student could never actually set it, so the field sat permanently empty.
+      p.learningStyle = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "yearLevel" && typeof value === "string" && value.trim()) {
       p.yearLevel = value.trim().slice(0, 40); p.preferencesUpdatedAt = new Date().toISOString();
     } else {

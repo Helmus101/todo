@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1223,7 +1223,7 @@ section("Study Mode: chat + Board always present, board write reliability (sourc
   // The board-write prompt used to leave EVERY write entirely to the model's own per-turn judgment call —
   // strengthened so a genuine topic resolution always leaves a "lessons learned" record, not just when it
   // happens to occur to the model.
-  check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE BOARD WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
+  check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
 }
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
@@ -1436,6 +1436,7 @@ section("CHAT_DOES_WORK / DOES_STUDENT_WORK — true positives without false pos
 check("catches an EN reply that hands over the essay", CHAT_DOES_WORK.test("Here's your essay introduction, ready to submit"));
 check("catches a FR reply that hands over the intro", CHAT_DOES_WORK.test("Voici l'introduction :"));
 check("does NOT flag legitimate structural help", !CHAT_DOES_WORK.test("Voici comment structurer ton introduction"));
+check("catches 'Voici le corrigé' — regression: JS \\b is ASCII-only, so a naive \\bcorrigé\\b silently never matches", CHAT_DOES_WORK.test("Voici le corrigé"));
 check("DOES_STUDENT_WORK catches an EN claim of having done the homework", DOES_STUDENT_WORK.test("I solved all the problems for you"));
 check("DOES_STUDENT_WORK catches a FR claim of having written the dissertation", DOES_STUDENT_WORK.test("J'ai rédigé ta dissertation pour toi"));
 check("DOES_STUDENT_WORK catches a FR claim of having finished the homework", DOES_STUDENT_WORK.test("J'ai terminé le devoir de maths"));
@@ -1449,6 +1450,49 @@ check("catches a FR answer announcement", CHAT_STATES_ANSWER.test("La réponse e
 check("catches a FR MCQ conclusion", CHAT_STATES_ANSWER.test("C'est donc l'option B."));
 check("does NOT flag ordinary tutoring text with a number in it", !CHAT_STATES_ANSWER.test("That's the same rule we used on step 3 — try applying it here."));
 check("does NOT flag a focusing question", !CHAT_STATES_ANSWER.test("What do you think happens if you substitute that back in?"));
+
+section("CHAT_CLAIMS_BOARD — catches Otto pointing at a board write that never happened");
+check("catches EN 'on your screen'", CHAT_CLAIMS_BOARD.test("The problem is on your screen now, just above."));
+check("catches EN 'just above'", CHAT_CLAIMS_BOARD.test("Take a look just above — that's the setup."));
+check("catches FR 'au tableau'", CHAT_CLAIMS_BOARD.test("Regarde au tableau, j'ai noté la formule."));
+check("catches FR 'ci-dessus'", CHAT_CLAIMS_BOARD.test("La formule ci-dessus te donne la réponse."));
+check("does NOT flag an ordinary sentence using 'above' in a math sense", !CHAT_CLAIMS_BOARD.test("the term above the fraction line cancels out"));
+
+section("CHAT_CLAIMS_DIAGRAM — catches Otto referring to a figure it never actually drew");
+check("catches 'the diagram I drew'", CHAT_CLAIMS_DIAGRAM.test("Look at the diagram I drew — the altitude splits the triangle in two."));
+check("catches 'I just sketched [a diagram]'", CHAT_CLAIMS_DIAGRAM.test("I just sketched a diagram to show where -3 sits."));
+check("catches FR 'le triangle que j'ai dessiné'", CHAT_CLAIMS_DIAGRAM.test("Regarde le triangle que j'ai dessiné pour toi."));
+check("does NOT flag ordinary prose mentioning a shape by name", !CHAT_CLAIMS_DIAGRAM.test("A triangle has three sides — can you name them?"));
+
+section("makeDiagramEntry — DRAW_ON_BOARD validation/clamping (server/claude.ts)");
+{
+  const ok = makeDiagramEntry({ caption: "Right triangle", ops: [
+    { op: "line", x1: 100, y1: 500, x2: 400, y2: 500 },
+    { op: "label", x: 250, y: 520, text: "base" },
+  ] });
+  check("accepts a valid figure and tags it kind:diagram", "entry" in ok && ok.entry.kind === "diagram" && ok.entry.diagram?.length === 2);
+  check("caption becomes the entry's caption text", "entry" in ok && ok.entry.text === "Right triangle");
+
+  const empty = makeDiagramEntry({ caption: "x", ops: [] });
+  check("rejects an empty ops array", "error" in empty);
+
+  const noCaption = makeDiagramEntry({ caption: "", ops: [{ op: "circle", cx: 10, cy: 10, r: 5 }] });
+  check("rejects a missing caption", "error" in noCaption);
+
+  const tooMany = makeDiagramEntry({ caption: "x", ops: Array.from({ length: 16 }, () => ({ op: "label", x: 0, y: 0, text: "a" })) });
+  check("rejects more than 15 ops instead of silently truncating", "error" in tooMany);
+
+  const offCanvas = makeDiagramEntry({ caption: "x", ops: [{ op: "circle", cx: 5000, cy: -200, r: 9000 }] });
+  check("clamps an off-canvas/oversized op into the 0-800x0-600 space instead of dropping it",
+    "entry" in offCanvas && offCanvas.entry.diagram?.[0].op === "circle" &&
+    offCanvas.entry.diagram[0].cx <= 800 && offCanvas.entry.diagram[0].cy >= 0 && offCanvas.entry.diagram[0].r <= 400);
+
+  const oneBadOp = makeDiagramEntry({ caption: "x", ops: [{ op: "not_a_real_op" }, { op: "label", x: 1, y: 1, text: "ok" }] });
+  check("drops one unrecognized op but keeps the rest of the figure", "entry" in oneBadOp && oneBadOp.entry.diagram?.length === 1);
+
+  const allBad = makeDiagramEntry({ caption: "x", ops: [{ op: "not_a_real_op" }] });
+  check("errors when NO op in the figure is valid", "error" in allBad);
+}
 
 section("revealsAnswer — studyHelp's code-level backstop against leaking the real answer");
 {

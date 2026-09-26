@@ -43,6 +43,13 @@ Until one of these is resolved, treat any use of this app in an institutional/of
 **out of scope** — informal use by consenting individuals (a family choosing to connect their own
 Pronote account) is a materially different risk posture than a school-endorsed rollout.
 
+**Decision (recorded, not left open): staying on DeepSeek.** Option (1) above was evaluated and
+declined for now — Otto keeps using DeepSeek, not Mistral. This is a conscious call, not an oversight,
+and it means the disqualifying-for-an-official-pilot posture above stands as written: this app is
+positioned for informal/consenting-family use, not an institutional rollout, until that changes. If the
+audience ever shifts toward schools/rectorats, this decision needs revisiting first — it's the actual
+gate, not a code change.
+
 ## Pronote access itself
 
 Separately from the LLM question: `server/pronote.ts` uses `pawnote`, an unofficial, reverse-engineered

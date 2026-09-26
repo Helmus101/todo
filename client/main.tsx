@@ -60,7 +60,24 @@ if (typeof window !== "undefined") {
 // Register service worker for PWA support
 if ("serviceWorker" in navigator && window.location.protocol === "https:") {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch((err) => {
+    navigator.serviceWorker.register("/sw.js").then((reg) => {
+      // Best-effort extra proactive-sweep coverage for a closed tab (see sw.js's own "periodicsync" comment
+      // for the full caveat: Chrome/Android installed-PWA only, browser-decided cadence, no iOS support).
+      // The server cron (server/jobs.ts's sweepDue) remains the only trigger guaranteed on every platform —
+      // this purely adds a chance of MORE-than-once/day coverage for students on a supported browser who've
+      // installed the app, never less. Silently does nothing everywhere else (feature-detected, and the
+      // permission check itself is wrapped since some browsers throw rather than resolve `false`).
+      const anyReg = reg as any;
+      if ("periodicSync" in anyReg) {
+        void (async () => {
+          try {
+            const status = await (navigator as any).permissions?.query({ name: "periodic-background-sync" as any });
+            if (status?.state !== "granted") return;
+            await anyReg.periodicSync.register("otto-sweep", { minInterval: 6 * 60 * 60 * 1000 }); // ~6h; the browser may space it out further
+          } catch { /* unsupported/denied — the cron/open-tab paths are unaffected */ }
+        })();
+      }
+    }).catch((err) => {
       console.warn("[sw] registration failed:", err);
     });
   });

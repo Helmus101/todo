@@ -5,6 +5,28 @@ import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type 
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
 import { TEST_DAYS_AHEAD } from "./pronote.ts";
+import { aggregateSubjectSignals } from "./patterns.ts";
+
+/** Same personalization bundle server/index.ts's chat route already assembles (subject performance trend +
+ *  recent study-journal entries) — reused here so aiRun's unprompted output (steps/notes/flashcards/quizzes)
+ *  gets the same signal a chat conversation already does, not just whatever the student happens to ask about.
+ *  Best-effort: returns {} (both fields silently undefined) on any missing subject/empty list, same posture
+ *  as every other personalization line in claude.ts. */
+function personalizationFor(list: WebTask[], subject: string | undefined): { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string }[] } {
+  let subjectSignal: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" } | undefined;
+  try {
+    if (subject) {
+      const signal = aggregateSubjectSignals(list).find((s) => s.subject === subject);
+      if (signal) subjectSignal = { correctRate: signal.correctRate, attempts: signal.attempts, trend: signal.trend };
+    }
+  } catch { /* best-effort */ }
+  const recentJournal = list
+    .filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:") && x.logText?.trim())
+    .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
+    .slice(0, 14)
+    .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
+  return { subjectSignal, recentJournal };
+}
 
 // Broad-scope verbs that genuinely tend to bundle several sub-actions under one short step text ("Review
 // the Brave Search API billing change", "Research colleges", "Organize the trip") — a step opening on one
@@ -1329,7 +1351,8 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
       goal: task.goal,
       infoRequirement: task.infoRequirement,
       unknowns: task.unknowns,
-    }, profile, focus, scoped, academic, siblingTasks);
+      flashcards: task.flashcards,
+    }, profile, focus, scoped, academic, siblingTasks, personalizationFor(list, task.sourceSubject));
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     // A raw/placeholder title gets tightened as a side effect of THIS run (no separate "clean up" pass
@@ -1442,7 +1465,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   // set). runTask's own `definitionOfDone = task.goal || task.why` was silently always taking the `why`
   // fallback here because `goal` (and taskType/infoRequirement/unknowns, which shape earlier steps of the
   // pipeline too) was never passed through from the outer task at all. Now it is.
-  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue, taskType: task.taskType, goal: task.goal, infoRequirement: task.infoRequirement, unknowns: task.unknowns }, profile, focus, extras, academic, siblingTasks);
+  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue, taskType: task.taskType, goal: task.goal, infoRequirement: task.infoRequirement, unknowns: task.unknowns, flashcards: task.flashcards }, profile, focus, extras, academic, siblingTasks, personalizationFor(list, task.sourceSubject));
   addUsage(profile, out.tokens, "autorun");
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);
