@@ -1377,7 +1377,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   // — see this route's own end-of-handler comment). The browser sends its own local thread with every
   // message, same shape/pattern /api/tasks/:id/study-help already used for its (always-local) hint chat.
   const historyRaw = Array.isArray(req.body?.history) ? req.body.history : [];
-  const history = historyRaw
+  const history: { role: "user" | "assistant"; text: string }[] = historyRaw
     .filter((h: any) => h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
     .map((h: any) => ({ role: h.role as "user" | "assistant", text: String(h.text).slice(0, 4000) }))
     .slice(-CHAT_CAP);
