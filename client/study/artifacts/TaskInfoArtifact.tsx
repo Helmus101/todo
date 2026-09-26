@@ -1,6 +1,15 @@
 import type { WebTask } from "../../../shared/types.ts";
 import { withInlineLinks, stripStrayMarkdown, stripHtml, useLang } from "../../ui.tsx";
 
+// Splits on the AI's own paragraph breaks (falling back to a " - " bullet marker when there's no real
+// newline at all) so a dense multi-topic context/instructions field reads as short paragraphs instead of
+// one wall of text — same helper as TaskDetailDrawer.tsx's twin of this component.
+function Paragraphs({ text }: { text: string }) {
+  let parts = text.split(/\n{2,}/).flatMap((p) => p.split(/\n/)).map((p) => p.trim()).filter(Boolean);
+  if (parts.length <= 1) parts = text.split(/\s+[-–]\s+(?=\S)/).map((p) => p.trim()).filter(Boolean);
+  return <>{(parts.length ? parts : [text]).map((p, i) => <p key={i}>{p}</p>)}</>;
+}
+
 interface TaskInfoArtifactProps {
   task: WebTask;
   onToggleStep?: (index: number, done: boolean) => void;
@@ -25,13 +34,13 @@ export function TaskInfoArtifact({ task, onToggleStep, onToggleSubstep, onComple
       {task.sourceDetail && (
         <div className="sm-task-detail-section">
           <h4>{L("Consignes", "Instructions")}</h4>
-          <p>{stripStrayMarkdown(stripHtml(task.sourceDetail))}</p>
+          <Paragraphs text={stripStrayMarkdown(stripHtml(task.sourceDetail))} />
         </div>
       )}
       {task.context && (
         <div className="sm-task-detail-section">
           <h4>{L("Contexte", "Context")}</h4>
-          <p>{stripStrayMarkdown(task.context)}</p>
+          <Paragraphs text={stripStrayMarkdown(task.context)} />
         </div>
       )}
       {task.links?.length ? (

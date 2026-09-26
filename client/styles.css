@@ -5761,6 +5761,29 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   min-height: 0;
   border: 0;
 }
+/* Same missing-layout-CSS shape as .sm-pdf-body/.sm-document-body above: .sm-notes-body/.sm-notes-textarea
+   had no rules at all, so the textarea sat at its browser-default intrinsic size (a few rows) inside
+   whatever space the artifact window actually had, instead of filling it — "text box should fill up the
+   space". */
+.sm-notes-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.sm-notes-textarea {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: var(--sp-3, 12px);
+  box-sizing: border-box;
+}
 .sm-pdf-fallback-link,
 .sm-document-fallback-link {
   display: block;

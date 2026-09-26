@@ -33,15 +33,27 @@ function getKey(userId: string | null): string {
   return userId ? `${BASE_KEY}:${userId}` : BASE_KEY;
 }
 
+// In-memory mirror, keyed the same as localStorage. Exists because `readAll` used to fall back to `{}` on
+// ANY failure — a quota-exceeded write (Safari private browsing caps localStorage hard, or a long-running
+// account simply accumulates enough decks/quizzes/chat across many tasks to hit the ~5-10MB per-origin
+// limit) meant the NEXT read after a failed write saw nothing, which read as "chat deletes itself" with no
+// error ever surfacing. This mirror survives for the life of the tab even when disk writes are failing, so
+// a quota/private-mode failure degrades to "doesn't survive a reload" instead of "vanishes immediately."
+const memory = new Map<string, Record<string, LocalTaskThread>>();
+
 function readAll(userId: string | null): Record<string, LocalTaskThread> {
+  const key = getKey(userId);
   try {
-    const raw = localStorage.getItem(getKey(userId));
-    return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+    const raw = localStorage.getItem(key);
+    if (raw) { const parsed = JSON.parse(raw); memory.set(key, parsed); return parsed; }
+  } catch { /* corrupt/unavailable — fall through to memory mirror below */ }
+  return memory.get(key) || {};
 }
 
 function writeAll(map: Record<string, LocalTaskThread>, userId: string | null): void {
-  try { localStorage.setItem(getKey(userId), JSON.stringify(map)); } catch { /* storage full/unavailable — best-effort only */ }
+  const key = getKey(userId);
+  memory.set(key, map); // always succeeds — the durable fallback when disk fails
+  try { localStorage.setItem(key, JSON.stringify(map)); } catch { /* storage full/unavailable — memory mirror above still has it for this tab */ }
 }
 
 /** One task's locally-stored thread — empty arrays (never undefined) so callers can spread straight onto

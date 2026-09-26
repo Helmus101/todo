@@ -1967,17 +1967,27 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
   const en = status?.language === "en";
   const [taskId, setTaskId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  // Same stable-ref pattern as the main study/:id route (App.tsx's studyModeTask) — a freestudy task has no
+  // URL to re-derive from, so a background syncTasks that momentarily omits or dismisses it (e.g. right after
+  // /api/study/free's own "dismiss the previous freestudy task" step, or a plain stale/incomplete fetch) must
+  // not make `task` go null mid-session, or this component falls straight back to the landing screen — the
+  // "study mode auto gets out of it" report, for free-study sessions specifically.
+  const studyTaskRef = useRef<WebTask | null>(null);
   const start = () => {
     setStarting(true);
     void api.studyFreeSession().then((list) => {
       setTasks(list);
       const t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
-      if (t) setTaskId(t.id);
+      if (t) { studyTaskRef.current = t; setTaskId(t.id); }
       else notify(en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie.", "error");
     }).catch((e: any) => notify(e?.message || (en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie."), "error"))
       .finally(() => setStarting(false));
   };
-  const task = taskId ? tasks.find((t) => t.id === taskId) : null;
+  if (taskId && studyTaskRef.current?.id === taskId) {
+    const fresh = tasks.find((t) => t.id === taskId);
+    if (fresh) studyTaskRef.current = fresh;
+  }
+  const task = taskId && studyTaskRef.current?.id === taskId ? studyTaskRef.current : null;
   if (!task) {
     return (
       <main className="list-wrap">
