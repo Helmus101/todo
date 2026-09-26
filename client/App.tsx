@@ -11,6 +11,7 @@ import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } 
 import { hydrateLocalThreads } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
+import { t, useT } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -185,8 +186,8 @@ const CACHED_STATUS: ConnectionStatus | null = (() => {
 
 const GREETING = (lang?: "fr" | "en") => {
   const h = new Date().getHours();
-  if (lang === "en") return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-  return h < 12 ? "Bonjour" : h < 18 ? "Bon après-midi" : "Bonsoir";
+  const key = h < 12 ? "dashboard.greeting.morning" : h < 18 ? "dashboard.greeting.afternoon" : "dashboard.greeting.evening";
+  return t(key, lang === "en" ? "en" : "fr");
 };
 /** A friendly first name from the account email's local part ("tjong.willem@…" → "Tjong"). Personalizes the UI. */
 const firstName = (user?: string) => {
@@ -909,6 +910,11 @@ export function App() {
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const en = status?.language === "en";
+  // Hook-bound translator for the (growing) slice of dashboard strings migrated to client/i18n.ts's
+  // catalog — named `T` (not `t`) because this same function has dozens of `.filter((t) => …)`/`.map((t)
+  // => …)` callbacks over tasks that shadow the module-level `t` import; a same-named hook result here
+  // would be one more local `t` to keep straight from the task-parameter convention used everywhere else.
+  const T = useT();
   // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
   // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
@@ -1052,7 +1058,7 @@ export function App() {
             <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span className="accent-num">{status.name || firstName(status.user)}</span></> : null}.</h1>
             {momentumSubject ? (
               <p className="dash-momentum">
-                {en ? `You've been genuinely improving in ${momentumSubject} lately — keep it up.` : `Tu progresses vraiment en ${momentumSubject} en ce moment — continue comme ça.`}
+                {T("dashboard.momentum", { subject: momentumSubject })}
               </p>
             ) : null}
             {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
@@ -1061,15 +1067,12 @@ export function App() {
                 reads as a real summary of where things stand, not just a tally. */}
             <p className="dash-line">
               {live.length === 0
-                ? (doneToday > 0
-                    ? (en ? "That's everything for today." : "C'est tout pour aujourd'hui.")
-                    : (en ? "You're all caught up." : "Tu es à jour."))
-                : (en
-                    ? `${live.length} thing${live.length > 1 ? "s" : ""} left today${doneToday > 0 ? ` — ${doneToday} already done` : ""}.`
-                    : `${live.length} chose${live.length > 1 ? "s" : ""} à faire aujourd'hui${doneToday > 0 ? ` — ${doneToday} déjà faite${doneToday > 1 ? "s" : ""}` : ""}.`)}
+                ? (doneToday > 0 ? T("dashboard.doneForToday") : T("dashboard.allCaughtUp"))
+                : (T("dashboard.thingsLeft", { count: live.length, plural: live.length > 1 ? "s" : "" }) +
+                   (doneToday > 0 ? T("dashboard.alreadyDone", { count: doneToday, plural: doneToday > 1 ? "s" : "" }) : "") + ".")}
               {live.length > 0 && heroTask ? (
                 <span className="dash-next">
-                  {en ? ` Next up: ${heroTask.title}.` : ` Ensuite : ${heroTask.title}.`}
+                  {T("dashboard.nextUp", { title: heroTask.title })}
                 </span>
               ) : null}
               {/* One status signal at a time, in priority order — overdue outranks in-progress work,
