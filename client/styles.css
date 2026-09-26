@@ -5619,6 +5619,20 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 .sm-board-entry-text { font-size: var(--text-sm); color: var(--ink); line-height: 1.5; }
 .sm-board-entry-text p { margin: 0; }
+/* DRAW_ON_BOARD's real figures (DiagramOpSVG, BoardArtifact.tsx) — a real drawing, not ASCII-in-a-box, so
+   it gets its own contained box with a light border (distinguishing it from the flowing-text entries around
+   it) rather than the borderless/backgroundless treatment those use. Fixed aspect ratio matches the 800x600
+   coordinate space every op is authored/clamped against server-side. */
+.sm-board-diagram-caption { margin-bottom: 6px; font-style: italic; color: var(--ink-2); }
+.sm-board-diagram {
+  display: block;
+  width: 100%;
+  aspect-ratio: 800 / 600;
+  color: var(--ink);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+}
 
 /* Problem display in board (merged canvas functionality) */
 .sm-board-problem {

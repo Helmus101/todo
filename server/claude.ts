@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
-import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask } from "../shared/types.ts";
+import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
 import { dedupeFacts, sameFact, errorLogBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
@@ -1700,9 +1700,49 @@ const WRITE_TO_BOARD_TOOL = {
   name: "WRITE_TO_BOARD",
   description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry — never a wall of text; the next thing gets its own entry later as the session moves on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
   input_schema: { type: "object", properties: {
-    text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. ANY diagram/ASCII sketch/labeled shape (a triangle, a timeline, a table drawn with dashes and slashes) MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left. If it needs to line up visually, it needs the fence." },
+    text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure; reserve a fenced ASCII block here for genuinely textual structure (a timeline, a mind-map of labels, a small table) where a real drawing wouldn't add anything. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left." },
     kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for an equation/fact worth keeping visible; 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'note' for anything else. Defaults to 'note' if omitted." },
   }, required: ["text"] },
+};
+
+// A real drawn figure, distinct from WRITE_TO_BOARD's ASCII-in-a-fence fallback — see the DiagramOp type
+// (shared/types.ts) for the shape vocabulary. Each figure is SELF-CONTAINED: if Otto needs to add to a
+// shape drawn earlier (e.g. the altitude on a triangle from three turns ago), it redraws the WHOLE scene
+// including the new part, rather than trying to append to op history it has no reliable way to recall or
+// see rendered — LLMs are far more reliable regenerating a short complete scene than patching state blind.
+const DRAW_ON_BOARD_TOOL = {
+  name: "DRAW_ON_BOARD",
+  description: "Draw ONE small labeled figure onto the student's board — a real diagram (shapes, arrows, " +
+    "a labeled triangle, a number line, a simple graph), not ASCII art. Use this instead of an ASCII/text " +
+    "diagram ANY time the content is genuinely spatial or geometric: a shape, an axis, a labeled figure, " +
+    "points and lines with real positions. Keep ASCII/markdown tables in WRITE_TO_BOARD for sequences, " +
+    "timelines, and comparisons — those aren't spatial. Each call is ONE complete, self-contained figure: " +
+    "if you need to add to something you drew earlier (e.g. add the altitude to a triangle already on the " +
+    "board), redraw the WHOLE figure again including the new part — never assume you can add to a past " +
+    "call's shapes. Coordinate space is 0-800 wide, 0-600 tall; keep the figure roughly centered and leave " +
+    "margin, it will be scaled to fit the board. Max 15 ops per figure — plan the layout before calling, " +
+    "don't sprawl. One label per meaningful point/line, positioned just off the shape it names, never " +
+    "overlapping another label.",
+  input_schema: { type: "object", properties: {
+    caption: { type: "string", description: "one short line describing the figure, shown as its title on the board" },
+    ops: {
+      type: "array",
+      description: "the figure's shapes, in any order. See each op's own fields.",
+      items: { type: "object", properties: {
+        op: { type: "string", enum: ["line", "rect", "circle", "polyline", "label", "axes"] },
+        x1: { type: "number" }, y1: { type: "number" }, x2: { type: "number" }, y2: { type: "number" },
+        arrow: { type: "boolean", description: "line only: draw an arrowhead at (x2,y2)" },
+        x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" },
+        fill: { type: "boolean", description: "rect/circle only: filled instead of outlined" },
+        cx: { type: "number" }, cy: { type: "number" }, r: { type: "number" },
+        points: { type: "array", description: "polyline only: 2+ points forming a curve/freeform shape", items: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, required: ["x", "y"] } },
+        text: { type: "string", description: "label only: the text itself, kept short (a variable, a value, a name)" },
+        size: { type: "string", enum: ["sm", "md", "lg"] },
+        xLabel: { type: "string" }, yLabel: { type: "string" },
+        color: { type: "string", description: "optional hex color; defaults to the board's ink color if omitted" },
+      }, required: ["op"] },
+    },
+  }, required: ["caption", "ops"] },
 };
 
 // ── Shared in-app artifact factories ──────────────────────────────────────────
@@ -1822,6 +1862,57 @@ export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: str
   const kindRaw = String(input?.kind || "").trim();
   const kind = BOARD_KINDS.has(kindRaw) ? (kindRaw as BoardEntry["kind"]) : undefined;
   return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), at: new Date().toISOString() } };
+}
+
+const MAX_DIAGRAM_OPS = 15;
+const clampCoord = (n: unknown, lo: number, hi: number): number => Math.max(lo, Math.min(hi, Number.isFinite(Number(n)) ? Number(n) : 0));
+const clampX = (n: unknown) => clampCoord(n, 0, 800);
+const clampY = (n: unknown) => clampCoord(n, 0, 600);
+const clampR = (n: unknown) => clampCoord(n, 0, 400);
+const DIAGRAM_SIZES = new Set(["sm", "md", "lg"]);
+/** Validates/clamps one raw op from the model into a real DiagramOp — every coordinate is clamped into the
+ *  0-800x0-600 space so a bad value can't produce a shape that renders off-canvas or breaks the SVG viewBox.
+ *  Returns null for an unrecognized `op` or one missing its required fields, so ONE bad op just gets dropped
+ *  rather than rejecting the whole figure the model otherwise got right. */
+function validateDiagramOp(raw: any): DiagramOp | null {
+  const color = typeof raw?.color === "string" && raw.color.trim() ? raw.color.trim().slice(0, 20) : undefined;
+  switch (raw?.op) {
+    case "line":
+      return { op: "line", x1: clampX(raw.x1), y1: clampY(raw.y1), x2: clampX(raw.x2), y2: clampY(raw.y2), ...(raw.arrow ? { arrow: true } : {}), ...(color ? { color } : {}) };
+    case "rect":
+      return { op: "rect", x: clampX(raw.x), y: clampY(raw.y), w: clampCoord(raw.w, 1, 800), h: clampCoord(raw.h, 1, 600), ...(raw.fill ? { fill: true } : {}), ...(color ? { color } : {}) };
+    case "circle":
+      return { op: "circle", cx: clampX(raw.cx), cy: clampY(raw.cy), r: clampR(raw.r) || 1, ...(raw.fill ? { fill: true } : {}), ...(color ? { color } : {}) };
+    case "polyline": {
+      const pts = Array.isArray(raw.points) ? raw.points.slice(0, 30).map((p: any) => ({ x: clampX(p?.x), y: clampY(p?.y) })) : [];
+      if (pts.length < 2) return null;
+      return { op: "polyline", points: pts, ...(color ? { color } : {}) };
+    }
+    case "label": {
+      const text = String(raw?.text || "").trim().slice(0, 60);
+      if (!text) return null;
+      const size = DIAGRAM_SIZES.has(raw?.size) ? raw.size : undefined;
+      return { op: "label", x: clampX(raw.x), y: clampY(raw.y), text, ...(size ? { size } : {}) };
+    }
+    case "axes":
+      return {
+        op: "axes", x: clampX(raw.x), y: clampY(raw.y), w: clampCoord(raw.w, 1, 800), h: clampCoord(raw.h, 1, 600),
+        ...(raw.xLabel ? { xLabel: String(raw.xLabel).trim().slice(0, 30) } : {}),
+        ...(raw.yLabel ? { yLabel: String(raw.yLabel).trim().slice(0, 30) } : {}),
+      };
+    default:
+      return null;
+  }
+}
+export function makeDiagramEntry(input: any): { entry: BoardEntry } | { error: string } {
+  const caption = String(input?.caption || "").trim().slice(0, 200);
+  if (!caption) return { error: "ERROR: caption is required." };
+  const rawOps = Array.isArray(input?.ops) ? input.ops : [];
+  if (!rawOps.length) return { error: "ERROR: ops cannot be empty." };
+  if (rawOps.length > MAX_DIAGRAM_OPS) return { error: `REJECTED: max ${MAX_DIAGRAM_OPS} ops — simplify the figure or split it into two board entries.` };
+  const ops = rawOps.map(validateDiagramOp).filter((o: DiagramOp | null): o is DiagramOp => o !== null);
+  if (!ops.length) return { error: "ERROR: no valid ops after validation — check each op has its required fields (see the tool schema)." };
+  return { entry: { id: randomUUID(), text: caption, kind: "diagram", diagram: ops, at: new Date().toISOString() } };
 }
 
 /** ONE free-response practice problem — validated the same defensive way as makeDeck/makeQuiz. Both
@@ -6063,6 +6154,12 @@ export const CHAT_STATES_ANSWER = /\bthe (?:correct |final )?answer is\b|\bthat 
 // the "just/right above" adverb pair. Exported for test pinning, same as the guardrails above.
 export const CHAT_CLAIMS_BOARD = /\b(?:on|to) (?:the|your) (?:board|canvas|screen)\b|\bon screen\b|\b(?:just|right) above\b|\bau tableau\b|\bsur (?:le|ton) tableau\b|\bsur ton écran\b|\bà l['’]écran\b|\bjuste au-dessus\b|\bci-dessus\b/i;
 
+// Narrower companion to CHAT_CLAIMS_BOARD: catches "the graph/diagram/figure I drew/sketched" even in a
+// sentence that doesn't use a board/screen anchor word (CHAT_CLAIMS_BOARD's own required-anchor scoping
+// would miss it) — the correction loop in runRounds uses this to require a real diagram-kind entry
+// specifically, not just any board write, since a text note doesn't make a claimed drawing true.
+export const CHAT_CLAIMS_DIAGRAM = /\b(?:the |that |this )?(?:graph|diagram|figure|drawing|sketch|triangle|shape)\b.{0,20}\b(?:i(?:'ve| just)? (?:drew|sketched|drawn)|drew|sketched)\b|\b(?:i(?:'ve| just)? (?:drew|sketched|drawn))\b.{0,20}\b(?:graph|diagram|figure|drawing|sketch|triangle|shape)\b|\b(?:le|la) (?:graphique|diagramme|figure|schéma|triangle|dessin) (?:que (?:je|j')(?:'ai)? (?:dessiné|tracé)|ci-dessus)\b|\bje (?:viens de |)(?:dessiner|dessiné|tracer|tracé)\b/i;
+
 /** What `chatAboutTask` returns: the spoken reply, plus any artifacts the tutor made this turn (empty
  *  arrays, never undefined — the route accumulates these straight onto the task). */
 export interface ChatResult {
@@ -6241,15 +6338,20 @@ export async function chatAboutTask(
     `ladder, never down: prefer asking them to explain/generate/justify (constructive) over telling them ` +
     `something to read (active), and prefer a back-and-forth exchange (interactive) over a one-shot answer ` +
     `(constructive). A reply that hands them the answer and ends is passive — even if the answer is correct.\n\n` +
-    `DIAGRAMS AND EXAMPLES — when a visual would genuinely help (a timeline, a comparison table, a ` +
-    `flowchart, a labeled diagram), USE IT in the chat reply using markdown:\n` +
-    `- Tables: use markdown pipe tables (| Header | Header |) — they render in chat.\n` +
-    `- ASCII/text diagrams inside a triple-backtick code block for timelines, flowcharts, labeled ` +
+    `DIAGRAMS AND EXAMPLES — when a visual would genuinely help, pick the right tool for what kind of ` +
+    `visual it is:\n` +
+    `- REAL SPATIAL CONTENT — a shape, a labeled triangle, a number line, points/lines on axes, anything ` +
+    `where position in 2D space IS the content — use DRAW_ON_BOARD. It renders an actual figure, not a text ` +
+    `approximation; ASCII cannot represent this faithfully, so don't try.\n` +
+    `- GENUINELY TEXTUAL structure — a timeline, a flowchart, a mind-map, a comparison — stays in the chat ` +
+    `reply using markdown:\n` +
+    `  - Tables: use markdown pipe tables (| Header | Header |) — they render in chat.\n` +
+    `  - ASCII/text diagrams inside a triple-backtick code block for timelines, flowcharts, labeled ` +
     `structures: \`\`\`\n  1789 ──▶ 1792 ──▶ 1799\n  Révolution │ Terreur │ Consulat\n  \`\`\`\n` +
-    `- Side-by-side comparisons in a table, labeled diagrams with arrows (→ ↑ ↓), mind-map style ` +
+    `  - Side-by-side comparisons in a table, labeled diagrams with arrows (→ ↑ ↓), mind-map style ` +
     `indented lists.\n` +
-    `- Keep diagrams SMALL and SCANNABLE — a few lines, not a full page. The point is a quick visual ` +
-    `anchor, not a wall of ASCII art.\n` +
+    `  - Keep these SMALL and SCANNABLE — a few lines, not a full page. The point is a quick visual anchor, ` +
+    `not a wall of ASCII art.\n` +
     `- Craft examples rooted in the student's OWN world (their interests, their course, things they ` +
     `mentioned) — a concrete analogy beats an abstract definition every time.\n` +
     `- Make explanations adjustable: offer "quick intuition", "visual example", "formal explanation", ` +
@@ -6697,8 +6799,8 @@ export async function chatAboutTask(
   // CHAT_STATES_ANSWER guardrails, applied here by removing the tool entirely rather than catching it
   // after the fact.
   const tools = opts?.canvasMode
-    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
-    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
+    ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])]
+    : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...(readOnlyExtras?.tools || [])];
   const empty = (): ChatResult => ({ reply: "", notes: [], flashcards: [], quizzes: [], problems: [], board: [], audit: [], tokens: { in: 0, out: 0, cachedIn: 0 }, guardrailTripped: false });
   const result = empty();
   const logAudit = (kind: AuditEvent["kind"], label: string) => result.audit.push({ at: new Date().toISOString(), kind, label });
@@ -6826,15 +6928,21 @@ export async function chatAboutTask(
         // all, because the model narrated a visual it never actually created. A student staring at an empty
         // space being told to read something off it is worse than no visual at all. Give it exactly one
         // chance to make the claim true (write the thing) or drop the claim, instead of shipping the lie.
-        if (!boardClaimCorrected && !lastRound && CHAT_CLAIMS_BOARD.test(textContent) && !result.board.length && !result.problems.length) {
+        const claimsDiagram = CHAT_CLAIMS_DIAGRAM.test(textContent);
+        const hasDiagram = result.board.some((e) => e.kind === "diagram");
+        if (!boardClaimCorrected && !lastRound && ((CHAT_CLAIMS_BOARD.test(textContent) && !result.board.length && !result.problems.length) || (claimsDiagram && !hasDiagram))) {
           boardClaimCorrected = true;
-          console.log(`${new Date().toISOString()} [chat] round ${round}: reply points at the board but nothing was written — asking for the actual write`);
+          console.log(`${new Date().toISOString()} [chat] round ${round}: reply points at the ${claimsDiagram ? "diagram" : "board"} but nothing was written — asking for the actual write`);
           messages.push({ role: "assistant", content: textContent });
-          messages.push({ role: "user", content:
-            "You just pointed them at something on the board/screen, but you never wrote anything there this " +
-            "turn — there is literally nothing for them to look at. Either call WRITE_TO_BOARD (or " +
-            "CREATE_PROBLEM if it's a problem) with that exact content right now, or rewrite your reply " +
-            "without referring to anything visible. Same short spoken tone, don't mention this correction." });
+          messages.push({ role: "user", content: claimsDiagram
+            ? "You just referred to a graph/diagram/figure you drew, but you never called DRAW_ON_BOARD this " +
+              "turn — there is literally nothing for them to look at. Either call DRAW_ON_BOARD with that " +
+              "exact figure right now, or rewrite your reply without referring to anything drawn. Same short " +
+              "spoken tone, don't mention this correction."
+            : "You just pointed them at something on the board/screen, but you never wrote anything there this " +
+              "turn — there is literally nothing for them to look at. Either call WRITE_TO_BOARD (or " +
+              "CREATE_PROBLEM if it's a problem) with that exact content right now, or rewrite your reply " +
+              "without referring to anything visible. Same short spoken tone, don't mention this correction." });
           continue;
         }
         return finish(textContent);
@@ -6882,6 +6990,11 @@ export async function chatAboutTask(
           // response from spamming dozens of entries in one turn.
           if (result.board.length >= 5) content = "LIMIT: you've already written several entries this message — that's enough for one turn.";
           else { const r = makeBoardEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Écrit au tableau : « ${r.entry.text.slice(0, 60)} »` : `Written to board: "${r.entry.text.slice(0, 60)}"`); } }
+        } else if (name === "DRAW_ON_BOARD") {
+          // Its own smaller cap, separate from WRITE_TO_BOARD's — a figure is heavier to render (SVG, not
+          // text) and a turn with several genuine diagrams is already an unusual turn.
+          if (result.board.filter((e) => e.kind === "diagram").length >= 3) content = "LIMIT: you've already drawn a few figures this message — that's enough for one turn.";
+          else { const r = makeDiagramEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Figure dessinée : « ${r.entry.text.slice(0, 60)} »` : `Diagram drawn: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "remember") {
           const category = String((input as any)?.category || "preference");
           const fact = String((input as any)?.fact || "").trim();

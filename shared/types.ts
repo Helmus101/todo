@@ -1155,17 +1155,35 @@ export interface TaskProblem {
  *  a formula, an instruction ("start working through part a"), a running summary of the student's
  *  reasoning, or a plain note — whatever's worth writing down rather than only saying in chat. Entries are
  *  append-only and rendered as a running log (client/study/artifacts/BoardArtifact.tsx), oldest first. */
+/** One drawable primitive in an Otto-authored diagram (DRAW_ON_BOARD tool). Coordinates are in a fixed
+ *  0-800 x 0-600 space so the model never has to reason about the container's actual pixel size — the
+ *  renderer scales the viewBox to fit. */
+export type DiagramOp =
+  | { op: "line"; x1: number; y1: number; x2: number; y2: number; arrow?: boolean; color?: string }
+  | { op: "rect"; x: number; y: number; w: number; h: number; fill?: boolean; color?: string }
+  | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; color?: string }
+  | { op: "polyline"; points: { x: number; y: number }[]; color?: string }
+  | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg" }
+  | { op: "axes"; x: number; y: number; w: number; h: number; xLabel?: string; yLabel?: string };
+
 export interface BoardEntry {
   id: string;
   /** Plain text/markdown-lite (renderChatText already handles this) — not restricted to any one format,
-   *  since a formula, an instruction, and a summary all need different shapes. */
+   *  since a formula, an instruction, and a summary all need different shapes. When kind === "diagram" this
+   *  is still a one-line caption (not the figure itself — see `diagram` below), so the entry reads sensibly
+   *  even before the SVG renders or if the ops fail validation. */
   text: string;
   /** Loose styling hint only, not a hard schema — lets the UI render a formula differently from an
    *  instruction without forcing Otto into a rigid structure for what's meant to be a free-form board.
    *  "focus" opens a session's document (today's arc), "definition" records a key term the first time it
    *  comes up, "insight" credits the STUDENT's own aha by name — together with formula/summary these make
-   *  the board read like a document being built entry by entry, not a pile of disconnected notes. */
-  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition";
+   *  the board read like a document being built entry by entry, not a pile of disconnected notes. "diagram"
+   *  is a real drawn figure (see `diagram`) rather than text/ASCII. */
+  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram";
+  /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
+   *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
+   *  graph, not enough to build a full illustration op-by-op. */
+  diagram?: DiagramOp[];
   at: string;
 }
 
