@@ -181,8 +181,8 @@ export function stallNudgeLine(
   task: {
     why: string;
     firstAction?: { text: string; minutes?: number };
-    steps?: { difficulty?: string; done?: boolean; automatable?: boolean }[];
-    shownAt?: string; firstActionAt?: string; when?: string; whenApprox?: boolean;
+    steps?: { difficulty?: string; done?: boolean; automatable?: boolean; minutes?: number }[];
+    shownAt?: string; firstActionAt?: string; when?: string; whenApprox?: boolean; sourceDue?: string;
   },
   profile?: Profile,
   now: Date = new Date(),
@@ -191,16 +191,33 @@ export function stallNudgeLine(
   if (!task.shownAt) return null; // never actually shown yet — too early to call this "stalled"
   const idleDays = (now.getTime() - Date.parse(task.shownAt)) / 86_400_000;
   if (!(idleDays >= 3)) return null; // NaN-safe: a bad/missing timestamp also skips, same as "too soon"
-  // A real, firm, near deadline is its own motivator — don't reframe genuine urgency as a motivation problem.
+  // A real, firm, near deadline is its own motivator — don't reframe genuine urgency as a motivation
+  // problem. `when` is free text ("today", "this week", "by Fri 5pm" — see WebTask's own doc comment), so
+  // Date.parse can come back NaN for a perfectly real, near deadline; treating NaN as "far off" (the old
+  // `daysToDeadline < 3` check, which is simply false on NaN) let an actually-urgent task get the
+  // low-stakes reframe. Prefer sourceDue (Pronote's own ISO date, when present) and fail CLOSED — skip
+  // the reframe — whenever a firm deadline is stated but can't be confirmed safely far off.
   if (task.when && !task.whenApprox) {
-    const daysToDeadline = (Date.parse(task.when) - now.getTime()) / 86_400_000;
+    const dueMs = Date.parse(task.sourceDue || task.when);
+    if (Number.isNaN(dueMs)) return null;
+    const daysToDeadline = (dueMs - now.getTime()) / 86_400_000;
     if (daysToDeadline < 3) return null;
   }
   const remaining = (task.steps || []).filter((s) => !s.done && !s.automatable);
-  // "Already a single, easy action" — no ability gap left to close, so more structure isn't the fix.
-  const isSimple = remaining.length <= 1 && remaining.every((s) => (s.difficulty || "easy") === "easy");
-  if (!isSimple) return null;
-  const fr = profile?.language === "fr";
+  // Exactly one — zero remaining actions means there's nothing left to call "a quick thing" (the task is
+  // effectively finished), and 2+ means real structure still exists, not just a motivation problem.
+  if (remaining.length !== 1) return null;
+  const [only] = remaining;
+  // "Already a single, EASY action" — no ability gap left to close, so more structure isn't the fix. Most
+  // steps on the main generation path no longer carry `difficulty` at all (see shared/types.ts's own doc
+  // comment on TaskStep) — treating an untagged step as easy by default defeated the whole check, since
+  // that's the common case, not the exception. Fall back to the step's own `minutes` estimate instead: a
+  // short one is genuinely easy; with NEITHER signal available, fail closed rather than assume easy.
+  const isEasy = only.difficulty === "easy" || (only.difficulty === undefined && typeof only.minutes === "number" && only.minutes <= 15);
+  if (!isEasy) return null;
+  // Profile.language defaults to French app-wide (see shared/types.ts's own doc comment) — select English
+  // only when it's explicitly set, so a French account with no profile yet doesn't get an English nudge.
+  const fr = profile?.language !== "en";
   const smallest = (task.firstAction?.text || task.why || "").trim().replace(/[.!]+$/, "");
   if (!smallest) return null;
   return fr

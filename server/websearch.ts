@@ -13,6 +13,30 @@
  * the remaining slots (capped small), and only for hits that actually share real vocabulary with the
  * query — see wikipediaSearch's own relevance filter below.
  */
+
+/** Is this a Wikipedia URL, regardless of WHICH provider surfaced it? DuckDuckGo (HTML, Lite, and its
+ *  Instant Answer API — DDG documents Wikipedia as one of its own sources) can and does return
+ *  wikipedia.org links as ordinary "general web" results. Classifying by SOURCE FUNCTION instead of by
+ *  destination let those slip past both the 2-result cap and the relevance filter below, entirely
+ *  undoing the point of treating Wikipedia as a capped fallback — this is the actual gate, applied
+ *  uniformly to every provider's output. */
+const isWikipediaUrl = (url: string): boolean => /^https?:\/\/[a-z]{2,3}\.wikipedia\.org\//i.test(url);
+
+/** Wikipedia's own `srsearch` (and, by extension, any other provider's incidental Wikipedia hit) is a
+ *  loose keyword match, not a relevance-ranked query match — it will happily surface a real article that
+ *  just happens to share ONE word with the query and is otherwise unrelated (the actual "sometimes it
+ *  doesn't make sense" complaint: a search for a task topic surfacing an unrelated person/place/event
+ *  page). Require the title itself to share a real word (4+ letters, so short connectors like "the"/"for"
+ *  don't count) with the query — the same signal that already gates task links elsewhere (see
+ *  dropForeignEntityLinks in server/claude.ts), applied here at the source. */
+function wikiTitleMatchesQuery(title: string, query: string): boolean {
+  const queryWords = query.toLowerCase().match(/[a-zà-ÿ]{4,}/gi);
+  if (!queryWords?.length) return true; // too short a query to judge — don't over-filter
+  const queryWordSet = new Set(queryWords);
+  const titleWords = title.toLowerCase().match(/[a-zà-ÿ]{4,}/gi) || [];
+  return titleWords.some((w) => queryWordSet.has(w));
+}
+
 export async function webSearch(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
   const q = query.trim();
   if (!q) return [];
@@ -22,24 +46,36 @@ export async function webSearch(query: string): Promise<{ title: string; url: st
     wikipediaSearch(q),
   ]);
 
-  const combined: { title: string; url: string; snippet: string }[] = [];
+  const nonWiki: { title: string; url: string; snippet: string }[] = [];
+  const wikiCandidates: { title: string; url: string; snippet: string }[] = [];
   const seenUrls = new Set<string>();
-  const add = (item: { title: string; url: string; snippet: string }) => {
+  const classify = (item: { title: string; url: string; snippet: string }) => {
     if (!item.url || !item.title) return;
     const normUrl = item.url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
     if (seenUrls.has(normUrl)) return;
     seenUrls.add(normUrl);
-    combined.push(item);
+    // Classify by DESTINATION, not by which provider returned it — DuckDuckGo (HTML, Lite, and Instant)
+    // can incidentally surface a wikipedia.org link as an ordinary general-web result, and that link needs
+    // the exact same cap + relevance check as one wikipediaSearch() found directly, or it silently escapes
+    // both (see isWikipediaUrl's own doc comment).
+    (isWikipediaUrl(item.url) ? wikiCandidates : nonWiki).push(item);
   };
 
   if (generalSettled.status === "fulfilled") {
-    for (const res of generalSettled.value) if (res.status === "fulfilled") for (const item of res.value) add(item);
+    for (const res of generalSettled.value) if (res.status === "fulfilled") for (const item of res.value) classify(item);
   }
-  // Fill in with Wikipedia only up to a small cap, and only when the general web didn't already fill
-  // the list — a genuinely thin result set (an obscure fact, a niche how-to) is exactly when an
-  // encyclopedia entry is worth having; a query that already got 6+ real hits doesn't need it too.
-  if (wikiSettled.status === "fulfilled" && combined.length < 6) {
-    for (const item of wikiSettled.value.slice(0, 2)) add(item);
+  if (wikiSettled.status === "fulfilled") for (const item of wikiSettled.value) classify(item);
+
+  const combined = [...nonWiki];
+  // Wikipedia (from ANY source) fills in only up to a small cap, only for a title that actually shares
+  // real vocabulary with the query, and only when the general web didn't already fill the list — a
+  // genuinely thin result set (an obscure fact, a niche how-to) is exactly when an encyclopedia entry is
+  // worth having; a query that already got 6+ real hits doesn't need it too.
+  if (combined.length < 6) {
+    for (const item of wikiCandidates) {
+      if (combined.length - nonWiki.length >= 2) break;
+      if (wikiTitleMatchesQuery(item.title, q)) combined.push(item);
+    }
   }
 
   return combined.slice(0, 10);
@@ -103,25 +139,13 @@ async function wikipediaSearch(query: string): Promise<{ title: string; url: str
   if (!res.ok) throw new Error(`wiki ${res.status}`);
   const json = await res.json() as any;
   const items = json?.query?.search || [];
-  // Wikipedia's own `srsearch` is a loose keyword match, not a relevance-ranked query match — it will
-  // happily return a real article that just happens to share ONE word with the query and is otherwise
-  // unrelated (the actual "sometimes it doesn't make sense" complaint: a search for a task topic
-  // surfacing an unrelated person/place/event page). Require the title itself to share a real word
-  // (4+ letters, so short connectors like "the"/"for" don't count) with the query — this is the same
-  // signal that already gates task links elsewhere (see dropForeignEntityLinks), applied at the source.
-  const queryWords = new Set(query.toLowerCase().match(/[a-zà-ÿ]{4,}/gi)?.map((w) => w.toLowerCase()) || []);
-  const titleMatchesQuery = (title: string) => {
-    if (!queryWords.size) return true; // too short a query to judge — don't over-filter
-    const titleWords = title.toLowerCase().match(/[a-zà-ÿ]{4,}/gi) || [];
-    return titleWords.some((w) => queryWords.has(w));
-  };
   return items
     .map((item: any) => ({
       title: String(item.title || ""),
       url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(item.title || "").replace(/ /g, "_"))}`,
       snippet: stripTags(String(item.snippet || "")),
     }))
-    .filter((x: any) => x.title && x.snippet && titleMatchesQuery(x.title))
+    .filter((x: any) => x.title && x.snippet && wikiTitleMatchesQuery(x.title, query))
     .slice(0, 4);
 }
 

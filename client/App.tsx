@@ -11,7 +11,7 @@ import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } 
 import { hydrateLocalThreads } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
-import { t, useT } from "./i18n.ts";
+import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -296,12 +296,19 @@ export function App() {
   // trend can't meaningfully change within a single session, so no need to re-poll.
   const [momentumSubject, setMomentumSubject] = useState<string | null>(null);
   useEffect(() => {
-    if (!status?.loggedIn) return;
+    // Keyed on status.user, not just loggedIn: without this, signing out (which clears other account
+    // state but not this one) or switching accounts on the same tab left the PREVIOUS account's subject
+    // visible, and a slow response landing after a newer one could overwrite it with stale data.
+    let current = true;
+    if (!status?.loggedIn) { setMomentumSubject(null); return () => { current = false; }; }
+    setMomentumSubject(null);
     void api.patternsSummary().then((p) => {
+      if (!current) return;
       const up = p.subjectMastery.find((s) => s.trend === "up");
       setMomentumSubject(up ? up.subject : null);
     }).catch(() => {});
-  }, [status?.loggedIn]);
+    return () => { current = false; };
+  }, [status?.loggedIn, status?.user]);
   // AI-personalized theme (opt-in, see Settings) — applied as inline custom-property overrides on <html>,
   // never a stylesheet swap. Re-applies whenever status refreshes so a change made in one tab/device shows
   // up here too, and clears cleanly (removeProperty) when customTheme is unset — e.g. after Reset.
@@ -910,11 +917,15 @@ export function App() {
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const en = status?.language === "en";
-  // Hook-bound translator for the (growing) slice of dashboard strings migrated to client/i18n.ts's
-  // catalog — named `T` (not `t`) because this same function has dozens of `.filter((t) => …)`/`.map((t)
-  // => …)` callbacks over tasks that shadow the module-level `t` import; a same-named hook result here
-  // would be one more local `t` to keep straight from the task-parameter convention used everywhere else.
-  const T = useT();
+  // Translator for the (growing) slice of dashboard strings migrated to client/i18n.ts's catalog. This
+  // deliberately calls the plain `t(key, lang, vars)` function, NOT the useT() hook: App() has several
+  // early `return`s above this point (route === "privacy"/"terms"/"research", !status, !status.loggedIn),
+  // so a hook placed here would be skipped on some renders and called on others — React's "rendered more
+  // hooks than during the previous render" failure. Passing `en` explicitly (already computed just above)
+  // also sidesteps a second real bug the hook would have had here anyway: LangContext.Provider doesn't
+  // wrap the tree until further down (see `return` below), so useT() at this point would always read the
+  // context's default ("fr"), regardless of the signed-in account's actual language.
+  const T = (key: string, vars?: Record<string, string | number>) => t(key, en ? "en" : "fr", vars);
   // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
   // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
