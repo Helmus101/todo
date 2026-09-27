@@ -518,6 +518,33 @@ export function studentModelLine(p?: Profile): string {
     `a generic one, and build toward their reasoning/judgment over time, not just today's fact; never quote ` +
     `this verbatim back to them or announce that you're using it):\n${p.studentModel.summary}\n`;
 }
+/** Turns the SAME quiz/flashcard accuracy signal errorLogLine already receives (server/patterns.ts's
+ *  aggregateSubjectSignals) into an explicit scaffolding instruction — the model-facing half of keeping the
+ *  student inside their Zone of Proximal Development (Vygotsky): too much unprompted explaining wastes the
+ *  gap between what they can already do alone and what they can't do at all, too little (staying purely
+ *  Socratic on a subject they're actually lost in) reads as the tutor withholding help they need. Reuses
+ *  existing tracked data — no new storage, no second model call — rather than standing up a separate
+ *  mastery store; a real Bayesian tracker would need per-SKILL (not per-subject) granularity this app
+ *  doesn't have yet, so this is deliberately coarse: a bias on pacing, not a claim about the exact concept. */
+export function zpdCalibrationLine(signal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }): string {
+  // Under 3 attempts is noise, not a signal — one lucky/unlucky card shouldn't swing how much Otto explains.
+  if (!signal || signal.attempts < 3) return "";
+  const { correctRate: r, trend } = signal;
+  if (r >= 0.85) {
+    return `\nCALIBRATION: their recent results in this subject are strong (${Math.round(r * 100)}% correct) — ` +
+      `they can carry more of the load. Lean further Socratic than usual, escalate the hint ladder more slowly, ` +
+      `and when they land something, offer a genuinely harder next problem rather than another one at this level.\n`;
+  }
+  if (r <= 0.4) {
+    return `\nCALIBRATION: their recent results in this subject are weak (${Math.round(r * 100)}% correct` +
+      `${trend === "down" ? ", and sliding further" : ""}) — the gap here is probably bigger than usual, so don't ` +
+      `stay purely Socratic if a first focusing question doesn't land; drop a rung sooner than you normally ` +
+      `would (rule 16/18) and check for a prerequisite gap underneath rather than repeating the same question ` +
+      `louder. This is about PACE, not content — still never hand over the graded answer.\n`;
+  }
+  return "";
+}
+
 /** Student-logged mistakes (Profile.errorLog, self-authored via the Error Log tab) for the SUBJECT this
  *  task belongs to — subject-matched, not global, since an error from a different subject is noise here.
  *  This data already existed and was fully built (CRUD routes, its own tab) but was never once read into an
@@ -5819,6 +5846,7 @@ export async function chatAboutTask(
       `few attempts. If it comes up naturally (don't force it into an unrelated reply), acknowledge that ` +
       `genuinely — a tutor who's watched them improve, not one meeting them for the first time.\n`
     : "";
+  const zpdLine = zpdCalibrationLine(opts?.subjectSignal);
   // Everything that changes from one call to the next (the clock, the student's profile facts, their error
   // log, journal, weak cards, the bandit's style pick) is assembled SEPARATELY and appended at the very END
   // of `sys`, not the front. It used to lead the prompt — with `nowBlock()` (changes every MINUTE) as
@@ -5830,7 +5858,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
+  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + zpdLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
   const sys =
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
@@ -5971,6 +5999,15 @@ export async function chatAboutTask(
     `parallel example where the same error would be obvious, or a single corrective step. Address WHY they're ` +
     `confused, not just THAT they're confused. A correct answer with the wrong reasoning is not learning — it's ` +
     `a coincidence waiting to fail.\n` +
+    `1b. ON A GENUINELY NEW TOPIC, MAKE THEM PLAN BEFORE THEY EXECUTE. The first time this task's kind of ` +
+    `problem shows up in the conversation (not every routine turn after) — before they start calculating, ` +
+    `writing, or working the mechanics — ask them to name the APPROACH first: "what's the first thing you'd ` +
+    `try here?", "what information in this even matters?", "what kind of problem is this, and what does that ` +
+    `usually call for?" This is a distinct skill from executing the steps, and it's the one that transfers to a ` +
+    `problem they've never seen: a student who can only run the steps once shown which ones is still lost on a ` +
+    `new problem; a student who can name the approach isn't. If they jump straight to calculating without ever ` +
+    `stating a plan, that's fine to let ride once — but if the plan turns out wrong, that's exactly the moment ` +
+    `to step back and ask them to reconsider the approach itself before re-doing the mechanics.\n` +
     `2. TEACH THE IDEA, NOT THE INSTANCE — FROM FIRST PRINCIPLES, ONE STEP PER MESSAGE. Once you know where ` +
     `they're stuck, don't open with the general rule — start from a definition or premise they ALREADY accept ` +
     `(something true in their own words, or a fact from earlier in the course) and build up to the concept a ` +

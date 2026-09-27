@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, statesUnconfirmedAnswer, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, zpdCalibrationLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, statesUnconfirmedAnswer, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1449,6 +1449,7 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("hint ladder only escalates on a genuine attempt, not a bare 'I don't know'", /ESCALATE ONLY ON A GENUINE ATTEMPT/.test(chatBody));
   check("hint ladder has explicit, enumerated answer-release conditions (not an open-ended gate)", /RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
   check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
+  check("tutor makes the student plan the approach before executing on a genuinely new topic", /MAKE THEM PLAN BEFORE THEY EXECUTE/.test(chatBody));
   check("board adds a complementary representation instead of restating the chat", /A DIFFERENT REPRESENTATION, NOT THE SAME ONE TWICE/.test(chatBody));
   check("board is kept curated in long sessions", /KEEP IT CURATED/.test(chatBody));
   check("answer release is scoped to steps/practice problems, never the graded assignment", /WHAT "RELEASING" MEANS/.test(chatBody));
@@ -1456,6 +1457,17 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("tutor sometimes asks for a confidence call before a verdict", /ASK HOW SURE THEY ARE/.test(chatBody));
   check("a guardrail trip gets one rewrite round before the canned line", /integrityCorrected = true/.test(chatBody));
   check("failed-reply fallback lines are dropped from the history sent to the model", /CHAT_FAILURE_LINE\.test/.test(chatBody));
+}
+
+section("zpdCalibrationLine — modulates scaffolding pace off the same accuracy signal errorLogLine uses");
+{
+  check("no signal → no-op", zpdCalibrationLine(undefined) === "");
+  check("under 3 attempts is noise, not a signal", zpdCalibrationLine({ correctRate: 0.9, attempts: 2 }) === "");
+  check("strong recent accuracy → push toward harder/more independent", /harder/.test(zpdCalibrationLine({ correctRate: 0.9, attempts: 5 })));
+  check("weak recent accuracy → drop a rung sooner, check for a prerequisite gap", /prerequisite gap/.test(zpdCalibrationLine({ correctRate: 0.3, attempts: 5 })));
+  check("weak AND sliding surfaces the trend too", /sliding further/.test(zpdCalibrationLine({ correctRate: 0.3, attempts: 5, trend: "down" })));
+  check("mid-range accuracy → no override, default pacing", zpdCalibrationLine({ correctRate: 0.6, attempts: 5 }) === "");
+  check("still holds the line against handing over the actual answer, even at low mastery", /never hand over/.test(zpdCalibrationLine({ correctRate: 0.2, attempts: 5 })));
 }
 // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
 // source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification
