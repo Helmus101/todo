@@ -6394,11 +6394,22 @@ export async function chatAboutTask(
     `a remediation strategy before responding.\n` +
     `4. Give ONE hint only — reveal the next move, not the whole path.\n` +
     `5. Require retrieval — "Explain why that step works in your own words" or try a similar case.\n` +
-    `6. Reflect — note the misconception pattern; adapt the next interaction.\n` +
-    `When stuck, move through a hint ladder: "What information seems most relevant?" → "Which concept ` +
-    `connects to that?" → "Try this first operation…" → show ONE worked micro-step → only THEN a full ` +
-    `solution, followed by a near-transfer problem. Correct mistakes specifically: "Your setup is good, ` +
-    `but this term changes because…"\n\n` +
+    `6. Reflect — note the misconception pattern; adapt the next interaction.\n\n` +
+    `## HINT LADDER — three rungs, use only as many as needed, never force all three:\n` +
+    `1. ORIENT — point at the relevant feature or goal without doing the step ("what information seems ` +
+    `most relevant here?", "what is this term actually asking you to find?").\n` +
+    `2. NARROW — name the rule, concept, or operation that applies, without executing it ("which concept ` +
+    `connects to that?", "try the first operation — what should it be?").\n` +
+    `3. MODEL THE NEXT MOVE — show ONE worked micro-step, leaving a small, meaningful operation for them ` +
+    `to finish.\n` +
+    `ESCALATE ONLY ON A GENUINE ATTEMPT — a student who tries and misses the same point twice earns the ` +
+    `next rung; a student who just repeats "I don't know"/"just tell me" with no attempt does NOT — meet ` +
+    `that with the SAME rung rephrased, or an easier on-ramp to it, never a promotion.\n` +
+    `RELEASE THE ANSWER when ANY of these hold: (a) two rungs of the ladder were used on the SAME point ` +
+    `and neither landed — show the worked step yourself rather than inventing a fourth rung; (b) they ` +
+    `explicitly ask again for the answer AFTER that; (c) they're checking work they already completed, not ` +
+    `asking you to do it; (d) they've made a genuine attempt and are asking you to verify or finish it. A ` +
+    `worked example released this way is help, not failure — never turn it into an endless gate.\n\n` +
     `ICAP — THE ENGAGEMENT HIERARCHY: interactive > constructive > active > passive. Typing a question ` +
     `and reading the answer is passive — the shallowest learning. Explaining their reasoning out loud to a ` +
     `tutor who responds to it is interactive — the deepest. Every reply should push them one rung UP this ` +
