@@ -1450,6 +1450,13 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("hint ladder has explicit, enumerated answer-release conditions (not an open-ended gate)", /RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
   check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
   check("tutor makes the student plan the approach before executing on a genuinely new topic", /MAKE THEM PLAN BEFORE THEY EXECUTE/.test(chatBody));
+  check("voice mode writes spoken notation to the board instead of leaving it unwritten", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(chatBody));
+  // Reported live: a reply cut off mid-sentence ("One version with a twist, to make sure the method
+  // travels:" then nothing) — DeepSeek's hidden reasoning tokens ate most of max_tokens before the visible
+  // reply started, so finish_reason came back "length" on a non-empty (so the separate empty-completion
+  // retry never fired) but truncated reply, and it shipped to the student exactly as cut off.
+  check("chat retries once on a non-empty but truncated (finish_reason:length) reply instead of shipping it cut off", /finish_reason === "length" && textContent\.trim\(\)/.test(chatBody) && /Continue from EXACTLY where it stopped/.test(chatBody));
+  check("the truncation retry is latched to fire at most once per turn", /let truncationRetried = false;/.test(chatBody) && /truncationRetried = true;/.test(chatBody));
   check("board adds a complementary representation instead of restating the chat", /A DIFFERENT REPRESENTATION, NOT THE SAME ONE TWICE/.test(chatBody));
   check("board is kept curated in long sessions", /KEEP IT CURATED/.test(chatBody));
   check("answer release is scoped to steps/practice problems, never the graded assignment", /WHAT "RELEASING" MEANS/.test(chatBody));
@@ -1698,6 +1705,15 @@ section("makeDiagramEntry — DRAW_ON_BOARD validation/clamping (server/claude.t
 
   const allBad = makeDiagramEntry({ caption: "x", ops: [{ op: "not_a_real_op" }] });
   check("errors when NO op in the figure is valid", "error" in allBad);
+
+  const eq = makeDiagramEntry({ caption: "Combine the fractions", ops: [
+    { op: "equation", x: 50, y: 100, latex: "\\frac{2}{x-1} + \\frac{3}{x+2} = \\frac{5x+1}{(x-1)(x+2)}" },
+  ] });
+  check("accepts a real 'equation' op for KaTeX rendering", "entry" in eq && eq.entry.diagram?.[0].op === "equation" && eq.entry.diagram[0].latex.includes("\\frac"));
+  const eqDollars = makeDiagramEntry({ caption: "x", ops: [{ op: "equation", x: 0, y: 0, latex: "$x^2$" }] });
+  check("strips $ delimiters the model included anyway — latex is meant to be bare", "entry" in eqDollars && eqDollars.entry.diagram[0].latex === "x^2");
+  const eqEmpty = makeDiagramEntry({ caption: "x", ops: [{ op: "equation", x: 0, y: 0, latex: "" }] });
+  check("rejects an empty equation", "error" in eqEmpty);
 }
 
 section("revealsAnswer — studyHelp's code-level backstop against leaking the real answer");

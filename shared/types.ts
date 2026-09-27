@@ -1270,7 +1270,10 @@ export type DiagramOp =
   | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; color?: string }
   | { op: "polyline"; points: { x: number; y: number }[]; color?: string }
   | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg" }
-  | { op: "axes"; x: number; y: number; w: number; h: number; xLabel?: string; yLabel?: string };
+  | { op: "axes"; x: number; y: number; w: number; h: number; xLabel?: string; yLabel?: string }
+  /** Real typeset math (KaTeX), not the plain-text approximation formatMath (client/ui.tsx) does for chat.
+   *  `latex` is raw LaTeX with no surrounding $/\( \) delimiters — e.g. "\\frac{2}{x-1} + \\frac{3}{x+2}". */
+  | { op: "equation"; x: number; y: number; latex: string };
 
 export interface BoardEntry {
   id: string;

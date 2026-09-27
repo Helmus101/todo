@@ -1770,7 +1770,7 @@ const WRITE_TO_BOARD_TOOL = {
   description: "Write ONE short entry onto the student's persistent tutor Board — a visible, always-accessible surface separate from the chat thread, NOT limited to practice problems. The board is a document being BUILT entry by entry across the session: it opens with the day's focus, collects the key definitions and formulas as they come up, credits the student's own insights, and ends with a summary of their reasoning. Each call adds ONE short, focused entry — never a wall of text; the next thing gets its own entry later as the session moves on. What belongs here is decided by one test: would the student otherwise have to hold it in their head, or scroll back through chat to find it? (given values and the goal, a formula in play, the cases a problem splits into, a diagram, the sub-goal they're on, a key term's gloss, their own insight). Anything that fails that test stays in chat. Don't narrate that you're writing it ('let me jot that down') — just call the tool.",
   input_schema: { type: "object", properties: {
     text: { type: "string", description: "the entry itself — plain text/light markdown, ONE idea, in KEYWORDS AND STRUCTURE rather than prose: ~25 words of prose max, and fewer is better. Write the skeleton of the idea, never a restatement of what you just said in chat (a board that repeats your sentences measurably hurts learning — the redundancy effect). Annotate like handwritten notes: 'term = plain gloss' on its own line; relationships as arrows ('A --pushes--> B'); contrasts stacked with '<-' margin asides ('NOT x <- what you'd expect' / 'BUT y <- the actual point'); dash lines for anything sequential, one idea each. Anything with REAL SPATIAL POSITION — a shape, a triangle, a number line, points on axes — belongs in DRAW_ON_BOARD instead, which renders an actual figure; reserve a fenced ASCII block here for genuinely textual structure (a timeline, a mind-map of labels, a small table) where a real drawing wouldn't add anything. ANY such ASCII sketch MUST be wrapped in a triple-backtick code fence (```\\n...\\n```) — the board renders a fenced block as monospace, preserving every space exactly as typed; UNFENCED text gets trimmed line by line and the whole shape collapses into a flat line with no structure left." },
-    kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for an equation/fact worth keeping visible; 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'note' for anything else. Defaults to 'note' if omitted." },
+    kind: { type: "string", enum: ["note", "instruction", "formula", "summary", "focus", "insight", "definition"], description: "styling/role hint: 'focus' ONCE to open a session's document — today's arc, where you start and what you're building toward; 'instruction' for a directive to start/try something; 'definition' the first time a key term comes up — the term in **bold**, then a plain-language definition; 'formula' for a plain fact/rule worth keeping visible in words (not real math notation — for an actual expression/equation with a fraction, exponent, or root, use DRAW_ON_BOARD's 'equation' op instead, which typesets it for real instead of describing it in text); 'insight' when the STUDENT has a genuine aha in their own words — credit them by name ('Will's insight: ...'); 'summary' for a recap of the STUDENT's reasoning; 'note' for anything else. Defaults to 'note' if omitted." },
   }, required: ["text"] },
 };
 
@@ -1782,10 +1782,13 @@ const WRITE_TO_BOARD_TOOL = {
 const DRAW_ON_BOARD_TOOL = {
   name: "DRAW_ON_BOARD",
   description: "Draw ONE small labeled figure onto the student's board — a real diagram (shapes, arrows, " +
-    "a labeled triangle, a number line, a simple graph), not ASCII art. Use this instead of an ASCII/text " +
-    "diagram ANY time the content is genuinely spatial or geometric: a shape, an axis, a labeled figure, " +
-    "points and lines with real positions. Keep ASCII/markdown tables in WRITE_TO_BOARD for sequences, " +
-    "timelines, and comparisons — those aren't spatial. Each call is ONE complete, self-contained figure: " +
+    "a labeled triangle, a number line, a simple graph) or real typeset math (an 'equation' op, rendered by " +
+    "KaTeX — actual stacked fractions, exponents, roots, not text like '2/(x-1)'), not ASCII art. Use this " +
+    "instead of an ASCII/text diagram ANY time the content is genuinely spatial or geometric, AND any time " +
+    "you say a real expression/equation/formula out loud or in chat — the student can't see a fraction bar " +
+    "in spoken or plain text, so a formula worth keeping visible belongs here, not just described in words. " +
+    "Keep ASCII/markdown tables in WRITE_TO_BOARD for sequences, timelines, and comparisons — those aren't " +
+    "spatial or mathematical. Each call is ONE complete, self-contained figure: " +
     "if you need to add to something you drew earlier (e.g. add the altitude to a triangle already on the " +
     "board), redraw the WHOLE figure again including the new part — never assume you can add to a past " +
     "call's shapes. Coordinate space is 0-800 wide, 0-600 tall; keep the figure roughly centered and leave " +
@@ -1798,7 +1801,7 @@ const DRAW_ON_BOARD_TOOL = {
       type: "array",
       description: "the figure's shapes, in any order. See each op's own fields.",
       items: { type: "object", properties: {
-        op: { type: "string", enum: ["line", "rect", "circle", "polyline", "label", "axes"] },
+        op: { type: "string", enum: ["line", "rect", "circle", "polyline", "label", "axes", "equation"] },
         x1: { type: "number" }, y1: { type: "number" }, x2: { type: "number" }, y2: { type: "number" },
         arrow: { type: "boolean", description: "line only: draw an arrowhead at (x2,y2)" },
         x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" },
@@ -1808,6 +1811,7 @@ const DRAW_ON_BOARD_TOOL = {
         text: { type: "string", description: "label only: the text itself, kept short (a variable, a value, a name)" },
         size: { type: "string", enum: ["sm", "md", "lg"] },
         xLabel: { type: "string" }, yLabel: { type: "string" },
+        latex: { type: "string", description: "equation only: raw LaTeX, NO surrounding $ or \\( \\) delimiters — e.g. \\frac{2}{x-1} + \\frac{3}{x+2} = \\frac{5x+1}{(x-1)(x+2)}. Rendered by KaTeX as real typeset math (stacked fractions, exponents, roots), not text." },
         color: { type: "string", description: "optional hex color; defaults to the board's ink color if omitted" },
       }, required: ["op"] },
     },
@@ -1969,6 +1973,16 @@ function validateDiagramOp(raw: any): DiagramOp | null {
         ...(raw.xLabel ? { xLabel: String(raw.xLabel).trim().slice(0, 30) } : {}),
         ...(raw.yLabel ? { yLabel: String(raw.yLabel).trim().slice(0, 30) } : {}),
       };
+    case "equation": {
+      // Strip $ / \( \) / \[ \] delimiters if the model included them anyway — `latex` is meant to be bare.
+      const latex = String(raw?.latex || "").trim()
+        .replace(/^\$+|\$+$/g, "")
+        .replace(/^\\\(|\\\)$/g, "")
+        .replace(/^\\\[|\\\]$/g, "")
+        .trim().slice(0, 300);
+      if (!latex) return null;
+      return { op: "equation", x: clampX(raw.x), y: clampY(raw.y), latex };
+    }
     default:
       return null;
   }
@@ -5937,7 +5951,14 @@ export async function chatAboutTask(
         `most 2-3 short spoken sentences. NEVER use markdown (headings, bold markers, bullet lists, tables — ` +
         `none of that survives being spoken, it reads as garbled symbols). If the full explanation genuinely ` +
         `needs more than that, give the single most useful sentence now and ask a short follow-up question ` +
-        `instead of a long monologue.\n\n`
+        `instead of a long monologue.\n` +
+        `THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION. Speech has no way to show "2/(x-1)" — ` +
+        `it comes out as "two over x minus one", and that spoken form is ALL the student gets unless you also ` +
+        `write it. So the moment you say a real expression, equation, or formula out loud (not just a plain ` +
+        `number), call WRITE_TO_BOARD with kind:"formula" for the exact symbolic form THAT SAME TURN — never ` +
+        `describe notation in speech and leave it unwritten. This applies to every intermediate line, not ` +
+        `just the final result: if you talk through combining 2/(x-1) and 3/(x+2) into one fraction, the board ` +
+        `should show that step too, not just the answer.\n\n`
       : "") +
     (opts?.canvasMode
       ? `CANVAS MODE — ONE PROBLEM AT A TIME: the student turned on a focused problem-solving canvas instead ` +
@@ -6488,6 +6509,7 @@ export async function chatAboutTask(
     // it threw away an otherwise good tutoring turn and read as a stock response. One rewrite round first
     // keeps the tutor's own voice and context; finish()'s canned line stays as the backstop.
     let integrityCorrected = false;
+    let truncationRetried = false;
     for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
       // The deadline below already answered the student — stop spending tokens on a reply nobody will see.
       if (timedOut) break;
@@ -6599,6 +6621,30 @@ export async function chatAboutTask(
               "CREATE_PROBLEM if it's a problem) with that exact content right now, or rewrite your reply " +
               "without referring to anything visible. Same short spoken tone, don't mention this correction." });
           continue;
+        }
+        // Reported live, verbatim: a reply ending mid-sentence ("One version with a twist, to make sure the
+        // method travels:") with nothing after the colon — DeepSeek v4's hidden reasoning tokens (see OUT's
+        // own comment) had already spent most of max_tokens before the visible reply started, so the reply
+        // itself hit the ceiling and finish_reason came back "length" with a genuinely non-empty (so the
+        // empty-completion retry above never fires), but truncated, reply. One retry, same conversation,
+        // asking it to actually finish the thought concisely rather than restart or pad — a truncated tutor
+        // reply mid-example is worse than a slightly shorter complete one.
+        if (!truncationRetried && res.choices?.[0]?.finish_reason === "length" && textContent.trim()) {
+          truncationRetried = true;
+          console.log(`${new Date().toISOString()} [chat] round ${round}: reply hit finish_reason 'length' — retrying once for a complete, concise reply`);
+          try {
+            const contRes: any = await retryRequest(() => client.chat.completions.create({
+              model: actualModel, max_tokens: OUT.chat, temperature: 0.6,
+              messages: [...apiMessages, { role: "assistant" as const, content: textContent },
+                { role: "user" as const, content: "That got cut off. Continue from EXACTLY where it stopped — a couple of short sentences, concisely — don't restart or repeat what you already said, just complete the thought." }],
+            }), 2, 400);
+            const u = usageOf(contRes);
+            result.tokens.in += u.in; result.tokens.out += u.out; result.tokens.cachedIn = (result.tokens.cachedIn || 0) + u.cachedIn;
+            const completion = contRes.choices?.[0]?.message?.content?.trim();
+            // Append, don't replace — the continuation call only ever sees "finish this", so its own
+            // response is just the missing tail, not a repeat of the part that already arrived.
+            if (completion) textContent = `${textContent.trim()} ${completion}`;
+          } catch (e: any) { console.error(`[chat] truncation retry failed: ${e?.message || e}`); }
         }
         return finish(textContent);
       }
