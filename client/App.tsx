@@ -11,7 +11,7 @@ import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } 
 import { hydrateLocalThreads } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
-import { t, useT } from "./i18n.ts";
+import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
@@ -910,11 +910,18 @@ export function App() {
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const en = status?.language === "en";
-  // Hook-bound translator for the (growing) slice of dashboard strings migrated to client/i18n.ts's
-  // catalog — named `T` (not `t`) because this same function has dozens of `.filter((t) => …)`/`.map((t)
-  // => …)` callbacks over tasks that shadow the module-level `t` import; a same-named hook result here
-  // would be one more local `t` to keep straight from the task-parameter convention used everywhere else.
-  const T = useT();
+  // Translator for the (growing) slice of dashboard strings migrated to client/i18n.ts's catalog — named
+  // `T` (not `t`) because this same function has dozens of `.filter((t) => …)`/`.map((t) => …)` callbacks
+  // over tasks that shadow the module-level `t` import.
+  // Deliberately NOT useT() (which reads LangContext): App() is the component that RENDERS
+  // <LangContext.Provider value={status?.language...}> below — a component's own hook calls never see the
+  // value it provides to its own JSX subtree, only what an ANCESTOR already provided. Since nothing wraps
+  // App() itself, useT() here always read LangContext's hardcoded "fr" default regardless of the account's
+  // actual language, while GREETING/todayLong (which read status?.language directly, same as `en` above)
+  // got it right — reported live as the dashboard mixing English chrome with French sentences ("Good
+  // afternoon, Willem." next to "Ensuite : ...") for an English-language account. Deriving the same way
+  // GREETING/todayLong already do keeps every dashboard string in this function on one real source.
+  const T = (key: string, vars?: Record<string, string | number>) => t(key, en ? "en" : "fr", vars);
   // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
   // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
