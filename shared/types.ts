@@ -1016,6 +1016,11 @@ export interface WebTask {
    *  synthetic zeroth step would shift every other step's index and silently corrupt any TaskStep.dependsOn
    *  already pointing at them on an existing task. */
   firstAction?: { text: string; minutes?: number };
+  /** Computed fresh on every GET /api/tasks (see stallNudgeLine in server/patterns.ts) — NEVER persisted,
+   *  NEVER set by a mutation handler. A "spark" reframe to show INSTEAD of `why` when this task is already
+   *  a single easy action that's sat untouched for days (a motivation problem, not a clarity one). Absent
+   *  means "no override" — the client falls back to `why` as always. */
+  nudgeLine?: string;
   /** Procrastination-latency signal for the personalization/bandit work (see server/bandit.ts): `shownAt`
    *  is stamped the first time this task is returned to the client in a "live" (not done/dismissed) state
    *  (GET /api/tasks), `firstActionAt` the first time the student actually acts on it (confirm, tick a

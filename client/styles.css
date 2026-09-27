@@ -792,6 +792,15 @@ input:focus, textarea:focus {
   /* Apple Design §4 — spring animation with staggered delay */
   animation: appleRise var(--duration-spring) var(--ease-spring) 0.05s backwards;
 }
+/* A genuine, already-computed "up" trend surfaced as a quiet acknowledgment — same rise-in as .dash-line,
+   deliberately NOT a pill/badge (this is warmth, not a status signal like overdue/working). */
+.dash-momentum {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--accent, var(--ink-2));
+  animation: appleRise var(--duration-spring) var(--ease-spring) 0.08s backwards;
+}
 .dash-late, .dash-working {
   font-family: var(--mono);
   font-size: 11.5px;

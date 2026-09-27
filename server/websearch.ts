@@ -2,33 +2,44 @@
  * Web search for task agents and study help — parallelized multi-provider search engine.
  * Queries DuckDuckGo HTML, DuckDuckGo Lite, Wikipedia REST API, and DDG Instant Answer concurrently
  * via Promise.allSettled. Fast, resilient, keyless, and deduplicated.
+ *
+ * Wikipedia is deliberately a FALL-BACK provider, not an equal peer: the general-web providers (DDG
+ * HTML/Lite) are the real query-matched results — Wikipedia's own `srsearch` is a loose keyword match
+ * that happily returns a tangentially-related article (an unrelated person/place/topic that merely
+ * shares a word with the query). When DDG scraping is having a bad day (bot-blocked, layout drift —
+ * both regex-scraped, so genuinely fragile), Wikipedia used to end up as MOST of the results by sheer
+ * concurrency, which is why real usage skewed "it's always Wikipedia" even though this function never
+ * hard-codes it as a source. Now: general-web results are always listed first, Wikipedia only fills in
+ * the remaining slots (capped small), and only for hits that actually share real vocabulary with the
+ * query — see wikipediaSearch's own relevance filter below.
  */
-
 export async function webSearch(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
   const q = query.trim();
   if (!q) return [];
 
-  // Run all search providers concurrently
-  const settled = await Promise.allSettled([
-    duckDuckGoHtml(q),
-    duckDuckGoLite(q),
+  const [generalSettled, wikiSettled] = await Promise.allSettled([
+    Promise.allSettled([duckDuckGoHtml(q), duckDuckGoLite(q), duckDuckGoInstant(q)]),
     wikipediaSearch(q),
-    duckDuckGoInstant(q),
   ]);
 
   const combined: { title: string; url: string; snippet: string }[] = [];
   const seenUrls = new Set<string>();
+  const add = (item: { title: string; url: string; snippet: string }) => {
+    if (!item.url || !item.title) return;
+    const normUrl = item.url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
+    if (seenUrls.has(normUrl)) return;
+    seenUrls.add(normUrl);
+    combined.push(item);
+  };
 
-  for (const res of settled) {
-    if (res.status === "fulfilled" && Array.isArray(res.value)) {
-      for (const item of res.value) {
-        if (!item.url || !item.title) continue;
-        const normUrl = item.url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
-        if (seenUrls.has(normUrl)) continue;
-        seenUrls.add(normUrl);
-        combined.push(item);
-      }
-    }
+  if (generalSettled.status === "fulfilled") {
+    for (const res of generalSettled.value) if (res.status === "fulfilled") for (const item of res.value) add(item);
+  }
+  // Fill in with Wikipedia only up to a small cap, and only when the general web didn't already fill
+  // the list — a genuinely thin result set (an obscure fact, a niche how-to) is exactly when an
+  // encyclopedia entry is worth having; a query that already got 6+ real hits doesn't need it too.
+  if (wikiSettled.status === "fulfilled" && combined.length < 6) {
+    for (const item of wikiSettled.value.slice(0, 2)) add(item);
   }
 
   return combined.slice(0, 10);
@@ -92,11 +103,26 @@ async function wikipediaSearch(query: string): Promise<{ title: string; url: str
   if (!res.ok) throw new Error(`wiki ${res.status}`);
   const json = await res.json() as any;
   const items = json?.query?.search || [];
-  return items.slice(0, 4).map((item: any) => ({
-    title: String(item.title || ""),
-    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(item.title || "").replace(/ /g, "_"))}`,
-    snippet: stripTags(String(item.snippet || "")),
-  })).filter((x: any) => x.title && x.snippet);
+  // Wikipedia's own `srsearch` is a loose keyword match, not a relevance-ranked query match — it will
+  // happily return a real article that just happens to share ONE word with the query and is otherwise
+  // unrelated (the actual "sometimes it doesn't make sense" complaint: a search for a task topic
+  // surfacing an unrelated person/place/event page). Require the title itself to share a real word
+  // (4+ letters, so short connectors like "the"/"for" don't count) with the query — this is the same
+  // signal that already gates task links elsewhere (see dropForeignEntityLinks), applied at the source.
+  const queryWords = new Set(query.toLowerCase().match(/[a-zà-ÿ]{4,}/gi)?.map((w) => w.toLowerCase()) || []);
+  const titleMatchesQuery = (title: string) => {
+    if (!queryWords.size) return true; // too short a query to judge — don't over-filter
+    const titleWords = title.toLowerCase().match(/[a-zà-ÿ]{4,}/gi) || [];
+    return titleWords.some((w) => queryWords.has(w));
+  };
+  return items
+    .map((item: any) => ({
+      title: String(item.title || ""),
+      url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(item.title || "").replace(/ /g, "_"))}`,
+      snippet: stripTags(String(item.snippet || "")),
+    }))
+    .filter((x: any) => x.title && x.snippet && titleMatchesQuery(x.title))
+    .slice(0, 4);
 }
 
 // ── Provider 4: DuckDuckGo Instant Answer API ──────────────────────────────
