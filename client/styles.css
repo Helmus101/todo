@@ -625,6 +625,13 @@ input:focus, textarea:focus {
 .week-fab-popover-body { display: flex; flex-direction: column; gap: var(--space-5); }
 .week-fab-popover-body > * + * { padding-top: var(--space-5); border-top: 1px solid var(--line-soft); }
 .exam-strip-wrap, .due-reviews { margin: 0; }
+/* Journal variant gets real page furniture (a header row with the "Review now" CTA + a one-line summary)
+   instead of the bare label the compact dashboard-popover variant uses — see DueReviewsList's own comment
+   for why the two variants exist. */
+.due-reviews-journal { margin-bottom: var(--space-6); padding-bottom: var(--space-5); border-bottom: 1px solid var(--line-soft); }
+.due-reviews-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-1); }
+.due-reviews-head .exam-strip-label { margin-bottom: 0; }
+.due-reviews-summary { margin: 0 0 var(--space-3); font-size: var(--text-sm); color: var(--ink-2); }
 /* Now a <button> (opens the deck's review player directly, see DueReviews' own comment) rather than an
    <a href="/task/..."> — reset the button chrome .exam-chip's other, non-interactive usages don't need. */
 .due-review-chip {

@@ -1386,7 +1386,7 @@ function WeekRailFab({ lang, onTask, tasks }: { lang?: "fr" | "en"; onTask: (t: 
           <div className="week-fab-popover-body">
             {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
                 (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
-            <DueReviews lang={lang} tasks={tasks} />
+            <DueReviewsList lang={lang} tasks={tasks} />
             <WeekLoad lang={lang} onTask={onTask} />
           </div>
         </TaskModal>
@@ -1403,12 +1403,24 @@ function WeekRailFab({ lang, onTask, tasks }: { lang?: "fr" | "en"; onTask: (t: 
  *  chip opened the whole task, and the student still had to go find the flashcard deck inside it. `tasks`
  *  is already loaded by the parent (App.tsx's main dashboard state), so the deck itself can be looked up
  *  locally — no extra fetch needed, same pattern as the Journal page's day/month deck review modals
- *  (StudyLogPage's onDayReview/onSummaryReview). */
-function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
+ *  (StudyLogPage's onDayReview/onSummaryReview).
+ *
+ *  Two call sites, one component: the Dashboard's "This week" popover (`variant="compact"`, the original
+ *  home) and the top of the Journal's Flashcards tab (`variant="journal"`) — the actual home for review,
+ *  since every deck already lives there and "due for review" buried inside a different page's popover was
+ *  never where a student reviewing their cards would think to look for it. `journal` adds a one-line
+ *  "N cards across M decks" summary + a "Review now" button that jumps straight into the busiest deck,
+ *  since the Journal tab has room for a real header, not just a chip strip.
+ *  CAP, DON'T DUMP: a subject with a lot of small decks (or a student who's fallen behind) can rack up a
+ *  dozen+ due decks at once — showing all of them unconditionally turns "here's what to review" into a wall
+ *  the student bounces off. Both variants cap the visible list and reuse the app's existing "See N more…"
+ *  pattern (.show-more-btn, same as the dashboard's task list) to reveal the rest on request. */
+function DueReviewsList({ lang, tasks, variant = "compact" }: { lang?: "fr" | "en"; tasks: WebTask[]; variant?: "compact" | "journal" }) {
   const en = lang === "en";
   const [due, setDue] = useState<{ taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number }[] | null>(null);
   const [error, setError] = useState(false);
   const [openDeck, setOpenDeck] = useState<{ taskId: string; deckId: string } | null>(null);
+  const [showAll, setShowAll] = useState(false);
   useEffect(() => { void api.reviewsDue().then((r) => setDue(r.due)).catch(() => { setDue([]); setError(true); }); }, []);
   // Once the open deck has nothing left due, close the modal automatically — a clear "you're done" signal
   // instead of leaving an empty-feeling review screen open with nothing more to click through.
@@ -1417,25 +1429,52 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   }, [due, openDeck]);
   if (error) return <p className="rewrite-error small">{en ? "Couldn't load reviews due." : "Impossible de charger les révisions dues."}</p>;
   if (!due?.length) return null;
-  // Group by DECK (not task) — a task with two decks should show two chips, not one merged count.
+  // Group by DECK (not task) — a task with two decks should show two chips, not one merged count. Sorted
+  // busiest-first so both the capped list and "Review now" (journal variant) surface what actually needs
+  // attention before decks with just one or two stray cards due.
   const byDeck = new Map<string, { taskId: string; deckTitle: string; count: number }>();
   for (const d of due) {
     const cur = byDeck.get(d.deckId);
     if (cur) cur.count++; else byDeck.set(d.deckId, { taskId: d.taskId, deckTitle: d.deckTitle, count: 1 });
   }
+  const decks = [...byDeck.entries()]
+    .map(([deckId, t]) => ({ deckId, ...t }))
+    .sort((a, b) => b.count - a.count);
+  const cap = variant === "journal" ? 3 : 4;
+  const visible = showAll ? decks : decks.slice(0, cap);
+  const hidden = decks.length - visible.length;
   const openTask = openDeck ? tasks.find((t) => t.id === openDeck.taskId) : undefined;
   const openDeckObj = openTask?.flashcards?.find((f) => f.id === openDeck?.deckId);
   return (
-    <div className="due-reviews">
-      <div className="exam-strip-label">{en ? "Due for review" : "À réviser"}</div>
+    <div className={`due-reviews due-reviews-${variant}`}>
+      <div className="due-reviews-head">
+        <div className="exam-strip-label">{en ? "Due for review" : "À réviser"}</div>
+        {variant === "journal" && (
+          <button type="button" className="btn xs primary" onClick={() => setOpenDeck({ taskId: decks[0].taskId, deckId: decks[0].deckId })}>
+            {en ? "Review now" : "Réviser maintenant"}
+          </button>
+        )}
+      </div>
+      {variant === "journal" && (
+        <p className="due-reviews-summary">
+          {en
+            ? `${due.length} card${due.length > 1 ? "s" : ""} due across ${decks.length} deck${decks.length > 1 ? "s" : ""}.`
+            : `${due.length} carte${due.length > 1 ? "s" : ""} due sur ${decks.length} paquet${decks.length > 1 ? "s" : ""}.`}
+        </p>
+      )}
       <div className="exam-strip">
-        {[...byDeck.entries()].map(([deckId, t]) => (
-          <button key={deckId} type="button" className="exam-chip due-review-chip" onClick={() => setOpenDeck({ taskId: t.taskId, deckId })}>
+        {visible.map((t) => (
+          <button key={t.deckId} type="button" className="exam-chip due-review-chip" onClick={() => setOpenDeck({ taskId: t.taskId, deckId: t.deckId })}>
             <span className="exam-days">{t.count}</span>
             <span className="exam-subject">{t.deckTitle}</span>
           </button>
         ))}
       </div>
+      {!showAll && hidden > 0 && (
+        <button type="button" className="btn xs ghost show-more-btn" onClick={() => setShowAll(true)}>
+          {en ? `See ${hidden} more deck${hidden > 1 ? "s" : ""}…` : `Voir ${hidden} paquet${hidden > 1 ? "s" : ""} de plus…`}
+        </button>
+      )}
       {openTask && openDeckObj && (
         <TaskModal onClose={() => setOpenDeck(null)} title={openDeckObj.title} nested>
           <FlashcardDeck
@@ -2303,8 +2342,10 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
           entirely invisible from Journal — the ONE place a student would expect to see "you have cards due
           for review," reported live as "i never see this." The cross-task /api/reviews/due signal already
           existed but was buried in the dashboard's "This week" popover, nowhere near the Journal tab where
-          these decks actually live. */}
-      <DueReviews lang={lang} tasks={tasks} />
+          these decks actually live. `variant="journal"` gives it a real header (a summary line + "Review
+          now") instead of the bare chip list the dashboard's popover uses, and caps the deck list instead of
+          dumping every overdue deck on the page at once — see DueReviewsList's own comment. */}
+      <DueReviewsList lang={lang} tasks={tasks} variant="journal" />
 
       {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
       <>
