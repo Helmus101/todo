@@ -1125,8 +1125,9 @@ export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, langua
       // not a new artifact every time) rather than leaving the student to notice it was updated on their
       // own. This is what makes "always accessible" actually mean something beyond "reachable if you go
       // looking" — the first time it's genuinely relevant, it comes to them.
-      const oldBoardLen = task.board?.length || 0;
-      if ((updated.board?.length || 0) > oldBoardLen) openOrFocusBoard();
+      // `board`/`problems` are this turn's local-only delta — `updated` is the cloud task, which never carries
+      // new board writes anymore (see localChatBoard.ts), so comparing its length never fired.
+      if (board.length || problems.length) openOrFocusBoard();
     } catch (e: any) {
       setChatError(e?.message || "Couldn't send that — try again.");
       setChatInput(message);
