@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, statesUnconfirmedAnswer, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -872,6 +872,7 @@ check("no profile / mixed → empty (no-op)", learningStyleLine(undefined) === "
 check("visual → spatial/structural framing", /spatial|structural/.test(learningStyleLine({ learningStyle: "visual" })));
 check("kinesthetic → hands-on framing", /doing|hands-on|try this/.test(learningStyleLine({ learningStyle: "kinesthetic" })));
 check("every style still forbids skipping diagnosis or dumbing down content", ["visual", "auditory", "reading", "kinesthetic"].every((s) => /Never skip a needed diagnostic question or dumb down content to fit/.test(learningStyleLine({ learningStyle: s }))));
+check("every style is framed as a preference — content still picks the representation", ["visual", "auditory", "reading", "kinesthetic"].every((s) => /CONTENT decides the representation/.test(learningStyleLine({ learningStyle: s }))));
 
 // ── Big project detection + milestone re-plan (no track gate — polyvalent) ────
 section("isBigIbProject");
@@ -1450,6 +1451,11 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
   check("board adds a complementary representation instead of restating the chat", /A DIFFERENT REPRESENTATION, NOT THE SAME ONE TWICE/.test(chatBody));
   check("board is kept curated in long sessions", /KEEP IT CURATED/.test(chatBody));
+  check("answer release is scoped to steps/practice problems, never the graded assignment", /WHAT "RELEASING" MEANS/.test(chatBody));
+  check("feedback targets work and strategy, not the person", /never at the person/.test(chatBody));
+  check("tutor sometimes asks for a confidence call before a verdict", /ASK HOW SURE THEY ARE/.test(chatBody));
+  check("a guardrail trip gets one rewrite round before the canned line", /integrityCorrected = true/.test(chatBody));
+  check("failed-reply fallback lines are dropped from the history sent to the model", /CHAT_FAILURE_LINE\.test/.test(chatBody));
 }
 // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
 // source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification
@@ -1548,6 +1554,16 @@ check("catches a FR answer announcement", CHAT_STATES_ANSWER.test("La réponse e
 check("catches a FR MCQ conclusion", CHAT_STATES_ANSWER.test("C'est donc l'option B."));
 check("does NOT flag ordinary tutoring text with a number in it", !CHAT_STATES_ANSWER.test("That's the same rule we used on step 3 — try applying it here."));
 check("does NOT flag a focusing question", !CHAT_STATES_ANSWER.test("What do you think happens if you substitute that back in?"));
+
+section("statesUnconfirmedAnswer — confirming the student's OWN answer is allowed (rule 3), supplying one isn't");
+check("flags a conclusion the student never stated", statesUnconfirmedAnswer("So the answer is 42.", "I'm stuck on part b"));
+check("allows confirming a number the student said", !statesUnconfirmedAnswer("Yes — the answer is 12, exactly.", "is it 12?"));
+check("allows confirming an MCQ letter the student picked", !statesUnconfirmedAnswer("Right, so it's option C.", "I think C"));
+check("short values need a whole-word match (the letter d inside 'dunno' isn't saying D)", statesUnconfirmedAnswer("So it's option D.", "dunno"));
+check("allows confirming a FR answer the student gave", !statesUnconfirmedAnswer("Oui, la réponse est donc 3,5 — bien joué.", "je trouve 3,5"));
+check("flags a FR conclusion the student never gave", statesUnconfirmedAnswer("La réponse est la photosynthèse.", "je sais pas"));
+check("allows confirming a word answer, case-insensitive", !statesUnconfirmedAnswer("Exactly — the answer is **Photosynthesis**.", "photosynthesis?"));
+check("no announcement → nothing to flag", !statesUnconfirmedAnswer("What do you notice about the denominator?", "help"));
 
 section("CHAT_CLAIMS_BOARD — catches Otto pointing at a board write that never happened");
 check("catches EN 'on your screen'", CHAT_CLAIMS_BOARD.test("The problem is on your screen now, just above."));
