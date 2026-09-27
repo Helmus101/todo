@@ -1837,6 +1837,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
             deck={open.deck}
             taskId={open.taskId}
             onReview={liveOwner ? (cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); } : undefined}
+            onNotNeeded={liveOwner ? (cardIndex) => { void api.markFlashcardNotNeeded(open.taskId, open.deck.id, cardIndex).catch(() => {}); } : undefined}
             onAllCorrect={() => setOpenId(null)}
           />
         </TaskModal>

@@ -691,23 +691,105 @@ export function dedupeFacts(list: string[]): string[] {
 // soonest first. Unparseable / empty → +Infinity (sorts last). Deliberately simple: only needs relative
 // ORDER, and the model already emits real dates from the source item (never invented). Shared so the
 // server ordering and the client list sort identically.
-const RANK_MONTHS: Record<string, number> = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+// Accent-stripped keys, so "février"/"fevrier" and "août"/"aout" both hit.
+const RANK_MONTHS: Record<string, number> = {
+  jan: 0, january: 0, janvier: 0, feb: 1, february: 1, fevrier: 1, fev: 1, mar: 2, march: 2, mars: 2,
+  apr: 3, april: 3, avril: 3, avr: 3, may: 4, mai: 4, jun: 5, june: 5, juin: 5, jul: 6, july: 6, juillet: 6, juil: 6,
+  aug: 7, august: 7, aout: 7, sep: 8, sept: 8, september: 8, septembre: 8, oct: 9, october: 9, octobre: 9,
+  nov: 10, november: 10, novembre: 10, dec: 11, december: 11, decembre: 11,
+};
+// No bare "mar" here — it's March in English, and "mar." for mardi is rare enough not to be worth the clash.
+const RANK_WEEKDAYS: Record<string, number> = {
+  sun: 0, sunday: 0, dimanche: 0, mon: 1, monday: 1, lundi: 1, tue: 2, tues: 2, tuesday: 2, mardi: 2,
+  wed: 3, wednesday: 3, mercredi: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, jeudi: 4,
+  fri: 5, friday: 5, vendredi: 5, sat: 6, saturday: 6, samedi: 6,
+};
+const MONTH_ALT = Object.keys(RANK_MONTHS).sort((a, b) => b.length - a.length).join("|");
+const WEEKDAY_ALT = Object.keys(RANK_WEEKDAYS).sort((a, b) => b.length - a.length).join("|");
+const MONTH_DAY_RE = new RegExp(`\\b(${MONTH_ALT})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th|er)?\\b(?:,?\\s+(20\\d{2}))?`);
+const DAY_MONTH_RE = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th|er)?\\s+(${MONTH_ALT})\\.?(?:\\s+(20\\d{2}))?\\b`);
+const WEEKDAY_RE = new RegExp(`\\b(${WEEKDAY_ALT})\\b`);
+const DAY_MS = 864e5;
+
+/** Calendar date at noon UTC — the same convention extractDateFromText (server/tasks.ts) uses, so the date
+ *  lands on the right calendar day in every realistic timezone instead of rolling back a day west of UTC. */
+function noonUtc(y: number, m: number, d: number): number { return Date.UTC(y, m, d, 12, 0, 0); }
+
+/** A year-less month/day → this year's occurrence, unless that's more than ~2 months gone (then it's next
+ *  year's). A homework "due Sep 20" read on Sep 27 is genuinely OVERDUE and must stay this year; a "Jan 15"
+ *  read in November is next January, not ten months overdue. */
+function inferYear(m: number, d: number, now: Date): number {
+  const t = noonUtc(now.getUTCFullYear(), m, d);
+  return t < now.getTime() - 60 * DAY_MS ? noonUtc(now.getUTCFullYear() + 1, m, d) : t;
+}
+
+/** Parse a task's free-text `when` into a sortable epoch — soonest first; unparseable/empty → +Infinity.
+ *  `when` is often the MODEL's own free text ("Oct 9", "9 octobre", "vendredi", "demain", "09/10"), and a
+ *  bare Date.parse gets nearly all of those wrong in Node: every year-less date ("Oct 9", "9 octobre")
+ *  parses as year 2001 — so the task read as 25 years overdue and pinned to max urgency — while weekday
+ *  names and "tomorrow"/"demain" parse as NaN and got no deadline at all. French numeric "09/10" (9 Oct)
+ *  was read US-style as Sep 10. This is the ONE parser every deadline consumer should go through. */
 export function deadlineEpoch(when: string | undefined, now: Date = new Date()): number {
-  const s = String(when || "").trim().toLowerCase();
-  if (!s) return Infinity;
-  if (/\btoday\b|\btonight\b|\bnow\b/.test(s)) return now.getTime();
-  if (/\btomorrow\b/.test(s)) return now.getTime() + 864e5;
-  // A string with an explicit 4-digit year is unambiguous → trust Date.parse ("2026-07-24", "June 30 2026").
-  if (/\b20\d{2}\b/.test(s)) { const iso = Date.parse(s); if (!isNaN(iso)) return iso; }
-  // Month + day WITHOUT a year → current year (or next if already well past). Must run BEFORE a bare
-  // Date.parse — Node parses "july 30" to year 2001, which would sort a summer deadline into the past.
-  const md = s.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})/);
-  if (md && RANK_MONTHS[md[1]] !== undefined) {
-    const d = new Date(now.getFullYear(), RANK_MONTHS[md[1]], Number(md[2]));
-    if (d.getTime() < now.getTime() - 180 * 864e5) d.setFullYear(now.getFullYear() + 1); // next occurrence
-    return d.getTime();
+  const raw = String(when || "").trim();
+  if (!raw) return Infinity;
+  // Real ISO timestamps (Pronote's own dates, estimateWhen's output) are unambiguous — trust them as-is.
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) { const iso = Date.parse(raw); return Number.isNaN(iso) ? Infinity : iso; }
+  const s = raw.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+  if (/\bapres[- ]demain\b|\bday after tomorrow\b/.test(s)) return now.getTime() + 2 * DAY_MS;
+  if (/\btomorrow\b|\bdemain\b/.test(s)) return now.getTime() + DAY_MS;
+  if (/\btoday\b|\btonight\b|\bnow\b|\basap\b|\baujourd'?hui\b|\bce soir\b|\btout de suite\b/.test(s)) return now.getTime();
+  const inDays = s.match(/\b(?:in|dans)\s+(\d{1,2})\s+(?:days?|jours?)\b/);
+  if (inDays) return now.getTime() + Number(inDays[1]) * DAY_MS;
+  if (/\bnext week\b|\bsemaine prochaine\b/.test(s)) return now.getTime() + 7 * DAY_MS;
+
+  // Month + day, both orders, EN + FR, optional year: "Oct 9", "October 9th, 2026", "9 octobre", "le 9 oct."
+  const md = s.match(MONTH_DAY_RE);
+  const dm = md ? null : s.match(DAY_MONTH_RE);
+  if (md || dm) {
+    const month = RANK_MONTHS[(md ? md[1] : dm![2])];
+    const day = Number(md ? md[2] : dm![1]);
+    const year = md ? md[3] : dm![3];
+    if (month !== undefined && day >= 1 && day <= 31) return year ? noonUtc(Number(year), month, day) : inferYear(month, day, now);
   }
+
+  // Numeric dates, European day-first (this is a French-first app: "09/10" is 9 October). Only swapped to
+  // month-first when the second number can't be a month (> 12), i.e. the string is unambiguously US-style.
+  // Slash only — a dotted "10.30" is far more often a time than a date.
+  const num = s.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (num) {
+    let day = Number(num[1]), month = Number(num[2]);
+    if (month > 12 && day <= 12) [day, month] = [month, day];
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const y = num[3] ? (num[3].length === 2 ? 2000 + Number(num[3]) : Number(num[3])) : undefined;
+      return y ? noonUtc(y, month - 1, day) : inferYear(month - 1, day, now);
+    }
+  }
+
+  // A weekday name → its NEXT occurrence (today if it IS that weekday, a week out if "next"/"prochain").
+  const wd = s.match(WEEKDAY_RE);
+  if (wd) {
+    const target = RANK_WEEKDAYS[wd[1]];
+    let ahead = (target - now.getDay() + 7) % 7;
+    if (ahead === 0 && /\bnext\b|\bprochain/.test(s)) ahead = 7;
+    return now.getTime() + ahead * DAY_MS;
+  }
+
+  if (/\b20\d{2}\b/.test(s)) { const p = Date.parse(raw); if (!Number.isNaN(p)) return p; }
   return Infinity;
+}
+
+/** Normalize a model-written `when` to an ISO timestamp at ingestion, so every downstream consumer (client
+ *  date labels, workload, raw Date.parse callers) sees a real date instead of re-parsing free text. An
+ *  already-ISO value is kept VERBATIM. Unparseable text ("soon", "avant les vacances") returns undefined —
+ *  callers treat that as "no stated deadline" and fall through to their own estimate, rather than storing
+ *  a string nothing downstream can read (which silently exempted the task from the urgency curve). */
+export function normalizeWhen(when: string | undefined, now: Date = new Date()): string | undefined {
+  const raw = String(when || "").trim();
+  if (!raw) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw) && !Number.isNaN(Date.parse(raw))) return raw;
+  const ms = deadlineEpoch(raw, now);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
 /**
@@ -717,9 +799,15 @@ export function deadlineEpoch(when: string | undefined, now: Date = new Date()):
  * deterministic — used by BOTH the server ordering and the client list, so the sort is identical
  * everywhere. It reorders; it changes NO layout.
  */
-export function sortWithinQuadrant<T extends { score: number; when?: string; source?: string; why?: string; title?: string; updatedAt?: string; createdAt?: string }>(
+export function sortWithinQuadrant<T extends { score: number; when?: string; whenApprox?: boolean; sourceDue?: string; source?: string; why?: string; title?: string; updatedAt?: string; createdAt?: string }>(
   list: T[], highPriorityPeople: string[] = [], now: Date = new Date(),
 ): T[] {
+  // A REAL deadline (not one estimateWhen invented) within the next week — Pronote's own ISO date first.
+  const realDue = (t: T): number => {
+    if (t.whenApprox) return Infinity;
+    const ms = t.sourceDue && !Number.isNaN(Date.parse(t.sourceDue)) ? Date.parse(t.sourceDue) : deadlineEpoch(t.when, now);
+    return ms - now.getTime() <= 7 * DAY_MS ? ms : Infinity;
+  };
   const vipTokens = highPriorityPeople.flatMap((v) => {
     const email = v.toLowerCase().match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
     const name = v.split(/[—\-(,]/)[0].trim().toLowerCase();
@@ -728,6 +816,14 @@ export function sortWithinQuadrant<T extends { score: number; when?: string; sou
   const isVip = (t: T) => { const hay = `${t.why || ""} ${t.title || ""} ${t.source || ""}`.toLowerCase(); return vipTokens.some((tok) => hay.includes(tok)); };
   const fresh = (t: T) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
   return [...list].sort((a, b) => {
+    // Same quadrant → a real deadline in the next week that's at least a day sooner wins over a slightly
+    // higher importance/urgency blend. Before this, deadline was only an exact-score tie-break, which almost
+    // never fires on a continuous score — so a task due tomorrow could sit below one due in 6 days just
+    // because the model rated the latter a touch more important. Quadrant still dominates everything.
+    if (Math.floor(a.score) === Math.floor(b.score)) {
+      const ra = realDue(a), rb = realDue(b);
+      if ((Number.isFinite(ra) || Number.isFinite(rb)) && Math.abs(ra - rb) >= DAY_MS) return ra - rb;
+    }
     if (Math.abs(b.score - a.score) > 1e-6) return b.score - a.score;          // Eisenhower quadrant + weight
     const da = deadlineEpoch(a.when, now), db = deadlineEpoch(b.when, now);
     if (da !== db) return da - db;                                             // soonest deadline first
@@ -1073,6 +1169,11 @@ export interface TaskFlashcards {
      *  schedule, not a separate SM-2 ease calculation — `ease` stays unused groundwork for a future, more
      *  precise scheduler). `seen`/`correct` remain the raw "how am I doing on this deck" counts. */
     review?: { seen: number; correct: number; lastAt?: string; dueAt?: string; ease?: number; box?: number };
+    /** The student marked this card "not something I need to learn" (outside their course/level) — as
+     *  opposed to "wrong" (something they DO need and don't know yet). Excluded from scoring, due-review
+     *  lists and every "still shaky" signal, and fed back into future deck generation as content to avoid
+     *  (see notNeededFronts in server/tasks.ts / notNeededLine in server/claude.ts). */
+    notNeeded?: boolean;
   }[];
   createdAt: string;
   lastReviewedAt?: string;

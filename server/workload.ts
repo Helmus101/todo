@@ -1,5 +1,5 @@
 import type { WebTask, Profile } from "../shared/types.ts";
-import { isHandled, isLowGrade } from "../shared/types.ts";
+import { isHandled, isLowGrade, deadlineEpoch } from "../shared/types.ts";
 import type { PronoteHomeworkItem, PronoteTestItem } from "./pronote.ts";
 import { localDay } from "./jobs.ts";
 
@@ -86,8 +86,8 @@ export function computeWorkload(input: {
     if (isHandled(task.status)) continue;
     const hasStatedDeadline = !!task.when?.trim();
     const bareKey = task.when && BARE_DATE.test(task.when) ? task.when : "";
-    const dueTs = Date.parse(task.when || "");
-    const parsedKey = bareKey || (Number.isFinite(dueTs) ? dayOf(task.when!) : "");
+    const dueTs = deadlineEpoch(task.when);
+    const parsedKey = bareKey || (Number.isFinite(dueTs) ? dayOf(new Date(dueTs).toISOString()) : "");
     const key = (parsedKey && keySet.has(parsedKey)) ? parsedKey : todayKey;
     const bucket = byDay.get(key);
     if (!bucket) continue;

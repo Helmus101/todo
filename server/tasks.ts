@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { WebTask, Quadrant, TaskLink, Profile, Sendable, AddUsageCategory, TaskStep, BoardEntry } from "../shared/types.ts";
-import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf } from "../shared/types.ts";
+import { dedupeFacts, sameFact, canonStatus, sortWithinQuadrant, addUsage, isHandled, tzOf, deadlineEpoch, normalizeWhen, gradesBySubject } from "../shared/types.ts";
 import { generateTasks, classifyCandidates, pickOneTask, runTask as aiRun, type ProfileUpdate, type RefinedTask, type AcademicContext } from "./claude.ts";
 import { readOnly, scopeTools, DOC_LINK, type AgentTools } from "./integrations.ts";
 import { discoverSourceItems, filterCandidates, hasAssignmentText } from "./discover.ts";
@@ -12,7 +12,93 @@ import { aggregateSubjectSignals } from "./patterns.ts";
  *  gets the same signal a chat conversation already does, not just whatever the student happens to ask about.
  *  Best-effort: returns {} (both fields silently undefined) on any missing subject/empty list, same posture
  *  as every other personalization line in claude.ts. */
-function personalizationFor(list: WebTask[], subject: string | undefined): { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string }[] } {
+/** Fronts of cards the student marked "not something I need to learn", from their tasks in the SAME
+ *  subject (every subject when the task has none), newest decks first — see notNeededLine (claude.ts). */
+export function notNeededFronts(list: WebTask[], subject: string | undefined): string[] {
+  const out: string[] = [];
+  const sameSubject = (t: WebTask) => !subject || !t.sourceSubject || t.sourceSubject.toLowerCase() === subject.toLowerCase();
+  for (const t of list) {
+    if (!sameSubject(t)) continue;
+    for (const deck of t.flashcards || []) for (const c of deck.cards) if (c.notNeeded) out.push(c.front);
+  }
+  return [...new Set(out)].slice(-15);
+}
+
+/** What Otto ALREADY has in-app for this task — the context a planning run otherwise can't see. The run
+ *  previously got the énoncé, the profile and Pronote's workload, but not the student's own history in the
+ *  app: what's already done on THIS task, which fiches/decks/quizzes already exist (and how the drilling
+ *  went), earlier work in the same subject, their grades there, or which other deadlines compete for the
+ *  same days. Without it, plans re-proposed work that already existed ("make a fiche on Fanon" when one was
+ *  sitting on the task) and couldn't size themselves to how busy the student actually is. Deterministic, no
+ *  AI call, hard-capped so it stays a small, cacheable-sized addition to every ask(). */
+export function inAppContextFor(list: WebTask[], task: WebTask, profile?: Profile, now_: Date = new Date()): string {
+  const lines: string[] = [];
+  const subj = task.sourceSubject?.toLowerCase();
+  const artifactSummary = (t: WebTask): string => {
+    const bits: string[] = [];
+    for (const n of (t.notes || []).slice(-3)) bits.push(`note "${n.title.slice(0, 60)}"`);
+    for (const d of (t.flashcards || []).slice(-3)) {
+      const reviewed = d.cards.filter((c) => (c.review?.seen || 0) > 0 && !c.notNeeded);
+      const seen = reviewed.reduce((s, c) => s + (c.review!.seen || 0), 0);
+      const ok = reviewed.reduce((s, c) => s + (c.review!.correct || 0), 0);
+      bits.push(`deck "${d.title.slice(0, 60)}"${seen ? ` (${Math.round((ok / seen) * 100)}% correct over ${seen} reviews)` : " (not reviewed yet)"}`);
+    }
+    for (const q of (t.quizzes || []).slice(-2)) {
+      const last = q.attempts?.[q.attempts.length - 1];
+      bits.push(`quiz "${q.title.slice(0, 60)}"${last ? ` (last ${last.score}/${last.total})` : " (not taken yet)"}`);
+    }
+    return bits.join(", ");
+  };
+
+  const steps = task.steps || [];
+  const doneSteps = steps.filter((s) => s.done);
+  const own = artifactSummary(task);
+  if (doneSteps.length || own) {
+    lines.push(`This task so far: ${doneSteps.length}/${steps.length} steps done` +
+      (doneSteps.length ? ` (${doneSteps.slice(0, 4).map((s) => `"${s.text.slice(0, 60)}"`).join(", ")})` : "") +
+      (own ? `; already made: ${own}` : ""));
+  }
+
+  if (subj) {
+    const related = list
+      .filter((t) => t.id !== task.id && t.sourceSubject?.toLowerCase() === subj && t.source !== "studylog")
+      .sort((a, b) => (Date.parse(b.updatedAt || b.createdAt) || 0) - (Date.parse(a.updatedAt || a.createdAt) || 0))
+      .slice(0, 4);
+    for (const t of related) {
+      const arts = artifactSummary(t);
+      lines.push(`Earlier ${task.sourceSubject} work: "${t.title.slice(0, 70)}" (${isHandled(t.status) ? t.status : "still open"})${arts ? ` — ${arts}` : ""}`);
+    }
+    const g = gradesBySubject(profile?.grades).find((x) => x.subject.toLowerCase() === subj);
+    if (g) lines.push(`Grades in ${g.subject}: average ${g.avg20.toFixed(1)}/20 (latest ${g.entries.slice(0, 3).map((e) => `${e.grade}/${e.scale}`).join(", ")})`);
+  }
+
+  // Other real deadlines landing on or before this one — what actually competes for the student's time.
+  const myDue = deadlineEpoch(task.sourceDue || task.when, now_);
+  if (Number.isFinite(myDue)) {
+    const competing = list
+      .filter((t) => t.id !== task.id && !isHandled(t.status) && t.source !== "studylog" && t.source !== "freestudy" && !t.whenApprox)
+      .map((t) => ({ t, due: deadlineEpoch(t.sourceDue || t.when, now_) }))
+      .filter((x) => Number.isFinite(x.due) && x.due >= now_.getTime() - 86_400_000 && x.due <= myDue)
+      .sort((a, b) => a.due - b.due);
+    if (competing.length) {
+      const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+      lines.push(`Also due by then (${competing.length}): ${competing.slice(0, 5).map((x) => `"${x.t.title.slice(0, 50)}" ${fmt(x.due)}`).join("; ")}`);
+    }
+    const daysLeft = (myDue - now_.getTime()) / 86_400_000;
+    lines.push(`Time left on THIS task: ${daysLeft < 0 ? "overdue" : daysLeft < 1 ? "due within a day" : `${Math.floor(daysLeft)} days`}`);
+  }
+
+  if (!lines.length) return "";
+  const block = `\nWHAT OTTO ALREADY HAS IN-APP FOR THIS (the student's own history — use it, never redo it):\n` +
+    lines.map((l) => `- ${l}`).join("\n") + "\n" +
+    `Build on this: a step should USE an existing fiche/deck/quiz (open it, drill the weak cards, retake the quiz) ` +
+    `rather than recreate it; skip work already done; lean on what earlier tasks in this subject showed is shaky; ` +
+    `and size the plan to the time left and the other deadlines — with little time or a crowded week, keep ` +
+    `only the highest-value steps.\n`;
+  return block.slice(0, 2200);
+}
+
+function personalizationFor(list: WebTask[], subject: string | undefined): { subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; recentJournal?: { date: string; text: string }[]; notNeeded?: string[] } {
   let subjectSignal: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" } | undefined;
   try {
     if (subject) {
@@ -25,7 +111,7 @@ function personalizationFor(list: WebTask[], subject: string | undefined): { sub
     .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
     .slice(0, 14)
     .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
-  return { subjectSignal, recentJournal };
+  return { subjectSignal, recentJournal, notNeeded: notNeededFronts(list, subject) };
 }
 
 // Broad-scope verbs that genuinely tend to bundle several sub-actions under one short step text ("Review
@@ -101,7 +187,7 @@ const URGENT_AT = 0.5, IMPORTANT_AT = 0.5;
  *  evenly. Pure so it's testable without a live AI call. */
 export function weakCardFronts(dayTasks: WebTask[]): string[] {
   const fronts: string[] = [];
-  for (const dt of dayTasks) for (const deck of dt.flashcards || []) for (const c of deck.cards) if (c.review?.box === 1) fronts.push(c.front);
+  for (const dt of dayTasks) for (const deck of dt.flashcards || []) for (const c of deck.cards) if (c.review?.box === 1 && !c.notNeeded) fronts.push(c.front);
   return fronts;
 }
 
@@ -113,7 +199,7 @@ export function weakCardFronts(dayTasks: WebTask[]): string[] {
  *  box 1 (reviewed and gotten wrong). */
 export function leitnerBoxBreakdown(dayTasks: WebTask[]): { front: string; box: number }[] {
   const out: { front: string; box: number }[] = [];
-  for (const dt of dayTasks) for (const deck of dt.flashcards || []) for (const c of deck.cards) out.push({ front: c.front, box: c.review?.box ?? 0 });
+  for (const dt of dayTasks) for (const deck of dt.flashcards || []) for (const c of deck.cards) if (!c.notNeeded) out.push({ front: c.front, box: c.review?.box ?? 0 });
   return out;
 }
 
@@ -184,7 +270,7 @@ export function extractDateFromText(text: string, now: Date = new Date()): strin
  *  of what a student needs. Called on every read (not just at sweep time) so ranking stays honest between
  *  sweeps; only ever RAISES urgency (never overrides a model that already flagged something more urgent),
  *  and only touches live "ready" cards with a real parseable date. */
-export function applyDeadlineUrgency<T extends { when?: string; urgency: number; importance: number; quadrant: Quadrant; score: number; status?: string }>(list: T[], now_: Date = new Date()): T[] {
+export function applyDeadlineUrgency<T extends { when?: string; sourceDue?: string; urgency: number; importance: number; quadrant: Quadrant; score: number; status?: string }>(list: T[], now_: Date = new Date()): T[] {
   const now = now_.getTime();
   for (const t of list) {
     // BUG (found live): this used to require status === "ready" exactly — but foldGenerated() (the main
@@ -195,8 +281,11 @@ export function applyDeadlineUrgency<T extends { when?: string; urgency: number;
     // every other live status (needs_review, ready, queued, executing, failed_retryable) should still climb
     // in urgency as its deadline nears.
     if (t.status && isHandled(t.status as any)) continue;
-    const due = Date.parse(t.when || "");
-    if (Number.isNaN(due)) continue;
+    // Pronote's own ISO due date beats the free-text `when`; deadlineEpoch, never a bare Date.parse — that
+    // read every year-less model date ("Oct 9") as 2001 (so: 25 years overdue, pinned to max urgency) and
+    // every "vendredi"/"demain" as NaN (no deadline boost at all).
+    const due = t.sourceDue && !Number.isNaN(Date.parse(t.sourceDue)) ? Date.parse(t.sourceDue) : deadlineEpoch(t.when, now_);
+    if (!Number.isFinite(due)) continue;
     const daysLeft = (due - now) / 86_400_000;
     // >14d out: no boost (a model that already sees it as calm can stay calm). Inside two weeks it climbs
     // fast; overdue/today maxes out — exactly when procrastination is most costly.
@@ -1103,7 +1192,7 @@ export function foldGenerated(existing: WebTask[], genTasks: {
   const STALE_READY_MS = 14 * 24 * 60 * 60_000;
   for (const t of existing) {
     if (t.status !== "ready") continue;
-    const stillUpcoming = t.when && (Date.parse(t.when) || 0) > now_.getTime();
+    const stillUpcoming = deadlineEpoch(t.when, now_) > now_.getTime() && Number.isFinite(deadlineEpoch(t.when, now_));
     const age = now_.getTime() - (Date.parse(t.createdAt || "") || now_.getTime());
     if (!stillUpcoming && age > STALE_READY_MS) { t.status = "dismissed"; t.updatedAt = now; }
   }
@@ -1139,10 +1228,13 @@ export function foldGenerated(existing: WebTask[], genTasks: {
     const evidence: TaskLink[] | undefined = g.link ? [{ label: g.source === "calendar" ? "Open event" : g.source === "gmail" ? "Open in Gmail" : g.source === "pronote" ? "Open attachment" : "Open source", url: g.link }] : undefined;
     const id = randomUUID();
     freshIds.add(id);
-    const textDate = extractDateFromText(`${g.title} ${g.why}`, now_);
-    const when = g.when || textDate || estimateWhen(e.quadrant, now_);
+    // normalizeWhen, not the raw model string: "Oct 9"/"vendredi"/"09/10" are stored as a real ISO date,
+    // and unreadable text ("soon") falls through to the estimate instead of being stored as-is.
+    const statedWhen = normalizeWhen(g.when, now_);
+    const textDate = statedWhen ? undefined : extractDateFromText(`${g.title} ${g.why}`, now_);
+    const when = statedWhen || textDate || estimateWhen(e.quadrant, now_);
     candidates.push({
-      id, title: g.title, why: g.why, when, whenApprox: !g.when && !textDate, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
+      id, title: g.title, why: g.why, when, whenApprox: !statedWhen && !textDate, source: g.source, risk: g.risk, sourceAccountId: g.accountId,
       urgency: g.urgency, importance: g.importance, quadrant: e.quadrant, score: e.score,
       status: g.status || "ready", createdAt: now, anchorKey: g.anchorKey, evidence,
       // Also surface the anchor source (the actual email/event/attachment this task is about) as a
@@ -1150,7 +1242,7 @@ export function foldGenerated(existing: WebTask[], genTasks: {
       // never invokes any run-time link-finding logic, which used to mean the source was captured in the
       // data model but structurally invisible to the student: no way to open the original email themselves
       // without re-finding it in their inbox. `links` may still get replaced/extended once the task actually
-      // runs (see RUN_SYSTEM's link rule), but it should never START empty when a real source is known.
+      // runs, but it should never START empty when a real source is known.
       links: evidence,
       sourceDetail: g.sourceDetail, sourceSubject: g.sourceSubject, sourceDue: g.sourceDue,
       ...(g.steps ? { steps: g.steps } : {}),
@@ -1179,7 +1271,7 @@ export function addManual(list: WebTask[], title: string, refined?: RefinedTask 
   const importance = refined ? refined.importance : 0.75;
   const e = eisenhower(urgency, importance);
   const now = new Date().toISOString();
-  const explicit = explicitWhen || refined?.when;
+  const explicit = normalizeWhen(explicitWhen) || normalizeWhen(refined?.when);
   const finalTitle = (refined?.title || title).trim().slice(0, 120);
   const finalWhy = refined?.why || "Added by you.";
   const textDate = explicit ? undefined : extractDateFromText(`${finalTitle} ${finalWhy}`);
@@ -1222,10 +1314,15 @@ export function applyRefinement(list: WebTask[], id: string, refined: RefinedTas
   const e = eisenhower(t.urgency, t.importance);
   t.quadrant = e.quadrant;
   t.score = e.score;
-  const refinedWhen = refined.when ?? t.when;
-  const textDate = refinedWhen ? undefined : extractDateFromText(`${t.title} ${t.why}`);
-  t.when = refinedWhen || textDate || estimateWhen(e.quadrant);
-  t.whenApprox = !refinedWhen && !textDate;
+  // Only a NEW stated date from the refine pass changes `when`/`whenApprox`; otherwise the task keeps its
+  // existing date AND its existing approx flag (an earlier estimate must not get promoted to "real").
+  const refinedWhen = normalizeWhen(refined.when);
+  if (refinedWhen) { t.when = refinedWhen; t.whenApprox = false; }
+  else if (!t.when) {
+    const textDate = extractDateFromText(`${t.title} ${t.why}`);
+    t.when = textDate || estimateWhen(e.quadrant);
+    t.whenApprox = !textDate;
+  }
   if (refined.taskType) t.taskType = refined.taskType;
   if (refined.goal) t.goal = refined.goal;
   if (refined.infoRequirement) t.infoRequirement = refined.infoRequirement;
@@ -1352,7 +1449,7 @@ export async function runById(list: WebTask[], id: string, profile: Profile, ext
       infoRequirement: task.infoRequirement,
       unknowns: task.unknowns,
       flashcards: task.flashcards,
-    }, profile, focus, scoped, academic, siblingTasks, personalizationFor(list, task.sourceSubject));
+    }, profile, focus, scoped, academic, siblingTasks, { ...personalizationFor(list, task.sourceSubject), inApp: inAppContextFor(list, task, profile) });
     // Fold anything the agent learned about the user into the profile.
     for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
     // A raw/placeholder title gets tightened as a side effect of THIS run (no separate "clean up" pass
@@ -1465,7 +1562,7 @@ export async function runStep(list: WebTask[], id: string, index: number, profil
   // set). runTask's own `definitionOfDone = task.goal || task.why` was silently always taking the `why`
   // fallback here because `goal` (and taskType/infoRequirement/unknowns, which shape earlier steps of the
   // pipeline too) was never passed through from the outer task at all. Now it is.
-  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue, taskType: task.taskType, goal: task.goal, infoRequirement: task.infoRequirement, unknowns: task.unknowns, flashcards: task.flashcards }, profile, focus, extras, academic, siblingTasks, personalizationFor(list, task.sourceSubject));
+  const out = await aiRun({ title: task.title, why: task.why, source: task.source, links: task.links, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, sourceDue: task.sourceDue, taskType: task.taskType, goal: task.goal, infoRequirement: task.infoRequirement, unknowns: task.unknowns, flashcards: task.flashcards }, profile, focus, extras, academic, siblingTasks, { ...personalizationFor(list, task.sourceSubject), inApp: inAppContextFor(list, task, profile) });
   addUsage(profile, out.tokens, "autorun");
   for (const u of out.profileUpdates || []) applyProfileUpdate(profile, u);
   step.result = out.synthesis.slice(0, 1200);

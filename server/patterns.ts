@@ -9,6 +9,7 @@
  * store.ts elsewhere in this codebase.
  */
 import type { Profile, WebTask } from "../shared/types.ts";
+import { deadlineEpoch } from "../shared/types.ts";
 
 /** This student's most likely (weekday, hour) to engage next, from the 7x24 grid — or null when there isn't
  *  enough history to trust yet (same cold-start posture as learnedProductiveHour). `minTotal` mirrors that
@@ -193,7 +194,7 @@ export function stallNudgeLine(
   if (!(idleDays >= 3)) return null; // NaN-safe: a bad/missing timestamp also skips, same as "too soon"
   // A real, firm, near deadline is its own motivator — don't reframe genuine urgency as a motivation problem.
   if (task.when && !task.whenApprox) {
-    const daysToDeadline = (Date.parse(task.when) - now.getTime()) / 86_400_000;
+    const daysToDeadline = (deadlineEpoch(task.when, now) - now.getTime()) / 86_400_000;
     if (daysToDeadline < 3) return null;
   }
   const remaining = (task.steps || []).filter((s) => !s.done && !s.automatable);

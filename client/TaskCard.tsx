@@ -11,7 +11,7 @@
  */
 import { useEffect, useState, useRef, useContext, useCallback, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, deadlineEpoch } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { BookOpen } from "lucide-react";
 import {
@@ -217,7 +217,8 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
   const w = taskDateLabel(task, L);
   // Days-to-deadline, not urgency score, drives the visual — same anti-procrastination curve as
   // the server's applyDeadlineUrgency, so a card LOOKS as urgent as it's actually ranked.
-  const daysLeft = task.when ? (Date.parse(task.when) - Date.now()) / 86_400_000 : NaN;
+  const dueMs = deadlineEpoch(task.when);
+  const daysLeft = Number.isFinite(dueMs) ? (dueMs - Date.now()) / 86_400_000 : NaN;
   const soon = !isDone && !isNaN(daysLeft) && daysLeft <= 3;
   const next = !isDone ? (task.steps || []).find((s) => !s.done) : undefined;
   const secondary = next ? L(`Suivant : ${next.text}`, `Next: ${next.text}`) : subtitle(task);
@@ -576,7 +577,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         <div className="tf-meta">
           {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
-          {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
+          {taskDateLabel(task, L) ? <span className={`when ${(deadlineEpoch(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
           {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
@@ -1584,6 +1585,12 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
       if (fresh) onTask(fresh);
     }).catch(() => {});
   } : undefined;
+  const onNotNeeded = deck ? (cardIndex: number) => {
+    void api.markFlashcardNotNeeded(task.id, deck.id, cardIndex).then((list) => {
+      const fresh = list.find((t) => t.id === task.id);
+      if (fresh) onTask(fresh);
+    }).catch(() => {});
+  } : undefined;
   return (
     <>
       {note ? (
@@ -1594,7 +1601,7 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
           </div>
         </TaskModal>
       ) : null}
-      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} /></TaskModal> : null}
+      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} onNotNeeded={onNotNeeded} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} /></TaskModal> : null}
       {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} subject={task.sourceSubject} /></TaskModal> : null}
     </>
   );

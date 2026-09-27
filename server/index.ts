@@ -1460,7 +1460,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, recentJournal, currentBoard, currentProblems },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, recentJournal, currentBoard, currentProblems, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
@@ -1797,6 +1797,21 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   if (seen >= 3) void recordMetric(req.session.user!, "flashcard_struggle", ok / seen, task.source || "n/a", card.front.slice(0, 120));
   res.json(req.session.tasks || []);
 }));
+// "Not something I need to learn" — distinct from marking a card WRONG. A wrong card is a real gap and stays
+// in the spaced-repetition rotation; a not-needed card is Otto misjudging the student's syllabus/level, so it
+// leaves scoring, due-review lists and every weak-card signal, and is fed back into future deck generation
+// as content to avoid (notNeededFronts → notNeededLine). Reversible: {notNeeded:false} restores it.
+app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/not-needed", requireAuth, rateLimit(120, 60_000), ah(async (req, res) => {
+  const task = await findTaskOrReload(req, String(req.params.id));
+  const card = task?.flashcards?.find((d) => d.id === String(req.params.deckId))?.cards?.[Number(req.params.cardIndex)];
+  if (!task || !card) { res.status(404).json({ error: "Card not found — it may have already changed elsewhere." }); return; }
+  const notNeeded = req.body?.notNeeded !== false;
+  if (notNeeded) card.notNeeded = true; else delete card.notNeeded;
+  task.updatedAt = new Date().toISOString();
+  void recordMetric(req.session.user!, "flashcard_not_needed", notNeeded ? 1 : 0, task.sourceSubject || task.source || "n/a", card.front.slice(0, 120));
+  await commit(req, { awaitCloud: true });
+  res.json(req.session.tasks || []);
+}));
 // Record one quiz attempt (a full pass through the quiz, not per-question) — mirrors the flashcard review
 // route above: deterministic, no AI call, just persists the score so it survives closing the popup. Capped
 // at 20 attempts, newest last (TaskQuiz.attempts was already reserved for this — see shared/types.ts).
@@ -1873,7 +1888,7 @@ app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
       deck.cards.forEach((c, i) => {
         // Never-reviewed cards aren't "due" — they're simply unreviewed; a fresh deck showing up in the
         // due list before the student has even seen it once would be confusing, not helpful.
-        if (c.review?.dueAt && Date.parse(c.review.dueAt) <= now) due.push({ taskId: t.id, taskTitle: t.title, deckId: deck.id, deckTitle: deck.title, cardIndex: i, front: c.front });
+        if (!c.notNeeded && c.review?.dueAt && Date.parse(c.review.dueAt) <= now) due.push({ taskId: t.id, taskTitle: t.title, deckId: deck.id, deckTitle: deck.title, cardIndex: i, front: c.front });
       });
     }
   }
@@ -1996,7 +2011,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   const priorWeakCards = list
     .filter((x) => x.source === "studylog" && x.logDate && x.logDate !== date && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:"))
     .flatMap((x) => (x.flashcards || []).flatMap((deck) => deck.cards
-      .filter((c) => c.review?.dueAt && Date.parse(c.review.dueAt) <= nowMs)
+      .filter((c) => !c.notNeeded && c.review?.dueAt && Date.parse(c.review.dueAt) <= nowMs)
       .map((c) => ({ front: c.front, box: c.review!.box || 1 }))))
     .sort((a, b) => a.box - b.box)
     .slice(0, 6)

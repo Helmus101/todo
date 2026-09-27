@@ -1,11 +1,11 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml, applyPronoteGrades } from "../server/pronote.ts";
@@ -725,6 +725,58 @@ const byVip = sortWithinQuadrant([rt({ title: "random", why: "someone asked" }),
 check("high-priority person breaks a tie", byVip[0].title === "boss");
 check("deadlineEpoch: empty sorts last", deadlineEpoch("") === Infinity && deadlineEpoch("today", RANK_NOW) === RANK_NOW.getTime());
 
+section("deadlineEpoch / normalizeWhen — the model's free-text dates, EN + FR");
+{
+  const now = new Date("2026-09-27T10:00:00Z"); // a Sunday
+  const day = (s) => { const ms = deadlineEpoch(s, now); return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : "none"; };
+  // The live bug: a bare Date.parse reads every year-less date as 2001 → 25 years overdue → max urgency.
+  check("'Oct 9' is this October, not 2001", day("Oct 9") === "2026-10-09");
+  check("'9 octobre' (French day-first) parses", day("9 octobre") === "2026-10-09");
+  check("'le 9 oct.' parses", day("le 9 oct.") === "2026-10-09");
+  check("French numeric '09/10' is 9 October, not September 10", day("09/10") === "2026-10-09");
+  check("unambiguous US '12/25' is still read correctly", day("12/25") === "2026-12-25");
+  check("'vendredi' → the coming Friday", day("vendredi") === "2026-10-02");
+  check("'demain' → tomorrow", day("demain") === "2026-09-28");
+  check("'après-demain' → in two days (not caught by the 'demain' rule)", day("après-demain") === "2026-09-29");
+  check("'dans 3 jours' → in three days", day("dans 3 jours") === "2026-09-30");
+  check("a date a week past stays THIS year (genuinely overdue), not next year", day("Sep 20") === "2026-09-20");
+  check("a date months past rolls to next year", day("Jan 15") === "2027-01-15");
+  check("'10.30am' is not misread as a date", day("10.30am") === "none");
+  check("normalizeWhen keeps an ISO value verbatim", normalizeWhen("2026-10-09T08:00:00Z", now) === "2026-10-09T08:00:00Z");
+  check("normalizeWhen returns undefined for unreadable text, so callers fall back to an estimate", normalizeWhen("avant les vacances", now) === undefined);
+
+  const folded = foldGenerated([], [{ title: "Rendre le devoir de philo", why: "Pronote", source: "pronote", risk: "low", urgency: 0.4, importance: 0.8, when: "9 octobre" }], [], now);
+  check("foldGenerated stores a model 'when' like '9 octobre' as a real ISO date", folded[0]?.when?.slice(0, 10) === "2026-10-09" && !folded[0]?.whenApprox);
+  const vague = foldGenerated([], [{ title: "Réviser le chapitre 3", why: "Pronote", source: "pronote", risk: "low", urgency: 0.4, importance: 0.8, when: "soon" }], [], now);
+  check("an unreadable model 'when' falls back to a flagged estimate instead of being stored raw", !Number.isNaN(Date.parse(vague[0]?.when || "")) && vague[0]?.whenApprox === true);
+
+  const yearless = { when: "Oct 9", urgency: 0.3, importance: 0.8, quadrant: "schedule", score: 2.5, status: "ready" };
+  applyDeadlineUrgency([yearless], now);
+  check("a year-less date 12 days out gets the moderate urgency boost, NOT max 'overdue' urgency", yearless.urgency === 0.5);
+  const fri = { when: "vendredi", urgency: 0.3, importance: 0.8, quadrant: "schedule", score: 2.5, status: "ready" };
+  applyDeadlineUrgency([fri], now);
+  check("'vendredi' (5 days out) now gets a deadline boost at all", fri.urgency === 0.7);
+  const pr = { when: "", sourceDue: "2026-09-28T00:00:00Z", urgency: 0.3, importance: 0.8, quadrant: "schedule", score: 2.5, status: "needs_review" };
+  applyDeadlineUrgency([pr], now);
+  check("Pronote's own sourceDue drives urgency even when `when` is empty", pr.urgency >= 0.95);
+
+  const sameQuadrant = sortWithinQuadrant([
+    { title: "important, due in 6 days", score: 2.9, when: "2026-10-03T12:00:00Z" },
+    { title: "slightly less important, due tomorrow", score: 2.6, when: "2026-09-28T12:00:00Z" },
+  ], [], now);
+  check("same quadrant: a real deadline tomorrow outranks a slightly higher score due in 6 days", sameQuadrant[0].title.startsWith("slightly"));
+  const approx = sortWithinQuadrant([
+    { title: "important", score: 2.9, when: "2026-10-03T12:00:00Z" },
+    { title: "estimated date only", score: 2.6, when: "2026-09-28T12:00:00Z", whenApprox: true },
+  ], [], now);
+  check("an ESTIMATED deadline never jumps the queue on its own", approx[0].title === "important");
+  const crossQuadrant = sortWithinQuadrant([
+    { title: "due tomorrow but 'later' quadrant", score: 0.5, when: "2026-09-28T12:00:00Z" },
+    { title: "do-now quadrant", score: 3.2, when: "2026-10-03T12:00:00Z" },
+  ], [], now);
+  check("the Eisenhower quadrant still dominates across quadrants", crossQuadrant[0].title === "do-now quadrant");
+}
+
 // ── Guardrail: shared-doc edits fail CLOSED, never open ───────────────────────
 // isArtifactShared backs the "Otto may edit its own artifact" carve-out (integrations.ts). Any error —
 // including "integrations not configured" (COMPOSIO_API_KEY unset here) — must be treated as SHARED, so
@@ -1331,7 +1383,7 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   // writeStepsFromContext's separate pipeline) need the same sequencing instruction.
   check("runTask's step-4 prompt instructs sequencing attempt-before-review steps", /SEQUENCE STEPS IN THE ORDER THE STUDENT WILL ACTUALLY DO THEM/.test(runTaskBody));
   const writeStepsStart = src.indexOf("export async function writeStepsFromContext(");
-  const writeStepsBody = src.slice(writeStepsStart, src.indexOf("\nasync function decideArtifact", writeStepsStart));
+  const writeStepsBody = src.slice(writeStepsStart, src.indexOf("\nexport async function expandStep", writeStepsStart));
   check("writeStepsFromContext's prompt instructs the same attempt-before-review sequencing", /SEQUENCE steps in the order the student will actually do them/.test(writeStepsBody));
   // All four taskType classification sites must offer/accept the same full 15-value enum — this is the
   // actual root cause of the live bug (three of four were truncated to the old 10-value list, so
@@ -1358,13 +1410,10 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   // did earlier this session. These are prompt-only additions (deliberately NOT new typed state — see the
   // "implementation discipline" reasoning this round: prefer prompt judgment over speculative abstractions
   // for behavior an LLM can already reason about directly).
-  // NOTE: these live in runTask's OWN "STEP 4" ask() prompt (the RULES: bullet list), NOT in the separate
-  // RUN_SYSTEM constant (server/claude.ts) — RUN_SYSTEM looks like it should be runTask's step-generation
-  // system prompt (its own doc comments reference it as such) but is DEAD CODE: declared, never passed to
-  // any chat.completions.create call anywhere in the file (confirmed: grepping "RUN_SYSTEM" across the
-  // whole file finds only its own declaration and two comments naming it, zero actual usages). A first pass
-  // at this round's rules was added there and silently had ZERO effect until caught by this exact test
-  // failing — pinned here specifically so that mistake can't recur.
+  // NOTE: these live in runTask's OWN "STEP 4" ask() prompt (the RULES: bullet list). A first pass at this
+  // round's rules was accidentally added to a DEAD prompt constant (RUN_SYSTEM, alongside the equally dead
+  // RUN_TOOLS/planResearch/decideArtifact — all declared, never wired into any actual chat.completions.create
+  // call, since deleted) and silently had ZERO effect until caught by this exact test failing.
   check("runTask's real step-4 prompt has the STEP QUALITY rule (start-immediately/concrete/produces-output/self-checking-done)", /STEP QUALITY.{0,60}for every step, internally check/.test(runTaskBody));
   check("runTask's real step-4 prompt has the FIRST-MOVE rule with its example", /FIRST STEP MUST BE STARTABLE RIGHT NOW/.test(runTaskBody));
   check("runTask's real step-4 prompt has the diagnose-before-assuming-relearn rule for uncertain-mastery tasks", /WHEN MASTERY IS GENUINELY UNCERTAIN/.test(runTaskBody));
@@ -1398,6 +1447,9 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("tutor prompt has the explicit HINT LADDER header with all three rungs", /## HINT LADDER[\s\S]{0,150}1\. ORIENT[\s\S]{0,400}2\. NARROW[\s\S]{0,400}3\. MODEL THE NEXT MOVE/.test(chatBody));
   check("hint ladder only escalates on a genuine attempt, not a bare 'I don't know'", /ESCALATE ONLY ON A GENUINE ATTEMPT/.test(chatBody));
   check("hint ladder has explicit, enumerated answer-release conditions (not an open-ended gate)", /RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
+  check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
+  check("board adds a complementary representation instead of restating the chat", /A DIFFERENT REPRESENTATION, NOT THE SAME ONE TWICE/.test(chatBody));
+  check("board is kept curated in long sessions", /KEEP IT CURATED/.test(chatBody));
 }
 // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
 // source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification
@@ -1509,6 +1561,86 @@ check("catches 'the diagram I drew'", CHAT_CLAIMS_DIAGRAM.test("Look at the diag
 check("catches 'I just sketched [a diagram]'", CHAT_CLAIMS_DIAGRAM.test("I just sketched a diagram to show where -3 sits."));
 check("catches FR 'le triangle que j'ai dessiné'", CHAT_CLAIMS_DIAGRAM.test("Regarde le triangle que j'ai dessiné pour toi."));
 check("does NOT flag ordinary prose mentioning a shape by name", !CHAT_CLAIMS_DIAGRAM.test("A triangle has three sides — can you name them?"));
+
+section("Flashcards the student doesn't NEED to learn (card.notNeeded) — excluded, fed back, scoped");
+{
+  const deck = (cards) => ({ id: "d1", title: "Vocab", createdAt: "2026-09-01", cards });
+  const tasksList = [
+    { id: "a", title: "Histoire ch.2", sourceSubject: "Histoire", status: "ready", createdAt: "2026-09-01", flashcards: [deck([
+      { front: "Date of the Treaty of Westphalia?", back: "1648", notNeeded: true },
+      { front: "Who was Robespierre?", back: "...", review: { seen: 2, correct: 0, box: 1 } },
+    ])] },
+    { id: "b", title: "Maths", sourceSubject: "Maths", status: "ready", createdAt: "2026-09-01", flashcards: [deck([
+      { front: "Derivative of ln x?", back: "1/x", notNeeded: true },
+    ])] },
+  ];
+  const hist = notNeededFronts(tasksList, "Histoire");
+  check("notNeededFronts collects the subject's not-needed cards", hist.length === 1 && hist[0].includes("Westphalia"));
+  check("notNeededFronts never leaks another subject's cards", !hist.some((f) => f.includes("ln x")));
+  check("notNeededLine is empty when there's nothing to avoid (no prompt noise)", notNeededLine([]) === "");
+  check("notNeededLine tells the model these are out of scope, not gaps", /OUT OF SCOPE/.test(notNeededLine(hist)) && /Westphalia/.test(notNeededLine(hist)));
+  const shaky = weakCardLine({ flashcards: [deck([
+    { front: "Not needed but box 1", back: "x", notNeeded: true, review: { seen: 3, correct: 0, box: 1 } },
+    { front: "Real gap", back: "y", review: { seen: 3, correct: 0, box: 1 } },
+  ])] });
+  check("a not-needed card is never reported as 'still shaky'", /Real gap/.test(shaky) && !/Not needed but box 1/.test(shaky));
+
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("runTask's deck prompt scopes cards to what this student is actually expected to know", /SCOPE — ONLY WHAT THIS STUDENT IS ACTUALLY EXPECTED TO KNOW/.test(src));
+  const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  check("FlashcardDeck offers the 'not something I need to learn' escape hatch", /deck-btn-not-needed/.test(ui) && /onNotNeeded\?\.\(cardIndex\)/.test(ui));
+  check("a not-needed card leaves the score's denominator", /right\.length \/ inScope/.test(ui));
+}
+
+section("inAppContextFor — the student's own in-app history reaches task planning");
+{
+  const now = new Date("2026-09-27T10:00:00Z");
+  const task = { id: "t", title: "Réviser la Révolution", sourceSubject: "Histoire", status: "ready", createdAt: "2026-09-20", when: "2026-10-03T12:00:00Z",
+    steps: [{ text: "Relire le chapitre 3", automatable: false, done: true }, { text: "Faire le quiz", automatable: false }],
+    flashcards: [{ id: "d", title: "Dates clés", createdAt: "2026-09-20", cards: [{ front: "1789?", back: "x", review: { seen: 4, correct: 3, box: 2 } }] }] };
+  const list = [task,
+    { id: "o", title: "Dissertation Louis XIV", sourceSubject: "Histoire", status: "done", createdAt: "2026-09-10", notes: [{ id: "n", title: "Fiche absolutisme", body: "…", createdAt: "2026-09-10" }] },
+    { id: "c", title: "DM de maths", sourceSubject: "Maths", status: "ready", createdAt: "2026-09-25", when: "2026-09-30T12:00:00Z" },
+    { id: "far", title: "Exposé anglais", status: "ready", createdAt: "2026-09-25", when: "2026-11-30T12:00:00Z" },
+  ];
+  const profile = { grades: [{ id: "g", subject: "Histoire", grade: 11, scale: 20, updatedAt: "2026-09-15" }] };
+  const block = inAppContextFor(list, task, profile, now);
+  check("reports what's already done on THIS task", /1\/2 steps done/.test(block) && /Relire le chapitre 3/.test(block));
+  check("reports this task's existing deck and how the drilling went", /Dates clés/.test(block) && /75% correct/.test(block));
+  check("surfaces earlier work in the same subject (so it isn't redone)", /Dissertation Louis XIV/.test(block) && /Fiche absolutisme/.test(block));
+  check("includes the student's grades in this subject", /Grades in Histoire: average 11\.0\/20/.test(block));
+  check("lists other deadlines competing for the same days", /Also due by then \(1\)/.test(block) && /DM de maths/.test(block));
+  check("never lists a deadline AFTER this one as competing", !/Exposé anglais/.test(block));
+  check("an empty history produces no block at all", inAppContextFor([], { id: "x", title: "x", status: "ready", createdAt: "2026-09-27" }, undefined, now) === "");
+}
+
+section("ensureArtifactUseSteps — a deck/quiz Otto made is always tied into the plan");
+{
+  const base = [{ text: "Relire le cours", automatable: false }];
+  const withDeck = ensureArtifactUseSteps(base, { decks: [{ title: "Vocab ch.4", count: 12 }] }, true);
+  check("adds a drill step when a deck was made and no step uses it", withDeck.length === 2 && /Vocab ch\.4/.test(withDeck[1].text) && withDeck[1].minutes === 18);
+  const already = ensureArtifactUseSteps([{ text: "Réviser les flashcards du chapitre", automatable: false }], { decks: [{ title: "Vocab", count: 10 }] }, true);
+  check("doesn't duplicate when a step already points at the flashcards", already.length === 1);
+  const full = ensureArtifactUseSteps(Array.from({ length: 6 }, (_, i) => ({ text: `step ${i}`, automatable: false })), { decks: [{ title: "V", count: 5 }] }, false);
+  check("never grows a plan past 6 steps", full.length === 6);
+  check("with nothing created, the plan is unchanged", ensureArtifactUseSteps(base, {}, true).length === 1);
+}
+
+section("runTask actually uses its inputs (source pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const start = src.indexOf("export async function runTask(");
+  const body = src.slice(start, src.indexOf("\nexport async function writeStepsFromContext", start));
+  // `focus` (revision requests, the granularity arm, runStep's single-step scoping + the student's answer)
+  // was accepted and never read — every one of those silently did nothing.
+  check("runTask reads `focus` into the shared context every ask() sees", /const focusBlock = focus\?\.trim\(\)/.test(body) && /\+ focusBlock;/.test(body));
+  check("runTask feeds the in-app history block into its context", /personalization\?\.inApp/.test(body));
+  check("runTask's live step prompt asks for a time estimate on every step", /"minutes" on EVERY step/.test(body) && /"minutes": 15/.test(body));
+  check("runTask's live step prompt asks for the firstAction on-ramp", /"firstAction": \{"text"/.test(body));
+  check("runTask returns firstAction (it used to only come from the rarely-used regenerate route)", /firstAction: \{\s*text: firstActionText/.test(body));
+  check("runTask ties created decks/quizzes into the plan", /steps = ensureArtifactUseSteps\(steps/.test(body));
+  check("the live step prompt applies the implementation-intentions finding (concrete cue)", /NAME THE CONCRETE CUE/.test(body));
+}
 
 section("makeDiagramEntry — DRAW_ON_BOARD validation/clamping (server/claude.ts)");
 {

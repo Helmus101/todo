@@ -733,7 +733,7 @@ function loadDeckProgress(deckId: string): { i: number; right: number[]; wrong: 
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; taskId?: string; onAllCorrect?: () => void }) {
+export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void }) {
   const L = useLang();
   const saved = useRef(loadDeckProgress(deck.id)).current;
   const [i, setI] = useState(saved?.i ?? 0);
@@ -762,9 +762,15 @@ export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: 
   // re-marked correct during a retry pass moves from `wrong` to `right` as normal, which is what makes the
   // score screen you land back on after a retry pass show an updated, meaningful percentage.
   const [retryQueue, setRetryQueue] = useState<number[] | null>(null);
-  const seqLen = retryQueue ? retryQueue.length : deck.cards.length;
+  // Cards already marked "not something I need to learn" (card.notNeeded) never enter the pass at all; ones
+  // marked during THIS pass land in `dropped` and leave the score's denominator. Frozen at mount so a server
+  // re-render mid-pass can't shift which card position `i` points at.
+  const baseSeq = useRef(deck.cards.map((_, idx) => idx).filter((idx) => !deck.cards[idx].notNeeded)).current;
+  const [dropped, setDropped] = useState<number[]>([]);
+  const inScope = baseSeq.length - dropped.length;
+  const seqLen = retryQueue ? retryQueue.length : baseSeq.length;
   const done = i >= seqLen;
-  const cardIndex = retryQueue ? retryQueue[i] : i;
+  const cardIndex = retryQueue ? retryQueue[i] : baseSeq[i];
   const card = !done ? deck.cards[cardIndex] : null;
   const mark = (ok: boolean) => {
     if (!card) return;
@@ -780,11 +786,27 @@ export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: 
     setFlipped(false);
     setI((v) => v + 1);
   };
+  // "I don't know this because I don't NEED to" ≠ "I got it wrong": the card leaves scoring and review
+  // entirely instead of being drilled as a gap, and the server feeds it back into future deck generation.
+  const markNotNeeded = () => {
+    if (!card) return;
+    setDropped((prev) => [...prev.filter((x) => x !== cardIndex), cardIndex]);
+    setRight((prev) => prev.filter((x) => x !== cardIndex));
+    setWrong((prev) => prev.filter((x) => x !== cardIndex));
+    onNotNeeded?.(cardIndex);
+    setSkipFlipAnim(true);
+    setFlipped(false);
+    setI((v) => v + 1);
+  };
   // Revisit a card marked in error, or just double-check it — matches the score screen's own "you can
   // always restart" spirit, but for one card instead of the whole deck. Never removes its recorded
   // verdict on its own; re-marking it (see `mark` above) is what actually changes the score.
   const back = () => { if (i === 0) return; setFlipped(false); setI((v) => v - 1); };
   const restart = () => { setRetryQueue(null); setI(0); setFlipped(false); setRight([]); setWrong([]); };
+  // Restarting keeps `dropped` — a card marked "not needed" stays out; the pass just skips past it.
+  useEffect(() => {
+    if (!done && !retryQueue && dropped.includes(cardIndex)) setI((v) => v + 1);
+  }, [i, done, retryQueue, dropped, cardIndex]);
   // Cycle through ONLY the cards currently marked wrong, in their original deck order — right/wrong stay as
   // they are (not reset), so getting one right this time genuinely moves the needle on the score you see
   // when this pass finishes, instead of starting the whole deck's tally over.
@@ -819,17 +841,25 @@ export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: 
   // "done, no mistakes outstanding" and should close the same way). Never fires while `wrong.length > 0`,
   // so a first pass with misses always lands on the score screen for the retry button instead of vanishing.
   useEffect(() => {
-    if (done && wrong.length === 0 && deck.cards.length > 0) onAllCorrect?.();
-  }, [done, wrong.length, deck.cards.length, onAllCorrect]);
+    if (done && wrong.length === 0 && inScope > 0) onAllCorrect?.();
+  }, [done, wrong.length, inScope, onAllCorrect]);
   if (done) {
-    const pct = deck.cards.length ? Math.round((right.length / deck.cards.length) * 100) : 0;
+    if (inScope <= 0) {
+      return (
+        <div className="deck-popup deck-done">
+          <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
+          <p className="deck-score">{L("Aucune carte à réviser ici — tu les as toutes marquées hors programme.", "No cards left to review here — you marked them all as not needed.")}</p>
+        </div>
+      );
+    }
+    const pct = Math.round((right.length / inScope) * 100);
     return (
       <div className="deck-popup deck-done">
         <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
         <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
           <span className="deck-score-pct">{pct}%</span>
         </div>
-        <p className="deck-score">{L(`${right.length} / ${deck.cards.length} correctes`, `${right.length} / ${deck.cards.length} correct`)}</p>
+        <p className="deck-score">{L(`${right.length} / ${inScope} correctes`, `${right.length} / ${inScope} correct`)}</p>
         <div className="deck-acts">
           {wrong.length > 0 ? (
             <button className="btn primary" onClick={retryWrong}>{L(`Réessayer les ${wrong.length} ratées`, `Retry the ${wrong.length} you got wrong`)}</button>
@@ -874,6 +904,12 @@ export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: 
       </div>
       {i > 0 ? (
         <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Carte précédente", "‹ Previous card")}</button>
+      ) : null}
+      {onNotNeeded ? (
+        <button type="button" className="btn xs ghost deck-btn-not-needed" onClick={markNotNeeded}
+          title={L("Hors programme ou pas de ton niveau — la carte sort de tes révisions et Otto évitera ce genre de carte", "Outside your course or level — the card leaves your reviews and Otto will avoid cards like it")}>
+          {L("Pas à apprendre pour moi", "Not something I need to learn")}
+        </button>
       ) : null}
       <StudyHelpPanel taskId={taskId} card={{ kind: "flashcard", front: card!.front, back: card!.back }} />
     </div>
