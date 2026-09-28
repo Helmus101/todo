@@ -4,6 +4,7 @@ initSentry(); // before anything else can throw — no-op if SENTRY_DSN isn't se
 import express from "express";
 import type { RequestHandler } from "express";
 import compression from "compression";
+import cors from "cors";
 import session from "express-session";
 import bcrypt from "bcryptjs";
 // A fixed dummy hash to compare against on login when the account doesn't exist — see the login route's
@@ -83,6 +84,25 @@ app.set("trust proxy", 1);
 // quiz question, ticking one step). This is the single highest-leverage fix for response egress: gzip
 // typically cuts JSON payloads 70-85%, with zero behavior change for callers.
 app.use(compression());
+// CORS configuration: explicitly configured for future API expansion. Currently enforces same-origin
+// policy (the app's frontend and backend are served from the same origin). If external clients need
+// API access in the future, add their origins to the allowlist.
+const allowedOrigins = [
+  process.env.PUBLIC_URL || "https://hiotto.vercel.app",
+  "http://localhost:5273", // local dev
+  "http://localhost:8788", // local dev
+];
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, or same-origin requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true, // allow cookies/session auth
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"],
+}));
 // Liveness probe for the host platform — no auth, no session, no DB; just "the process is up".
 app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
 // Content-Security-Policy: scripts are self-only (the self-heal script is externalized, not inline);
@@ -148,6 +168,9 @@ app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   if (PROD) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();
 });
@@ -448,7 +471,12 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
   // signal beats none.
   if (req.body?.consent !== true) { res.status(400).json({ error: "Please confirm you're 15 or older, or that a parent set this account up for you." }); return; }
   if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
-  if (await getUser(email)) { res.status(409).json({ error: "An account with that email already exists — log in instead." }); return; }
+  if (await getUser(email)) {
+    // Log signup attempt for existing email for security monitoring
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    void recordEvent(email, "signup_exists", { message: `IP: ${ip}` });
+    res.status(409).json({ error: "An account with that email already exists — log in instead." }); return;
+  }
   if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: "Couldn't create the account." }); return; }
   void mirrorAuthUser(email, password); // best-effort — shows the account in Supabase's own Auth tab too
   // Regenerate the session id on every privilege change (login/signup) — never write the authenticated
@@ -491,7 +519,9 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
   // this fixed dummy) so a nonexistent account takes the same time as a wrong password on a real one.
   const validPassword = bcrypt.compareSync(password, u?.pass_hash || DUMMY_PASS_HASH);
   if (!u || !validPassword) {
-    void recordEvent(email, "login_failed", {}); // never the password — email only, for brute-force visibility
+    // Log failed login attempt with IP address for security monitoring
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
+    void recordEvent(email, "login_failed", { message: `IP: ${ip}` }); // never the password — email + IP only, for brute-force visibility
     res.status(401).json({ error: "Wrong email or password." });
     return;
   }
@@ -534,7 +564,8 @@ app.post("/api/auth/forgot-password", rateLimit(5, 60 * 60_000), ah(async (req, 
           ? `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password →</a></p><p>If this wasn't you, you can safely ignore this email — your password hasn't changed.</p>`
           : `<p>Quelqu'un (toi, on espère) a demandé à réinitialiser ton mot de passe Otto. Ce lien fonctionne une seule fois et expire dans 30 minutes.</p><p><a href="${link}">Réinitialiser ton mot de passe →</a></p><p>Si ce n'était pas toi, tu peux ignorer cet e-mail — ton mot de passe n'a pas changé.</p>`;
         void sendTransactionalEmail(email, en ? "Reset your Otto password" : "Réinitialise ton mot de passe Otto", html);
-        void recordEvent(email, "password_reset_requested", {});
+        const ip = req.ip || req.socket.remoteAddress || "unknown";
+        void recordEvent(email, "password_reset_requested", { message: `IP: ${ip}` });
       }
     }
   } catch (e: any) { reportError("auth-forgot-password", e, { email }); /* still respond ok:true below — never leak account existence via a failure path either */ }

@@ -31,6 +31,7 @@
     "@vercel/analytics": "^2.0.1",
     "bcryptjs": "^2.4.3",
     "compression": "^1.8.1",
+    "cors": "^2.8.6",
     "cross-env": "^7.0.3",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
@@ -49,6 +50,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.8.1",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.0",
     "@types/express-session": "^1.18.0",
     "@types/node": "^22.10.2",
