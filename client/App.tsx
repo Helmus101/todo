@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, lazy, Suspense, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject, milestonesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
@@ -10,13 +10,11 @@ import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } 
 // Keyed by userId same as the others, so a different account signing in on the same browser never sees it.
 import { hydrateLocalThreads } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
-import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint, FirstTimeHint } from "./ui.tsx";
+import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
+import { StudyMode } from "./study/StudyMode.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
-
-// Lazy load heavy features
-const StudyMode = lazy(() => import("./study/StudyMode.tsx").then(module => ({ default: module.StudyMode })));
 import { 
   LayoutDashboard,
   BookOpen,
@@ -354,9 +352,6 @@ export function App() {
   const [skippedConnect, setSkippedConnect] = useState(() => {
     try { return localStorage.getItem("otto-skip-connect") === "1"; } catch { return false; }
   });
-  const [dismissedOnboardingReminder, setDismissedOnboardingReminder] = useState(() => {
-    try { return localStorage.getItem("otto-dismissed-onboarding-reminder") === "1"; } catch { return false; }
-  });
   const [tasks, setTasks] = useState<WebTask[]>(CACHED_TASKS);
   // Every flashcard deck Otto has ever generated gets mirrored to this browser's localStorage (see
   // client/localDecks.ts) — a real DB write already happens server-side, but this is a local backup so a
@@ -415,14 +410,7 @@ export function App() {
   const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
-  const finishOnboard = async () => {
-    try { 
-      await api.setProfilePreference("onboardingCompletedAt", new Date().toISOString()); 
-      await loadStatus(); 
-    } catch { /* best-effort */ }
-    try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ } 
-    setOnboard(false); 
-  };
+  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
@@ -865,11 +853,10 @@ export function App() {
       return (
         <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
           <NotifyContext.Provider value={notify}>
-            <Suspense fallback={<div className="p-8 text-center">Chargement…</div>}>
-              <StudyMode
-                task={task}
-                onExit={() => { setStudyModeTask(null); navigate("tasks"); }}
-                onTaskUpdate={(u: WebTask) => {
+            <StudyMode
+              task={task}
+              onExit={() => { setStudyModeTask(null); navigate("tasks"); }}
+              onTaskUpdate={(u) => {
                 // Register like patchTask does (see keepLocalHandled) — a chat turn is a local mutation too,
                 // so a background syncTasks racing this update doesn't get treated as unconditionally newer.
                 localMutations.current.set(u.id, Date.now());
@@ -882,7 +869,7 @@ export function App() {
                     })
                   : [...prev, u]);
                 setStudyModeTask((prev) => {
-                  if (!prev || prev?.id !== u.id) return u;
+                  if (prev?.id !== u.id) return u;
                   const existingChat = prev.chat || [];
                   if (!existingChat.length) return u;
                   return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
@@ -892,7 +879,6 @@ export function App() {
               language={status?.language === "en" ? "en" : "fr"}
               betaFeatures={!!status?.betaFeatures}
             />
-            </Suspense>
           </NotifyContext.Provider>
         </LangContext.Provider>
       );
@@ -1059,22 +1045,8 @@ export function App() {
 
       {onboard && <Onboarding status={status} onStatus={loadStatus} onDone={finishOnboard} />}
 
-      {/* Incomplete onboarding reminder — shown if user never finished onboarding and hasn't dismissed the reminder */}
-      {!onboard && !status?.onboardingCompletedAt && !dismissedOnboardingReminder && (
-        <div className="onboard-reminder" role="alert">
-          <div>
-            <strong>{status?.language === "en" ? "Complete your setup" : "Complète ton parcours"}</strong>
-            <p className="muted small">{status?.language === "en" ? "Take a few minutes to discover how Otto can help you." : "Prends quelques minutes pour découvrir comment Otto peut t'aider."}</p>
-          </div>
-          <div className="onboard-reminder-actions">
-            <button className="btn xs ghost" onClick={() => { try { localStorage.setItem("otto-dismissed-onboarding-reminder", "1"); } catch { /* ignore */ } setDismissedOnboardingReminder(true); }}>{status?.language === "en" ? "Later" : "Plus tard"}</button>
-            <button className="btn xs primary" onClick={() => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); }}>{status?.language === "en" ? "Continue" : "Continuer"}</button>
-          </div>
-        </div>
-      )}
-
       {route === "settings" ? (
-        <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} onRestartOnboarding={() => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); }} />
+        <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} />
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} />
       ) : route === "study" ? (
@@ -1969,14 +1941,6 @@ function MistakeLogPage({ lang }: { lang?: "fr" | "en" }) {
       <div className="dash-head">
         <h2>{L("Journal d'erreurs", "Error log")}</h2>
         <p className="dash-line">{L("Note tes erreurs précises — la question, ce que tu as eu faux, ce qu'il faut faire la prochaine fois. Classé par matière, pour réviser avant un contrôle.", "Log your specific mistakes — the question, what you got wrong, what to do next time. Grouped by subject, so you can review before a test.")}</p>
-        <FirstTimeHint
-          id="errorlog-intro"
-          title={L("Comment utiliser le journal d'erreurs", "How to use the error log")}
-          body={L(
-            "Après un contrôle, note les questions où tu as eu faux. Indique ce que tu as répondu et la bonne solution. Otto s'en souviendra pour t'aider à éviter les mêmes erreurs.",
-            "After a test, log the questions you got wrong. Note what you answered and the correct solution. Otto will remember this to help you avoid the same mistakes."
-          )}
-        />
       </div>
 
       {profileError ? (
@@ -2071,27 +2035,25 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
     );
   }
   return (
-    <Suspense fallback={<div className="p-8 text-center">Chargement…</div>}>
-      <StudyMode
-        task={task}
-        onExit={() => navigate("tasks")}
-        // Free-study session (no linked task, its own synthetic "study id" task) — same chat-union protection
-        // as the task-linked path above, previously entirely missing here: a plain replace let a stale
-        // background sync directly overwrite a fresher local chat with no merge at all, the most exposed of
-        // the three onTaskUpdate call sites to "chat sometimes auto-deletes stuff".
-        onTaskUpdate={(u: WebTask) => setTasks((prev) => prev.some((x) => x.id === u.id)
-          ? prev.map((x) => {
-              if (x.id !== u.id) return x;
-              const existingChat = x.chat || [];
-              if (!existingChat.length) return u;
-              return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
-            })
-          : [...prev, u])}
-        userId={status?.user}
-        language={en ? "en" : "fr"}
-        betaFeatures={!!status?.betaFeatures}
-      />
-    </Suspense>
+    <StudyMode
+      task={task}
+      onExit={() => navigate("tasks")}
+      // Free-study session (no linked task, its own synthetic "study id" task) — same chat-union protection
+      // as the task-linked path above, previously entirely missing here: a plain replace let a stale
+      // background sync directly overwrite a fresher local chat with no merge at all, the most exposed of
+      // the three onTaskUpdate call sites to "chat sometimes auto-deletes stuff".
+      onTaskUpdate={(u) => setTasks((prev) => prev.some((x) => x.id === u.id)
+        ? prev.map((x) => {
+            if (x.id !== u.id) return x;
+            const existingChat = x.chat || [];
+            if (!existingChat.length) return u;
+            return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
+          })
+        : [...prev, u])}
+      userId={status?.user}
+      language={en ? "en" : "fr"}
+      betaFeatures={!!status?.betaFeatures}
+    />
   );
 }
 
@@ -2357,14 +2319,6 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
     <main className="list-wrap studylog-page">
       <h1 className="list-head">{L("Journal d'apprentissage", "Study journal")}</h1>
       <p className="dash-line">{L("Note ce que tu as appris aujourd'hui — Otto en fait des cartes de révision.", "Note what you learned today — Otto turns it into flashcards.")}</p>
-      <FirstTimeHint
-        id="journal-intro"
-        title={L("Comment utiliser le Journal", "How to use the Journal")}
-        body={L(
-          "Chaque jour, note ce que tu as appris. Otto transforme tes notes en cartes de révision et quiz que tu pourras revoir ici. Les cartes dues apparaissent en haut de la page.",
-          "Each day, note what you learned. Otto turns your notes into flashcards and quizzes you can review here. Due cards appear at the top of the page."
-        )}
-      />
 
       {/* Same .seg/.seg-btn segmented-control pattern as Pronote's Student/Parent picker — one visual
           language for every binary switcher in the app, not a second bespoke tab style. */}
@@ -2527,7 +2481,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
 /** The landing page (shown logged out at route /) — sharp, crisp positioning as a trusted decision engine. */
 /** The Settings PAGE (route /settings): account, ALL app connections (Composio — incl. Google), the
  *  person-profile editor, and exactly what Otto will/won't do. */
-function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate, onRestartOnboarding }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void; onRestartOnboarding?: () => void }) {
+function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onStatusUpdate }: { status: ConnectionStatus; tasks: WebTask[]; onSignOut: () => void; onChanged: () => void; onTasksChanged: (tasks: WebTask[]) => void; onStatusUpdate?: () => void }) {
   const L = useLang();
   const notify = useNotify();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -2627,17 +2581,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.03s" }}>
         <h3>{L("Compte", "Account")}</h3>
         <div className="modal-row"><span className="lbl">{status.user}{status.cloud ? L(" · synchronisé", " · synced") : ""}</span><button className="btn xs" onClick={() => void onSignOut()}>{L("Se déconnecter", "Sign out")}</button></div>
-        {!status.onboardingCompletedAt && (
-          <div className="modal-row">
-            <span className="lbl">{L("Aide au démarrage", "Getting started")}</span>
-            <button className="btn xs ghost" onClick={() => void onRestartOnboarding?.()}>{L("Relancer l'onboarding", "Restart onboarding")}</button>
-          </div>
-        )}
-        <FirstTimeHint
-          id="settings-help"
-          title={L("Besoin d'aide ?", "Need help?")}
-          body={L("Si tu veux revoir la présentation d'Otto, clique sur « Relancer l'onboarding » dans la section Compte.", "If you want to see Otto's introduction again, click \"Restart onboarding\" in the Account section.")}
-        />
         {/* French parents care about RGPD more than the AI-spend number itself — show both, but privacy first.
             NEVER claim EU-only data residency here — the AI calls (server/claude.ts) go to DeepSeek, which has
             no confirmed EU residency and no DPA (see DATA_PROTECTION.md). Only state what's actually true. */}
@@ -2677,17 +2620,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
               catch (e: any) { setDeletingAccount(false); notify(e?.message || L("Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again."), "error"); }
             }}
           >{deletingAccount ? L("Suppression…", "Deleting…") : L("Tout supprimer", "Delete everything")}</button>
-        </div>
-        <div className="modal-row">
-          <span className="lbl">{L("Relancer l'onboarding", "Restart onboarding")}</span>
-          <button
-            className="btn xs ghost"
-            onClick={() => {
-              try { localStorage.setItem("otto-onboard", "1"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); }
-              catch { /* ignore */ }
-              notify(L("Onboarding relancé — tu verras la présentation au prochain chargement.", "Onboarding restarted — you'll see the introduction on the next load."));
-            }}
-          >{L("Relancer", "Restart")}</button>
         </div>
       </section>
 
@@ -3810,7 +3742,6 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [consent, setConsent] = useState(false);
-  const [showWhatToExpect, setShowWhatToExpect] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   // The reset link's token lives in the URL's query string, which the app's own client-side router
@@ -3846,10 +3777,6 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
       return;
     }
     if (!email.trim() || !pw || (mode === "signup" && !consent)) return;
-    if (mode === "signup" && !showWhatToExpect) {
-      setShowWhatToExpect(true);
-      return;
-    }
     setBusy(true); setErr("");
     try {
       const r = mode === "signup" ? await api.signup(email.trim(), pw, consent) : await api.login(email.trim(), pw);
@@ -3907,17 +3834,6 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
                   <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
                   <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
                 </label>
-              )}
-              {mode === "signup" && showWhatToExpect && (
-                <div className="settings-hint">
-                  <p>{L("Ce à quoi t'attendre :", "What to expect:")}</p>
-                  <ul>
-                    <li>{L("Otto scannera tes devoirs et examens (via Pronote ou Gmail/Calendar)", "Otto will scan your homework and exams (via Pronote or Gmail/Calendar)")}</li>
-                    <li>{L("Il générera des tâches quotidiennes adaptées à ton emploi du temps", "It will generate daily tasks adapted to your schedule")}</li>
-                    <li>{L("Tu pourras connecter d'autres comptes à tout moment dans les Réglages", "You can connect more accounts anytime in Settings")}</li>
-                  </ul>
-                  <button className="btn ghost" onClick={() => setShowWhatToExpect(false)}>{L("Modifier", "Edit")}</button>
-                </div>
               )}
               {err && <div className="autherr">{err}</div>}
               <button className="btn primary big" disabled={busy || (mode === "forgot" ? !email.trim() : mode === "reset" ? !pw : !email.trim() || !pw || (mode === "signup" && !consent))} onClick={() => void submit()}>

@@ -34,17 +34,3 @@ export function reportError(scope: string, err: unknown, extra?: Record<string, 
     });
   } catch { /* observability must never itself throw */ }
 }
-
-/** Add a breadcrumb for critical events — provides context for errors without logging sensitive data.
- *  Safe to call unconditionally: a no-op when Sentry isn't configured. */
-export function addBreadcrumb(category: string, message: string, level: "info" | "warning" | "error" = "info", data?: Record<string, unknown>): void {
-  if (!DSN || !initialized) return;
-  try {
-    Sentry.addBreadcrumb({
-      category,
-      message,
-      level,
-      data,
-    });
-  } catch { /* observability must never itself throw */ }
-}

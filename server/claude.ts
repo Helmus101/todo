@@ -8,7 +8,6 @@ import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey a
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 import { hasAssignmentText } from "./discover.ts";
-import { circuitBreakers } from "./circuit-breaker.ts";
 
 // Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
 // email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
@@ -4052,20 +4051,11 @@ export async function runTask(
   async function ask(prompt: string, maxTokens: number): Promise<any> {
     askCalls++;
     const attempt = async (tokens: number, extraInstruction: string): Promise<{ parsed: any; truncated: boolean } | null> => {
-      const result = await circuitBreakers.ai.execute(async () => {
-        return await retryRequest(() => client.chat.completions.create({
-          model, max_tokens: tokens, temperature: 0.2,
-          response_format: { type: "json_object" },
-          messages: [{ role: "user", content: prompt + baseCtx + extraInstruction + langLine + nowLine }],
-        }));
-      });
-      
-      if (!result.success) {
-        console.error(`${new Date().toISOString()} [ai] circuit breaker blocked AI call: ${result.error.message}`);
-        throw result.error;
-      }
-      
-      const res = result.data;
+      const res = await retryRequest(() => client.chat.completions.create({
+        model, max_tokens: tokens, temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: prompt + baseCtx + extraInstruction + langLine + nowLine }],
+      }));
       tokIn += res.usage?.prompt_tokens || 0;
       tokOut += res.usage?.completion_tokens || 0;
       const content = String(res.choices?.[0]?.message?.content || "");

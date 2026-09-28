@@ -32,15 +32,7 @@ const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
  *  throws on malformed LaTeX (a model slip, an unbalanced brace); caught here so ONE bad equation renders as
  *  its raw source instead of blanking the whole board entry or crashing the canvas. `strict: false` because
  *  a tutoring model's LaTeX is rarely publication-clean (stray spacing, a non-standard macro) and KaTeX's
- *  default strict mode throws console warnings-as-errors for things that still render fine visually.
- *
- *  SECURITY NOTE: KaTeX is designed to sanitize LaTeX input and only output safe HTML/CSS for math rendering.
- *  It does not execute arbitrary JavaScript or allow script injection. The use of dangerouslySetInnerHTML here
- *  is controlled and safe because:
- *  1. The input is strictly LaTeX math notation, not arbitrary HTML
- *  2. KaTeX's renderToString() sanitizes the output and only produces safe math markup
- *  3. Any malformed input falls back to raw text display (see try/catch above)
- *  4. The latex string comes from the AI model's task generation, which is server-side validated */
+ *  default strict mode throws console warnings-as-errors for things that still render fine visually. */
 function Equation({ latex }: { latex: string }) {
   const html = useMemo(() => {
     try { return katex.renderToString(latex, { throwOnError: true, strict: false, displayMode: true }); }

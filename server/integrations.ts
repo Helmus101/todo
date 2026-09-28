@@ -10,7 +10,6 @@
  * into firing one; they surface as "needs you" steps. (Email keeps the rule you set: draft only, you send.)
  */
 import { Composio } from "@composio/core";
-import { circuitBreakers } from "./circuit-breaker.ts";
 /** Tool shape in the (Anthropic-style) format the agent loop converts for the OpenAI-compatible API. */
 export interface AgentTool { name: string; description?: string; input_schema: { type: "object"; properties: Record<string, unknown>; required?: string[] }; }
 
@@ -226,21 +225,13 @@ export async function initiateConnection(app: string, userId: string, callbackUr
 /** Connected/not for every app in one sweep (matches by toolkit, or by the captured connectionId hint). */
 export async function getAllConnectionStatuses(userId: string, apps: string[], connIdByApp: Record<string, string> = {}): Promise<Record<string, boolean>> {
   try {
-    const result = await circuitBreakers.composio.execute(async () => {
-      const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
-      const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
-      const toolkits = new Set(items.map(acctToolkit));
-      const ids = new Set(items.map(acctId));
-      const out: Record<string, boolean> = {};
-      for (const app of apps) out[app] = toolkits.has(norm(TOOLKIT_OF(app))) || (!!connIdByApp[app] && ids.has(connIdByApp[app]));
-      return out;
-    });
-    
-    if (!result.success) {
-      console.warn("[integrations] getAllConnectionStatuses circuit breaker blocked:", result.error.message);
-      return Object.fromEntries(apps.map((a) => [a, false]));
-    }
-    return result.data;
+    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
+    const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+    const toolkits = new Set(items.map(acctToolkit));
+    const ids = new Set(items.map(acctId));
+    const out: Record<string, boolean> = {};
+    for (const app of apps) out[app] = toolkits.has(norm(TOOLKIT_OF(app))) || (!!connIdByApp[app] && ids.has(connIdByApp[app]));
+    return out;
   } catch (e: any) {
     console.warn("[integrations] getAllConnectionStatuses error:", e?.message ?? e);
     return Object.fromEntries(apps.map((a) => [a, false]));
@@ -281,19 +272,10 @@ const acctListCache = new Map<string, { at: number; items: any[] }>();
 async function rawConnectedAccounts(userId: string): Promise<any[]> {
   const hit = acctListCache.get(userId);
   if (hit && Date.now() - hit.at < 30_000) return hit.items;
-  const result = await circuitBreakers.composio.execute(async () => {
-    const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
-    const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
-    return items;
-  });
-  
-  if (!result.success) {
-    console.warn("[integrations] rawConnectedAccounts circuit breaker blocked:", result.error.message);
-    return [];
-  }
-  
-  acctListCache.set(userId, { at: Date.now(), items: result.data });
-  return result.data;
+  const list: any = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 } as any);
+  const items: any[] = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+  acctListCache.set(userId, { at: Date.now(), items });
+  return items;
 }
 
 /** Get all connected accounts for a specific app (returns multiple accounts if connected). Pass

@@ -22,8 +22,6 @@ jobs:
         run: npm test
       - name: Smoke tests (real HTTP against the Express app — auth gating, error handling, no Supabase/AI needed)
         run: npm run test:smoke
-      - name: Integration tests (auth flows)
-        run: npm run test:integration
       - name: Build
         run: npm run build
       # Blocking at high/critical (verified clean at this threshold as of writing — only pre-existing
