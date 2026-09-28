@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
-import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType } from "./claude.ts";
 import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
@@ -1879,11 +1879,11 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
 // Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
 // repetition only actually compounds if the student can see everything due at a glance instead of having
 // to reopen each task to check. Cheap enough to compute on every request (no AI, just a filter/sort).
-// Cap on distinct decks surfaced per day — spaced repetition only sticks if a day's review stays doable;
-// dumping every due deck at once (which grows unboundedly as more days/weeks/months get logged) is exactly
-// the overwhelm that makes students bail on review entirely. 3 sets is a deliberately small daily dose —
-// still-due decks simply reappear the next day.
-const MAX_DUE_SETS_PER_DAY = 3;
+// MAX_DUE_SETS_PER_DAY (shared/types.ts) caps distinct decks surfaced per day — spaced repetition only
+// sticks if a day's review stays doable; dumping every due deck at once (which grows unboundedly as more
+// days/weeks/months get logged) is exactly the overwhelm that makes students bail on review entirely. 3
+// sets is a deliberately small daily dose — still-due decks simply reappear the next day. Shared (not a
+// local const) so normalizeProfile can clamp Profile.reviewSetDeckIds to the same number.
 app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
   const now = Date.now();
   const due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] = [];

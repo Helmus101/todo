@@ -328,7 +328,10 @@ export function normalizeProfile(p: any): Profile {
     autoRunDay: typeof p?.autoRunDay === "string" ? p.autoRunDay : undefined,
     autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
     reviewSetsDay: typeof p?.reviewSetsDay === "string" ? p.reviewSetsDay : undefined,
-    reviewSetDeckIds: Array.isArray(p?.reviewSetDeckIds) ? arr(p.reviewSetDeckIds) : undefined,
+    // Clamped to MAX_DUE_SETS_PER_DAY — every real write already respects this (the route only ever admits
+    // up to the cap), so this only ever bites a hand-edited/replayed /api/account/import file trying to
+    // plant more admitted decks than the app itself would ever persist.
+    reviewSetDeckIds: Array.isArray(p?.reviewSetDeckIds) ? arr(p.reviewSetDeckIds).slice(0, MAX_DUE_SETS_PER_DAY) : undefined,
     reviewSetsUpdatedAt: typeof p?.reviewSetsUpdatedAt === "string" ? p.reviewSetsUpdatedAt : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
     timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
@@ -1168,6 +1171,12 @@ export interface TaskNote {
 // (optimistic update) and server (source of truth).
 export const LEITNER_INTERVAL_DAYS = [1, 7];
 export const LEITNER_BOX_LABEL = ["Learning", "Known"] as const;
+// Cap on distinct flashcard decks surfaced per day by GET /api/reviews/due (server/index.ts) — see
+// Profile.reviewSetDeckIds's own comment. Single source of truth (imported by server/index.ts) so
+// normalizeProfile below can clamp to the SAME number: without that, a hand-edited /api/account/import
+// file could plant more admitted-deck ids than the route itself would ever write, letting an imported
+// profile show more than the intended daily dose after merge.
+export const MAX_DUE_SETS_PER_DAY = 3;
 export function nextLeitnerReview(prevBox: number | undefined, correct: boolean, now: Date = new Date()): { box: number; dueAt: string } {
   const box = correct ? Math.min(2, (prevBox || 0) + 1) : 1;
   const days = LEITNER_INTERVAL_DAYS[box - 1];
