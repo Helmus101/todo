@@ -105,6 +105,13 @@ export interface Profile {
   // day changes.
   reviewSetsDay?: string;
   reviewSetDeckIds?: string[];
+  // Stamped every write to reviewSetDeckIds — lets mergeProfileStates use latest-write-wins (like pausedAt/
+  // lastSweepAt above) instead of unioning two devices' admitted sets. A single write is always ≤
+  // MAX_DUE_SETS_PER_DAY by construction (the route only ever admits up to the cap); a same-day UNION of two
+  // independent writes is not, and could blow the cap past 3 across devices. Latest-write-wins keeps the
+  // invariant intact at the cost of possibly dropping a losing device's admissions from a genuinely
+  // simultaneous race — an acceptable trade for a soft daily-dose cap, not a spend/security guard.
+  reviewSetsUpdatedAt?: string;
   // No longer drives sweep cadence — automatic generation is now fixed at once/day, 16:00 local (see
   // server/jobs.ts's sweepDue) rather than this 1-4x/day setting. Field kept (not removed) since it's
   // still a harmless, settable preference with no UI exposing it either way — not worth a wider removal
@@ -322,6 +329,7 @@ export function normalizeProfile(p: any): Profile {
     autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
     reviewSetsDay: typeof p?.reviewSetsDay === "string" ? p.reviewSetsDay : undefined,
     reviewSetDeckIds: Array.isArray(p?.reviewSetDeckIds) ? arr(p.reviewSetDeckIds) : undefined,
+    reviewSetsUpdatedAt: typeof p?.reviewSetsUpdatedAt === "string" ? p.reviewSetsUpdatedAt : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
     timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
     // Structured preferences

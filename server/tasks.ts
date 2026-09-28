@@ -719,17 +719,25 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
       if (!d2) return { autoRunDay: d1, autoRunCount: p1.autoRunCount };
       return d2 > d1 ? { autoRunDay: d2, autoRunCount: p2.autoRunCount } : { autoRunDay: d1, autoRunCount: p1.autoRunCount };
     })(),
-    // Same "never under-count within the same day" reasoning as autoRunDay/autoRunCount above — this is
-    // also a same-day cap guard (MAX_DUE_SETS_PER_DAY, server/index.ts), so a merge must never drop a deck
-    // either side already admitted today. Same day on both sides → UNION the admitted deck ids (not just
-    // the max count — the two sides may have admitted genuinely different decks); otherwise take the LATER
-    // day wholesale, same as autoRunDay.
+    // This is a same-day CAP guard (MAX_DUE_SETS_PER_DAY, server/index.ts) on a bounded SET, not an
+    // accumulating counter like autoRunCount — each individual write is already ≤ the cap by construction
+    // (the route only ever admits up to MAX_DUE_SETS_PER_DAY). Unioning two same-day writes from different
+    // devices could push the merged set past the cap (device A admits 3 decks, device B independently
+    // admits 3 different decks before seeing A's write → a naive union persists 6). Latest-write-wins (via
+    // reviewSetsUpdatedAt, same pattern as pausedAt/lastSweepAt above) keeps the ≤3 invariant intact instead
+    // — the trade-off is a genuinely simultaneous race can drop the losing device's admissions, acceptable
+    // for a soft daily-dose cap rather than a spend/security guard.
     ...(() => {
       const d1 = p1.reviewSetsDay, d2 = p2.reviewSetsDay;
-      if (d1 && d2 && d1 === d2) return { reviewSetsDay: d1, reviewSetDeckIds: [...new Set([...(p1.reviewSetDeckIds || []), ...(p2.reviewSetDeckIds || [])])] };
-      if (!d1) return { reviewSetsDay: d2, reviewSetDeckIds: p2.reviewSetDeckIds };
-      if (!d2) return { reviewSetsDay: d1, reviewSetDeckIds: p1.reviewSetDeckIds };
-      return d2 > d1 ? { reviewSetsDay: d2, reviewSetDeckIds: p2.reviewSetDeckIds } : { reviewSetsDay: d1, reviewSetDeckIds: p1.reviewSetDeckIds };
+      const u1 = Date.parse(p1.reviewSetsUpdatedAt || "") || 0, u2 = Date.parse(p2.reviewSetsUpdatedAt || "") || 0;
+      if (d1 && d2 && d1 === d2) return u2 >= u1
+        ? { reviewSetsDay: d2, reviewSetDeckIds: p2.reviewSetDeckIds, reviewSetsUpdatedAt: p2.reviewSetsUpdatedAt }
+        : { reviewSetsDay: d1, reviewSetDeckIds: p1.reviewSetDeckIds, reviewSetsUpdatedAt: p1.reviewSetsUpdatedAt };
+      if (!d1) return { reviewSetsDay: d2, reviewSetDeckIds: p2.reviewSetDeckIds, reviewSetsUpdatedAt: p2.reviewSetsUpdatedAt };
+      if (!d2) return { reviewSetsDay: d1, reviewSetDeckIds: p1.reviewSetDeckIds, reviewSetsUpdatedAt: p1.reviewSetsUpdatedAt };
+      return d2 > d1
+        ? { reviewSetsDay: d2, reviewSetDeckIds: p2.reviewSetDeckIds, reviewSetsUpdatedAt: p2.reviewSetsUpdatedAt }
+        : { reviewSetsDay: d1, reviewSetDeckIds: p1.reviewSetDeckIds, reviewSetsUpdatedAt: p1.reviewSetsUpdatedAt };
     })(),
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
     // genPerDay/timezone/responseStyle/autoApprove/highPriorityPeople/autoArchivePatterns/track/yearLevel:
@@ -1077,6 +1085,7 @@ export function setReviewSetDeckIdsToday(profile: Profile, deckIds: string[], no
   const tz = tzOf(profile);
   profile.reviewSetsDay = localDayOf(now.toISOString(), tz);
   profile.reviewSetDeckIds = deckIds;
+  profile.reviewSetsUpdatedAt = now.toISOString();
 }
 
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {
