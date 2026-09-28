@@ -204,6 +204,16 @@ export interface Profile {
   // surveillance-adjacent field in the app, so hiding it would be inconsistent with that precedent. NEVER
   // used for grading, a parent-facing view, or any priority/auto-archive decision — tutoring tone only.
   studentModel?: { summary: string; updatedAt: string; basedOnActivityAt?: string };
+  // Durable, per-TOPIC progress markers — "mastered factoring quadratics", "can now conjugate the
+  // subjonctif" — the granularity below `subject` that nothing else in the app tracks (grades/errorLog/
+  // subjectActivityHours are all flat per-SUBJECT). Extracted alongside the existing journal→profile.courses
+  // pipeline (extractJournalMemory, server/claude.ts) — same AI call, same "journal/study mode" spend
+  // window (see studentModel's own comment on the 3 confined windows), no new cost. ACCUMULATES like
+  // errorLog/grades (never overwritten) so the tutor can see real progression over the term, not just the
+  // latest state. Read back into chat via milestoneLine (server/claude.ts) so Otto can build on what's
+  // already landed instead of re-teaching it, and shown to the student directly (Journal tab) so the
+  // "remembering" is visible, not just a black box.
+  milestones?: { id: string; subject: string; topic: string; label: string; achievedAt: string }[];
   // Last time this student did something a tutor would call "real activity" — sent a chat message, saved a
   // journal entry, attempted a quiz/flashcard review. Distinct from activityHours (an hour-of-day histogram,
   // no absolute timestamp) — this is the single stamp shouldRefreshStudentModel compares against
@@ -302,6 +312,21 @@ function dedupePronoteGrades<T extends { id: string; subject: string; grade: num
   }
   return [...manual, ...newestPronote.values()];
 }
+/** Same-topic milestones extracted from different journal entries over the term shouldn't pile up as
+ *  separate rows (e.g. "grasped the chain rule" logged three different weeks in slightly different words) —
+ *  key on subject+topic (case-insensitive), keep the OLDEST achievedAt (that's when it was actually first
+ *  reached) but the newest label wording (closer to how the student described it most recently). */
+type MilestoneEntry = { id: string; subject: string; topic: string; label: string; achievedAt: string };
+function dedupeMilestones(list: MilestoneEntry[]): MilestoneEntry[] {
+  const byKey = new Map<string, MilestoneEntry>();
+  for (const m of list) {
+    const key = `${m.subject.toLowerCase()}::${m.topic.toLowerCase()}`;
+    const prev = byKey.get(key);
+    if (!prev) { byKey.set(key, m); continue; }
+    byKey.set(key, { ...m, achievedAt: Date.parse(prev.achievedAt) <= Date.parse(m.achievedAt) ? prev.achievedAt : m.achievedAt });
+  }
+  return [...byKey.values()];
+}
 export function normalizeProfile(p: any): Profile {
   const arr = (v: any): string[] => Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
   return {
@@ -396,6 +421,15 @@ export function normalizeProfile(p: any): Profile {
           basedOnActivityAt: typeof p.studentModel.basedOnActivityAt === "string" ? p.studentModel.basedOnActivityAt : undefined,
         }
       : undefined,
+    milestones: Array.isArray(p?.milestones)
+      ? dedupeMilestones(p.milestones.map((m: any) => ({
+          id: typeof m?.id === "string" && m.id ? m.id : newId(),
+          subject: String(m?.subject || "").trim().slice(0, 60),
+          topic: String(m?.topic || "").trim().slice(0, 80),
+          label: String(m?.label || "").trim().slice(0, 200),
+          achievedAt: typeof m?.achievedAt === "string" ? m.achievedAt : new Date().toISOString(),
+        })).filter((m: MilestoneEntry) => m.subject && m.topic && m.label)).slice(0, 300)
+      : undefined,
     lastTutorActivityAt: typeof p?.lastTutorActivityAt === "string" ? p.lastTutorActivityAt : undefined,
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
@@ -454,6 +488,21 @@ export function errorLogBySubject(log: NonNullable<Profile["errorLog"]> | undefi
   })).sort((a, b) => b.entries.length - a.entries.length);
 }
 
+/** Group milestones by subject, most-recently-achieved topic first within each subject, subject with the
+ *  most milestones first — same "most-progress-first" ordering as errorLogBySubject's "most-mistakes-first"
+ *  (mirrors it, but the opposite signal: this is what's GOING well). */
+export interface SubjectMilestones { subject: string; entries: NonNullable<Profile["milestones"]>; }
+export function milestonesBySubject(list: NonNullable<Profile["milestones"]> | undefined): SubjectMilestones[] {
+  const map = new Map<string, NonNullable<Profile["milestones"]>>();
+  for (const m of list || []) {
+    const key = m.subject.toLowerCase();
+    (map.get(key) || map.set(key, []).get(key)!).push(m);
+  }
+  return [...map.values()].map((entries) => ({
+    subject: entries[0].subject,
+    entries: [...entries].sort((a, b) => Date.parse(b.achievedAt) - Date.parse(a.achievedAt)),
+  })).sort((a, b) => b.entries.length - a.entries.length);
+}
 /** Is this a resolvable IANA timezone? (Intl throws on an unknown zone.) */
 export function isValidTz(tz: string): boolean {
   try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }

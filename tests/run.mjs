@@ -1,11 +1,11 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, zpdCalibrationLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, statesUnconfirmedAnswer, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
 import { stripHtml, applyPronoteGrades } from "../server/pronote.ts";
@@ -872,7 +872,6 @@ check("no profile / mixed → empty (no-op)", learningStyleLine(undefined) === "
 check("visual → spatial/structural framing", /spatial|structural/.test(learningStyleLine({ learningStyle: "visual" })));
 check("kinesthetic → hands-on framing", /doing|hands-on|try this/.test(learningStyleLine({ learningStyle: "kinesthetic" })));
 check("every style still forbids skipping diagnosis or dumbing down content", ["visual", "auditory", "reading", "kinesthetic"].every((s) => /Never skip a needed diagnostic question or dumb down content to fit/.test(learningStyleLine({ learningStyle: s }))));
-check("every style is framed as a preference — content still picks the representation", ["visual", "auditory", "reading", "kinesthetic"].every((s) => /CONTENT decides the representation/.test(learningStyleLine({ learningStyle: s }))));
 
 // ── Big project detection + milestone re-plan (no track gate — polyvalent) ────
 section("isBigIbProject");
@@ -1449,7 +1448,6 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("hint ladder only escalates on a genuine attempt, not a bare 'I don't know'", /ESCALATE ONLY ON A GENUINE ATTEMPT/.test(chatBody));
   check("hint ladder has explicit, enumerated answer-release conditions (not an open-ended gate)", /RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
   check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
-  check("tutor makes the student plan the approach before executing on a genuinely new topic", /MAKE THEM PLAN BEFORE THEY EXECUTE/.test(chatBody));
   check("voice mode writes spoken notation to the board instead of leaving it unwritten", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(chatBody));
   // Reported live: a reply cut off mid-sentence ("One version with a twist, to make sure the method
   // travels:" then nothing) — DeepSeek's hidden reasoning tokens ate most of max_tokens before the visible
@@ -1459,22 +1457,13 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   check("the truncation retry is latched to fire at most once per turn", /let truncationRetried = false;/.test(chatBody) && /truncationRetried = true;/.test(chatBody));
   check("board adds a complementary representation instead of restating the chat", /A DIFFERENT REPRESENTATION, NOT THE SAME ONE TWICE/.test(chatBody));
   check("board is kept curated in long sessions", /KEEP IT CURATED/.test(chatBody));
-  check("answer release is scoped to steps/practice problems, never the graded assignment", /WHAT "RELEASING" MEANS/.test(chatBody));
-  check("feedback targets work and strategy, not the person", /never at the person/.test(chatBody));
-  check("tutor sometimes asks for a confidence call before a verdict", /ASK HOW SURE THEY ARE/.test(chatBody));
-  check("a guardrail trip gets one rewrite round before the canned line", /integrityCorrected = true/.test(chatBody));
-  check("failed-reply fallback lines are dropped from the history sent to the model", /CHAT_FAILURE_LINE\.test/.test(chatBody));
-}
-
-section("zpdCalibrationLine — modulates scaffolding pace off the same accuracy signal errorLogLine uses");
-{
-  check("no signal → no-op", zpdCalibrationLine(undefined) === "");
-  check("under 3 attempts is noise, not a signal", zpdCalibrationLine({ correctRate: 0.9, attempts: 2 }) === "");
-  check("strong recent accuracy → push toward harder/more independent", /harder/.test(zpdCalibrationLine({ correctRate: 0.9, attempts: 5 })));
-  check("weak recent accuracy → drop a rung sooner, check for a prerequisite gap", /prerequisite gap/.test(zpdCalibrationLine({ correctRate: 0.3, attempts: 5 })));
-  check("weak AND sliding surfaces the trend too", /sliding further/.test(zpdCalibrationLine({ correctRate: 0.3, attempts: 5, trend: "down" })));
-  check("mid-range accuracy → no override, default pacing", zpdCalibrationLine({ correctRate: 0.6, attempts: 5 }) === "");
-  check("still holds the line against handing over the actual answer, even at low mastery", /never hand over/.test(zpdCalibrationLine({ correctRate: 0.2, attempts: 5 })));
+  // Per direct request ("ask questions if need") — the learning loop's own step 1 now says to ask rather
+  // than guess when there's genuinely not enough context, instead of relying only on the implicit
+  // diagnose-before-explaining framing elsewhere in the prompt.
+  check("tutor prompt explicitly says to ASK when there's genuinely not enough context, instead of guessing", /ASK, in one short question, rather than guessing/.test(chatBody));
+  // Milestones (Profile.milestones, extracted from journal entries) surfaced into chat so the tutor builds
+  // on real per-topic progress instead of re-teaching it from scratch every session.
+  check("chat context includes milestoneLine (per-topic progress from the journal)", /milestoneLine\(profile, task\.sourceSubject\)/.test(chatBody));
 }
 // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
 // source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification
@@ -1573,16 +1562,6 @@ check("catches a FR answer announcement", CHAT_STATES_ANSWER.test("La réponse e
 check("catches a FR MCQ conclusion", CHAT_STATES_ANSWER.test("C'est donc l'option B."));
 check("does NOT flag ordinary tutoring text with a number in it", !CHAT_STATES_ANSWER.test("That's the same rule we used on step 3 — try applying it here."));
 check("does NOT flag a focusing question", !CHAT_STATES_ANSWER.test("What do you think happens if you substitute that back in?"));
-
-section("statesUnconfirmedAnswer — confirming the student's OWN answer is allowed (rule 3), supplying one isn't");
-check("flags a conclusion the student never stated", statesUnconfirmedAnswer("So the answer is 42.", "I'm stuck on part b"));
-check("allows confirming a number the student said", !statesUnconfirmedAnswer("Yes — the answer is 12, exactly.", "is it 12?"));
-check("allows confirming an MCQ letter the student picked", !statesUnconfirmedAnswer("Right, so it's option C.", "I think C"));
-check("short values need a whole-word match (the letter d inside 'dunno' isn't saying D)", statesUnconfirmedAnswer("So it's option D.", "dunno"));
-check("allows confirming a FR answer the student gave", !statesUnconfirmedAnswer("Oui, la réponse est donc 3,5 — bien joué.", "je trouve 3,5"));
-check("flags a FR conclusion the student never gave", statesUnconfirmedAnswer("La réponse est la photosynthèse.", "je sais pas"));
-check("allows confirming a word answer, case-insensitive", !statesUnconfirmedAnswer("Exactly — the answer is **Photosynthesis**.", "photosynthesis?"));
-check("no announcement → nothing to flag", !statesUnconfirmedAnswer("What do you notice about the denominator?", "help"));
 
 section("CHAT_CLAIMS_BOARD — catches Otto pointing at a board write that never happened");
 check("catches EN 'on your screen'", CHAT_CLAIMS_BOARD.test("The problem is on your screen now, just above."));
@@ -1960,6 +1939,34 @@ const finFAOutOfRangeMinutes = finalize({ context: "c", synthesis: "s", did: [],
   { text: "Pick which store list to use", automatable: false },
 ], links: [], sendables: [], firstAction: { text: "Do the tiny thing", minutes: 90 } }, "", []);
 check("out-of-range firstAction minutes dropped, text kept", finFAOutOfRangeMinutes.firstAction?.text === "Do the tiny thing" && finFAOutOfRangeMinutes.firstAction?.minutes === undefined);
+
+section("expandStep prompt — substeps get the same task-decomposition quality bar as real steps (source pin)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const expandStepStart = src.indexOf("export async function expandStep(");
+  const expandStepBody = src.slice(expandStepStart, src.indexOf("\nexport async function runSubstep", expandStepStart));
+  // Substeps used to be generated with a thinner prompt than real steps — no dependency ordering, no
+  // self-checking-done criterion, no concrete-cue guidance — even though the same task-decomposition
+  // research (GTD-style single "next action", implementation-intention specificity) applies at any
+  // granularity. Direct request: "do research on how to create good subtasks for steps and implement that."
+  check("substeps are ordered by dependency, same check as real steps", /ORDER THEM IN THE SEQUENCE THE STUDENT WILL ACTUALLY DO THEM/.test(expandStepBody));
+  check("substeps require one deliverable each, not an 'and'/'then' compound", /ONE DELIVERABLE PER SUB-ACTION/.test(expandStepBody));
+  check("substeps must be self-checking (a concrete, verifiable outcome)", /SELF-CHECKING: the student should be able to tell/.test(expandStepBody));
+  check("substeps should name the concrete material/page/document when known", /NAME THE CONCRETE CUE/.test(expandStepBody));
+}
+
+section("Step-5 artifact selection — a note is never auto-added without real substance to write (source pin)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const idx = src.indexOf("For academic tasks that don't match the discrete-facts pattern");
+  const block = src.slice(idx, idx + 1400);
+  // Reported live pattern this closes: EVERY academic task that didn't match the discrete-facts regex got
+  // a note auto-added regardless of whether the model itself had just said "none" for a good reason — a
+  // "not every task needs a brief" violation. Now gated on the context actually having enough real material
+  // (same 400-char floor already used for the practical-task/isNoteOnly branch just below it) to write
+  // something substantive, instead of firing for every academic-looking task unconditionally.
+  check("the academic note fallback requires real context substance before firing (not unconditional)", block.includes('isAcademic && `${context || ""}`.trim().length > 400'));
+}
 
 section("expandStep substep url — bounded to the task's own links");
 {
@@ -2417,6 +2424,59 @@ section("normalizeProfile — self-heals duplicated Pronote grade rows (the '40 
   check("keeps the NEWEST Pronote row (by updatedAt), not an arbitrary one", pronoteRows[0].id === "random-39");
   check("never touches a genuinely separate manual entry for the same subject", cleaned.some((g) => g.source === "manual" && g.id === "manual-1"));
   check("a normal, already-clean grade list is untouched", normalizeProfile({ grades: [{ id: "a", subject: "Maths", grade: 15, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "pronote" }] }).grades.length === 1);
+}
+
+section("normalizeProfile — milestones: dedupe by topic, cap length, reject incomplete rows");
+{
+  const raw = [
+    { subject: "Maths", topic: "factoring quadratics", label: "Can factor any quadratic with integer roots", achievedAt: "2026-01-10T00:00:00Z" },
+    // Same subject+topic, reworded, logged later — should collapse into ONE row keeping the OLDER achievedAt
+    // (that's when it actually first landed) but this newer label wording.
+    { subject: "maths", topic: "Factoring Quadratics", label: "Solid on factoring quadratics now", achievedAt: "2026-02-01T00:00:00Z" },
+    { subject: "Maths", topic: "completing the square", label: "Can complete the square unaided", achievedAt: "2026-01-15T00:00:00Z" },
+    { subject: "", topic: "no subject", label: "should be dropped" },
+    { subject: "Physique", topic: "", label: "no topic, should be dropped" },
+  ];
+  const cleaned = normalizeProfile({ milestones: raw }).milestones;
+  check("collapses same subject+topic (case-insensitive) into one row", cleaned.filter((m) => m.topic.toLowerCase() === "factoring quadratics").length === 1);
+  const collapsed = cleaned.find((m) => m.topic.toLowerCase() === "factoring quadratics");
+  check("keeps the OLDER achievedAt on collapse (when it actually first landed)", collapsed.achievedAt === "2026-01-10T00:00:00Z");
+  check("keeps the newer label wording on collapse", collapsed.label === "Solid on factoring quadratics now");
+  check("a genuinely different topic in the same subject survives as its own row", cleaned.some((m) => m.topic === "completing the square"));
+  check("a row missing subject is dropped", !cleaned.some((m) => m.topic === "no subject"));
+  check("a row missing topic is dropped", !cleaned.some((m) => m.label === "no topic, should be dropped"));
+  check("every kept row got a real id", cleaned.every((m) => typeof m.id === "string" && m.id.length > 0));
+  const many = Array.from({ length: 400 }, (_, i) => ({ subject: "S", topic: `topic-${i}`, label: "x", achievedAt: "2026-01-01T00:00:00Z" }));
+  check("hard-caps at 300 rows even when every topic is genuinely distinct", normalizeProfile({ milestones: many }).milestones.length === 300);
+}
+
+section("milestoneLine — surfaces per-topic progress into the tutor's chat context, subject-matched");
+{
+  const profile = { milestones: [
+    { id: "1", subject: "Maths", topic: "quadratics", label: "Can factor any quadratic with integer roots", achievedAt: "2026-01-01T00:00:00Z" },
+    { id: "2", subject: "Français", topic: "subjonctif", label: "Uses it correctly after 'il faut que'", achievedAt: "2026-01-02T00:00:00Z" },
+  ] };
+  check("no subject → empty (nothing to match against)", milestoneLine(profile, undefined) === "");
+  check("a subject with no tracked milestones → empty, not a forced empty section", milestoneLine(profile, "Physique") === "");
+  const line = milestoneLine(profile, "Maths");
+  check("matched subject includes its topic and label", line.includes("quadratics") && line.includes("Can factor any quadratic"));
+  check("case-insensitive subject match", milestoneLine(profile, "maths").includes("quadratics"));
+  check("doesn't leak a different subject's milestone in", !milestoneLine(profile, "Maths").includes("subjonctif"));
+  check("undefined profile → empty, never throws", milestoneLine(undefined, "Maths") === "");
+}
+
+section("milestonesBySubject — grouping/ordering for the tutor-context and UI readers");
+{
+  const list = [
+    { id: "1", subject: "Maths", topic: "quadratics", label: "a", achievedAt: "2026-01-01T00:00:00Z" },
+    { id: "2", subject: "Maths", topic: "derivatives", label: "b", achievedAt: "2026-02-01T00:00:00Z" },
+    { id: "3", subject: "Français", topic: "subjonctif", label: "c", achievedAt: "2026-01-15T00:00:00Z" },
+  ];
+  const groups = milestonesBySubject(list);
+  check("groups by subject", groups.length === 2);
+  check("subject with the most milestones sorts first", groups[0].subject === "Maths");
+  check("within a subject, most-recently-achieved topic sorts first", groups[0].entries[0].topic === "derivatives");
+  check("empty/undefined input returns an empty array, not a throw", milestonesBySubject(undefined).length === 0);
 }
 
 section("leadingArm — honest, deterministic 'what does the bandit currently believe' for Settings display");

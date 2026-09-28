@@ -662,6 +662,12 @@ input:focus, textarea:focus {
 .exam-days { font-family: var(--mono, ui-monospace, monospace); font-size: var(--text-md); font-weight: 700; flex: none; }
 .exam-chip.soon .exam-days { color: var(--accent); }
 .exam-subject { font-size: 13px; font-weight: var(--weight-medium); color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Milestone chips (MilestonesStrip, client/App.tsx) reuse .exam-chip's base but read as progress, not a
+   deadline — no left-flag urgency color, and the subject/topic pair needs its own two-part layout instead
+   of .exam-days' number-first one. */
+.milestone-chip { border-left-color: var(--accent); flex-wrap: wrap; row-gap: 2px; cursor: default; }
+.milestone-chip .exam-subject { flex: none; color: var(--ink-3); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
+.milestone-topic { font-size: 13px; font-weight: var(--weight-medium); color: var(--ink); }
 .exam-when { font-size: var(--text-xs); color: var(--ink-3); text-transform: capitalize; flex: none; }
 .exam-more, .milestone-more { flex: none; align-self: center; white-space: nowrap; }
 

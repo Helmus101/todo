@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject, milestonesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks, clearLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } from "./localQuizzes.ts";
@@ -1457,6 +1457,34 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   );
 }
 
+/** Otto's own record of what's actually landed, per topic — profile.milestones (shared/types.ts), extracted
+ *  from journal entries (extractJournalMemory, server/claude.ts) alongside the existing journal→courses fact
+ *  pipeline. Same chip strip pattern as DueReviews/exam-strip right above — one visual language for "here's
+ *  a small stack of things about your studying," not a new bespoke widget. This is the direct, visible half
+ *  of "the tutor remembers your progress" — the other half (feeding it back INTO chat so Otto builds on it
+ *  instead of re-teaching) is milestoneLine in server/claude.ts, invisible by design (a tutor doesn't
+ *  announce "per my notes...").  Own profile fetch (same pattern as MistakeLogPage/SettingsPage below) since
+ *  StudyLogPage doesn't otherwise carry profile state. */
+function MilestonesStrip({ lang }: { lang?: "fr" | "en" }) {
+  const en = lang === "en";
+  const [groups, setGroups] = useState<ReturnType<typeof milestonesBySubject> | null>(null);
+  useEffect(() => { void api.profile().then((p) => setGroups(milestonesBySubject(p.milestones))).catch(() => setGroups([])); }, []);
+  if (!groups?.length) return null;
+  return (
+    <div className="due-reviews milestones-strip">
+      <div className="exam-strip-label">{en ? "What's clicked so far" : "Ce qui a déclic jusqu'ici"}</div>
+      <div className="exam-strip">
+        {groups.flatMap((g) => g.entries.slice(0, 3).map((m) => (
+          <span key={m.id} className="exam-chip milestone-chip" title={m.label}>
+            <span className="exam-subject">{g.subject}</span>
+            <span className="milestone-topic">{m.topic}</span>
+          </span>
+        )))}
+      </div>
+    </div>
+  );
+}
+
 type WorkloadDay = { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number };
 
 /** Deterministic "this week" strip — no AI call, just real Pronote homework/tests + open tasks bucketed
@@ -2305,6 +2333,7 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
           existed but was buried in the dashboard's "This week" popover, nowhere near the Journal tab where
           these decks actually live. */}
       <DueReviews lang={lang} tasks={tasks} />
+      <MilestonesStrip lang={lang} />
 
       {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
       <>

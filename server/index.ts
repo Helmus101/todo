@@ -2079,6 +2079,13 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
       if (jm) {
         addUsage(req.session.profile ||= emptyProfile(), jm.tokens, "studylog");
         for (const fact of jm.facts) tasks.applyProfileUpdate(req.session.profile, { category: "course", fact });
+        // Milestones ACCUMULATE (like errorLog/grades), never overwritten — appended here and self-healed of
+        // same-topic duplicates on the next normalizeProfile pass (shared/types.ts's dedupeMilestones), same
+        // "write raw, clean up on read" posture as dedupePronoteGrades' own comment explains for grades.
+        if (jm.milestones.length) {
+          const p = req.session.profile;
+          p.milestones = [...(p.milestones || []), ...jm.milestones.map((m) => ({ id: crypto.randomUUID(), ...m, achievedAt: new Date().toISOString() }))];
+        }
       }
     } catch { /* best-effort */ }
     t.updatedAt = new Date().toISOString();

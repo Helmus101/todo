@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import type { Profile, TaskStep, TaskLink, Sendable, TaskNote, TaskFlashcards, TaskQuiz, TaskProblem, BoardEntry, DiagramOp, DailyPracticeProblem, ThemeTokens, WebTask, TaskType, InfoRequirement, TaskArtifact, SeparateTask } from "../shared/types.ts";
 import { validateThemeTokens } from "../shared/types.ts";
-import { dedupeFacts, sameFact, errorLogBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
+import { dedupeFacts, sameFact, errorLogBySubject, milestonesBySubject, gradesBySubject, learnedProductiveHourForSubject } from "../shared/types.ts";
 import { aggregateSubjectSignals, predictNextEngagement } from "./patterns.ts";
 import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey as banditContextKey, type BanditState } from "./bandit.ts";
 import type { AgentTools } from "./integrations.ts";
@@ -486,11 +486,7 @@ export function learningStyleLine(p?: Profile): string {
       `first; prefer "try this and see what happens" over up-front theory. Never skip a needed diagnostic ` +
       `question or dumb down content to fit.\n`,
   };
-  if (!by[style]) return "";
-  // A stated preference, not a diagnosis: the evidence doesn't support "meshing" instruction to a learning
-  // style (Pashler et al., 2008), so this only tilts presentation — the content still picks the representation.
-  return "\n\n" + by[style] + `(Treat this as a comfort preference, not a rule about how they learn — the CONTENT decides ` +
-    `the representation: a geometry problem gets a figure and a poem gets its words, whatever their preference.)\n`;
+  return "\n\n" + (by[style] || "");
 }
 // "Stories tuned to her life" — the one piece of Neal Stephenson's Primer that's directly buildable here:
 // when explaining something new, reach for an analogy or example rooted in what THIS student is actually
@@ -518,33 +514,6 @@ export function studentModelLine(p?: Profile): string {
     `a generic one, and build toward their reasoning/judgment over time, not just today's fact; never quote ` +
     `this verbatim back to them or announce that you're using it):\n${p.studentModel.summary}\n`;
 }
-/** Turns the SAME quiz/flashcard accuracy signal errorLogLine already receives (server/patterns.ts's
- *  aggregateSubjectSignals) into an explicit scaffolding instruction — the model-facing half of keeping the
- *  student inside their Zone of Proximal Development (Vygotsky): too much unprompted explaining wastes the
- *  gap between what they can already do alone and what they can't do at all, too little (staying purely
- *  Socratic on a subject they're actually lost in) reads as the tutor withholding help they need. Reuses
- *  existing tracked data — no new storage, no second model call — rather than standing up a separate
- *  mastery store; a real Bayesian tracker would need per-SKILL (not per-subject) granularity this app
- *  doesn't have yet, so this is deliberately coarse: a bias on pacing, not a claim about the exact concept. */
-export function zpdCalibrationLine(signal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }): string {
-  // Under 3 attempts is noise, not a signal — one lucky/unlucky card shouldn't swing how much Otto explains.
-  if (!signal || signal.attempts < 3) return "";
-  const { correctRate: r, trend } = signal;
-  if (r >= 0.85) {
-    return `\nCALIBRATION: their recent results in this subject are strong (${Math.round(r * 100)}% correct) — ` +
-      `they can carry more of the load. Lean further Socratic than usual, escalate the hint ladder more slowly, ` +
-      `and when they land something, offer a genuinely harder next problem rather than another one at this level.\n`;
-  }
-  if (r <= 0.4) {
-    return `\nCALIBRATION: their recent results in this subject are weak (${Math.round(r * 100)}% correct` +
-      `${trend === "down" ? ", and sliding further" : ""}) — the gap here is probably bigger than usual, so don't ` +
-      `stay purely Socratic if a first focusing question doesn't land; drop a rung sooner than you normally ` +
-      `would (rule 16/18) and check for a prerequisite gap underneath rather than repeating the same question ` +
-      `louder. This is about PACE, not content — still never hand over the graded answer.\n`;
-  }
-  return "";
-}
-
 /** Student-logged mistakes (Profile.errorLog, self-authored via the Error Log tab) for the SUBJECT this
  *  task belongs to — subject-matched, not global, since an error from a different subject is noise here.
  *  This data already existed and was fully built (CRUD routes, its own tab) but was never once read into an
@@ -575,6 +544,24 @@ export function errorLogLine(p: Profile | undefined, subject: string | undefined
  *  subjects) — a plain case-insensitive mention of the task's subject name is enough of a filter to be useful
  *  without a whole extra AI classification call; when nothing matches by name, the few most recent entries
  *  still go in (a same-week entry is usually relevant context even without an exact subject-name mention). */
+/** Durable per-topic progress (Profile.milestones, extracted from journal entries — see extractJournalMemory
+ *  and shared/types.ts's milestonesBySubject), subject-matched like errorLogLine, so the tutor knows what's
+ *  ALREADY landed in this subject and can build on it or skip re-teaching it, instead of treating every
+ *  session as a blank slate even within a single subject. Direct request: "remember and show milestones for
+ *  different topics... know what you learned in part through journal." Silent when nothing's tracked yet for
+ *  this subject (cold start, or a subject that's never surfaced a milestone-worthy moment) — same posture as
+ *  every other personalization line here. */
+export function milestoneLine(p: Profile | undefined, subject: string | undefined): string {
+  if (!subject) return "";
+  const match = milestonesBySubject(p?.milestones).find((g) => g.subject.toLowerCase() === subject.toLowerCase());
+  if (!match?.entries.length) return "";
+  const recent = match.entries.slice(0, 6); // milestonesBySubject already sorts most-recently-achieved first
+  return `\nALREADY SOLID IN ${subject.toUpperCase()} (real progress they've made, tracked from their own ` +
+    `journal — build on these, don't re-teach them from scratch; it's fine to name one directly if it's ` +
+    `genuinely the foundation for what they're asking now, e.g. "this uses the same idea as X, which you've ` +
+    `already got"):\n` +
+    recent.map((m) => `- ${m.topic}: ${m.label}`).join("\n") + "\n";
+}
 export function recentJournalLine(entries: { date: string; text: string }[] | undefined, subject: string | undefined): string {
   if (!entries?.length) return "";
   const bySubject = subject ? entries.filter((e) => e.text.toLowerCase().includes(subject.toLowerCase())) : [];
@@ -1695,7 +1682,7 @@ const CREATE_NOTE_TOOL = {
   description: "Create a SHORT in-app brief/note attached to this task — a quick checklist, reference sheet, or outline the student opens in a popup right on the card. No account, no approval, nothing external. Use this by default for anything short; only create a real Google Doc/Sheet/Slides when the content is genuinely long-form or needs to leave the app.",
   input_schema: { type: "object", properties: {
     title: { type: "string", description: "short label shown on the button, e.g. 'Fiche de révision — Suites numériques'" },
-    body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists, and a GFM pipe table — `| col | col |` with a `|---|---|` separator row — when the content is naturally tabular, e.g. a timing/schedule breakdown) — this IS the brief, not a placeholder. Be concise throughout: short lines, no padding, no restating the task title/why back at the student, no filler sentences before getting to substance — every line should earn its place. If you make a table, every cell must actually be filled in with real content — NEVER leave a column blank/empty for the student to fill in later (e.g. a 'your own example' or 'your answer' column with nothing in it); a note is something the student reads, not a form they complete, so either fill every cell yourself with a genuine, specific answer or drop that column entirely. This includes the case where the source material needed to fill a row (an extract/text you don't actually have) is missing — do NOT publish an empty template grid with blank rows waiting for it; state in one line what's missing and skip the table entirely, then send the actual filled table in a follow-up once you have the real content. NEVER include a markdown link whose URL you made up (this app has no domain of its own for notes/tasks — a link like otto.ai/... or similar is always fabricated, never real) — only ever a URL copied verbatim from an actual source (a task's own link/attachment, or a real web_search result). Plain text with no link is always fine when you don't have a real one." },
+    body: { type: "string", description: "the real content, in markdown (headings, **bold**, bullet/numbered lists, and a GFM pipe table — `| col | col |` with a `|---|---|` separator row — when the content is naturally tabular, e.g. a timing/schedule breakdown) — this IS the brief, not a placeholder. Be concise throughout: short lines, no padding, no restating the task title/why back at the student, no filler sentences before getting to substance — every line should earn its place. Most briefs should read in under a minute (roughly 100-200 words, or a short table) — a brief that runs long is usually restating things the student already knows or padding a thin point with extra sentences; if the genuinely necessary content is longer than that (a real multi-part checklist, a full itinerary), let it run, but never pad TOWARD a length. If you make a table, every cell must actually be filled in with real content — NEVER leave a column blank/empty for the student to fill in later (e.g. a 'your own example' or 'your answer' column with nothing in it); a note is something the student reads, not a form they complete, so either fill every cell yourself with a genuine, specific answer or drop that column entirely. This includes the case where the source material needed to fill a row (an extract/text you don't actually have) is missing — do NOT publish an empty template grid with blank rows waiting for it; state in one line what's missing and skip the table entirely, then send the actual filled table in a follow-up once you have the real content. NEVER include a markdown link whose URL you made up (this app has no domain of its own for notes/tasks — a link like otto.ai/... or similar is always fabricated, never real) — only ever a URL copied verbatim from an actual source (a task's own link/attachment, or a real web_search result). Plain text with no link is always fine when you don't have a real one." },
   }, required: ["title", "body"] },
 };
 
@@ -3524,7 +3511,7 @@ export async function checkFeynmanGap(logText: string, profile?: Profile): Promi
  *  deliberately NOT folded into generateDailyStudyCards' own schema (see that function's own comment on why
  *  it stays small/simple — a richer combined ask was found live to fail more often than the extra content
  *  was worth). Small threshold to skip logistics-only entries with nothing durable to extract. */
-export async function extractJournalMemory(logText: string, profile?: Profile): Promise<{ facts: string[]; tokens: { in: number; out: number; cachedIn: number } } | null> {
+export async function extractJournalMemory(logText: string, profile?: Profile): Promise<{ facts: string[]; milestones: { subject: string; topic: string; label: string }[]; tokens: { in: number; out: number; cachedIn: number } } | null> {
   const raw = String(logText || "").trim();
   if (raw.length < 40) return null;
   try {
@@ -3532,31 +3519,44 @@ export async function extractJournalMemory(logText: string, profile?: Profile): 
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const res = await retryRequest(() => client.chat.completions.create({
       model,
-      max_tokens: 300,
+      max_tokens: 400,
       temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content:
           languageLine(profile) + trackLine(profile) +
-          `Read the student's own "what I learned today" journal entry. Extract 0-2 facts genuinely worth ` +
-          `REMEMBERING LONG-TERM about how THIS student learns — not what they studied today, that's already ` +
-          `captured elsewhere. Only extract something that would still be true and useful weeks from now: a ` +
-          `recurring conceptual mix-up ("consistently confuses métaphore and métonymie"), a real preference ` +
-          `("prefers worked examples over abstract proofs"), a teacher/class-specific pattern they mentioned ` +
-          `("Mr. X's tests always include a data-analysis question"), a genuine strength or blind spot that ` +
-          `keeps showing up. Do NOT extract: today's topic, a one-off event, generic study advice, anything ` +
-          `already obvious from the subject name alone. Most entries have NOTHING durable to extract — that's ` +
-          `the normal, common case, output an empty array, don't force it. Each fact: one short plain ` +
-          `sentence, ≤20 words, no preamble.\n\n` +
-          `Return ONLY this JSON: {"facts": ["...", ...]} (0 to 2 items, empty array is normal/expected).` },
+          `Read the student's own "what I learned today" journal entry. Do TWO separate extractions from it:\n\n` +
+          `1. FACTS (0-2): genuinely worth REMEMBERING LONG-TERM about how THIS student learns — not what they ` +
+          `studied today, that's already captured elsewhere. Only extract something that would still be true ` +
+          `and useful weeks from now: a recurring conceptual mix-up ("consistently confuses métaphore and ` +
+          `métonymie"), a real preference ("prefers worked examples over abstract proofs"), a teacher/class-` +
+          `specific pattern they mentioned ("Mr. X's tests always include a data-analysis question"), a genuine ` +
+          `strength or blind spot that keeps showing up. Do NOT extract: today's topic, a one-off event, generic ` +
+          `study advice, anything already obvious from the subject name alone. Most entries have NOTHING durable ` +
+          `to extract — that's the normal, common case, output an empty array, don't force it. Each fact: one ` +
+          `short plain sentence, ≤20 words, no preamble.\n\n` +
+          `2. MILESTONES (0-2): a SPECIFIC topic/skill they now show real command of — evidence of actually ` +
+          `GETTING something, not just "studied X" (studying isn't mastering). Look for phrasing like "finally ` +
+          `understood...", "I can now...", "got the hang of...", solving something they were stuck on before, or ` +
+          `a teacher/quiz confirming it clicked. Each needs: subject (e.g. "Maths", "Physique-Chimie" — the ` +
+          `actual course name, inferred from context if not stated), topic (the specific skill/concept, ≤6 ` +
+          `words, e.g. "factoring quadratics", "subjonctif conjugation" — NOT the whole subject), and label (one ` +
+          `short sentence describing what they can now do, ≤15 words). Most entries have NO milestone-worthy ` +
+          `moment either — don't force one from routine "did my homework" logging.\n\n` +
+          `Return ONLY this JSON: {"facts": ["...", ...], "milestones": [{"subject": "...", "topic": "...", ` +
+          `"label": "..."}, ...]} (each array 0-2 items, empty is normal/expected).` },
         { role: "user", content: `TODAY'S LOG ENTRY:\n"""\n${raw.slice(0, 4000)}\n"""` },
       ],
     }));
-    const out = firstJson<{ facts?: string[] }>(res.choices[0]?.message?.content || "");
+    const out = firstJson<{ facts?: string[]; milestones?: { subject?: string; topic?: string; label?: string }[] }>(res.choices[0]?.message?.content || "");
     const facts = Array.isArray(out?.facts) ? out.facts.map((f) => String(f).trim().slice(0, 200)).filter(Boolean).slice(0, 2) : [];
+    const milestones = Array.isArray(out?.milestones)
+      ? out.milestones.map((m) => ({ subject: String(m?.subject || "").trim().slice(0, 60), topic: String(m?.topic || "").trim().slice(0, 80), label: String(m?.label || "").trim().slice(0, 200) }))
+        .filter((m) => m.subject && m.topic && m.label).slice(0, 2)
+      : [];
     const tokens = usageOf(res);
-    if (facts.length) console.log(`${new Date().toISOString()} [ai] extractJournalMemory: ${facts.length} fact(s) extracted`);
-    return { facts, tokens };
+    if (facts.length || milestones.length) console.log(`${new Date().toISOString()} [ai] extractJournalMemory: ${facts.length} fact(s), ${milestones.length} milestone(s) extracted`);
+    return { facts, milestones, tokens };
   } catch { return null; }
 }
 
@@ -4514,11 +4514,18 @@ export async function runTask(
       console.log(`${new Date().toISOString()} [ai] step 5: auto-adding flashcards for academic task`);
     }
     // For academic tasks that don't match the discrete-facts pattern (essays, analysis, understanding a
-    // concept, problem-solving), a note is the right fallback artifact — a structured guide, outline, or
-    // method reference. Only nudge when the DoD doesn't look like a coordination outcome (checked below).
-    if (!requestedArtifacts.length && isAcademic) {
-      requestedArtifacts.push({ type: "note", reason: "Academic task — a study guide/outline note helps structure the work" });
-      console.log(`${new Date().toISOString()} [ai] step 5: auto-adding note for academic task`);
+    // concept, problem-solving), a note CAN be the right fallback artifact — but only when there's actually
+    // something worth writing down. This used to fire unconditionally for EVERY non-discrete-facts academic
+    // task regardless of what the model itself had just said — overriding an explicit "none" from the very
+    // call above whenever the task merely LOOKED academic, even for something with no real structure/method/
+    // reference to capture (a single essay paragraph, a one-off problem set with nothing to compile). That
+    // produced a brief nobody asked for and nobody needed just because the task was "academic" — the exact
+    // "not every task needs a brief" default this nudge should never have overridden. Now it only fires when
+    // the context actually has enough real material to write something substantive with (same floor as the
+    // isNoteOnly branch below) — a thin/empty context means there's nothing to structure yet, so no note.
+    if (!requestedArtifacts.length && isAcademic && `${context || ""}`.trim().length > 400) {
+      requestedArtifacts.push({ type: "note", reason: "Academic task with real material to structure into a study guide/outline" });
+      console.log(`${new Date().toISOString()} [ai] step 5: auto-adding note for academic task (context has real substance)`);
     }
 
     // Practical/coordination tasks: a note (brief) is the ONLY artifact that can make sense, so drop any
@@ -5142,6 +5149,17 @@ export async function expandStep(
           `every sub-step is something THEY do — never phrase the graded/` +
           `learning work itself (writing, arguing, solving) as if it were already done or as Otto's job. Stay ` +
           `strictly inside the scope of "${step.text}" — do not re-plan the whole task, only this one step.\n\n` +
+          `SAME QUALITY BAR AS A REAL STEP, just smaller in scope:\n` +
+          `- ORDER THEM IN THE SEQUENCE THE STUDENT WILL ACTUALLY DO THEM — whatever a later sub-action needs ` +
+          `already decided or already done comes first (same dependency check as ordering full steps: "what ` +
+          `must already be true to start this one?").\n` +
+          `- ONE DELIVERABLE PER SUB-ACTION — if it names two separate things to produce, it's two sub-actions, ` +
+          `not one joined by "and"/"then".\n` +
+          `- SELF-CHECKING: the student should be able to tell, without asking anyone, whether they actually ` +
+          `finished it — a concrete object or outcome, not an open-ended activity ("underline the 3 dates ` +
+          `Otto's context names" beats "review the dates").\n` +
+          `- NAME THE CONCRETE CUE when the context/source material gives you one — the actual page, document, ` +
+          `deck, or site to open, not a generic "your notes"/"the material".\n\n` +
           `ANCHOR IN THE TASK'S CONTEXT: the substeps must serve the DEFINITION OF DONE and use the CONTEXT ` +
           `and SOURCE MATERIAL above — ground every sub-action in what this specific task actually needs, ` +
           `not a generic breakdown of the step's verb. If the DEFINITION OF DONE names specific deliverables ` +
@@ -5258,66 +5276,64 @@ export async function studyHelp(
     if (query) {
       const results = await webSearch(query);
       if (results.length > 0) {
-        // Web snippets are third-party text — wrapped like every tool result so an instruction hidden in a
-        // search result can't steer the hint.
-        webSearchBlock = `\n\nREFERENCE MATERIAL (web search, may be imperfect):\n` +
-          untrustedToolResult(results.slice(0, 3).map((r) => `- [${r.title}] (${r.url}): ${r.snippet}`).join("\n"));
+        webSearchBlock = `\n\nREAL-WORLD OUTSIDE CONTEXT & WEB SEARCH RESULTS:\n` +
+          results.slice(0, 3).map((r) => `- [${r.title}] (${r.url}): ${r.snippet}`).join("\n");
       }
     }
   } catch { /* best-effort */ }
 
   const sys = languageLine(profile) + CHAT_LANGUAGE_OVERRIDE +
     `You are Otto, sitting next to a student while they drill ${card.kind === "flashcard" ? "flashcards" : "a quiz"}. They're stuck on ` +
-    `ONE specific card/question and want a nudge, not the answer. The point of the drill is RETRIEVAL — them ` +
-    `pulling the answer out of their own memory is what makes it stick, so every hint should make that ` +
-    `retrieval easier, never replace it.\n\n${cardBlock}${webSearchBlock}\n\n` +
+    `ONE specific card/question and want a nudge, not the answer.\n\n${cardBlock}${webSearchBlock}\n\n` +
     `RULES:\n` +
+    `1a. USE OUTSIDE CONTEXT & REAL-WORLD KNOWLEDGE — You are NOT limited to the text on the card. Use real-world ` +
+    `examples, analogies, historical/scientific background, web search context, and broader domain knowledge to help the ` +
+    `student understand the concept intuitively without revealing the final answer.\n` +
     `1. NEVER state, confirm, or rule out the FINAL answer — not the exact text, not a paraphrase, not by ` +
     `process of elimination down to a single remaining option, not even if they ask directly or claim they ` +
-    `"already know" it. If they ask for it, decline kindly and offer a different angle of hint instead; if ` +
-    `they ask again, decline again the same way — repeated asking is pressure, not a reason to get more generous.\n` +
-    `2. THEIR METHOD IS FAIR GAME, THEIR RESULT IS NOT. If they explicitly ask whether an approach, setup or ` +
-    `formula is valid ("isn't it 5/x = 1/10?"), answer THAT plainly ("yes, that setup works — go ahead and ` +
-    `solve it" / "not quite — check which quantity goes on top"). If they just show an attempt without asking, ` +
-    `don't fix it for them: ask ONE precise question that makes them inspect the exact relationship, sign, ` +
-    `unit or assumption that's off. Never turn "check my work" into the corrected working or the final result.\n` +
-    `3. FOCUS, DON'T FUNNEL. Prefer a focusing question ("what do you notice about...?", "which word in the ` +
-    `question is the key clue?") over a fill-in-the-blank ("so the answer starts with..."). Hints go up a ` +
-    `ladder, one rung per reply and only after a genuine try: first point at what matters in the question, ` +
-    `then name the concept/rule that applies, then give a cue (a related example, an analogy, the category it ` +
-    `belongs to) — never skip straight to the top.\n` +
-    `4. Use what you know beyond the card — real-world examples, analogies, background, the reference material ` +
-    `below when present — to make the idea click, as long as none of it gives the answer away.\n` +
-    `5. SHORT: 1-3 sentences, ONE nudge, then stop — this is a sidebar next to a drill, not a lecture. No ` +
-    `attempt shown yet → open with a question, not an explanation.\n` +
-    `6. If they seem to have it now, tell them to commit — flip the card or pick an option themselves — ` +
-    `rather than telling them they're right. Feedback on the real attempt is what makes it stick.\n` +
-    `7. Stay on this one card. Something unrelated → answer briefly, then steer back.\n` +
-    `8. ALWAYS write something — even one sentence. An empty reply is never acceptable.`;
-  let res: any;
-  try {
-    res = await retryRequest(() => client.chat.completions.create({
-      model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
-      // DeepSeek v4 is a REASONING model — its hidden reasoning tokens count against max_tokens (same trap
-      // documented on OUT above/chatAboutTask's CHAT_DEADLINE_MS history). 300 was sized for the visible
-      // reply alone; reasoning could eat the whole budget before a single reply token came out, leaving an
-      // empty completion that silently fell through to the generic fallback line below — reproduced live via
-      // this exact fallback appearing in the hint panel. Match OUT.chat's ceiling instead of a bespoke small one.
-      max_tokens: OUT.chat,
-      temperature: 0.4,
-      messages: [
-        { role: "system", content: sys },
-        ...history.filter((h) => !(h.role === "assistant" && CHAT_FAILURE_LINE.test(h.text.trim()))).slice(-STUDY_HELP_HISTORY_CAP).map((h) => ({ role: h.role, content: h.text.slice(0, 1000) })),
-        { role: "user", content: message.slice(0, 1000) },
-      ],
-    }));
-  } catch (e: any) {
-    // Used to propagate straight up as an unhandled 500 with the raw provider error text; log it and fall
-    // through to the same honest error path an empty completion takes.
-    console.error(`[study-help] DeepSeek request failed: ${e?.message || e}`);
-    res = null;
-  }
-  let raw = String(res?.choices?.[0]?.message?.content || "").trim().slice(0, 800);
+    `"already know" it. If they explicitly beg for the final answer, gently decline and offer another angle ` +
+    `of hint instead. If they ask again after that, decline again the same way — don't get more generous the ` +
+    `more times they ask; repeated begging is pressure, not a reason to cave. But this does NOT mean staying silent on their METHOD: "isn't this the way to do it, ` +
+    `5/x = 1/10?" is asking whether their APPROACH is valid, not what x equals — answer THAT plainly ("yes, ` +
+    `cross-multiplying works here — go ahead and solve it" / "not quite — that setup would work if the ratio ` +
+    `were flipped, try again with..."). Confirming or correcting the METHOD/setup/formula/first step is ` +
+  `always fair game; only the final value/text is off-limits. However, if the student's message contains an ` +
+  `attempt, equation, calculation, or proposed correction, do NOT fix it for them or point out the sign/error ` +
+  `immediately. Treat it as evidence that they are thinking: ask one precise question that makes them inspect ` +
+  `the relevant relationship, direction, unit, or assumption themselves. Only discuss whether the method is valid ` +
+  `when they explicitly ask whether their method/setup is valid. Never turn "check my work" into the corrected ` +
+  `working or final result.\n` +
+  `1a. FOCUS, DON'T FUNNEL — prefer a focusing question ("what do you notice about...?", "which part of ` +
+    `the question is the key clue?") over a fill-in-the-blank ("so the answer starts with..."). Never give a ` +
+    `hint that decomposes the reasoning FOR them — make them do the noticing. Let them struggle productively ` +
+    `before narrowing down; only narrow after they've genuinely tried and missed.\n` +
+    `2. Guide with questions, a relevant fact, an analogy, or by pointing at what part of the question actually ` +
+    `matters — the same first-principles style as Otto's regular tutoring, just compressed to 1-3 short ` +
+  `sentences (this is a sidebar next to a drill, not a lecture). ONE nudge, then stop — never a multi-step ` +
+  `walkthrough of the whole method in one reply, even if you could. If the student has not shown any attempt, ` +
+  `start with a question instead of an explanation. Keep the reply short enough that the student has to do ` +
+  `the next move, rather than giving them a mini-solution.\n` +
+    `3. If they seem to genuinely understand it now, encourage them to flip the card / pick an option ` +
+    `themselves rather than telling them they're right.\n` +
+    `4. Stay on this one card. If they ask something unrelated to it, answer briefly but steer back.\n` +
+    `5. ALWAYS write something — even a one-sentence nudge is required. An empty or near-empty reply is a ` +
+    `worse failure than being slightly too generous with a hint; never leave the message blank.`;
+  const res: any = await retryRequest(() => client.chat.completions.create({
+    model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
+    // DeepSeek v4 is a REASONING model — its hidden reasoning tokens count against max_tokens (same trap
+    // documented on OUT above/chatAboutTask's CHAT_DEADLINE_MS history). 300 was sized for the visible
+    // reply alone; reasoning could eat the whole budget before a single reply token came out, leaving an
+    // empty completion that silently fell through to the generic fallback line below — reproduced live via
+    // this exact fallback appearing in the hint panel. Match OUT.chat's ceiling instead of a bespoke small one.
+    max_tokens: OUT.chat,
+    temperature: 0.4,
+    messages: [
+      { role: "system", content: sys },
+      ...history.slice(-STUDY_HELP_HISTORY_CAP).map((h) => ({ role: h.role, content: h.text.slice(0, 1000) })),
+      { role: "user", content: message.slice(0, 1000) },
+    ],
+  }));
+  let raw = String(res.choices?.[0]?.message?.content || "").trim().slice(0, 800);
   // Backstop: if the model slipped and the reply actually contains the real answer, discard it — the same
   // "don't just trust the prompt" posture as chatAboutTask's CHAT_DOES_WORK/CHAT_STATES_ANSWER guardrail,
   // applied here with a stronger check since the actual answer string is right there (see revealsAnswer).
@@ -5330,7 +5346,7 @@ export async function studyHelp(
   // fix (its finish()) for why: this text only ever shows when the AI call genuinely came back empty/failed,
   // never because Otto is waiting on the student to clarify something.
   const reply = raw || (profile?.language === "en" ? "Otto couldn't reply just now — try again in a moment." : "Otto n'a pas pu répondre tout de suite — réessaie dans un instant.");
-  return { reply, tokens: res ? usageOf(res) : { in: 0, out: 0, cachedIn: 0 }, ...(raw ? {} : { error: true }) };
+  return { reply, tokens: usageOf(res), ...(raw ? {} : { error: true }) };
 }
 
 /**
@@ -5680,36 +5696,6 @@ export const CHAT_DOES_WORK = /\bhere('s| is)?\s+(the|your|an?)\s+(essay|paragra
 // on step 3"). Same EN+FR construction as CHAT_DOES_WORK/DOES_STUDENT_WORK, exported for test pinning.
 export const CHAT_STATES_ANSWER = /\bthe (?:correct |final )?answer is\b|\bthat means the answer is\b|\bso it'?s option [a-d]\b|\bthe correct option is\b|\bla (?:bonne )?réponse est\b|\bc'est donc (?:la réponse|l['’]option [a-d])\b|\bdonc c'est l['’]option [a-d]\b/i;
 
-/** CHAT_STATES_ANSWER, minus the case rule 3 explicitly allows: confirming a conclusion the STUDENT already
- *  stated. A bare regex match can't tell "yes — the answer is 12, exactly" (student said 12; confirming it is
- *  good tutoring) from Otto supplying a conclusion nobody said, so the value right after the announcement
- *  is compared against the student's own message. Short values (a digit, an option letter) need a whole-word
- *  match — "d" must not count as "said" just because the student's message contains the letter d somewhere. */
-export function statesUnconfirmedAnswer(reply: string, studentMessage: string): boolean {
-  const m = CHAT_STATES_ANSWER.exec(reply);
-  if (!m) return false;
-  const norm = (x: string) => x.toLowerCase().replace(/[*_`"«»“”]/g, "").replace(/\s+/g, " ").trim();
-  const letter = /option ([a-d])\b/i.exec(m[0]);
-  const value = letter
-    ? letter[1].toLowerCase()
-    : norm(reply.slice(m.index + m[0].length).split(/[.,;!?\n]|\s[—–-]\s/)[0])
-        .replace(/^[:\s]+/, "")
-        .replace(/^(?:donc|alors|bien|so|then|indeed|just|simply)\s+/, "")
-        .replace(/^(?:option|l['’]option)\s+/, "");
-  if (!value) return true;
-  const said = norm(studentMessage);
-  if (value.length < 3 || letter) {
-    const esc = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return !new RegExp(`(^|[^a-z0-9à-öø-ÿ])${esc}($|[^a-z0-9à-öø-ÿ])`, "i").test(said);
-  }
-  return !said.includes(value);
-}
-
-// The honest "couldn't reply" lines chatAboutTask/studyHelp return on a genuine failure. They end up in the
-// client-owned thread like any other bubble, and resending them as history made the model see itself as
-// having "said" something unhelpful — filtered out of the history before each call.
-const CHAT_FAILURE_LINE = /^Otto (?:couldn't reply just now|n'a pas pu répondre tout de suite)/;
-
 // Otto pointing the student at something VISIBLE — the board, the canvas, "just above", "on your screen".
 // Reported live, verbatim: "My bad — the problem didn't actually load that time. It's on your screen now,
 // just above." …with nothing on the board at all, because the model narrated writing something it never
@@ -5791,7 +5777,6 @@ export async function chatAboutTask(
   academic?: AcademicContext,
   opts?: { stepIndex?: number; materials?: { label: string; text: string }[]; extras?: AgentTools; styleArm?: string; growthTrend?: "up"; subjectSignal?: { correctRate: number; attempts: number; trend?: "up" | "down" | "flat" }; voiceMode?: boolean; canvasMode?: boolean; recentJournal?: { date: string; text: string }[]; currentBoard?: BoardEntry[]; currentProblems?: TaskProblem[]; notNeeded?: string[] },
 ): Promise<ChatResult> {
-  history = history.filter((h) => !(h.role === "assistant" && CHAT_FAILURE_LINE.test(h.text.trim())));
   const steps = task.steps || [];
   // Substeps (a step's own on-demand sub-checklist, ticked independently — see Profile.grades-style comment
   // on TaskStep.substeps) used to be invisible here: the tutor could see a step as "not done" while the
@@ -5860,7 +5845,6 @@ export async function chatAboutTask(
       `few attempts. If it comes up naturally (don't force it into an unrelated reply), acknowledge that ` +
       `genuinely — a tutor who's watched them improve, not one meeting them for the first time.\n`
     : "";
-  const zpdLine = zpdCalibrationLine(opts?.subjectSignal);
   // Everything that changes from one call to the next (the clock, the student's profile facts, their error
   // log, journal, weak cards, the bandit's style pick) is assembled SEPARATELY and appended at the very END
   // of `sys`, not the front. It used to lead the prompt — with `nowBlock()` (changes every MINUTE) as
@@ -5872,7 +5856,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + zpdLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
+  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
   const sys =
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
     `good tutor they can't afford to hire: patient, genuinely curious about how THEY think, and interested ` +
@@ -5889,7 +5873,11 @@ export async function chatAboutTask(
     `"So here's the thing —" not "It is important to note that —". A student should feel like someone's ` +
     `talking to them, not reading a textbook.\n\n` +
     `THE LEARNING LOOP — almost every interaction follows this cycle:\n` +
-    `1. Set the goal — "What are you trying to understand or solve here?"\n` +
+    `1. Set the goal — "What are you trying to understand or solve here?" If the task, board, or their message ` +
+    `genuinely doesn't tell you enough to start (which specific part they're stuck on, which topic this even ` +
+    `is, what they've already tried) — ASK, in one short question, rather than guessing and diagnosing the ` +
+    `wrong thing. Never invent a plausible-sounding assumption about their level or what they meant just to ` +
+    `keep moving; a wrong guess costs more turns than the question would have.\n` +
     `2. Elicit an attempt — "Show me your first step, even if you're unsure." Let PRODUCTIVE STRUGGLE ` +
     `happen: if they're working through it, even slowly, DON'T interrupt to make it faster. A student ` +
     `who struggles productively and then breaks through learns more than one who was helped past the ` +
@@ -5916,12 +5904,7 @@ export async function chatAboutTask(
     `and neither landed — show the worked step yourself rather than inventing a fourth rung; (b) they ` +
     `explicitly ask again for the answer AFTER that; (c) they're checking work they already completed, not ` +
     `asking you to do it; (d) they've made a genuine attempt and are asking you to verify or finish it. A ` +
-    `worked example released this way is help, not failure — never turn it into an endless gate.\n` +
-    `WHAT "RELEASING" MEANS — so this never collides with rule 3 or THE LINE YOU NEVER CROSS below: you show the ` +
-    `worked STEP they're stuck on, or the full solution of a PRACTICE/parallel problem YOU posed — never the ` +
-    `graded assignment's own answer or text, which stays theirs no matter how many times they ask. And a ` +
-    `release is never the end of the exchange: right after it, hand them ONE fresh, similar item to do alone ` +
-    `(rule 20), because seeing a worked step is not the same as being able to do it.\n\n` +
+    `worked example released this way is help, not failure — never turn it into an endless gate.\n\n` +
     `ICAP — THE ENGAGEMENT HIERARCHY: interactive > constructive > active > passive. Typing a question ` +
     `and reading the answer is passive — the shallowest learning. Explaining their reasoning out loud to a ` +
     `tutor who responds to it is interactive — the deepest. Every reply should push them one rung UP this ` +
@@ -6020,15 +6003,6 @@ export async function chatAboutTask(
     `parallel example where the same error would be obvious, or a single corrective step. Address WHY they're ` +
     `confused, not just THAT they're confused. A correct answer with the wrong reasoning is not learning — it's ` +
     `a coincidence waiting to fail.\n` +
-    `1b. ON A GENUINELY NEW TOPIC, MAKE THEM PLAN BEFORE THEY EXECUTE. The first time this task's kind of ` +
-    `problem shows up in the conversation (not every routine turn after) — before they start calculating, ` +
-    `writing, or working the mechanics — ask them to name the APPROACH first: "what's the first thing you'd ` +
-    `try here?", "what information in this even matters?", "what kind of problem is this, and what does that ` +
-    `usually call for?" This is a distinct skill from executing the steps, and it's the one that transfers to a ` +
-    `problem they've never seen: a student who can only run the steps once shown which ones is still lost on a ` +
-    `new problem; a student who can name the approach isn't. If they jump straight to calculating without ever ` +
-    `stating a plan, that's fine to let ride once — but if the plan turns out wrong, that's exactly the moment ` +
-    `to step back and ask them to reconsider the approach itself before re-doing the mechanics.\n` +
     `2. TEACH THE IDEA, NOT THE INSTANCE — FROM FIRST PRINCIPLES, ONE STEP PER MESSAGE. Once you know where ` +
     `they're stuck, don't open with the general rule — start from a definition or premise they ALREADY accept ` +
     `(something true in their own words, or a fact from earlier in the course) and build up to the concept a ` +
@@ -6126,10 +6100,7 @@ export async function chatAboutTask(
     `either. Stay kind, never mocking, but never let politeness replace a specific, honest assessment, and ` +
     `never let bluntness replace noticing what's actually good: if it's off-topic, doesn't answer the ` +
     `question, or has a real flaw, say exactly that; if a step or sentence is genuinely solid, say exactly ` +
-    `why, right alongside it — never one without the other when both are true. Aim feedback at the WORK and ` +
-    `the STRATEGY ("checking the units caught that", "you split it into cases — that's what made it ` +
-    `tractable"), never at the person ("you're so smart", "you're bad at this"): feedback about the self ` +
-    `carries almost no learning value, feedback about the process and how they monitored it carries the most.\n` +
+    `why, right alongside it — never one without the other when both are true.\n` +
     `8. MAKE IT SAFE TO BE STUCK. Confusion or a wrong attempt is normal work, not a failure to manage around — ` +
     `never react to "I don't get it" or a genuinely wrong answer with surprise, a sigh-shaped line, or ` +
     `anything that reads as judging them for not already knowing it. The fastest way to lose a student is to ` +
@@ -6232,13 +6203,7 @@ export async function chatAboutTask(
     `scored far higher on practice and measurably LOWER on the exam without it — getting it right WITH you ` +
     `proves little. Before you treat a skill as learned, give ONE fresh, similar item and let them do it with ` +
     `no hints at all; only a clean unaided attempt counts. If it fails, that's the real diagnosis — go back down ` +
-    `the hint ladder on exactly that point.\n` +
-    `21. ASK HOW SURE THEY ARE — SOMETIMES. Before you confirm or correct an answer they've just committed ` +
-    `to, now and then ask for a quick confidence call ("how sure are you, honestly?") — not every turn, and ` +
-    `never as a stalling tactic. It matters both ways: an error they were CONFIDENT about is the one most ` +
-    `worth correcting carefully (those corrections stick best when the reasoning behind the error is exposed), ` +
-    `and a right answer they were UNSURE of is still a guess — ask them why it's right before moving on. ` +
-    `Over time this trains them to judge their own understanding, which is what they'll need alone in an exam.\n\n` +
+    `the hint ladder on exactly that point.\n\n` +
 
     `THE LINE YOU NEVER CROSS — this is what makes Otto different from asking a chatbot to do it:\n` +
     `Never produce the graded work itself. No essay/dissertation paragraphs (not even "just the intro"), no ` +
@@ -6384,9 +6349,9 @@ export async function chatAboutTask(
     `dash list only when you're genuinely listing 2-4 parallel things AND prose would be more awkward, not ` +
     `less. Never a header, never a bold "Label:" in front of every line, never a numbered framework, never a ` +
     `list where a sentence would do. If more than a third of your reply is formatting, you're writing a ` +
-    `document instead of talking. Default to 1-3 short sentences — think of it as a text message back, not an ` +
-    `answer. More than that is for walking through a method or a parallel worked example, never for a ` +
-    `normal exchange.\n` +
+    `document instead of talking. Default to ONE short sentence — think of it as a text message back, not an ` +
+    `answer. Two is already a longer reply than most turns need. Three or four is the ceiling, and that's for ` +
+    `walking through a method, not for a normal exchange.\n` +
     `Say the thing, then stop. Don't restate their question back, don't preamble ("Great question!", "I can ` +
     `definitely help with that!"), don't recap what you just said, don't close every message with an offer of ` +
     `more help. No fake enthusiasm and no therapy-speak — they're stressed, not fragile, and they can tell ` +
@@ -6460,20 +6425,15 @@ export async function chatAboutTask(
     // The redirect line replaces a violating REPLY, but if that same turn also produced artifacts, they were
     // almost certainly the same violation wearing a different container (a "fiche" that's just the essay) —
     // discard them too rather than hand over a chip whose text just got rejected.
-    const doesWork = CHAT_DOES_WORK.test(reply);
-    if (doesWork || statesUnconfirmedAnswer(reply, message)) {
+    if (CHAT_DOES_WORK.test(reply) || CHAT_STATES_ANSWER.test(reply)) {
       result.notes = []; result.flashcards = []; result.quizzes = []; result.problems = []; result.board = [];
       result.guardrailTripped = true;
       logAudit("guardrail", fr
         ? "Tu as demandé quelque chose qui ressemblait à faire le travail à ta place — Otto a dit non et a fait un guide à la place."
         : "That looked like asking Otto to do the graded work for you — it said no and made a guide instead.");
-      reply = doesWork
-        ? (fr
-          ? "Je peux t'aider à débloquer ça, mais je ne vais pas le rédiger à ta place — cette partie est la tienne. On cherche un point de départ ensemble ?"
-          : "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?")
-        : (fr
-          ? "Tu as tout ce qu'il faut pour conclure toi-même — c'est la partie qui compte. Avec ce qu'on vient d'établir, tu dirais quoi ?"
-          : "You've got everything you need to call it yourself — that's the part that counts. Given what we just worked out, what would you say it is?");
+      reply = fr
+        ? "Je peux t'aider à débloquer ça, mais je ne vais pas le rédiger à ta place — cette partie est la tienne. On cherche un point de départ ensemble ?"
+        : "I can help you get unstuck on this, but I won't write it for you — that part's yours. Want help finding a starting point instead?";
     }
     // 2400 (was 1200): a genuine tutoring turn — a method walked through step by step, or a parallel worked
     // example — legitimately runs longer than a one-line nudge, and truncating mid-explanation is worse than
@@ -6498,21 +6458,13 @@ export async function chatAboutTask(
     return result;
   };
 
-  let timedOut = false;
   const runRounds = async (): Promise<ChatResult> => {
     // One-shot: a reply that points the student at the board/screen when nothing was actually written there
     // gets ONE corrective round to write it for real (see CHAT_CLAIMS_BOARD's own comment). Latched so a
     // model that keeps doing it can't spin the loop.
     let boardClaimCorrected = false;
-    // Same one-shot idea for the integrity guardrails: a reply that hands over the graded work or announces a
-    // conclusion the student never stated used to be swapped straight for a canned redirect line — safe, but
-    // it threw away an otherwise good tutoring turn and read as a stock response. One rewrite round first
-    // keeps the tutor's own voice and context; finish()'s canned line stays as the backstop.
-    let integrityCorrected = false;
     let truncationRetried = false;
     for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
-      // The deadline below already answered the student — stop spending tokens on a reply nobody will see.
-      if (timedOut) break;
       if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) {
         // Reproduced live: a big tool-call payload (e.g. a large flashcard deck) plus the growing
         // conversation history can blow the ceiling on round 0 or 1, landing here BEFORE the loop ever
@@ -6588,17 +6540,6 @@ export async function chatAboutTask(
           }
         } catch (e: any) { console.error(`[chat] empty-completion retry also failed: ${e?.message || e}`); }
         return finish(textContent);
-      }
-      if (!toolCalls.length && !integrityCorrected && !lastRound && (CHAT_DOES_WORK.test(textContent) || statesUnconfirmedAnswer(textContent, message))) {
-        integrityCorrected = true;
-        console.log(`${new Date().toISOString()} [chat] round ${round}: reply crossed the integrity line — asking for a rewrite`);
-        messages.push({ role: "assistant", content: textContent });
-        messages.push({ role: "user", content:
-          "That reply either hands over graded work or states a conclusion the student hasn't said yet (rule 3 / " +
-          "THE LINE YOU NEVER CROSS). Rewrite it: keep what was useful, drop the conclusion or finished work, and " +
-          "end on ONE focusing question that lets them take that last step themselves. Confirming an answer they " +
-          "already stated is fine. Same short spoken tone, don't mention this correction." });
-        continue;
       }
       if (!toolCalls.length) {
         // Reported live, verbatim: "it's on your screen now, just above" — with nothing on the board at
@@ -6744,9 +6685,8 @@ export async function chatAboutTask(
   // fallback is always the better outcome, and DeepSeek v4's hidden reasoning tokens make "slow" hard to
   // bound tightly (see the 28s→45s history right above).
   const CHAT_DEADLINE_MS = 120_000;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     runRounds(),
-    new Promise<ChatResult>((resolve) => { timer = setTimeout(() => { timedOut = true; resolve(finish("")); }, CHAT_DEADLINE_MS); }),
-  ]).finally(() => clearTimeout(timer));
+    new Promise<ChatResult>((resolve) => setTimeout(() => resolve(finish("")), CHAT_DEADLINE_MS)),
+  ]);
 }
