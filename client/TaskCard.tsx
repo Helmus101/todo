@@ -349,6 +349,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [openDeck, setOpenDeck] = useState<string | null>(null);
   const [openQuiz, setOpenQuiz] = useState<string | null>(null);
+  const [openChat, setOpenChat] = useState(false);
   // Lifted: the hero edits the CURRENT step's decision box, the step list edits any step's.
   const [decided, setDecided] = useState<Record<number, string>>({});
 
@@ -665,12 +666,18 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
           touches bank data, see the /api/tasks/:id/chat route's own comment), so don't even offer the
           input for something that can only ever come back as an error. */}
       {!isDone && task.source !== "plaid" ? (
-        <TaskChat
-          task={task} input={chatInput} setInput={setChatInput} sending={chatSending} error={chatError}
-          pendingMsg={pendingMsg} slow={chatSlow} verySlow={chatVerySlow} onSend={sendChat}
-          inputRef={chatInputRef} endRef={chatEndRef}
-          onOpenNote={setOpenNote} onOpenDeck={setOpenDeck} onOpenQuiz={setOpenQuiz}
-        />
+        <button type="button" className="btn ghost" onClick={() => setOpenChat(true)}>{L("Demander à Otto", "Ask Otto")}</button>
+      ) : null}
+
+      {openChat ? (
+        <TaskModal onClose={() => setOpenChat(false)} nested title={L("Demander à Otto", "Ask Otto")}>
+          <TaskChat
+            task={task} input={chatInput} setInput={setChatInput} sending={chatSending} error={chatError}
+            pendingMsg={pendingMsg} slow={chatSlow} verySlow={chatVerySlow} onSend={sendChat}
+            inputRef={chatInputRef} endRef={chatEndRef}
+            onOpenNote={setOpenNote} onOpenDeck={setOpenDeck} onOpenQuiz={setOpenQuiz}
+          />
+        </TaskModal>
       ) : null}
 
       {/* (F) the quiet exit. "C'est bon" lives in the hero's done state, not down here. */}
