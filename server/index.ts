@@ -1879,20 +1879,33 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
 // Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
 // repetition only actually compounds if the student can see everything due at a glance instead of having
 // to reopen each task to check. Cheap enough to compute on every request (no AI, just a filter/sort).
+// Cap on distinct decks surfaced per day — spaced repetition only sticks if a day's review stays doable;
+// dumping every due deck at once (which grows unboundedly as more days/weeks/months get logged) is exactly
+// the overwhelm that makes students bail on review entirely. 3 sets is a deliberately small daily dose —
+// still-due decks simply reappear the next day.
+const MAX_DUE_SETS_PER_DAY = 3;
 app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
   const now = Date.now();
   const due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] = [];
-  for (const t of req.session.tasks || []) {
+  const seenDeckIds = new Set<string>();
+  outer: for (const t of req.session.tasks || []) {
     if (isHandled(t.status)) continue;
     for (const deck of t.flashcards || []) {
+      const hasDue = deck.cards.some((c) => !c.notNeeded && c.review?.dueAt && Date.parse(c.review.dueAt) <= now);
+      if (!hasDue) continue;
+      // Once today's 3-set budget is spent, stop pulling in NEW decks — but a deck already admitted keeps
+      // all its own due cards (never cut off mid-deck).
+      if (!seenDeckIds.has(deck.id) && seenDeckIds.size >= MAX_DUE_SETS_PER_DAY) continue;
+      seenDeckIds.add(deck.id);
       deck.cards.forEach((c, i) => {
         // Never-reviewed cards aren't "due" — they're simply unreviewed; a fresh deck showing up in the
         // due list before the student has even seen it once would be confusing, not helpful.
         if (!c.notNeeded && c.review?.dueAt && Date.parse(c.review.dueAt) <= now) due.push({ taskId: t.id, taskTitle: t.title, deckId: deck.id, deckTitle: deck.title, cardIndex: i, front: c.front });
       });
+      if (seenDeckIds.size >= MAX_DUE_SETS_PER_DAY && due.length >= 60) break outer;
     }
   }
-  res.json({ due: due.slice(0, 60) });
+  res.json({ due: due.slice(0, 60), setsShown: seenDeckIds.size, setCap: MAX_DUE_SETS_PER_DAY });
 }));
 
 // ── Study log: daily "what I learned today" → auto flashcards, + a week-end summary deck ──────────────

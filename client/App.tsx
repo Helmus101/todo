@@ -3468,7 +3468,11 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // Pronote is a French national-education-system tool — real and worth asking about for "bac"/unset, but
   // actively misleading to lead with for an IB/other-track student whose school very likely doesn't use it
   // at all (Google Classroom, Managebac, Toddle, or just email/calendar are far more common internationally).
-  const pronoteIsPrimary = false;
+  // Previously hardcoded `false` regardless of the track picked in step 1 — every student, including "bac"
+  // ones who'd just chosen Pronote as their real primary source, saw the non-primary "if you have one"
+  // copy. Derive it from the actual selection: primary unless the student is explicitly on IB (unset track
+  // still defaults to primary, same as the "bac"/unset framing the comment above already describes).
+  const pronoteIsPrimary = track !== "ib";
 
   return (
     <div className="onboard-overlay" role="dialog" aria-modal="true">
@@ -3476,8 +3480,8 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
         <button className="onboard-skip" onClick={onDone} aria-label={L("Passer", "Skip")}>{L("Passer", "Skip")}</button>
         <div className="onboard-top">
           <div className="onboard-brand"><Logo size={20} /> <span>Otto</span></div>
-          <div className="onboard-progress" aria-hidden="true">
-            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} className={d <= step ? "on" : ""} />)}
+          <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={step + 1} aria-label={L(`Étape ${step + 1} sur ${OB_STEPS}`, `Step ${step + 1} of ${OB_STEPS}`)}>
+            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} aria-hidden="true" className={d <= step ? "on" : ""} />)}
           </div>
         </div>
 
@@ -3486,9 +3490,10 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
             <h2>{L("Bienvenue sur Otto", "Welcome to Otto")}</h2>
             <p className="onboard-lead">{L("Otto lit tes devoirs, contrôles et mails, transforme tout ça en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place. Connecte Pronote, Gmail, ou ajoute tes tâches à la main.", "Otto reads your homework, tests and emails, turns them into a clear plan for today, and helps you get started — never doing the work for you. Connect Pronote, Gmail, or add tasks by hand.")}</p>
             <label className="field onboard-name"><span>{L("Comment veux-tu qu'Otto t'appelle ?", "What should Otto call you?")}</span>
-              <input className="addinput" placeholder={L("Ton prénom", "Your first name")} value={name} maxLength={60} autoFocus
+              <input className="addinput" placeholder={L("Ton prénom (optionnel)", "Your first name (optional)")} value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
             </label>
+            <p className="muted small">{L("Tu peux le renseigner plus tard dans les Réglages.", "You can set this later in Settings.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>{L("Commencer", "Get started")}</button></div>
           </div>
         )}
@@ -3502,6 +3507,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>{L("IB", "IB")}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
             </div>
+            <p className="muted small">{L("Tu peux choisir plus tard depuis les Réglages.", "You can pick this later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
               <button className="btn primary" onClick={() => setStep(2)}>{L("Continuer", "Continue")}</button>
