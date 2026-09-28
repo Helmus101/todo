@@ -27,7 +27,21 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     root: ".",
-    build: { outDir: "dist" },
+    build: { 
+      outDir: "dist",
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // Split large libraries into separate chunks
+            'pdf-worker': ['pdfjs-dist'],
+            'katex': ['katex'],
+            'mediapipe': ['@mediapipe/tasks-vision'],
+            'react-vendor': ['react', 'react-dom'],
+          },
+        },
+      },
+      chunkSizeWarningLimit: 1000, // Raise warning limit from default 500 to 1000 kB
+    },
     server: {
       host: true, // bind 0.0.0.0 so the preview proxy can reach the dev server
       allowedHosts: true, // accept the preview proxy's external hostname

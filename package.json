@@ -19,7 +19,9 @@
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx tests/run.mjs",
-    "test:smoke": "tsx tests/smoke.mjs"
+    "test:smoke": "tsx tests/smoke.mjs",
+    "test:integration": "tsx tests/integration/auth.test.mjs",
+    "verify-backup": "node scripts/verify-backup.mjs"
   },
   "dependencies": {
     "@blockshub/pawnote-lts": "^1.6.4",

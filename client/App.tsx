@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, useCallback, useRef, lazy, Suspense, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
 import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject, milestonesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
@@ -13,8 +13,10 @@ import { pushError } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint, FirstTimeHint } from "./ui.tsx";
 import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
-import { StudyMode } from "./study/StudyMode.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
+
+// Lazy load heavy features
+const StudyMode = lazy(() => import("./study/StudyMode.tsx").then(module => ({ default: module.StudyMode })));
 import { 
   LayoutDashboard,
   BookOpen,
@@ -863,10 +865,11 @@ export function App() {
       return (
         <LangContext.Provider value={status?.language === "en" ? "en" : "fr"}>
           <NotifyContext.Provider value={notify}>
-            <StudyMode
-              task={task}
-              onExit={() => { setStudyModeTask(null); navigate("tasks"); }}
-              onTaskUpdate={(u) => {
+            <Suspense fallback={<div className="p-8 text-center">Chargement…</div>}>
+              <StudyMode
+                task={task}
+                onExit={() => { setStudyModeTask(null); navigate("tasks"); }}
+                onTaskUpdate={(u: WebTask) => {
                 // Register like patchTask does (see keepLocalHandled) — a chat turn is a local mutation too,
                 // so a background syncTasks racing this update doesn't get treated as unconditionally newer.
                 localMutations.current.set(u.id, Date.now());
@@ -879,7 +882,7 @@ export function App() {
                     })
                   : [...prev, u]);
                 setStudyModeTask((prev) => {
-                  if (prev?.id !== u.id) return u;
+                  if (!prev || prev?.id !== u.id) return u;
                   const existingChat = prev.chat || [];
                   if (!existingChat.length) return u;
                   return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
@@ -889,6 +892,7 @@ export function App() {
               language={status?.language === "en" ? "en" : "fr"}
               betaFeatures={!!status?.betaFeatures}
             />
+            </Suspense>
           </NotifyContext.Provider>
         </LangContext.Provider>
       );
@@ -2067,25 +2071,27 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
     );
   }
   return (
-    <StudyMode
-      task={task}
-      onExit={() => navigate("tasks")}
-      // Free-study session (no linked task, its own synthetic "study id" task) — same chat-union protection
-      // as the task-linked path above, previously entirely missing here: a plain replace let a stale
-      // background sync directly overwrite a fresher local chat with no merge at all, the most exposed of
-      // the three onTaskUpdate call sites to "chat sometimes auto-deletes stuff".
-      onTaskUpdate={(u) => setTasks((prev) => prev.some((x) => x.id === u.id)
-        ? prev.map((x) => {
-            if (x.id !== u.id) return x;
-            const existingChat = x.chat || [];
-            if (!existingChat.length) return u;
-            return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
-          })
-        : [...prev, u])}
-      userId={status?.user}
-      language={en ? "en" : "fr"}
-      betaFeatures={!!status?.betaFeatures}
-    />
+    <Suspense fallback={<div className="p-8 text-center">Chargement…</div>}>
+      <StudyMode
+        task={task}
+        onExit={() => navigate("tasks")}
+        // Free-study session (no linked task, its own synthetic "study id" task) — same chat-union protection
+        // as the task-linked path above, previously entirely missing here: a plain replace let a stale
+        // background sync directly overwrite a fresher local chat with no merge at all, the most exposed of
+        // the three onTaskUpdate call sites to "chat sometimes auto-deletes stuff".
+        onTaskUpdate={(u: WebTask) => setTasks((prev) => prev.some((x) => x.id === u.id)
+          ? prev.map((x) => {
+              if (x.id !== u.id) return x;
+              const existingChat = x.chat || [];
+              if (!existingChat.length) return u;
+              return { ...u, chat: unionChatEntries(existingChat, u.chat || []) };
+            })
+          : [...prev, u])}
+        userId={status?.user}
+        language={en ? "en" : "fr"}
+        betaFeatures={!!status?.betaFeatures}
+      />
+    </Suspense>
   );
 }
 

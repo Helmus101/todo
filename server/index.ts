@@ -1,5 +1,5 @@
 import "./env.ts"; // load web/.env + the repo-root .env (COMPOSIO_API_KEY etc.) — MUST be first
-import { initSentry, reportError } from "./sentry.ts";
+import { initSentry, reportError, addBreadcrumb } from "./sentry.ts";
 initSentry(); // before anything else can throw — no-op if SENTRY_DSN isn't set
 import express from "express";
 import type { RequestHandler } from "express";
@@ -21,6 +21,9 @@ import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken,
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "./patterns.ts";
+import { getAllCircuitBreakerStates } from "./circuit-breaker.ts";
+import { shallowHealthCheck, deepHealthCheck } from "./health-check.ts";
+import { validateEnvironmentOrThrow } from "./env-validation.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
@@ -51,6 +54,9 @@ declare module "express-session" {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8788);
 const PROD = process.env.NODE_ENV === "production";
+
+// Validate environment on startup
+validateEnvironmentOrThrow();
 
 // Fail closed: required environment variables in production
 if (PROD) {
@@ -105,6 +111,7 @@ app.use(cors({
 }));
 // Liveness probe for the host platform — no auth, no session, no DB; just "the process is up".
 app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
+
 // Content-Security-Policy: scripts are self-only (the self-heal script is externalized, not inline);
 // styles allow 'unsafe-inline' for React style={{}} attributes; images allow the Composio logo CDN + data:.
 // On Vercel the static HTML is served by Vercel's layer (see vercel.json headers) — this covers the Express
@@ -458,6 +465,18 @@ const rateLimit = (max: number, windowMs: number): RequestHandler => async (req,
 // The agent's toolset for this account's connected apps (Composio). Empty if Composio's unset/nothing linked.
 const toolsFor = (req: express.Request) => integrations.getAgentTools(req.session.user!, { primaryAccounts: req.session.profile?.primaryAccounts }).catch(() => undefined);
 
+// Shallow health check endpoint (unauthenticated, fast) - for load balancers and basic monitoring
+app.get("/api/health/shallow", ah(async (_req, res) => {
+  const result = await shallowHealthCheck();
+  res.status(result.status === "unhealthy" ? 503 : 200).json(result);
+}));
+
+// Deep health check endpoint (authenticated, detailed) - for monitoring and diagnostics
+app.get("/api/health/deep", requireAuth, ah(async (_req, res) => {
+  const result = await deepHealthCheck();
+  res.status(result.status === "unhealthy" ? 503 : 200).json(result);
+}));
+
 // ── Email account auth ─────────────────────────────────────────────────────────
 const normEmail = (s: unknown) => String(s || "").trim().toLowerCase();
 const validEmail = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
@@ -499,6 +518,7 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
     // status poll) already has a valid token to send — otherwise requireAuth would reject that first call
     // with no way for the client to have known the token yet.
     req.session.csrfToken = randomBytes(24).toString("hex");
+    addBreadcrumb("auth", "User signed up", "info", { email });
     void recordEvent(email, "signup", {});
     saveSession(req).then(() => res.json({ ok: true, csrfToken: req.session.csrfToken }));
   });
@@ -521,6 +541,7 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
   if (!u || !validPassword) {
     // Log failed login attempt with IP address for security monitoring
     const ip = req.ip || req.socket.remoteAddress || "unknown";
+    addBreadcrumb("auth", "Failed login attempt", "warning", { email, hasAccount: !!u, ip });
     void recordEvent(email, "login_failed", { message: `IP: ${ip}` }); // never the password — email + IP only, for brute-force visibility
     res.status(401).json({ error: "Wrong email or password." });
     return;
@@ -537,6 +558,7 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
     // See the signup handler's identical comment — generated here so the token is available immediately,
     // not only after the client's next /api/status poll.
     req.session.csrfToken = randomBytes(24).toString("hex");
+    addBreadcrumb("auth", "User logged in", "info", { email });
     void recordEvent(email, "login", {});
     await saveSession(req);
     res.json({ ok: true, csrfToken: req.session.csrfToken });
@@ -599,7 +621,7 @@ app.post("/api/auth/reset-password", rateLimit(10, 60 * 60_000), ah(async (req, 
   });
 }));
 
-app.post("/api/auth/logout", (req, res) => {
+app.post("/api/auth/logout", rateLimit(20, 60_000), (req, res) => {
   const email = req.session.user;
   req.session.destroy(() => {
     // Belt-and-suspenders on top of destroy(): if some OTHER request already in flight on this same
@@ -753,8 +775,11 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
   }
   try {
     const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
-    if (result.ok) pronoteSvc.invalidatePronoteStatus(req.session.user!); // else /api/status's cache keeps reporting "not connected" for up to 60s
-    if (result.ok) void recordMetric(req.session.user!, "pronote_sync", 1);
+    if (result.ok) {
+      addBreadcrumb("integrations", "Pronote connected", "info", { user: req.session.user });
+      pronoteSvc.invalidatePronoteStatus(req.session.user!); // else /api/status's cache keeps reporting "not connected" for up to 60s
+      void recordMetric(req.session.user!, "pronote_sync", 1);
+    }
     // Pull grades right away on a fresh connect — otherwise a student wouldn't see any until the next daily
     // sweep or a manual "Sync from Pronote" click, and "I just connected Pronote" is exactly the moment
     // grades should already be there. Best-effort: never fails the connect itself.
@@ -766,7 +791,10 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
       } catch { /* best-effort */ }
     }
     res.status(result.ok ? 200 : 400).json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't connect to Pronote — try again." }); }
+  } catch (e: any) {
+    addBreadcrumb("integrations", "Pronote connection failed", "error", { user: req.session.user, error: e?.message });
+    res.status(500).json({ error: e?.message || "Couldn't connect to Pronote — try again." });
+  }
 });
 // Upcoming tests for the dashboard's exam countdown strip — a plain read, separate from the task pipeline
 // (a test already has/will have a task, but the countdown needs the raw subject+date list to lay out as a
@@ -793,7 +821,7 @@ app.get("/api/pronote/touch", requireAuth, rateLimit(10, 60_000), async (req, re
   void pronoteSvc.touchPronoteSession(req.session.user!).catch(() => {});
   res.json({ ok: true });
 });
-app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
+app.post("/api/integrations/pronote/disconnect", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try {
     await pronoteSvc.disconnectPronote(req.session.user!);
     pronoteSvc.invalidatePronoteStatus(req.session.user!);
@@ -858,7 +886,7 @@ app.post("/api/integrations/plaid/connect-mock", requireAuth, rateLimit(10, 60_0
   if (!result.ok) { res.status(400).json(result); return; }
   res.json(result);
 }));
-app.post("/api/integrations/plaid/disconnect", requireAuth, async (req, res) => {
+app.post("/api/integrations/plaid/disconnect", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try { await plaidSvc.disconnectPlaid(req.session.user!); res.json({ ok: true }); }
   catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
 });
@@ -902,7 +930,7 @@ app.post("/api/integrations/blackbaud/connect-mock", requireAuth, rateLimit(10, 
   if (!result.ok) { res.status(400).json(result); return; }
   res.json(result);
 }));
-app.post("/api/integrations/blackbaud/disconnect", requireAuth, async (req, res) => {
+app.post("/api/integrations/blackbaud/disconnect", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try { await blackbaudSvc.disconnectBlackbaud(req.session.user!); res.json({ ok: true }); }
   catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
 });
@@ -926,7 +954,7 @@ app.get("/api/workload", requireAuth, async (req, res) => {
   res.json({ days });
 });
 
-app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
+app.post("/api/integrations/:app/disconnect", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   const app2 = String(req.params.app);
   try {
     const result = integrations.integrationsReady() ? await integrations.disconnect(app2, req.session.user!) : { ok: true };
@@ -939,7 +967,7 @@ app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
 });
 
 // Disconnect a specific account by ID (for multi-account support)
-app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req, res) => {
+app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   const app2 = String(req.params.app);
   const accountId = String(req.params.accountId);
   try {
@@ -991,6 +1019,7 @@ app.get("/api/status", ah(async (req, res) => {
     customTheme: req.session.profile?.customTheme,
     betaFeatures: !!req.session.profile?.betaFeatures,
     onboardingCompletedAt: req.session.profile?.onboardingCompletedAt,
+    circuitBreakers: getAllCircuitBreakerStates(),
   };
   // Hand the CSRF synchronizer token to the client here — this is the ONE place it's ever transmitted (see
   // requireAuth's own comment). Generated lazily so an already-logged-in session picks one up on its next
@@ -1018,7 +1047,7 @@ const overBudget = (req: express.Request): boolean => overMonthlyBudget(req.sess
 const overInteractive = (req: express.Request): boolean => overInteractiveBudget(req.session.profile);
 const BUDGET_MSG = "Otto's reached its monthly AI budget (including the interactive reserve) — it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
 // Visiting /unlimited (client-side route, see App.tsx) removes this account's monthly AI spend cap.
-app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
+app.post("/api/settings/unlimited", requireAuth, rateLimit(5, 60_000), async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());
     p.unlimited = true;
@@ -1028,7 +1057,7 @@ app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
 });
 
-app.post("/api/settings/pause", requireAuth, async (req, res) => {
+app.post("/api/settings/pause", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());
     p.paused = req.body?.paused === true;
@@ -1205,7 +1234,13 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     return;
   }
     const job = await jobs.enqueueAndDrain(user, "sweep");
-    if (job.status === "succeeded") req.session.lastGenTime = new Date().toISOString();
+    addBreadcrumb("tasks", "Task generation started", "info", { user, force, hasTools: !!extras?.tools?.length, pronoteOn, bankingOn });
+    if (job.status === "succeeded") {
+      addBreadcrumb("tasks", "Task generation succeeded", "info", { user, taskCount: (req.session.tasks || []).length });
+      req.session.lastGenTime = new Date().toISOString();
+    } else if (job.status.startsWith("failed")) {
+      addBreadcrumb("tasks", "Task generation failed", "error", { user, status: job.status });
+    }
     // The job committed to the CLOUD copy — fold it into this session so the response reflects it.
     // bypassCache is REQUIRED here, not an optimization: the sweep may well have run its commit on a
     // different serverless instance than the one serving this request, so a cached read can return state
@@ -2490,7 +2525,7 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(asyn
     res.json({ customTheme: profile.customTheme });
   } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't personalize your theme — try again." }); }
 }));
-app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
+app.post("/api/ui/theme-reset", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
   const profile = req.session.profile ||= emptyProfile();
   profile.customTheme = undefined;
   profile.preferencesUpdatedAt = new Date().toISOString();

@@ -1508,6 +1508,7 @@ export interface ConnectionStatus {
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
   onboardingCompletedAt?: string; // ISO timestamp when onboarding was completed — used to show/hide help UI
+  circuitBreakers?: Record<string, { state: string; failureCount: number; lastFailureTime: number | null; lastSuccessTime: number | null; nextAttemptTime: number | null }>; // circuit breaker states for monitoring
   csrfToken?: string;         // synchronizer-token CSRF defense (server/index.ts's requireAuth) — only present when loggedIn
 }
 
