@@ -1,11 +1,6 @@
 {
   "buildCommand": "npm run build && bash scripts/build-vercel.sh",
   "outputDirectory": "dist",
-  "functions": {
-    "api/index.mjs": {
-      "maxDuration": 300
-    }
-  },
   "regions": ["cdg1"],
   "crons": [
     { "path": "/api/cron/drain", "schedule": "0 12 * * *" }

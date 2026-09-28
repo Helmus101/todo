@@ -3,6 +3,5 @@ dist
 .env
 *.local
 public/otto-tabs-extension.zip
-api/index.mjs
 .base44/
 docker-compose.base44.yml
