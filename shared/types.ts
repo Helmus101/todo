@@ -98,6 +98,20 @@ export interface Profile {
   // whenever the local day changes; count is the number of tasks auto-enqueued so far THAT day.
   autoRunDay?: string;
   autoRunCount?: number;
+  // Which flashcard decks have already counted against today's MAX_DUE_SETS_PER_DAY cap (see /api/reviews/due
+  // in server/index.ts) — persisted (not just computed fresh per request) so that reviewing a card, which
+  // moves its dueAt into the future and would otherwise make its deck stop looking "due", can't silently free
+  // up a slot for a 4th deck on the same day. Reset (like autoRunDay/autoRunCount above) whenever the local
+  // day changes.
+  reviewSetsDay?: string;
+  reviewSetDeckIds?: string[];
+  // Stamped every write to reviewSetDeckIds — lets mergeProfileStates use latest-write-wins (like pausedAt/
+  // lastSweepAt above) instead of unioning two devices' admitted sets. A single write is always ≤
+  // MAX_DUE_SETS_PER_DAY by construction (the route only ever admits up to the cap); a same-day UNION of two
+  // independent writes is not, and could blow the cap past 3 across devices. Latest-write-wins keeps the
+  // invariant intact at the cost of possibly dropping a losing device's admissions from a genuinely
+  // simultaneous race — an acceptable trade for a soft daily-dose cap, not a spend/security guard.
+  reviewSetsUpdatedAt?: string;
   // No longer drives sweep cadence — automatic generation is now fixed at once/day, 16:00 local (see
   // server/jobs.ts's sweepDue) rather than this 1-4x/day setting. Field kept (not removed) since it's
   // still a harmless, settable preference with no UI exposing it either way — not worth a wider removal
@@ -313,6 +327,12 @@ export function normalizeProfile(p: any): Profile {
     activityDecayedAt: typeof p?.activityDecayedAt === "string" ? p.activityDecayedAt : undefined,
     autoRunDay: typeof p?.autoRunDay === "string" ? p.autoRunDay : undefined,
     autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
+    reviewSetsDay: typeof p?.reviewSetsDay === "string" ? p.reviewSetsDay : undefined,
+    // Clamped to MAX_DUE_SETS_PER_DAY — every real write already respects this (the route only ever admits
+    // up to the cap), so this only ever bites a hand-edited/replayed /api/account/import file trying to
+    // plant more admitted decks than the app itself would ever persist.
+    reviewSetDeckIds: Array.isArray(p?.reviewSetDeckIds) ? arr(p.reviewSetDeckIds).slice(0, MAX_DUE_SETS_PER_DAY) : undefined,
+    reviewSetsUpdatedAt: typeof p?.reviewSetsUpdatedAt === "string" ? p.reviewSetsUpdatedAt : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
     timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
     // Structured preferences
@@ -1151,6 +1171,12 @@ export interface TaskNote {
 // (optimistic update) and server (source of truth).
 export const LEITNER_INTERVAL_DAYS = [1, 7];
 export const LEITNER_BOX_LABEL = ["Learning", "Known"] as const;
+// Cap on distinct flashcard decks surfaced per day by GET /api/reviews/due (server/index.ts) — see
+// Profile.reviewSetDeckIds's own comment. Single source of truth (imported by server/index.ts) so
+// normalizeProfile below can clamp to the SAME number: without that, a hand-edited /api/account/import
+// file could plant more admitted-deck ids than the route itself would ever write, letting an imported
+// profile show more than the intended daily dose after merge.
+export const MAX_DUE_SETS_PER_DAY = 3;
 export function nextLeitnerReview(prevBox: number | undefined, correct: boolean, now: Date = new Date()): { box: number; dueAt: string } {
   const box = correct ? Math.min(2, (prevBox || 0) + 1) : 1;
   const days = LEITNER_INTERVAL_DAYS[box - 1];

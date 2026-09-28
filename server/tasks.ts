@@ -719,6 +719,26 @@ export function mergeProfileStates(p1: Profile, p2: Profile): Profile {
       if (!d2) return { autoRunDay: d1, autoRunCount: p1.autoRunCount };
       return d2 > d1 ? { autoRunDay: d2, autoRunCount: p2.autoRunCount } : { autoRunDay: d1, autoRunCount: p1.autoRunCount };
     })(),
+    // This is a same-day CAP guard (MAX_DUE_SETS_PER_DAY, server/index.ts) on a bounded SET, not an
+    // accumulating counter like autoRunCount — each individual write is already ≤ the cap by construction
+    // (the route only ever admits up to MAX_DUE_SETS_PER_DAY). Unioning two same-day writes from different
+    // devices could push the merged set past the cap (device A admits 3 decks, device B independently
+    // admits 3 different decks before seeing A's write → a naive union persists 6). Latest-write-wins (via
+    // reviewSetsUpdatedAt, same pattern as pausedAt/lastSweepAt above) keeps the ≤3 invariant intact instead
+    // — the trade-off is a genuinely simultaneous race can drop the losing device's admissions, acceptable
+    // for a soft daily-dose cap rather than a spend/security guard.
+    ...(() => {
+      const d1 = p1.reviewSetsDay, d2 = p2.reviewSetsDay;
+      const u1 = Date.parse(p1.reviewSetsUpdatedAt || "") || 0, u2 = Date.parse(p2.reviewSetsUpdatedAt || "") || 0;
+      if (d1 && d2 && d1 === d2) return u2 >= u1
+        ? { reviewSetsDay: d2, reviewSetDeckIds: p2.reviewSetDeckIds, reviewSetsUpdatedAt: p2.reviewSetsUpdatedAt }
+        : { reviewSetsDay: d1, reviewSetDeckIds: p1.reviewSetDeckIds, reviewSetsUpdatedAt: p1.reviewSetsUpdatedAt };
+      if (!d1) return { reviewSetsDay: d2, reviewSetDeckIds: p2.reviewSetDeckIds, reviewSetsUpdatedAt: p2.reviewSetsUpdatedAt };
+      if (!d2) return { reviewSetsDay: d1, reviewSetDeckIds: p1.reviewSetDeckIds, reviewSetsUpdatedAt: p1.reviewSetsUpdatedAt };
+      return d2 > d1
+        ? { reviewSetsDay: d2, reviewSetDeckIds: p2.reviewSetDeckIds, reviewSetsUpdatedAt: p2.reviewSetsUpdatedAt }
+        : { reviewSetsDay: d1, reviewSetDeckIds: p1.reviewSetDeckIds, reviewSetsUpdatedAt: p1.reviewSetsUpdatedAt };
+    })(),
     primaryAccounts: (p1.primaryAccounts || p2.primaryAccounts) ? { ...p1.primaryAccounts, ...p2.primaryAccounts } : undefined,
     // genPerDay/timezone/responseStyle/autoApprove/highPriorityPeople/autoArchivePatterns/track/yearLevel:
     // all set through the ONE POST /api/profile/preference route (server/index.ts), all stamped together via
@@ -1001,9 +1021,10 @@ export function forceWeekCoverage(
   return out;
 }
 
-/** Local calendar day (YYYY-MM-DD) of an instant in the user's timezone — for the once-per-day force gate.
- *  Duplicated tiny helper (not imported from jobs.ts) to avoid a circular module dependency. */
-function localDayOf(iso: string, timezone?: string): string {
+/** Local calendar day (YYYY-MM-DD) of an instant in the user's timezone — for the once-per-day force gate
+ *  and the daily flashcard-review-deck cap below. Duplicated tiny helper (not imported from jobs.ts) to
+ *  avoid a circular module dependency. Exported for the review-deck cap in server/index.ts. */
+export function localDayOf(iso: string, timezone?: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
   try { return new Intl.DateTimeFormat("en-CA", { timeZone: timezone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
@@ -1046,6 +1067,25 @@ export function recordAutoRuns(profile: Profile, n: number, now: Date = new Date
   const today = localDayOf(now.toISOString(), tz);
   if (profile.autoRunDay !== today) { profile.autoRunDay = today; profile.autoRunCount = 0; }
   profile.autoRunCount = (profile.autoRunCount || 0) + n;
+}
+/** Today's already-admitted flashcard review decks (profile.reviewSetDeckIds), resetting the set the moment
+ *  the user's local day changes — same reset shape as recordAutoRuns above. Read-only: does NOT mutate
+ *  `profile`, so a request that only wants to know what's already admitted (without spending a new slot)
+ *  can call this safely. */
+export function reviewSetDeckIdsToday(profile: Profile, now: Date = new Date()): string[] {
+  const tz = tzOf(profile);
+  const today = localDayOf(now.toISOString(), tz);
+  return profile.reviewSetsDay === today ? (profile.reviewSetDeckIds || []) : [];
+}
+/** Persist that `deckIds` are (now) today's admitted review decks — mutates `profile` in place (same pattern
+ *  as recordAutoRuns/applyProfileUpdate), so the caller's own commit persists it. Overwrites rather than
+ *  merges: callers pass the FULL admitted set (reviewSetDeckIdsToday(...) plus any newly admitted ids), not
+ *  just the new ones. */
+export function setReviewSetDeckIdsToday(profile: Profile, deckIds: string[], now: Date = new Date()): void {
+  const tz = tzOf(profile);
+  profile.reviewSetsDay = localDayOf(now.toISOString(), tz);
+  profile.reviewSetDeckIds = deckIds;
+  profile.reviewSetsUpdatedAt = now.toISOString();
 }
 
 export async function generate(existing: WebTask[], profile: Profile, extras?: AgentTools, userEmail?: string): Promise<WebTask[]> {

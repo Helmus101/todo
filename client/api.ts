@@ -247,7 +247,9 @@ export const api = {
   // A student's own hand-written note — "what I got wrong, what to remember" — no AI call, lands in the
   // same task.notes the AI's own fiches use so it shows up as a normal chip in "What Otto prepared".
   addNote: (taskId: string, title: string, body: string): Promise<WebTask[]> => post(`/api/tasks/${taskId}/notes`, { title, body }),
-  reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] }> => req("/api/reviews/due").then(j),
+  // setsShown/setCap: server caps how many distinct flashcard decks it surfaces per day (see
+  // MAX_DUE_SETS_PER_DAY in server/index.ts) — still-due decks beyond the cap simply reappear tomorrow.
+  reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[]; setsShown?: number; setCap?: number }> => req("/api/reviews/due").then(j),
   // Study log: daily "what I learned today" → auto flashcards (see server/index.ts's /api/studylog/*).
   // Saving empty text clears that day's entry+deck; non-empty text (re)generates the deck server-side.
   studyLogDay: (date: string, text: string): Promise<WebTask[]> => post("/api/studylog/day", { date, text }),

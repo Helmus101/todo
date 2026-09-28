@@ -410,7 +410,7 @@ export function App() {
   const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
-  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); } catch { /* ignore */ } setOnboard(false); };
+  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
@@ -740,7 +740,7 @@ export function App() {
     // PREVIOUS account's cached tasks/status (see CACHED_TASKS/CACHED_STATUS above) before the real fetch
     // replaces them — visible, if briefly, as someone else's to-do list. None of these are needed once
     // signed out; the next session starts genuinely fresh.
-    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
     // Clear user-specific local backups (decks, quizzes)
     const userId = status?.user || null;
     clearLocalDecks(userId);
@@ -3441,7 +3441,18 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // already good) and, from here on, whether Pronote gets framed as THE data source or as one option among
   // several. Previously never asked anywhere, so every account silently defaulted to unset/"bac"-shaped
   // assumptions regardless of what the student actually needed.
-  const [track, setTrack] = useState<"ib" | "bac" | "other" | null>(null);
+  // Persisted the same way `step` is (localStorage) — plain useState reverted to null on every reload, so a
+  // student who picked "ib" on step 1 and refreshed mid-onboarding (their track already saved server-side
+  // by then) would see step 3's pronoteIsPrimary computed from a null track again, i.e. the wrong (primary)
+  // Pronote copy for an IB student.
+  const [track, setTrackState] = useState<"ib" | "bac" | "other" | null>(() => {
+    try { return (localStorage.getItem("otto-onboard-track") as "ib" | "bac" | "other" | null) || null; }
+    catch { return null; }
+  });
+  const setTrack = (t: "ib" | "bac" | "other" | null) => {
+    setTrackState(t);
+    try { if (t) localStorage.setItem("otto-onboard-track", t); else localStorage.removeItem("otto-onboard-track"); } catch { /* best-effort */ }
+  };
   // Free text, not a dropdown — see Profile.yearLevel's doc comment: year/grade naming isn't standardized
   // across the Bac/IB/"other" tracks this asks about, and forcing one system's labels onto another would
   // just be wrong for whichever track didn't match. Saved on blur (no separate "confirm" step) since it's
@@ -3468,7 +3479,11 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // Pronote is a French national-education-system tool — real and worth asking about for "bac"/unset, but
   // actively misleading to lead with for an IB/other-track student whose school very likely doesn't use it
   // at all (Google Classroom, Managebac, Toddle, or just email/calendar are far more common internationally).
-  const pronoteIsPrimary = false;
+  // Previously hardcoded `false` regardless of the track picked in step 1 — every student, including "bac"
+  // ones who'd just chosen Pronote as their real primary source, saw the non-primary "if you have one"
+  // copy. Derive it from the actual selection: primary unless the student is explicitly on IB (unset track
+  // still defaults to primary, same as the "bac"/unset framing the comment above already describes).
+  const pronoteIsPrimary = track !== "ib";
 
   return (
     <div className="onboard-overlay" role="dialog" aria-modal="true">
@@ -3476,8 +3491,8 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
         <button className="onboard-skip" onClick={onDone} aria-label={L("Passer", "Skip")}>{L("Passer", "Skip")}</button>
         <div className="onboard-top">
           <div className="onboard-brand"><Logo size={20} /> <span>Otto</span></div>
-          <div className="onboard-progress" aria-hidden="true">
-            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} className={d <= step ? "on" : ""} />)}
+          <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={step + 1} aria-label={L(`Étape ${step + 1} sur ${OB_STEPS}`, `Step ${step + 1} of ${OB_STEPS}`)}>
+            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} aria-hidden="true" className={d <= step ? "on" : ""} />)}
           </div>
         </div>
 
@@ -3486,9 +3501,10 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
             <h2>{L("Bienvenue sur Otto", "Welcome to Otto")}</h2>
             <p className="onboard-lead">{L("Otto lit tes devoirs, contrôles et mails, transforme tout ça en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place. Connecte Pronote, Gmail, ou ajoute tes tâches à la main.", "Otto reads your homework, tests and emails, turns them into a clear plan for today, and helps you get started — never doing the work for you. Connect Pronote, Gmail, or add tasks by hand.")}</p>
             <label className="field onboard-name"><span>{L("Comment veux-tu qu'Otto t'appelle ?", "What should Otto call you?")}</span>
-              <input className="addinput" placeholder={L("Ton prénom", "Your first name")} value={name} maxLength={60} autoFocus
+              <input className="addinput" placeholder={L("Ton prénom (optionnel)", "Your first name (optional)")} value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
             </label>
+            <p className="muted small">{L("Tu peux le renseigner plus tard dans les Réglages.", "You can set this later in Settings.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>{L("Commencer", "Get started")}</button></div>
           </div>
         )}
@@ -3502,6 +3518,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>{L("IB", "IB")}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
             </div>
+            <p className="muted small">{L("Tu peux choisir plus tard depuis les Réglages.", "You can pick this later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
               <button className="btn primary" onClick={() => setStep(2)}>{L("Continuer", "Continue")}</button>
