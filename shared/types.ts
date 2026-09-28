@@ -98,6 +98,13 @@ export interface Profile {
   // whenever the local day changes; count is the number of tasks auto-enqueued so far THAT day.
   autoRunDay?: string;
   autoRunCount?: number;
+  // Which flashcard decks have already counted against today's MAX_DUE_SETS_PER_DAY cap (see /api/reviews/due
+  // in server/index.ts) — persisted (not just computed fresh per request) so that reviewing a card, which
+  // moves its dueAt into the future and would otherwise make its deck stop looking "due", can't silently free
+  // up a slot for a 4th deck on the same day. Reset (like autoRunDay/autoRunCount above) whenever the local
+  // day changes.
+  reviewSetsDay?: string;
+  reviewSetDeckIds?: string[];
   // No longer drives sweep cadence — automatic generation is now fixed at once/day, 16:00 local (see
   // server/jobs.ts's sweepDue) rather than this 1-4x/day setting. Field kept (not removed) since it's
   // still a harmless, settable preference with no UI exposing it either way — not worth a wider removal
@@ -313,6 +320,8 @@ export function normalizeProfile(p: any): Profile {
     activityDecayedAt: typeof p?.activityDecayedAt === "string" ? p.activityDecayedAt : undefined,
     autoRunDay: typeof p?.autoRunDay === "string" ? p.autoRunDay : undefined,
     autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
+    reviewSetsDay: typeof p?.reviewSetsDay === "string" ? p.reviewSetsDay : undefined,
+    reviewSetDeckIds: Array.isArray(p?.reviewSetDeckIds) ? arr(p.reviewSetDeckIds) : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
     timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
     // Structured preferences

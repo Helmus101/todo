@@ -410,7 +410,7 @@ export function App() {
   const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
-  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); } catch { /* ignore */ } setOnboard(false); };
+  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
@@ -740,7 +740,7 @@ export function App() {
     // PREVIOUS account's cached tasks/status (see CACHED_TASKS/CACHED_STATUS above) before the real fetch
     // replaces them — visible, if briefly, as someone else's to-do list. None of these are needed once
     // signed out; the next session starts genuinely fresh.
-    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
     // Clear user-specific local backups (decks, quizzes)
     const userId = status?.user || null;
     clearLocalDecks(userId);
@@ -3441,7 +3441,18 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // already good) and, from here on, whether Pronote gets framed as THE data source or as one option among
   // several. Previously never asked anywhere, so every account silently defaulted to unset/"bac"-shaped
   // assumptions regardless of what the student actually needed.
-  const [track, setTrack] = useState<"ib" | "bac" | "other" | null>(null);
+  // Persisted the same way `step` is (localStorage) — plain useState reverted to null on every reload, so a
+  // student who picked "ib" on step 1 and refreshed mid-onboarding (their track already saved server-side
+  // by then) would see step 3's pronoteIsPrimary computed from a null track again, i.e. the wrong (primary)
+  // Pronote copy for an IB student.
+  const [track, setTrackState] = useState<"ib" | "bac" | "other" | null>(() => {
+    try { return (localStorage.getItem("otto-onboard-track") as "ib" | "bac" | "other" | null) || null; }
+    catch { return null; }
+  });
+  const setTrack = (t: "ib" | "bac" | "other" | null) => {
+    setTrackState(t);
+    try { if (t) localStorage.setItem("otto-onboard-track", t); else localStorage.removeItem("otto-onboard-track"); } catch { /* best-effort */ }
+  };
   // Free text, not a dropdown — see Profile.yearLevel's doc comment: year/grade naming isn't standardized
   // across the Bac/IB/"other" tracks this asks about, and forcing one system's labels onto another would
   // just be wrong for whichever track didn't match. Saved on blur (no separate "confirm" step) since it's
