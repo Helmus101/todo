@@ -53,6 +53,9 @@ export interface Profile {
   // (server/index.ts's /api/auth/signup rejects signup without it) — a real audit trail for the RGPD
   // Art.8 parental-consent requirement, not just a UI gate that leaves no record.
   ageConsentAt?: string;
+  // Tracks whether the user has completed the onboarding flow — set when onboarding finishes
+  // in App.tsx's Onboarding component. Stored in profile so it persists across devices/sessions.
+  onboardingCompletedAt?: string;
   paused?: boolean;       // "pause all AI usage" — blocks generation and task runs server-side
   pausedAt?: string;      // ISO stamp of the last toggle, so cross-device merge keeps the most RECENT choice
   lastSweepAt?: string;   // ISO stamp of the last SUCCESSFUL generation sweep — durable "did we check today"
@@ -1504,6 +1507,7 @@ export interface ConnectionStatus {
   overBudget?: boolean;       // month-to-date AI spend has crossed the cap — gen/exec paused until it resets
   unlimited?: boolean;        // account has no monthly AI spend cap (set via the /unlimited page)
   language?: "fr" | "en";     // the account's UI + AI-content language (Settings toggle) — defaults "fr"
+  onboardingCompletedAt?: string; // ISO timestamp when onboarding was completed — used to show/hide help UI
   csrfToken?: string;         // synchronizer-token CSRF defense (server/index.ts's requireAuth) — only present when loggedIn
 }
 

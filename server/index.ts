@@ -990,6 +990,7 @@ app.get("/api/status", ah(async (req, res) => {
     language: req.session.profile?.language === "en" ? "en" : "fr",
     customTheme: req.session.profile?.customTheme,
     betaFeatures: !!req.session.profile?.betaFeatures,
+    onboardingCompletedAt: req.session.profile?.onboardingCompletedAt,
   };
   // Hand the CSRF synchronizer token to the client here — this is the ONE place it's ever transmitted (see
   // requireAuth's own comment). Generated lazily so an already-logged-in session picks one up on its next

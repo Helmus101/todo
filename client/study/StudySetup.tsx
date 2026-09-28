@@ -3,7 +3,7 @@ import type { WebTask } from "../../shared/types.ts";
 import type { StudyEnvironment, StudyMaterial } from "./StudyTypes.ts";
 import { extractPdfText } from "./pdfText.ts";
 import { api } from "../api.ts";
-import { stripHtml, useLang } from "../ui.tsx";
+import { stripHtml, useLang, FirstTimeHint } from "../ui.tsx";
 
 export interface PomodoroChoice { enabled: boolean; workMinutes: number; breakMinutes: number; armId: string }
 export interface AudioChoice { audioType: "silence" | "brown" | "pink" | "white"; armId?: string }
@@ -267,8 +267,16 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
 
         {/* Materials */}
         <div className="sm-setup-section">
+          <FirstTimeHint
+            id="study-mode-materials"
+            title={L("Matériaux de session", "Session materials")}
+            body={L(
+              "Ajoute ici tout ce dont tu as besoin pour cette séance : PDFs, liens YouTube, Google Docs, images. Tout reste sur ton bureau pendant que tu travailles.",
+              "Add everything you need for this session here: PDFs, YouTube links, Google Docs, images. Everything stays on your desk while you work."
+            )}
+          />
           <h2>Materials for this session</h2>
-          <p className="sm-setup-hint">Add everything you'll need before starting. Study Mode keeps this task's materials contained on your desk.</p>
+          <p className="sm-setup-hint">{L("Ajoute tout ce dont tu as besoin avant de commencer. Study Mode garde les matériaux de cette tâche sur ton bureau.", "Add everything you'll need before starting. Study Mode keeps this task's materials contained on your desk.")}</p>
 
           {/* Link / URL input */}
           <div className="sm-setup-link-row">
