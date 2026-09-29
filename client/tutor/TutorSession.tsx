@@ -37,10 +37,6 @@ export function TutorSession({ userId }: { userId: string | null }) {
     "Philosophy", "Computer Science", "Art", "Music", "Other"
   ];
 
-  useEffect(() => {
-    setPastSessions(getTutorSessions(userId));
-  }, [userId]);
-
   const loadTask = useCallback(async (fresh = false) => {
     setLoadError(false);
     try {
@@ -64,24 +60,24 @@ export function TutorSession({ userId }: { userId: string | null }) {
     }
   }, [userId, selectedSubject]);
 
-  // Check if there's an existing session for the selected subject
-  const [hasExistingSession, setHasExistingSession] = useState(false);
+  // Check if there's ANY active session (regardless of subject)
+  const [activeSession, setActiveSession] = useState<WebTask | null>(null);
 
   useEffect(() => {
-    if (selectedSubject) {
-      api.studyFreeSession(false, selectedSubject).then((list) => {
-        const existing = Array.isArray(list) ? list.find((x) => 
-          x.source === "freestudy" && 
-          x.status !== "dismissed" && 
-          x.status !== "done" &&
-          x.sourceSubject === selectedSubject
-        ) : undefined;
-        setHasExistingSession(!!existing);
-      }).catch(() => setHasExistingSession(false));
-    } else {
-      setHasExistingSession(false);
-    }
-  }, [selectedSubject, task]); // Re-check when task changes (session ended/started)
+    api.studyFreeSession(false).then((list) => {
+      const existing = Array.isArray(list) ? list.find((x) => 
+        x.source === "freestudy" && 
+        x.status !== "dismissed" && 
+        x.status !== "done"
+      ) : undefined;
+      setActiveSession(existing || null);
+    }).catch(() => setActiveSession(null));
+  }, [task]); // Re-check when task changes (session ended/started)
+
+  // Refresh past sessions when active session changes
+  useEffect(() => {
+    setPastSessions(getTutorSessions(userId));
+  }, [activeSession, userId]);
 
   // Auto-end session after 1 hour
   useEffect(() => {
@@ -94,6 +90,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
         try { api.dismiss(task.id); } catch { /* best-effort */ }
         setTask(null);
         setSessionStart(null);
+        setActiveSession(null);
         setShowHistory(true);
       }
     }, 60 * 1000); // Check every minute
@@ -142,6 +139,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
       try { await api.dismiss(task.id); } catch { /* best-effort */ }
       setTask(null);
       setSessionStart(null);
+      setActiveSession(null);
       setShowHistory(true);
     } finally {
       setEndingSession(false);
@@ -150,7 +148,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
 
   const startNewSession = useCallback(async () => {
     // Always create a fresh session - never auto-resume
-    setHasExistingSession(false); // Clear immediately to prevent race condition
+    setActiveSession(null); // Clear immediately to prevent race condition
     try {
       const list = await api.studyFreeSession(true, selectedSubject || undefined);
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy") : undefined;
@@ -160,25 +158,6 @@ export function TutorSession({ userId }: { userId: string | null }) {
       }
     } catch (e) {
       setError(L("Impossible de démarrer la séance", "Couldn't start the session"));
-    }
-  }, [selectedSubject, userId, L]);
-
-  const resumeSession = useCallback(async () => {
-    // Resume existing session
-    try {
-      const list = await api.studyFreeSession(false, selectedSubject || undefined);
-      const t = Array.isArray(list) ? list.find((x) => 
-        x.source === "freestudy" && 
-        x.status !== "dismissed" && 
-        x.status !== "done" &&
-        x.sourceSubject === selectedSubject
-      ) : undefined;
-      if (t) {
-        setTask(hydrateLocalThreads([t], userId)[0]);
-        setSessionStart(new Date().toISOString());
-      }
-    } catch (e) {
-      setError(L("Impossible de reprendre la séance", "Couldn't resume the session"));
     }
   }, [selectedSubject, userId, L]);
 
@@ -200,36 +179,45 @@ export function TutorSession({ userId }: { userId: string | null }) {
           <h2>{L("Apprendre en réfléchissant", "Learn by thinking")}</h2>
           <p className="tutor-landing-sub">{L("Otto ne fait pas le travail à ta place. Il t'aide à essayer, à expliquer ton raisonnement et à transférer ce que tu apprends.", "Otto won't do the work for you. He helps you try, explain your reasoning, and transfer what you learn.")}</p>
           
-          <div className="tutor-subject-select">
-            <label htmlFor="subject-select">{L("Sur quoi veux-tu réfléchir ?", "What would you like to think about?")}</label>
-            <select
-              id="subject-select"
-              value={selectedSubject}
-              onChange={(e) => setSelectedSubject(e.target.value)}
-              className="btn ghost"
-            >
-              <option value="">{L("Choisir une matière", "Choose a subject")}</option>
-              {COMMON_SUBJECTS.map((subj) => (
-                <option key={subj} value={subj}>{subj}</option>
-              ))}
-            </select>
-          </div>
-          
-          {/* Show session or start/resume button based on state */}
-          {selectedSubject && (
-            task ? (
-              <div className="tutor-active-session-note">
-                {L("Séance en cours", "Session in progress")}
+          {/* First check if there's an active session */}
+          {activeSession ? (
+            <button className="btn primary tutor-start-btn" onClick={() => {
+              setTask(hydrateLocalThreads([activeSession], userId)[0]);
+              setSessionStart(new Date().toISOString());
+              setActiveSession(null);
+            }}>
+              {L("Reprendre la séance", "Resume session")}
+            </button>
+          ) : (
+            <>
+              <div className="tutor-subject-select">
+                <label htmlFor="subject-select">{L("Sur quoi veux-tu réfléchir ?", "What would you like to think about?")}</label>
+                <select
+                  id="subject-select"
+                  value={selectedSubject}
+                  onChange={(e) => setSelectedSubject(e.target.value)}
+                  className="btn ghost"
+                >
+                  <option value="">{L("Choisir une matière", "Choose a subject")}</option>
+                  {COMMON_SUBJECTS.map((subj) => (
+                    <option key={subj} value={subj}>{subj}</option>
+                  ))}
+                </select>
               </div>
-            ) : hasExistingSession ? (
-              <button className="btn primary tutor-start-btn" onClick={resumeSession}>
-                {L("Reprendre la séance", "Resume session")}
-              </button>
-            ) : (
-              <button className="btn primary tutor-start-btn" onClick={startNewSession}>
-                {L("Commencer une séance", "Start a session")}
-              </button>
-            )
+              
+              {/* Show session or start button based on state */}
+              {selectedSubject && (
+                task ? (
+                  <div className="tutor-active-session-note">
+                    {L("Séance en cours", "Session in progress")}
+                  </div>
+                ) : (
+                  <button className="btn primary tutor-start-btn" onClick={startNewSession}>
+                    {L("Commencer une séance", "Start a session")}
+                  </button>
+                )
+              )}
+            </>
           )}
 
           {pastSessions.length > 0 && (
