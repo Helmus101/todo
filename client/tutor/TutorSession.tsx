@@ -125,17 +125,24 @@ export function TutorSession({ userId }: { userId: string | null }) {
     return (
       <main className="list-wrap tutor-landing">
         <div className="tutor-landing-inner">
-          <h2>{L("Séance de tutorat", "Tutoring session")}</h2>
-          <p className="tutor-landing-sub">{L("Travaille avec Otto sur ce que tu veux apprendre. Il te guide, te pose des questions, et retient ce que tu fais à chaque séance.", "Work with Otto on whatever you'd like to learn. He guides you, asks questions, and remembers what you accomplish each session.")}</p>
+          <div className="tutor-hero-kicker">{L("Le tutorat qui te rend autonome", "Tutoring that makes you independent")}</div>
+          <h2>{L("Apprendre en réfléchissant", "Learn by thinking")}</h2>
+          <p className="tutor-landing-sub">{L("Otto ne fait pas le travail à ta place. Il t'aide à essayer, à expliquer ton raisonnement et à transférer ce que tu apprends.", "Otto won't do the work for you. He helps you try, explain your reasoning, and transfer what you learn.")}</p>
+          <div className="tutor-principles" aria-label={L("Principes de la séance", "Session principles")}>
+            <div><strong>1</strong><span>{L("Tu essaies d'abord", "You try first")}</span></div>
+            <div><strong>2</strong><span>{L("Les indices arrivent progressivement", "Hints arrive gradually")}</span></div>
+            <div><strong>3</strong><span>{L("Tu repars capable de le refaire seul", "You leave able to do it alone")}</span></div>
+          </div>
+          <div className="tutor-session-note"><span aria-hidden="true">12 min</span>{L("Une séance courte, avec une pause quand tu en as besoin. La qualité compte plus que le temps passé.", "A short session, with a break whenever you need one. Quality matters more than time spent.")}</div>
           <div className="tutor-subject-select">
-            <label htmlFor="subject-select">{L("Matière (optionnel)", "Subject (optional)")}</label>
+            <label htmlFor="subject-select">{L("Sur quoi veux-tu réfléchir ?", "What would you like to think about?")}</label>
             <select
               id="subject-select"
               value={selectedSubject}
               onChange={(e) => setSelectedSubject(e.target.value)}
               className="btn ghost"
             >
-              <option value="">{L("— Aucune —", "— None —")}</option>
+              <option value="">{L("Choisir une matière", "Choose a subject")}</option>
               {COMMON_SUBJECTS.map((subj) => (
                 <option key={subj} value={subj}>{subj}</option>
               ))}
@@ -146,6 +153,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
           </button>
 
           {pastSessions.length > 0 && (
+
             <div className="tutor-past-sessions">
               <button className="tutor-history-toggle" onClick={() => setShowHistory((v) => !v)}>
                 {showHistory ? "▼ " : "▶ "}{L("Séances précédentes", "Past sessions")} ({pastSessions.length})
