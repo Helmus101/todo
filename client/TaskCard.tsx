@@ -95,7 +95,7 @@ function useTaskLeave(
  *  at all, which read as incomplete/broken next to every other card that has one. Falls back to a relative
  *  "Added <when>" from `createdAt`, which every task has unconditionally. */
 const taskDateLabel = (t: WebTask, L: (fr: string, en: string) => string): string =>
-  t.when ? (t.whenApprox ? `~${fmtWhen(t.when)}` : fmtWhen(t.when)) : t.createdAt ? L(`Ajoutée ${relTime(t.createdAt)}`, `Added ${relTime(t.createdAt)}`) : "";
+  t.when ? (t.whenApprox ? `~${fmtWhen(t.when, L)}` : fmtWhen(t.when, L)) : t.createdAt ? L(`Ajoutée ${relTime(t.createdAt, L)}`, `Added ${relTime(t.createdAt, L)}`) : "";
 
 // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
 const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
@@ -680,7 +680,7 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
       {/* (F) the quiet exit. "C'est bon" lives in the hero's done state, not down here. */}
       <div className="tf-foot">
         {isDone ? (
-          <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt)}` : ""}</span>
+          <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt, L)}` : ""}</span>
         ) : (
           <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>{L("Ignorer", "Dismiss")}</button>
         )}
@@ -899,7 +899,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <p className="hero-step">{withInlineLinks(s.text)}</p>
       {/* NOTE: doneWhen is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
       {/* NOTE: checkpoint is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
-      {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
+      {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate, L)}`, `by ${fmtDate(s.targetDate, L)}`)}</span> : null}
       {s.minutes ? <SessionTimer key={currentIdx} minutes={s.minutes} /> : null}
       {s.result ? <span className="step-result note">{s.result}</span> : null}
       {/* A step Otto can DO but is missing ONE piece of info for (server sets `question`, optionally
@@ -1049,7 +1049,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
             const late = !s.done && s.targetDate! < todayIso();
             const state = s.done ? "done" : late ? "late" : i === doneIdx ? "current" : "upcoming";
             return (
-              <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate)}${late ? ` (${L("en retard", "overdue")})` : ""}` : ""}`}>
+              <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate, L)}${late ? ` (${L("en retard", "overdue")})` : ""}` : ""}`}>
                 <span className="milestone-segment-bar" />
                 <span className="milestone-segment-label">{s.text}</span>
               </div>
@@ -1074,7 +1074,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 className={`step-mark ${!s.done && !blk ? "tickable" : ""}`}
                 aria-label={blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : markLabel}
                 aria-pressed={s.done}
-                title={s.done ? L(`Fait${s.doneAt ? " " + relTime(s.doneAt) : ""} — cliquer pour annuler`, `Done${s.doneAt ? " " + relTime(s.doneAt) : ""} — click to undo`) : blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : L("Cliquer pour marquer comme fait", "Click to mark done")}
+                title={s.done ? L(`Fait${s.doneAt ? " " + relTime(s.doneAt, L) : ""} — cliquer pour annuler`, `Done${s.doneAt ? " " + relTime(s.doneAt, L) : ""} — click to undo`) : blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : L("Cliquer pour marquer comme fait", "Click to mark done")}
                 disabled={blk}
                 onClick={() => { if (blk) return; s.done ? onUndo(i) : onStepDone(i); }}
               >
@@ -1087,8 +1087,8 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 </div>
                 {/* NOTE: doneWhen no longer displayed on individual steps */}
                 {/* NOTE: checkpoint no longer displayed on individual steps */}
-                {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
-                {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
+                {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt, L)}`, `done ${relTime(s.doneAt, L)}`)}</span> : null}
+                {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate, L)}`, `by ${fmtDate(s.targetDate, L)}`)}</span> : null}
                 {/* 2-minute rule: a step this short shouldn't just sit in the checklist waiting its turn —
                     flag it so it's obviously worth knocking out right now instead of scheduling for later. */}
                 {!s.done && s.minutes ? (

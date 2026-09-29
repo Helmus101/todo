@@ -116,10 +116,12 @@ function todayLong(lang?: string): string {
   return new Date().toLocaleDateString(lang === "en" ? "en-US" : "fr-FR", { weekday: "long", month: "long", day: "numeric" });
 }
 
-// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date.
-function fmtDay(iso: string): string {
+// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date. Optional `L(fr, en)` (same
+// one every caller already has from useLang()) picks the locale — a French account no longer falls back to
+// whatever locale the BROWSER happens to be set to, which isn't necessarily the same language at all.
+function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
   const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 }
 
 // Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
@@ -1123,8 +1125,8 @@ export function App() {
               <div className="intro-body">
                 <div className="intro-title">{en ? "Monthly cap reached" : "Plafond mensuel atteint"}</div>
                 <p>{en
-                  ? `Otto has paused new work — it renews ${budget?.renewsOn ? fmtDay(budget.renewsOn) : "on the 1st"}. Your tasks stay as they are.`
-                  : `Otto a mis en pause le nouveau travail — ça se renouvelle ${budget?.renewsOn ? fmtDay(budget.renewsOn) : "le 1er"}. Tes tâches restent en place.`}</p>
+                  ? `Otto has paused new work — it renews ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "on the 1st"}. Your tasks stay as they are.`
+                  : `Otto a mis en pause le nouveau travail — ça se renouvelle ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "le 1er"}. Tes tâches restent en place.`}</p>
               </div>
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
@@ -1271,7 +1273,7 @@ export function App() {
                     <button type="button" key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
                       <span className="done-check" aria-hidden="true">✓</span>
                       <span className="done-title">{t.title}</span>
-                      <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
+                      <span className="done-when">{relTime(t.updatedAt || t.createdAt, (fr, enS) => en ? enS : fr)}</span>
                     </button>
                   ))}</div>
                   {completed.length > 8 && !showCompleted && (
@@ -1347,7 +1349,7 @@ function Milestones({ tasks }: { tasks: WebTask[] }) {
           const late = it.targetDate < todayIso();
           return (
             <div key={i} className={`milestone-chip ${late ? "late" : ""}`}>
-              <span className="milestone-date">{late ? L("en retard", "overdue") : fmtDate(it.targetDate)}</span>
+              <span className="milestone-date">{late ? L("en retard", "overdue") : fmtDate(it.targetDate, L)}</span>
               <span className="milestone-text">{it.text}</span>
               <span className="milestone-task">{it.taskTitle}</span>
             </div>
@@ -1423,13 +1425,19 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
     const cur = byDeck.get(d.deckId);
     if (cur) cur.count++; else byDeck.set(d.deckId, { taskId: d.taskId, deckTitle: d.deckTitle, count: 1 });
   }
+  // Capped at 3 decks/day — this strip sits at the very top of the Journal tab, and a student with a lot of
+  // accumulated review debt used to see every single overdue deck at once (reported live: 7+ chips stacked
+  // above the day picker), crowding out the actual journal entry below the fold. Most decks with the most
+  // cards due first — that's the review that's actually gone stale longest, the one worth surfacing over a
+  // deck that's barely behind.
+  const dueDecks = [...byDeck.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 3);
   const openTask = openDeck ? tasks.find((t) => t.id === openDeck.taskId) : undefined;
   const openDeckObj = openTask?.flashcards?.find((f) => f.id === openDeck?.deckId);
   return (
     <div className="due-reviews">
       <div className="exam-strip-label">{en ? "Due for review" : "À réviser"}</div>
       <div className="exam-strip">
-        {[...byDeck.entries()].map(([deckId, t]) => (
+        {dueDecks.map(([deckId, t]) => (
           <button key={deckId} type="button" className="exam-chip due-review-chip" onClick={() => setOpenDeck({ taskId: t.taskId, deckId })}>
             <span className="exam-days">{t.count}</span>
             <span className="exam-subject">{t.deckTitle}</span>
@@ -2339,14 +2347,14 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
       <>
       <div className="studylog-weeknav">
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>
-        <span className="studylog-weeklabel">{fmtDate(monday)} – {fmtDate(addDays(monday, 4))}</span>
+        <span className="studylog-weeklabel">{fmtDate(monday, L)} – {fmtDate(addDays(monday, 4), L)}</span>
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, 7))}>{L("Semaine suiv.", "Next week") + " →"}</button>
       </div>
 
       <div className="studylog-days">
         {dayLabels.map((label, i) => (
           <button key={i} type="button" className={`studylog-day-btn ${selected === i ? "active" : ""} ${days[i]?.logText ? "has-entry" : ""}`} onClick={() => setSelected(i)}>
-            <span>{label}</span><span className="studylog-day-date">{fmtDate(dates[i])}</span>
+            <span>{label}</span><span className="studylog-day-date">{fmtDate(dates[i], L)}</span>
           </button>
         ))}
       </div>
@@ -2629,7 +2637,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
           <span className={`caret ${showUsage ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
         {showUsage && <div className="settings-reveal">
-        {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn)}</span></div>}
+        {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn, L)}</span></div>}
         {/* Breakdown by WHAT spent it — added after a live "why is €0.30/day being spent with no interaction"
             question that the single total above couldn't answer on its own. sweep = the daily background scan,
             autorun = tasks Otto ran on its own (no click needed anymore), chat = Ask Otto conversations,
@@ -3035,7 +3043,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             {profile?.studentModel?.summary ? (
               <>
                 <p className="student-model-text">{profile.studentModel.summary}</p>
-                <p className="settings-hint">{L(`Mis à jour le ${fmtDay(profile.studentModel.updatedAt)}`, `Updated ${fmtDay(profile.studentModel.updatedAt)}`)}</p>
+                <p className="settings-hint">{L(`Mis à jour le ${fmtDay(profile.studentModel.updatedAt, L)}`, `Updated ${fmtDay(profile.studentModel.updatedAt, L)}`)}</p>
                 <button type="button" className="btn xs ghost" onClick={async () => {
                   try { setProfile(await api.resetStudentModel()); }
                   catch (e: any) { notify(e?.message || L("Réinitialisation impossible — réessaie.", "Couldn't reset — try again."), "error"); }

@@ -1308,6 +1308,58 @@ section("server/index.ts error responses — French/English aware, no leaked ope
   const budgetMsgBody = src.slice(budgetMsgIdx, src.indexOf(";", budgetMsgIdx) + 1);
   check("budgetMsg() is bilingual and never mentions the internal env var to a student", budgetMsgIdx > 0 && !/MONTHLY_AI_BUDGET_USD/.test(budgetMsgBody));
   check("every over-budget 402 call site uses budgetMsg(req), not a raw hardcoded constant", !/error: BUDGET_MSG/.test(src));
+  // Completeness pass (this round): every remaining error response in the file — the ~130 one-off catch-
+  // block fallbacks this section didn't individually pin above — must go through M()/e?.message, never a
+  // bare hardcoded string or template literal, for BOTH capitalized ("Couldn't save...") and lowercase
+  // ("not found") English validation strings, plus template-literal ones interpolating a variable.
+  check("no remaining bare capitalized-English error string literals anywhere in the file", !/error: "[A-Z]/.test(src));
+  check("no remaining bare lowercase-English error string literals anywhere in the file", !/error: "[a-z]/.test(src));
+  check("no remaining bare English error TEMPLATE LITERALS anywhere in the file", !/error: `[A-Za-z]/.test(src));
+  // One string was already French-only (not bilingual at all) before this pass — Otto's own chat-completion
+  // fallback message. Confirms it's bilingual now, not just moved.
+  check("the chat fallback reply message (previously French-only, never bilingual) is now bilingual", /M\(req, "Otto n'a pas réussi à répondre\.", "Otto couldn't come up with a reply\."\)/.test(src));
+}
+
+section("Client-side i18n completeness — client/study/ hardcoded English strings (source pins)");
+{
+  // Audit found these as the areas that never got folded into the L()/useLang() system used everywhere else
+  // in client/App.tsx/TaskCard.tsx — aria-labels and placeholders a French student would see in raw English.
+  const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("AskOttoPanel's aria-labels and placeholder are bilingual, not hardcoded English", !/aria-label="[A-Z]/.test(askOtto) && !/placeholder="[A-Z]/.test(askOtto));
+  const studySetup = readFileSync(new URL("../client/study/StudySetup.tsx", import.meta.url), "utf8");
+  check("StudySetup's link/label placeholders are bilingual", /placeholder=\{L\(/.test(studySetup));
+  const dict = readFileSync(new URL("../client/study/artifacts/DictionaryArtifact.tsx", import.meta.url), "utf8");
+  check("DictionaryArtifact's search placeholder is language-aware, not hardcoded English", !/placeholder="Search a word"/.test(dict));
+  const citation = readFileSync(new URL("../client/study/artifacts/CitationArtifact.tsx", import.meta.url), "utf8");
+  check("CitationArtifact's field placeholders are bilingual, not hardcoded English", !/placeholder="[A-Z]/.test(citation));
+  const camera = readFileSync(new URL("../client/study/artifacts/CameraArtifact.tsx", import.meta.url), "utf8");
+  check("CameraArtifact's aria-label is bilingual, not hardcoded English", !/aria-label="[A-Z]/.test(camera));
+}
+
+section("DueReviews (Journal tab) — capped at 3 decks/day (source pin)");
+{
+  // Reported live: a student with accumulated review debt saw every single overdue deck stacked at the top
+  // of the Journal tab (7+ chips), crowding out the actual journal entry below. Capped to the top 3 by
+  // review count (most cards due first — the review that's gone stalest, not just whichever deck sorts first).
+  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const start = appSrc.indexOf("function DueReviews(");
+  const body = appSrc.slice(start, appSrc.indexOf("\nfunction ", start + 10));
+  check("DueReviews caps the shown decks at 3", /\.slice\(0, 3\)/.test(body));
+  check("DueReviews sorts by review count descending before capping (worst-behind deck first)", /sort\(\(a, b\) => b\[1\]\.count - a\[1\]\.count\)/.test(body));
+}
+
+section("Locale-aware date formatting — fmtDate/relTime/fmtWhen/fmtDay take the caller's own language (source pins)");
+{
+  // These used to call toLocaleDateString(undefined, ...), which uses the BROWSER's own default locale —
+  // not the same thing as the app's own language setting (a French-language account on an English-locale
+  // browser got English month names). Now each takes the same optional L(fr, en) every caller already has
+  // from useLang(), used only to pick "fr-FR"/"en-US", never to translate text.
+  const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  check("fmtDate takes an optional L and never calls toLocaleDateString(undefined, ...)", /export const fmtDate = \(iso: string, L\?/.test(ui) && !/toLocaleDateString\(undefined/.test(ui));
+  check("relTime takes an optional L and localizes the relative-time WORDS too, not just the date fallback", /export const relTime = \(iso: string, L\?/.test(ui) && /à l'instant/.test(ui) && /il y a \$\{m\}min/.test(ui));
+  check("fmtWhen takes an optional L", /export function fmtWhen\(when: string, L\?/.test(ui));
+  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("fmtDay takes an optional L and never calls toLocaleDateString(undefined, ...)", /function fmtDay\(iso: string, L\?/.test(appSrc) && !/toLocaleDateString\(undefined/.test(appSrc));
 }
 
 section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote connect URL");

@@ -105,22 +105,30 @@ export function useThinkingWord(active: boolean, intervalMs = 1400): string | nu
  *  convention as server/workload.ts's BARE_DATE check, so this never drifts across a timezone). */
 export const todayIso = (): string => new Date().toISOString().slice(0, 10);
 
-/** "Sep 12" — a milestone target date (YYYY-MM-DD), formatted for display. */
-export const fmtDate = (iso: string): string => {
+/** "Sep 12" — a milestone target date (YYYY-MM-DD), formatted for display. Takes the same `L(fr, en)`
+ *  function every caller already has from `useLang()` — used only to pick the right locale string
+ *  ("fr-FR"/"en-US"), never to translate text — so a French account gets "12 sept." instead of the
+ *  browser's own default locale (which previously wasn't the same thing at all, e.g. an English-locale
+ *  browser on a French-language account). Optional/omittable for the rare caller with no `L` in scope,
+ *  same fallback behavior as before. */
+export const fmtDate = (iso: string, L?: (fr: string, en: string) => string): string => {
   const d = new Date(`${iso}T00:00:00`);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 };
 
-/** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
-export const relTime = (iso: string): string => {
+/** "à l'instant" / "il y a 2h" / "12 sept." — compact, human moment for when a step was completed. Same
+ *  optional `L` as fmtDate — also fixes the relative-time WORDS themselves ("2h ago"), which were
+ *  hardcoded English unconditionally before (a separate, larger gap than just the date-formatting locale). */
+export const relTime = (iso: string, L?: (fr: string, en: string) => string): string => {
   const ms = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ms) || ms < 0) return "";
+  const en = L ? L("", "en") === "en" : true; // no L passed → keep the old English-default behavior
   const m = Math.floor(ms / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
+  if (m < 1) return en ? "just now" : "à l'instant";
+  if (m < 60) return en ? `${m}m ago` : `il y a ${m}min`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (h < 24) return en ? `${h}h ago` : `il y a ${h}h`;
+  return new Date(iso).toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 };
 
 // "Found in Gmail · 2h ago" — the Pillar-1 (proactive, not reactive) claim made concrete on the card
@@ -220,9 +228,11 @@ export function subtitle(t: WebTask): string {
 }
 
 // Format a task's deadline: a raw ISO date/datetime → "Jul 27"; already-human text ("late July", "today") as-is.
-export function fmtWhen(when: string): string {
+// Same optional `L(fr, en)` as fmtDate/relTime — picks the locale, never translates (the "already-human
+// text" case is whatever the server already generated in the right language).
+export function fmtWhen(when: string, L?: (fr: string, en: string) => string): string {
   const s = String(when || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d.getTime())) return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d.getTime())) return d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" }); }
   return s;
 }
 

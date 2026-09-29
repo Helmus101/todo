@@ -9219,7 +9219,7 @@ var requireAuth = (req, res, next) => {
 };
 async function requireAuthAsync(req, res, next) {
   if (!req.session.user) {
-    res.status(401).json({ error: "not logged in" });
+    res.status(401).json({ error: M(req, "pas connect\xE9", "not logged in") });
     return;
   }
   const hadToken = !!req.session.csrfToken;
@@ -9232,7 +9232,7 @@ async function requireAuthAsync(req, res, next) {
         req.session.csrfToken = fresh;
       } else {
         res.setHeader(CSRF_HEADER, fresh || req.session.csrfToken || "");
-        res.status(403).json({ error: "Session expired or invalid \u2014 refresh the page and try again." });
+        res.status(403).json({ error: M(req, "Session expir\xE9e ou invalide \u2014 actualise la page et r\xE9essaie.", "Session expired or invalid \u2014 refresh the page and try again.") });
         return;
       }
     }
@@ -9258,7 +9258,7 @@ var rateLimit = (max, windowMs) => async (req, res, next) => {
   const result = cloud ?? inMemoryRateLimit(key2, max, windowMs);
   if (!result.allowed) {
     const retry = Math.ceil(result.retryAfterMs / 1e3);
-    res.set("Retry-After", String(retry)).status(429).json({ error: `Too many requests \u2014 give it ${retry}s.` });
+    res.set("Retry-After", String(retry)).status(429).json({ error: M(req, `Trop de requ\xEAtes \u2014 patiente ${retry}s.`, `Too many requests \u2014 give it ${retry}s.`) });
     return;
   }
   next();
@@ -9478,7 +9478,7 @@ app.get("/api/integrations", requireAuth, ah(async (req, res) => {
 app.get("/api/integrations/:app/accounts", requireAuth, ah(async (req, res) => {
   const app2 = String(req.params.app);
   if (!CATALOG.some((c) => c.key === app2)) {
-    res.status(404).json({ error: "Unknown integration." });
+    res.status(404).json({ error: M(req, "Int\xE9gration inconnue.", "Unknown integration.") });
     return;
   }
   const accounts = integrationsReady() ? await getConnectedAccounts(req.session.user, app2, true) : [];
@@ -9512,7 +9512,7 @@ app.get("/api/integrations/pronote/status", requireAuth, ah(async (req, res) => 
 app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 6e4), async (req, res) => {
   const { url: url2, username, password, kind } = req.body || {};
   if (typeof url2 !== "string" || typeof username !== "string" || typeof password !== "string") {
-    res.status(400).json({ error: "URL, username and password are required." });
+    res.status(400).json({ error: M(req, "L'URL, l'identifiant et le mot de passe sont requis.", "URL, username and password are required.") });
     return;
   }
   try {
@@ -9529,7 +9529,7 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 6e4
     }
     res.status(result.ok ? 200 : 400).json(result);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't connect to Pronote \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de se connecter \xE0 Pronote \u2014 r\xE9essaie.", "Couldn't connect to Pronote \u2014 try again.") });
   }
 });
 app.get("/api/pronote/tests", requireAuth, async (req, res) => {
@@ -9557,14 +9557,14 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
     invalidatePronoteStatus(req.session.user);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't disconnect Pronote \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de d\xE9connecter Pronote \u2014 r\xE9essaie.", "Couldn't disconnect Pronote \u2014 try again.") });
   }
 });
 app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 6e4), async (req, res) => {
   try {
     const live = await pronoteGrades(req.session.user);
     if (!live.length) {
-      res.status(502).json({ error: "Pronote returned no subject grades. Check the current period and connection." });
+      res.status(502).json({ error: M(req, "Pronote n'a renvoy\xE9 aucune note. V\xE9rifie la p\xE9riode en cours et la connexion.", "Pronote returned no subject grades. Check the current period and connection.") });
       return;
     }
     const profile = req.session.profile ||= emptyProfile();
@@ -9572,7 +9572,7 @@ app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 6e4), async (req,
     await commit(req);
     res.json({ grades: live, synced: true });
   } catch (e) {
-    res.status(502).json({ error: e?.message || "Could not pull grades from Pronote." });
+    res.status(502).json({ error: e?.message || M(req, "Impossible de r\xE9cup\xE9rer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
   }
 });
 app.get("/api/pronote/grades", requireAuth, async (req, res) => {
@@ -9641,7 +9641,7 @@ app.post("/api/integrations/blackbaud/disconnect", requireAuth, async (req, res)
     await disconnectBlackbaud(req.session.user);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't disconnect \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de d\xE9connecter \u2014 r\xE9essaie.", "Couldn't disconnect \u2014 try again.") });
   }
 });
 app.get("/api/workload", requireAuth, async (req, res) => {
@@ -9669,7 +9669,7 @@ app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
     await saveSession(req);
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't disconnect \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de d\xE9connecter \u2014 r\xE9essaie.", "Couldn't disconnect \u2014 try again.") });
   }
 });
 app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req, res) => {
@@ -9679,7 +9679,7 @@ app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req
     const accounts = integrationsReady() ? await getConnectedAccounts(req.session.user, app2) : [];
     const account = accounts.find((a) => a.id === accountId);
     if (!account) {
-      res.status(404).json({ error: "Account not found." });
+      res.status(404).json({ error: M(req, "Compte introuvable.", "Account not found.") });
       return;
     }
     const result = await disconnectAccount(accountId);
@@ -9687,7 +9687,7 @@ app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req
     await saveSession(req);
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't disconnect \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de d\xE9connecter \u2014 r\xE9essaie.", "Couldn't disconnect \u2014 try again.") });
     return;
   }
 });
@@ -9748,7 +9748,7 @@ app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't save \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer \u2014 r\xE9essaie.", "Couldn't save \u2014 try again.") });
   }
 });
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
@@ -9761,7 +9761,7 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't save \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer \u2014 r\xE9essaie.", "Couldn't save \u2014 try again.") });
   }
 });
 app.post("/api/settings/smoke", requireAuth, rateLimit(3, 6e4), async (req, res) => {
@@ -9770,7 +9770,7 @@ app.post("/api/settings/smoke", requireAuth, rateLimit(3, 6e4), async (req, res)
     void recordEvent(req.session.user, "smoke_test", { message: `${results.filter((r) => r.ok).length}/${results.length} checks passed` });
     res.json(results);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "integration check failed" });
+    res.status(500).json({ error: e?.message || M(req, "\xE9chec de la v\xE9rification d'int\xE9gration", "integration check failed") });
   }
 });
 app.get("/api/tasks", requireAuth, async (req, res) => {
@@ -9897,13 +9897,13 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
   } catch (e) {
     console.error("[tasks] generate error:", e);
     reportError("tasks-generate", e);
-    res.status(500).json({ error: e?.message || "generate failed" });
+    res.status(500).json({ error: e?.message || M(req, "\xE9chec de la g\xE9n\xE9ration", "generate failed") });
   }
 });
 app.post("/api/tasks", requireAuth, rateLimit(20, 6e4), async (req, res) => {
   const title = String(req.body?.title || "").trim();
   if (!title) {
-    res.status(400).json({ error: "title required" });
+    res.status(400).json({ error: M(req, "titre requis", "title required") });
     return;
   }
   const clientId = typeof req.body?.clientId === "string" ? req.body.clientId.slice(0, 80) : void 0;
@@ -9942,7 +9942,7 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 6e4), async (req, res) => {
     }
     res.json(req.session.tasks);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't add that task \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'ajouter cette t\xE2che \u2014 r\xE9essaie.", "Couldn't add that task \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, res) => {
@@ -9970,7 +9970,7 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, r
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't refine that task \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'affiner cette t\xE2che \u2014 r\xE9essaie.", "Couldn't refine that task \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 6e4), async (req, res) => {
@@ -10028,7 +10028,7 @@ app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 6e4), async (req
     res.json(req.session.tasks || []);
   } catch (e) {
     console.error("[tasks] regenerate error:", e);
-    res.status(500).json({ error: e?.message || "Couldn't regenerate steps \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de r\xE9g\xE9n\xE9rer les \xE9tapes \u2014 r\xE9essaie.", "Couldn't regenerate steps \u2014 try again.") });
   }
 });
 app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 6e4), async (req, res) => {
@@ -10049,7 +10049,7 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 6e4), as
     res.json({ cleaned: totalCleaned, tasks: req.session.tasks || [] });
   } catch (e) {
     console.error("[tasks] cleanup error:", e);
-    res.status(500).json({ error: e?.message || "Couldn't cleanup steps \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de nettoyer les \xE9tapes \u2014 r\xE9essaie.", "Couldn't cleanup steps \u2014 try again.") });
   }
 });
 var CHAT_CAP = 60;
@@ -10068,7 +10068,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), async (req, res
   }
   const message = String(req.body?.message || "").trim().slice(0, 2e3);
   if (!message) {
-    res.status(400).json({ error: "Say something first." });
+    res.status(400).json({ error: M(req, "\xC9cris quelque chose d'abord.", "Say something first.") });
     return;
   }
   const t = await findTaskOrReload(req, String(req.params.id));
@@ -10133,7 +10133,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), async (req, res
     void recordMetric(req.session.user, "chat_message_length_chars", message.length);
     if (out.error && !out.reply?.trim()) {
       void recordMetric(req.session.user, "chat_error", 1);
-      res.status(500).json({ error: "Otto couldn't reply just now \u2014 try again in a moment." });
+      res.status(500).json({ error: M(req, "Otto n'a pas pu r\xE9pondre \u2014 r\xE9essaie dans un instant.", "Otto couldn't reply just now \u2014 try again in a moment.") });
       return;
     }
     if (out.error) void recordMetric(req.session.user, "chat_fallback_reply", 1);
@@ -10182,7 +10182,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), async (req, res
     ];
     res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, guardrailTripped: out.guardrailTripped, task: t });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "chat failed" });
+    res.status(500).json({ error: e?.message || M(req, "\xE9chec de la discussion", "chat failed") });
   }
 });
 app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 6e4), ah(async (req, res) => {
@@ -10200,7 +10200,7 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 6e4), ah(async 
   }
   const message = String(req.body?.message || "").trim().slice(0, 1e3);
   if (!message) {
-    res.status(400).json({ error: "Say something first." });
+    res.status(400).json({ error: M(req, "\xC9cris quelque chose d'abord.", "Say something first.") });
     return;
   }
   const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
@@ -10211,7 +10211,7 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 6e4), ah(async 
     const front = String(req.body?.card?.front || "").slice(0, 500);
     const back = String(req.body?.card?.back || "").slice(0, 500);
     if (!front || !back) {
-      res.status(400).json({ error: "Missing card." });
+      res.status(400).json({ error: M(req, "Carte manquante.", "Missing card.") });
       return;
     }
     card = { kind: "flashcard", front, back };
@@ -10220,12 +10220,12 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 6e4), ah(async 
     const options = Array.isArray(req.body?.card?.options) ? req.body.card.options.map((o) => String(o).slice(0, 300)).slice(0, 10) : [];
     const correct = Number(req.body?.card?.correct);
     if (!question || !options.length || !Number.isInteger(correct) || correct < 0 || correct >= options.length) {
-      res.status(400).json({ error: "Missing question." });
+      res.status(400).json({ error: M(req, "Question manquante.", "Missing question.") });
       return;
     }
     card = { kind: "quiz", question, options, correct };
   } else {
-    res.status(400).json({ error: "Missing card." });
+    res.status(400).json({ error: M(req, "Carte manquante.", "Missing card.") });
     return;
   }
   const out = await studyHelp(card, history, message, req.session.profile);
@@ -10233,7 +10233,7 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 6e4), ah(async 
   await commit(req);
   if (out.error) {
     void recordMetric(req.session.user, "chat_error", 1);
-    res.status(500).json({ error: "Otto couldn't reply just now \u2014 try again in a moment." });
+    res.status(500).json({ error: M(req, "Otto n'a pas pu r\xE9pondre \u2014 r\xE9essaie dans un instant.", "Otto couldn't reply just now \u2014 try again in a moment.") });
     return;
   }
   res.json({ reply: out.reply });
@@ -10244,7 +10244,7 @@ var runViaJob = async (req, res, type, input) => {
   try {
     const job = await enqueueAndDrain(user, type, id, input);
     if (job.type !== type) {
-      res.status(409).json({ error: "Otto is still working on this task \u2014 try again in a moment." });
+      res.status(409).json({ error: M(req, "Otto travaille encore sur cette t\xE2che \u2014 r\xE9essaie dans un instant.", "Otto is still working on this task \u2014 try again in a moment.") });
       return;
     }
     const cloud = await loadState(user, { bypassCache: true });
@@ -10269,7 +10269,7 @@ var runViaJob = async (req, res, type, input) => {
   } catch (e) {
     console.error(`[tasks] ${type} error for task`, id, ":", e);
     reportError("tasks-job-action", e, { type, taskId: id });
-    res.status(500).json({ error: e?.message || "run failed" });
+    res.status(500).json({ error: e?.message || M(req, "\xE9chec de l'ex\xE9cution", "run failed") });
   }
 };
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
@@ -10286,7 +10286,7 @@ app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res)
 app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, res) => {
   const note = String(req.body?.note || "").trim();
   if (!note) {
-    res.status(400).json({ error: "note required" });
+    res.status(400).json({ error: M(req, "note requise", "note required") });
     return;
   }
   if (isPaused(req)) {
@@ -10305,7 +10305,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 6e4), async (req, 
   try {
     const task = await findTaskOrReload(req, id);
     if (!task) {
-      res.status(404).json({ error: "Task not found \u2014 it may have already been handled elsewhere." });
+      res.status(404).json({ error: M(req, "T\xE2che introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 \xE9t\xE9 trait\xE9e ailleurs.", "Task not found \u2014 it may have already been handled elsewhere.") });
       return;
     }
     stampFirstAction(task, req.session.user, req.session.profile);
@@ -10323,7 +10323,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 6e4), async (req, 
     res.json(req.session.tasks || []);
   } catch (e) {
     reportError("tasks-confirm", e, { taskId: id });
-    res.status(500).json({ error: e?.message || "Couldn't confirm that task \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de confirmer cette t\xE2che \u2014 r\xE9essaie.", "Couldn't confirm that task \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 6e4), async (req, res) => {
@@ -10331,7 +10331,7 @@ app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 6e4), async (req, r
   try {
     const task = await findTaskOrReload(req, id);
     if (!task) {
-      res.status(404).json({ error: "Task not found \u2014 it may have already been handled elsewhere." });
+      res.status(404).json({ error: M(req, "T\xE2che introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 \xE9t\xE9 trait\xE9e ailleurs.", "Task not found \u2014 it may have already been handled elsewhere.") });
       return;
     }
     reject(req.session.tasks || [], id);
@@ -10339,7 +10339,7 @@ app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 6e4), async (req, r
     res.json(req.session.tasks || []);
   } catch (e) {
     reportError("tasks-reject", e, { taskId: id });
-    res.status(500).json({ error: e?.message || "Couldn't reject that task \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de rejeter cette t\xE2che \u2014 r\xE9essaie.", "Couldn't reject that task \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 6e4), async (req, res) => {
@@ -10347,7 +10347,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 6e4), async (req, 
   try {
     const task = await findTaskOrReload(req, id);
     if (!task) {
-      res.status(404).json({ error: "Task not found \u2014 it may have already been handled elsewhere." });
+      res.status(404).json({ error: M(req, "T\xE2che introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 \xE9t\xE9 trait\xE9e ailleurs.", "Task not found \u2014 it may have already been handled elsewhere.") });
       return;
     }
     task.status = "dismissed";
@@ -10358,7 +10358,7 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 6e4), async (req, 
     res.json(req.session.tasks || []);
   } catch (e) {
     reportError("tasks-dismiss", e, { taskId: id });
-    res.status(500).json({ error: e?.message || "Couldn't dismiss that task \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'ignorer cette t\xE2che \u2014 r\xE9essaie.", "Couldn't dismiss that task \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
@@ -10375,7 +10375,7 @@ app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 6e4), asyn
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : void 0;
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (!task || !task.steps?.[index]) {
-    res.status(404).json({ error: "Step not found \u2014 it may have already changed elsewhere." });
+    res.status(404).json({ error: M(req, "\xC9tape introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Step not found \u2014 it may have already changed elsewhere.") });
     return;
   }
   stampFirstAction(task, req.session.user, req.session.profile);
@@ -10386,7 +10386,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 6e4), asy
     const id = String(req.params.id);
     const index = Number(req.params.index);
     if (!Number.isInteger(index) || index < 0) {
-      res.status(400).json({ error: "Invalid step index." });
+      res.status(400).json({ error: M(req, "Index d'\xE9tape invalide.", "Invalid step index.") });
       return;
     }
     const done = req.body?.done !== false;
@@ -10394,7 +10394,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 6e4), asy
     const task = await findTaskOrReload(req, id);
     const step = task?.steps?.[index];
     if (!task || !step) {
-      res.status(404).json({ error: "Step not found \u2014 it may have already changed elsewhere." });
+      res.status(404).json({ error: M(req, "\xC9tape introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Step not found \u2014 it may have already changed elsewhere.") });
       return;
     }
     if (done) stampFirstAction(task, req.session.user, req.session.profile);
@@ -10419,7 +10419,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 6e4), asy
     res.json(req.session.tasks || []);
   } catch (e) {
     reportError("tasks-step-done", e);
-    res.status(500).json({ error: e?.message || "Couldn't update the step \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de mettre \xE0 jour l'\xE9tape \u2014 r\xE9essaie.", "Couldn't update the step \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rateLimit(200, 6e4), ah(async (req, res) => {
@@ -10431,7 +10431,7 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   const deck = task?.flashcards?.find((d) => d.id === deckId);
   const card = deck?.cards?.[cardIndex];
   if (!task || !card) {
-    res.status(404).json({ error: "Card not found \u2014 it may have already changed elsewhere." });
+    res.status(404).json({ error: M(req, "Carte introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Card not found \u2014 it may have already changed elsewhere.") });
     return;
   }
   const prev = card.review;
@@ -10453,7 +10453,7 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/not-needed", requireAuth, 
   const task = await findTaskOrReload(req, String(req.params.id));
   const card = task?.flashcards?.find((d) => d.id === String(req.params.deckId))?.cards?.[Number(req.params.cardIndex)];
   if (!task || !card) {
-    res.status(404).json({ error: "Card not found \u2014 it may have already changed elsewhere." });
+    res.status(404).json({ error: M(req, "Carte introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Card not found \u2014 it may have already changed elsewhere.") });
     return;
   }
   const notNeeded = req.body?.notNeeded !== false;
@@ -10472,13 +10472,13 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 6e4)
   const score = Number(req.body?.score);
   const wrong = Array.isArray(req.body?.wrong) ? req.body.wrong.filter((n) => Number.isInteger(n)).slice(0, 50) : void 0;
   if (!Number.isInteger(total) || total <= 0 || !Number.isInteger(score) || score < 0 || score > total) {
-    res.status(400).json({ error: "Invalid score." });
+    res.status(400).json({ error: M(req, "Score invalide.", "Invalid score.") });
     return;
   }
   const task = await findTaskOrReload(req, id);
   const quiz = task?.quizzes?.find((q) => q.id === quizId);
   if (!task || !quiz) {
-    res.status(404).json({ error: "Quiz not found \uFFFD\uFFFD it may have already changed elsewhere." });
+    res.status(404).json({ error: M(req, "Quiz introuvable \u2014 il a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Quiz not found \u2014 it may have already changed elsewhere.") });
     return;
   }
   quiz.attempts = [...quiz.attempts || [], { at: (/* @__PURE__ */ new Date()).toISOString(), score, total, ...wrong?.length ? { wrong } : {} }].slice(-QUIZ_ATTEMPT_CAP);
@@ -10496,12 +10496,12 @@ app.post("/api/tasks/:id/notes", requireAuth, rateLimit(60, 6e4), ah(async (req,
   const title = String(req.body?.title || "").trim().slice(0, 90) || "Note";
   const body = String(req.body?.body || "").trim().slice(0, 4e3);
   if (!body) {
-    res.status(400).json({ error: "Write something first." });
+    res.status(400).json({ error: M(req, "\xC9cris quelque chose d'abord.", "Write something first.") });
     return;
   }
   const task = await findTaskOrReload(req, id);
   if (!task) {
-    res.status(404).json({ error: "Task not found \u2014 it may have already been handled elsewhere." });
+    res.status(404).json({ error: M(req, "T\xE2che introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 \xE9t\xE9 trait\xE9e ailleurs.", "Task not found \u2014 it may have already been handled elsewhere.") });
     return;
   }
   const note = { id: randomUUID4(), title, body, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
@@ -10515,13 +10515,13 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
   const id = String(req.params.id);
   const answer = String(req.body?.answer || "").trim().slice(0, 200);
   if (!answer) {
-    res.status(400).json({ error: "Type an answer first." });
+    res.status(400).json({ error: M(req, "Tape une r\xE9ponse d'abord.", "Type an answer first.") });
     return;
   }
   const task = await findTaskOrReload(req, id);
   const problem = task?.practiceProblem;
   if (!task || !problem) {
-    res.status(404).json({ error: "Practice problem not found \u2014 it may have already changed elsewhere." });
+    res.status(404).json({ error: M(req, "Probl\xE8me d'entra\xEEnement introuvable \u2014 il a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Practice problem not found \u2014 it may have already changed elsewhere.") });
     return;
   }
   const correct = practiceAnswerMatches(answer, problem.answer);
@@ -10575,7 +10575,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 6e4), ah(async (req, re
   const date = String(req.body?.date || "");
   const text = String(req.body?.text || "").trim().slice(0, 4e3);
   if (!DATE_RE.test(date)) {
-    res.status(400).json({ error: "Invalid date." });
+    res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") });
     return;
   }
   const list = req.session.tasks || [];
@@ -10713,13 +10713,13 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 6e4), ah(async (req, re
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't make flashcards from that \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de cr\xE9er des cartes \xE0 partir de \xE7a \u2014 r\xE9essaie.", "Couldn't make flashcards from that \u2014 try again.") });
   }
 }));
 app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
   const start = String(req.query.start || "");
   if (!DATE_RE.test(start)) {
-    res.status(400).json({ error: "Invalid date." });
+    res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") });
     return;
   }
   const monday = mondayOf(start);
@@ -10751,7 +10751,7 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 6e4), ah(async
   }
   const weekStart = String(req.body?.weekStart || "");
   if (!DATE_RE.test(weekStart)) {
-    res.status(400).json({ error: "Invalid date." });
+    res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") });
     return;
   }
   const monday = mondayOf(weekStart);
@@ -10767,15 +10767,16 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 6e4), ah(async
   const dayTasks = dates.map((d) => list.find((x) => x.source === "studylog" && x.logDate === d)).filter((x) => !!x?.logText?.trim());
   if (!dayTasks.length) {
     const allLogs = list.filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:"));
-    const found = allLogs.length ? allLogs.map((x) => `${x.logDate}${x.logText?.trim() ? "" : " (empty)"}`).sort().join(", ") : "none at all";
-    res.status(400).json({ error: `No entries logged this week yet. (Looked for ${dates.join(", ")} \u2014 entries that actually exist: ${found})` });
+    const en2 = reqLang(req) === "en";
+    const found = allLogs.length ? allLogs.map((x) => `${x.logDate}${x.logText?.trim() ? "" : en2 ? " (empty)" : " (vide)"}`).sort().join(", ") : en2 ? "none at all" : "aucune";
+    res.status(400).json({ error: M(req, `Aucune entr\xE9e cette semaine pour l'instant. (Recherch\xE9 : ${dates.join(", ")} \u2014 entr\xE9es existantes : ${found})`, `No entries logged this week yet. (Looked for ${dates.join(", ")} \u2014 entries that actually exist: ${found})`) });
     return;
   }
   const boxBreakdown = leitnerBoxBreakdown(dayTasks);
   try {
     const result = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate, logText: dt.logText })), boxBreakdown, req.session.profile);
     if (!result) {
-      res.status(500).json({ error: "Couldn't build the week summary \u2014 try again." });
+      res.status(500).json({ error: M(req, "Impossible de cr\xE9er le r\xE9sum\xE9 de la semaine \u2014 r\xE9essaie.", "Couldn't build the week summary \u2014 try again.") });
       return;
     }
     addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
@@ -10826,7 +10827,7 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 6e4), ah(async
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't build the week summary \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de cr\xE9er le r\xE9sum\xE9 de la semaine \u2014 r\xE9essaie.", "Couldn't build the week summary \u2014 try again.") });
   }
 }));
 function monthOf(dateStr) {
@@ -10836,7 +10837,7 @@ var MONTH_RE = /^\d{4}-\d{2}$/;
 app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
   const start = String(req.query.start || "");
   if (!MONTH_RE.test(start) && !DATE_RE.test(start)) {
-    res.status(400).json({ error: "Invalid date." });
+    res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") });
     return;
   }
   const month = monthOf(start);
@@ -10867,7 +10868,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 6e4), ah(asyn
   }
   const monthStart = String(req.body?.monthStart || "");
   if (!MONTH_RE.test(monthStart) && !DATE_RE.test(monthStart)) {
-    res.status(400).json({ error: "Invalid date." });
+    res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") });
     return;
   }
   const month = monthOf(monthStart);
@@ -10881,7 +10882,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 6e4), ah(asyn
   const list = req.session.tasks || [];
   const weekTasks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month && x.flashcards?.length);
   if (!weekTasks.length) {
-    res.status(400).json({ error: "No weekly summaries yet this month." });
+    res.status(400).json({ error: M(req, "Pas encore de r\xE9sum\xE9s hebdomadaires ce mois-ci.", "No weekly summaries yet this month.") });
     return;
   }
   const boxBreakdown = leitnerBoxBreakdown(weekTasks);
@@ -10892,7 +10893,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 6e4), ah(asyn
       req.session.profile
     );
     if (!result) {
-      res.status(500).json({ error: "Couldn't build the month summary \u2014 try again." });
+      res.status(500).json({ error: M(req, "Impossible de cr\xE9er le r\xE9sum\xE9 du mois \u2014 r\xE9essaie.", "Couldn't build the month summary \u2014 try again.") });
       return;
     }
     addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
@@ -10940,7 +10941,7 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 6e4), ah(asyn
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't build the month summary \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de cr\xE9er le r\xE9sum\xE9 du mois \u2014 r\xE9essaie.", "Couldn't build the month summary \u2014 try again.") });
   }
 }));
 app.post("/api/study/free", requireAuth, rateLimit(20, 6e4), ah(async (req, res) => {
@@ -10982,7 +10983,7 @@ function stripHtmlToText(html) {
 app.post("/api/study/extract-text", requireAuth, rateLimit(30, 6e4), ah(async (req, res) => {
   const url2 = String(req.body?.url || "").trim();
   if (!/^https?:\/\//i.test(url2)) {
-    res.status(400).json({ error: "Invalid URL." });
+    res.status(400).json({ error: M(req, "URL invalide.", "Invalid URL.") });
     return;
   }
   try {
@@ -11065,7 +11066,7 @@ app.get("/api/ui/density-suggestion", requireAuth, ah(async (req, res) => {
 }));
 app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 6e4), ah(async (req, res) => {
   if (!req.session.profile?.betaFeatures) {
-    res.status(403).json({ error: "Beta features are off \u2014 turn them on in Settings to try this." });
+    res.status(403).json({ error: M(req, "Les fonctionnalit\xE9s b\xEAta sont d\xE9sactiv\xE9es \u2014 active-les dans les R\xE9glages pour essayer \xE7a.", "Beta features are off \u2014 turn them on in Settings to try this.") });
     return;
   }
   if (isPaused(req)) {
@@ -11090,7 +11091,7 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 6e4), ah(async (
     const result = await generateThemeTokens(summary, profile);
     addUsage(profile, result.tokensUsed, "other");
     if (!Object.keys(result.tokens).length) {
-      res.status(502).json({ error: "Couldn't come up with a theme just now \u2014 try again." });
+      res.status(502).json({ error: M(req, "Impossible de g\xE9n\xE9rer un th\xE8me pour l'instant \u2014 r\xE9essaie.", "Couldn't come up with a theme just now \u2014 try again.") });
       return;
     }
     profile.customTheme = result.tokens;
@@ -11098,7 +11099,7 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 6e4), ah(async (
     await commit(req);
     res.json({ customTheme: profile.customTheme });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't personalize your theme \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de personnaliser ton th\xE8me \u2014 r\xE9essaie.", "Couldn't personalize your theme \u2014 try again.") });
   }
 }));
 app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
@@ -11112,7 +11113,7 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 6e4), ah(async
   try {
     const armId = String(req.body?.armId || "");
     if (!POMODORO_ARMS.some((a) => a.id === armId)) {
-      res.status(400).json({ error: "Unknown arm." });
+      res.status(400).json({ error: M(req, "Option inconnue.", "Unknown arm.") });
       return;
     }
     const completedPlanned = !!req.body?.completedPlanned;
@@ -11124,7 +11125,7 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 6e4), ah(async
     const restlessPct = req.body?.restlessPct !== void 0 ? Number(req.body.restlessPct) : void 0;
     const headPoseStability = req.body?.headPoseStability !== void 0 ? Number(req.body.headPoseStability) : void 0;
     if (!Number.isFinite(idleRatio)) {
-      res.status(400).json({ error: "Invalid idleRatio." });
+      res.status(400).json({ error: M(req, "idleRatio invalide.", "Invalid idleRatio.") });
       return;
     }
     const reward = computeReward({
@@ -11157,14 +11158,14 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 6e4), ah(async
     }
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't record that \u2014 it won't affect your session." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer \xE7a \u2014 \xE7a n'affectera pas ta session.", "Couldn't record that \u2014 it won't affect your session.") });
   }
 }));
 app.post("/api/metrics", requireAuth, rateLimit(60, 6e4), ah(async (req, res) => {
   const name = String(req.body?.name || "").slice(0, 60);
   const value = Number(req.body?.value);
   if (!name || !Number.isFinite(value)) {
-    res.status(400).json({ error: "name and numeric value required." });
+    res.status(400).json({ error: M(req, "nom et valeur num\xE9rique requis.", "name and numeric value required.") });
     return;
   }
   const bucket = req.body?.bucket ? String(req.body.bucket).slice(0, 60) : "n/a";
@@ -11202,7 +11203,7 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 6e4), a
     }
     res.json(req.session.tasks || []);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't break this step down \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de d\xE9couper cette \xE9tape \u2014 r\xE9essaie.", "Couldn't break this step down \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateLimit(120, 6e4), async (req, res) => {
@@ -11213,7 +11214,7 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
   const task = (req.session.tasks || []).find((t) => t.id === id);
   const sub = task?.steps?.[index]?.substeps?.[subIndex];
   if (!task || !sub) {
-    res.status(404).json({ error: "Sub-step not found \u2014 it may have already changed elsewhere." });
+    res.status(404).json({ error: M(req, "Sous-\xE9tape introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Sub-step not found \u2014 it may have already changed elsewhere.") });
     return;
   }
   try {
@@ -11222,7 +11223,7 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't save this sub-step \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer cette sous-\xE9tape \u2014 r\xE9essaie.", "Couldn't save this sub-step \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLimit(20, 6e4), async (req, res) => {
@@ -11245,11 +11246,11 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLi
   const step = task?.steps?.[index];
   const sub = step?.substeps?.[subIndex];
   if (!task || !step || !sub) {
-    res.status(404).json({ error: "Sub-step not found \u2014 it may have already changed elsewhere." });
+    res.status(404).json({ error: M(req, "Sous-\xE9tape introuvable \u2014 elle a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Sub-step not found \u2014 it may have already changed elsewhere.") });
     return;
   }
   if (!sub.automatable) {
-    res.status(400).json({ error: "This one isn't something Otto can do for you." });
+    res.status(400).json({ error: M(req, "Ce n'est pas quelque chose qu'Otto peut faire \xE0 ta place.", "This one isn't something Otto can do for you.") });
     return;
   }
   try {
@@ -11259,14 +11260,14 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLi
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Otto n'a pas r\xE9ussi \xE0 r\xE9pondre." });
+    res.status(500).json({ error: e?.message || M(req, "Otto n'a pas r\xE9ussi \xE0 r\xE9pondre.", "Otto couldn't come up with a reply.") });
   }
 });
 app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 6e4), async (req, res) => {
   const id = String(req.params.id);
   const when = String(req.body?.when || "").trim();
   if (!when || Number.isNaN(Date.parse(when))) {
-    res.status(400).json({ error: "a valid date is required" });
+    res.status(400).json({ error: M(req, "une date valide est requise", "a valid date is required") });
     return;
   }
   const task = (req.session.tasks || []).find((t) => t.id === id);
@@ -11275,11 +11276,11 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 6e4), async (re
     return;
   }
   if (isHandled(task.status)) {
-    res.status(409).json({ error: "This task is already done or dismissed \u2014 nothing to move." });
+    res.status(409).json({ error: M(req, "Cette t\xE2che est d\xE9j\xE0 termin\xE9e ou ignor\xE9e \u2014 rien \xE0 d\xE9placer.", "This task is already done or dismissed \u2014 nothing to move.") });
     return;
   }
   if (task.when?.trim()) {
-    res.status(409).json({ error: "This task already has a deadline \u2014 it can't be moved." });
+    res.status(409).json({ error: M(req, "Cette t\xE2che a d\xE9j\xE0 une \xE9ch\xE9ance \u2014 elle ne peut pas \xEAtre d\xE9plac\xE9e.", "This task already has a deadline \u2014 it can't be moved.") });
     return;
   }
   try {
@@ -11289,7 +11290,7 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 6e4), async (re
     await commit(req);
     res.json(req.session.tasks || []);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't move that task \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de d\xE9placer cette t\xE2che \u2014 r\xE9essaie.", "Couldn't move that task \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 6e4), async (req, res) => {
@@ -11313,7 +11314,7 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 6e4), async (r
     }
     res.json(t);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't send \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'envoyer \u2014 r\xE9essaie.", "Couldn't send \u2014 try again.") });
   }
 });
 app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 6e4), async (req, res) => {
@@ -11324,7 +11325,7 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 6e4),
     return;
   }
   if (s.sent) {
-    res.status(400).json({ error: "already sent" });
+    res.status(400).json({ error: M(req, "d\xE9j\xE0 envoy\xE9", "already sent") });
     return;
   }
   const subject = typeof req.body?.subject === "string" ? req.body.subject.slice(0, 300) : void 0;
@@ -11339,14 +11340,14 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 6e4),
       if (subject !== void 0) s.subject = subject;
       if (body !== void 0) s.body = body;
     } else {
-      res.status(400).json({ error: "this draft can't be edited here" });
+      res.status(400).json({ error: M(req, "ce brouillon ne peut pas \xEAtre modifi\xE9 ici", "this draft can't be edited here") });
       return;
     }
     t.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     await commit(req);
     res.json(t);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't save your edit \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer ta modification \u2014 r\xE9essaie.", "Couldn't save your edit \u2014 try again.") });
   }
 });
 app.get("/api/jobs/:id", requireAuth, ah(async (req, res) => {
@@ -11379,18 +11380,18 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 6e4), async (req, res) => 
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
     res.json({ processed: out.processed, failed: out.failed, active, activeTaskIds, tasks: responseTasks });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "kick failed" });
+    res.status(500).json({ error: e?.message || M(req, "\xE9chec du d\xE9clenchement", "kick failed") });
   }
 });
 app.get("/api/cron/drain", async (req, res) => {
   const secret = process.env.CRON_SECRET;
   const auth = String(req.headers.authorization || "");
   if (secret && auth !== `Bearer ${secret}`) {
-    res.status(401).json({ error: "unauthorized" });
+    res.status(401).json({ error: M(req, "non autoris\xE9", "unauthorized") });
     return;
   }
   if (!secret && PROD) {
-    res.status(503).json({ error: "CRON_SECRET not configured" });
+    res.status(503).json({ error: M(req, "CRON_SECRET non configur\xE9", "CRON_SECRET not configured") });
     return;
   }
   try {
@@ -11400,7 +11401,7 @@ app.get("/api/cron/drain", async (req, res) => {
   } catch (e) {
     console.error("[cron] drain failed:", e);
     reportError("cron-drain", e);
-    res.status(500).json({ error: e?.message || "drain failed" });
+    res.status(500).json({ error: e?.message || M(req, "\xE9chec du traitement", "drain failed") });
   }
 });
 app.get("/api/cron/status", requireAuth, async (req, res) => {
@@ -11423,7 +11424,7 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
       cronConfigured: !!process.env.CRON_SECRET
     });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "status failed" });
+    res.status(500).json({ error: e?.message || M(req, "\xE9chec de la v\xE9rification du statut", "status failed") });
   }
 });
 app.get("/api/usage", requireAuth, async (req, res) => {
@@ -11447,7 +11448,7 @@ app.get("/api/usage", requireAuth, async (req, res) => {
       byCategory: u?.monthByCategory || {}
     });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "usage failed" });
+    res.status(500).json({ error: e?.message || M(req, "\xE9chec de la r\xE9cup\xE9ration de l'utilisation", "usage failed") });
   }
 });
 var listKey = (c) => c === "preference" ? "preferences" : c === "person" ? "people" : c === "project" ? "projects" : c === "course" ? "courses" : "";
@@ -11466,7 +11467,7 @@ app.post("/api/profile", requireAuth, async (req, res) => {
     } else {
       const k = listKey(category);
       if (!k) {
-        res.status(400).json({ error: `Unknown profile category "${category}".` });
+        res.status(400).json({ error: M(req, `Cat\xE9gorie de profil inconnue : "${category}".`, `Unknown profile category "${category}".`) });
         return;
       }
       if (value && !p[k].some((x) => x.toLowerCase() === value.toLowerCase())) p[k].push(value.slice(0, 160));
@@ -11474,7 +11475,7 @@ app.post("/api/profile", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't save \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer \u2014 r\xE9essaie.", "Couldn't save \u2014 try again.") });
   }
 });
 app.post("/api/profile/preference", requireAuth, async (req, res) => {
@@ -11521,13 +11522,13 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
       p.yearLevel = value.trim().slice(0, 40);
       p.preferencesUpdatedAt = (/* @__PURE__ */ new Date()).toISOString();
     } else {
-      res.status(400).json({ error: `Unrecognized preference "${key2}" or invalid value.` });
+      res.status(400).json({ error: M(req, `Pr\xE9f\xE9rence non reconnue "${key2}" ou valeur invalide.`, `Unrecognized preference "${key2}" or invalid value.`) });
       return;
     }
     await commit(req);
     res.json(p);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't save \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer \u2014 r\xE9essaie.", "Couldn't save \u2014 try again.") });
   }
 });
 app.post("/api/profile/grade", requireAuth, ah(async (req, res) => {
@@ -11536,7 +11537,7 @@ app.post("/api/profile/grade", requireAuth, ah(async (req, res) => {
   const grade = Number(req.body?.grade);
   const scale = Number(req.body?.scale) > 0 ? Number(req.body.scale) : 20;
   if (!subject || !Number.isFinite(grade)) {
-    res.status(400).json({ error: "subject and grade are required" });
+    res.status(400).json({ error: M(req, "la mati\xE8re et la note sont requises", "subject and grade are required") });
     return;
   }
   const list = p.grades ||= [];
@@ -11559,7 +11560,7 @@ app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't delete that grade \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cette note \u2014 r\xE9essaie.", "Couldn't delete that grade \u2014 try again.") });
   }
 });
 app.post("/api/profile/exam", requireAuth, ah(async (req, res) => {
@@ -11567,7 +11568,7 @@ app.post("/api/profile/exam", requireAuth, ah(async (req, res) => {
   const subject = String(req.body?.subject || "").trim().slice(0, 60);
   const deadline = String(req.body?.deadline || "");
   if (!subject || !/^\d{4}-\d{2}-\d{2}/.test(deadline)) {
-    res.status(400).json({ error: "subject and a real deadline are required" });
+    res.status(400).json({ error: M(req, "la mati\xE8re et une vraie \xE9ch\xE9ance sont requises", "subject and a real deadline are required") });
     return;
   }
   const list = p.manualExams ||= [];
@@ -11580,7 +11581,7 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     const p = req.session.profile ||= emptyProfile();
     const session3 = req.body;
     if (!session3.id || !session3.startTime || !session3.endTime || session3.duration === void 0) {
-      res.status(400).json({ error: "Missing required session fields" });
+      res.status(400).json({ error: M(req, "Champs de session requis manquants", "Missing required session fields") });
       return;
     }
     const sessions = p.focusSessions ||= [];
@@ -11593,7 +11594,7 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     res.json({ success: true, stats: p.focusStats });
   } catch (e) {
     console.error("Failed to save focus session:", e);
-    res.status(500).json({ error: e?.message || "Couldn't save session \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer la session \u2014 r\xE9essaie.", "Couldn't save session \u2014 try again.") });
   }
 });
 app.get("/api/focus/stats", requireAuth, async (req, res) => {
@@ -11606,7 +11607,7 @@ app.get("/api/focus/stats", requireAuth, async (req, res) => {
     recalculateFocusStats(p);
     res.json({ stats: p.focusStats });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't load stats \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les statistiques \u2014 r\xE9essaie.", "Couldn't load stats \u2014 try again.") });
   }
 });
 app.get("/api/focus/sessions", requireAuth, async (req, res) => {
@@ -11620,7 +11621,7 @@ app.get("/api/focus/sessions", requireAuth, async (req, res) => {
     const sessions = (p.focusSessions || []).slice(-limit).reverse();
     res.json({ sessions });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't load sessions \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les sessions \u2014 r\xE9essaie.", "Couldn't load sessions \u2014 try again.") });
   }
 });
 app.get("/api/focus/schedule-suggestion", requireAuth, async (req, res) => {
@@ -11631,7 +11632,7 @@ app.get("/api/focus/schedule-suggestion", requireAuth, async (req, res) => {
     const suggestion = generateSchedulingSuggestion({ sourceSubject: subject || void 0, difficulty: difficulty || void 0 }, p);
     res.json({ suggestion });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't generate suggestion \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de g\xE9n\xE9rer une suggestion \u2014 r\xE9essaie.", "Couldn't generate suggestion \u2014 try again.") });
   }
 });
 app.get("/api/focus/artifact-recommendation", requireAuth, async (req, res) => {
@@ -11641,7 +11642,7 @@ app.get("/api/focus/artifact-recommendation", requireAuth, async (req, res) => {
     const recommendation = recommendArtifactType(subject, p);
     res.json({ recommendation });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't generate recommendation \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de g\xE9n\xE9rer une recommandation \u2014 r\xE9essaie.", "Couldn't generate recommendation \u2014 try again.") });
   }
 });
 function recalculateFocusStats(p) {
@@ -11783,7 +11784,7 @@ app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't remove that exam \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cet examen \u2014 r\xE9essaie.", "Couldn't remove that exam \u2014 try again.") });
   }
 });
 app.post("/api/profile/errorlog", requireAuth, ah(async (req, res) => {
@@ -11793,7 +11794,7 @@ app.post("/api/profile/errorlog", requireAuth, ah(async (req, res) => {
   const mistake = String(req.body?.mistake || "").trim().slice(0, 500);
   const fix = String(req.body?.fix || "").trim().slice(0, 500);
   if (!subject || !question) {
-    res.status(400).json({ error: "subject and question are required" });
+    res.status(400).json({ error: M(req, "la mati\xE8re et la question sont requises", "subject and question are required") });
     return;
   }
   const list = p.errorLog ||= [];
@@ -11815,7 +11816,7 @@ app.delete("/api/profile/errorlog/:id", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't remove that entry \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cette entr\xE9e \u2014 r\xE9essaie.", "Couldn't remove that entry \u2014 try again.") });
   }
 });
 app.delete("/api/profile/student-model", requireAuth, async (req, res) => {
@@ -11831,7 +11832,7 @@ app.delete("/api/profile/student-model", requireAuth, async (req, res) => {
     await commit(req);
     res.json(p);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't reset \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de r\xE9initialiser \u2014 r\xE9essaie.", "Couldn't reset \u2014 try again.") });
   }
 });
 app.delete("/api/profile", requireAuth, async (req, res) => {
@@ -11840,7 +11841,7 @@ app.delete("/api/profile", requireAuth, async (req, res) => {
     await commit(req);
     res.json(stripProfileForResponse(req.session.profile));
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't reset your profile \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de r\xE9initialiser ton profil \u2014 r\xE9essaie.", "Couldn't reset your profile \u2014 try again.") });
   }
 });
 app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
@@ -11848,7 +11849,7 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   const k = listKey(String(req.params.category));
   const i = Number(String(req.params.index));
   if (!k || !Array.isArray(p[k]) || !(i >= 0 && i < p[k].length)) {
-    res.status(404).json({ error: "Nothing to delete there \u2014 it may have already changed elsewhere." });
+    res.status(404).json({ error: M(req, "Rien \xE0 supprimer ici \u2014 \xE7a a peut-\xEAtre d\xE9j\xE0 chang\xE9 ailleurs.", "Nothing to delete there \u2014 it may have already changed elsewhere.") });
     return;
   }
   try {
@@ -11856,7 +11857,7 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
     await commit(req);
     res.json(stripProfileForResponse(p));
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't delete that \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer \xE7a \u2014 r\xE9essaie.", "Couldn't delete that \u2014 try again.") });
   }
 });
 app.get("/api/study/sessions", requireAuth, async (req, res) => {
@@ -11868,19 +11869,19 @@ app.get("/api/study/sessions", requireAuth, async (req, res) => {
       res.json([]);
     }
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't load study sessions." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les sessions d'\xE9tude.", "Couldn't load study sessions.") });
   }
 });
 app.post("/api/study/session", requireAuth, async (req, res) => {
   try {
     const sessionData = req.body;
     if (!sessionData.taskId || !sessionData.userId) {
-      res.status(400).json({ error: "taskId and userId are required" });
+      res.status(400).json({ error: M(req, "taskId et userId sont requis", "taskId and userId are required") });
       return;
     }
     const email = req.session.user;
     if (!email) {
-      res.status(401).json({ error: "Not authenticated" });
+      res.status(401).json({ error: M(req, "Non authentifi\xE9", "Not authenticated") });
       return;
     }
     const current = await loadState(email);
@@ -11911,7 +11912,7 @@ app.post("/api/study/session", requireAuth, async (req, res) => {
     await saveState(email, { profile: current.profile, tasks: current.tasks, studySessions: trimmedSessions }, { throwOnError: true });
     res.json(session3);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't save study session." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer la session d'\xE9tude.", "Couldn't save study session.") });
   }
 });
 app.get("/api/study/profile", requireAuth, async (req, res) => {
@@ -11923,7 +11924,7 @@ app.get("/api/study/profile", requireAuth, async (req, res) => {
       res.json({ userId: req.session.user, updatedAt: (/* @__PURE__ */ new Date()).toISOString() });
     }
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't load study profile." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de charger le profil d'\xE9tude.", "Couldn't load study profile.") });
   }
 });
 app.post("/api/study/profile", requireAuth, async (req, res) => {
@@ -11931,7 +11932,7 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
     const profileData = req.body;
     const email = req.session.user;
     if (!email) {
-      res.status(401).json({ error: "Not authenticated" });
+      res.status(401).json({ error: M(req, "Non authentifi\xE9", "Not authenticated") });
       return;
     }
     const current = await loadState(email);
@@ -11961,17 +11962,17 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
     await saveState(email, { profile: current.profile, tasks: current.tasks, studyProfile: updated }, { throwOnError: true });
     res.json(updated);
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't save study profile." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer le profil d'\xE9tude.", "Couldn't save study profile.") });
   }
 });
 app.post("/api/tts", requireAuth, async (req, res) => {
   const { text } = req.body;
   if (!text || typeof text !== "string") {
-    res.status(400).json({ error: "text is required" });
+    res.status(400).json({ error: M(req, "le texte est requis", "text is required") });
     return;
   }
   if (!process.env.FREETTS_API_KEY) {
-    res.status(501).json({ error: "TTS not configured" });
+    res.status(501).json({ error: M(req, "Synth\xE8se vocale non configur\xE9e", "TTS not configured") });
     return;
   }
   try {
@@ -11982,7 +11983,7 @@ app.post("/api/tts", requireAuth, async (req, res) => {
     });
     if (!response.ok) {
       console.error(`[tts] FreeTTS error: ${response.status}`);
-      res.status(500).json({ error: "TTS generation failed" });
+      res.status(500).json({ error: M(req, "\xC9chec de la g\xE9n\xE9ration vocale", "TTS generation failed") });
       return;
     }
     const buffer = await response.arrayBuffer();
@@ -11990,7 +11991,7 @@ app.post("/api/tts", requireAuth, async (req, res) => {
     res.send(Buffer.from(buffer));
   } catch (e) {
     console.error(`[tts] error: ${e?.message}`);
-    res.status(500).json({ error: "TTS request failed" });
+    res.status(500).json({ error: M(req, "\xC9chec de la requ\xEAte vocale", "TTS request failed") });
   }
 });
 if (PROD && !process.env.VERCEL) {

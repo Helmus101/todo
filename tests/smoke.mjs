@@ -54,7 +54,11 @@ try {
   {
     const tasksGet = await req("/api/tasks");
     check("GET /api/tasks → 401 (not 500, not 200 with data)", tasksGet.status === 401);
-    check("401 body has the expected shape", tasksGet.body?.error === "not logged in");
+    // Error text is now bilingual (server/index.ts's M(req, fr, en) — a French account used to see this
+    // exact string raw in English, an i18n bug fixed this round) and defaults to French absent a `lang`
+    // hint, same as the rest of the app's own French-first default — assert the real current text rather
+    // than a stale hardcoded English one.
+    check("401 body has the expected shape", tasksGet.body?.error === "pas connecté");
 
     const generate = await req("/api/tasks/generate", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     check("POST /api/tasks/generate → 401", generate.status === 401);
