@@ -29,6 +29,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
   const [endingSession, setEndingSession] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [openBoardSession, setOpenBoardSession] = useState<TutorSessionSummary | null>(null);
+  const [openChatSession, setOpenChatSession] = useState<TutorSessionSummary | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<string>("");
 
   const COMMON_SUBJECTS = [
@@ -79,31 +80,45 @@ export function TutorSession({ userId }: { userId: string | null }) {
     setPastSessions(getTutorSessions(userId));
   }, [activeSession, userId]);
 
-  // Auto-end session after 1 hour
-  useEffect(() => {
-    if (!sessionStart || !task) return;
-
-    const timer = setInterval(() => {
-      const elapsed = Date.now() - new Date(sessionStart).getTime();
-      if (elapsed >= 60 * 60 * 1000) { // 1 hour
-        // Directly dismiss and clear state without calling endSession to avoid circular dependency
-        try { api.dismiss(task.id); } catch { /* best-effort */ }
-        setTask(null);
-        setSessionStart(null);
-        setActiveSession(null);
-        setShowHistory(true);
-      }
-    }, 60 * 1000); // Check every minute
-
-    return () => clearInterval(timer);
-  }, [sessionStart, task]);
-
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
     const message = (override ?? input).trim();
     if (!message || sending || !task) return;
     setInput(""); setSending(true); setError(null); setPendingMsg(message);
     try {
-      const { task: updated, chatDelta, board, problems } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, undefined, true);
+      const response = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, undefined, true);
+      
+      // Check if session was ended due to cap
+      if ("sessionEnded" in response && response.sessionEnded) {
+        // Save session summary before clearing
+        const thread = getLocalThread(task.id, userId);
+        const summary = buildSessionSummary(task.board || [], task.chat || []);
+        const sessionSummary: TutorSessionSummary = {
+          id: task.id,
+          taskId: task.id,
+          startTime: sessionStart || new Date().toISOString(),
+          endTime: new Date().toISOString(),
+          messageCount: (task.chat || []).filter((m) => m.role === "user").length,
+          boardEntries: (task.board || []).map((b) => b.text.trim()).filter(Boolean),
+          board: task.board || [],
+          chat: task.chat || [], // Save the full chat history
+          summary,
+          subject: task.sourceSubject,
+        };
+        saveTutorSession(sessionSummary, userId);
+        setPastSessions(getTutorSessions(userId));
+        
+        // Clear all session state
+        setTask(null);
+        setSessionStart(null);
+        setActiveSession(null);
+        setShowHistory(true);
+        setError(response.error || L("Session terminée", "Session ended"));
+        setSending(false);
+        setPendingMsg(null);
+        return;
+      }
+      
+      const { task: updated, chatDelta, board, problems } = response;
       const chat = appendLocalChat(task.id, chatDelta, userId);
       const newBoard = appendLocalBoard(task.id, board, userId);
       const newProblems = appendLocalProblems(task.id, problems, userId);
@@ -114,7 +129,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
     } finally {
       setSending(false); setPendingMsg(null);
     }
-  }, [input, sending, task, userId, L]);
+  }, [input, sending, task, userId, L, sessionStart]);
 
   const endSession = useCallback(async () => {
     if (!task || !sessionStart) return;
@@ -130,6 +145,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
         messageCount: (task.chat || []).filter((m) => m.role === "user").length,
         boardEntries: (task.board || []).map((b) => b.text.trim()).filter(Boolean),
         board: task.board || [],
+        chat: task.chat || [], // Save the full chat history
         summary,
         subject: task.sourceSubject,
       };
@@ -247,11 +263,18 @@ export function TutorSession({ userId }: { userId: string | null }) {
                       {/* Full board (diagrams/equations, not just the flattened text preview above) — only
                           present for a session ended after this was added; an older saved session has no
                           `board` field to reopen. */}
-                      {!!s.board?.length && (
-                        <button type="button" className="btn ghost xs tutor-history-view-board" onClick={() => setOpenBoardSession(s)}>
-                          {L("Voir le tableau", "View board")}
-                        </button>
-                      )}
+                      <div className="tutor-history-actions">
+                        {!!s.board?.length && (
+                          <button type="button" className="btn ghost xs tutor-history-view-board" onClick={() => setOpenBoardSession(s)}>
+                            {L("Voir le tableau", "View board")}
+                          </button>
+                        )}
+                        {!!s.chat?.length && (
+                          <button type="button" className="btn ghost xs tutor-history-view-chat" onClick={() => setOpenChatSession(s)}>
+                            {L("Voir le chat", "View chat")}
+                          </button>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -262,6 +285,18 @@ export function TutorSession({ userId }: { userId: string | null }) {
         {openBoardSession && (
           <TaskModal onClose={() => setOpenBoardSession(null)} title={L("Le tableau", "Board")}>
             <BoardArtifact task={{ board: openBoardSession.board } as unknown as WebTask} />
+          </TaskModal>
+        )}
+        {openChatSession && (
+          <TaskModal onClose={() => setOpenChatSession(null)} title={L("Le chat", "Chat")}>
+            <div className="tutor-chat-history">
+              {openChatSession.chat?.map((msg, i) => (
+                <div key={i} className={`tutor-chat-message ${msg.role}`}>
+                  <div className="tutor-chat-role">{msg.role === "user" ? L("Toi", "You") : L("Otto", "Otto")}</div>
+                  <div className="tutor-chat-text">{msg.text}</div>
+                </div>
+              ))}
+            </div>
           </TaskModal>
         )}
       </main>

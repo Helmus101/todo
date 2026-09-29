@@ -1410,14 +1410,27 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     req.session.primerSessionStarts[subject] = now;
     req.session.primerLastActivities[subject] = now;
   } else if (sessionMinutes >= sessionCap) {
-    // Only block if outside resume window
-    res.status(403).json({ 
-      error: M(req, 
-        `Session limit reached for ${subject} (${sessionCap} minutes). Take a break!`,
-        `Session limit reached for ${subject} (${sessionCap} minutes). Take a break!`
-      ),
+    // Session limit reached - end the session automatically
+    t.status = "dismissed";
+    t.updatedAt = now;
+    // Clear session tracking for this subject
+    delete req.session.primerSessionStarts[subject];
+    delete req.session.primerLastActivities[subject];
+    // Return the dismissed task so client can save summary
+    res.status(200).json({ 
+      reply: "",
+      chatDelta: [],
+      board: [],
+      problems: [],
+      guardrailTripped: false,
+      task: t,
       sessionCapReached: true,
-      subject 
+      subject,
+      sessionEnded: true,
+      error: M(req, 
+        `Session limit reached for ${subject} (${sessionCap} minutes). Session ended.`,
+        `Session limit reached for ${subject} (${sessionCap} minutes). Session ended.`
+      )
     });
     return;
   }

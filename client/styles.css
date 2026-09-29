@@ -6386,6 +6386,18 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-history-board li { font-size: 0.85rem; color: var(--ink-2); padding-left: 14px; position: relative; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.4; }
 .tutor-history-board li::before { content: ""; position: absolute; left: 1px; top: 0.58em; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 
+.tutor-history-actions { display: flex; gap: 8px; margin-top: 10px; }
+.tutor-history-view-board, .tutor-history-view-chat { font-size: 0.8rem; padding: 4px 10px; }
+
+.tutor-chat-history { display: flex; flex-direction: column; gap: 16px; max-height: 500px; overflow-y: auto; padding: 16px; }
+.tutor-chat-message { display: flex; flex-direction: column; gap: 4px; }
+.tutor-chat-message.user { align-items: flex-end; }
+.tutor-chat-message.assistant { align-items: flex-start; }
+.tutor-chat-role { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.tutor-chat-text { font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; padding: 10px 14px; border-radius: var(--radius-sm); max-width: 85%; }
+.tutor-chat-message.user .tutor-chat-text { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--ink); }
+.tutor-chat-message.assistant .tutor-chat-text { background: var(--surface); border: 1px solid var(--line); color: var(--ink); }
+
 /* Tutor landing page */
 .tutor-subject-select { margin: 16px 0; }
 .tutor-subject-select label { display: block; font-size: 0.9rem; color: var(--ink-2); margin-bottom: 6px; }

@@ -17,6 +17,8 @@ export interface TutorSessionSummary {
   // board exactly as it looked when the session ended. Optional or absent for a session saved before this
   // field existed (older localStorage entries) — history views must degrade to the text-only boardEntries.
   board?: BoardEntry[];
+  // The full chat history (all messages with role and text) so the conversation can be reviewed later
+  chat?: NonNullable<WebTask["chat"]>;
   summary: string;          // a short auto-generated recap
   subject?: string;         // the subject selected when starting the session
 }
