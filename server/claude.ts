@@ -4305,7 +4305,8 @@ export async function runTask(
           `act on it instead of re-searching what Otto already found. Use ONLY these exact URLs, copied ` +
           `character for character; never invent, shorten or guess one, and leave "url" off any step where ` +
           `none of them genuinely fits:\n` +
-          links.map((l) => `  · ${l.label} — ${l.url}`).join("\n") + `\n`
+          links.map((l) => `  · ${l.label} — ${l.url}`).join("\n") + `\n` +
+          `- IF THE TASK ALREADY HAS A LINK (especially an email/message link), never write a step like "find the email", "search for the email", or "locate the message". Instead, write "open the link" and attach the existing URL. The link is already provided — use it directly.\n`
         : "") +
       adaptiveInstructions +
       `\nHOW TO ANSWER:\n` +

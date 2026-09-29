@@ -1389,59 +1389,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   const t = await findTaskOrReload(req, String(req.params.id));
   if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   
-  // Primer session cap enforcement (Phase 1.5) - per-subject
-  const profile = req.session.profile;
-  const sessionCap = profile?.primerSettings?.sessionCapMinutes || 60; // Default 60min for adults
-  const RESUME_WINDOW_MINUTES = 60; // Allow resume within 1 hour
-  const now = Date.now();
-  const subject = t.sourceSubject || "general";
-  
-  // Initialize per-subject tracking
-  if (!req.session.primerSessionStarts) req.session.primerSessionStarts = {};
-  if (!req.session.primerLastActivities) req.session.primerLastActivities = {};
-  
-  const sessionStart = req.session.primerSessionStarts[subject] || now;
-  const sessionMinutes = (now - sessionStart) / (60 * 1000);
-  const lastActivity = req.session.primerLastActivities[subject] || sessionStart;
-  const minutesSinceLastActivity = (now - lastActivity) / (60 * 1000);
-  
-  // If within resume window, reset session start time to allow continuation
-  if (minutesSinceLastActivity < RESUME_WINDOW_MINUTES && sessionMinutes >= sessionCap) {
-    req.session.primerSessionStarts[subject] = now;
-    req.session.primerLastActivities[subject] = now;
-  } else if (sessionMinutes >= sessionCap) {
-    // Session limit reached - end the session automatically
-    t.status = "dismissed";
-    t.updatedAt = now;
-    // Clear session tracking for this subject
-    delete req.session.primerSessionStarts[subject];
-    delete req.session.primerLastActivities[subject];
-    // Return the dismissed task so client can save summary
-    res.status(200).json({ 
-      reply: "",
-      chatDelta: [],
-      board: [],
-      problems: [],
-      guardrailTripped: false,
-      task: t,
-      sessionCapReached: true,
-      subject,
-      sessionEnded: true,
-      error: M(req, 
-        `Session limit reached for ${subject} (${sessionCap} minutes). Session ended.`,
-        `Session limit reached for ${subject} (${sessionCap} minutes). Session ended.`
-      )
-    });
-    return;
-  }
-  
-  // Set session start time if not set for this subject
-  if (!req.session.primerSessionStarts[subject]) {
-    req.session.primerSessionStarts[subject] = now;
-  }
-  
-  // Update last activity time for this subject
-  req.session.primerLastActivities[subject] = now;
+
   
   // The "Aide" button on a step (see F) sends its own index — validate the range server-side, never trust
   // it blindly (steps get regenerated on every rerun, so a stale index from an old page load could point

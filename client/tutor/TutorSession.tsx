@@ -80,44 +80,61 @@ export function TutorSession({ userId }: { userId: string | null }) {
     setPastSessions(getTutorSessions(userId));
   }, [activeSession, userId]);
 
+  // Auto-end session after 30 minutes of inactivity
+  useEffect(() => {
+    if (!sessionStart || !task) return;
+
+    let inactivityTimer: NodeJS.Timeout;
+    let lastActivity = Date.now();
+
+    const resetTimer = () => {
+      lastActivity = Date.now();
+      clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        // Auto-end session after 30 minutes of inactivity
+        const thread = getLocalThread(task.id, userId);
+        const summary = buildSessionSummary(task.board || [], task.chat || []);
+        const sessionSummary: TutorSessionSummary = {
+          id: task.id,
+          taskId: task.id,
+          startTime: sessionStart,
+          endTime: new Date().toISOString(),
+          messageCount: (task.chat || []).filter((m) => m.role === "user").length,
+          boardEntries: (task.board || []).map((b) => b.text.trim()).filter(Boolean),
+          board: task.board || [],
+          chat: task.chat || [],
+          summary,
+          subject: task.sourceSubject,
+        };
+        saveTutorSession(sessionSummary, userId);
+        setPastSessions(getTutorSessions(userId));
+        try { api.dismiss(task.id); } catch { /* best-effort */ }
+        setTask(null);
+        setSessionStart(null);
+        setActiveSession(null);
+        setShowHistory(true);
+      }, 30 * 60 * 1000); // 30 minutes
+    };
+
+    // Track user activity
+    const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+    const handleActivity = () => resetTimer();
+
+    activityEvents.forEach(event => window.addEventListener(event, handleActivity));
+    resetTimer(); // Start timer initially
+
+    return () => {
+      clearTimeout(inactivityTimer);
+      activityEvents.forEach(event => window.removeEventListener(event, handleActivity));
+    };
+  }, [sessionStart, task, userId]);
+
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
     const message = (override ?? input).trim();
     if (!message || sending || !task) return;
     setInput(""); setSending(true); setError(null); setPendingMsg(message);
     try {
       const response = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, undefined, true);
-      
-      // Check if session was ended due to cap
-      if ("sessionEnded" in response && response.sessionEnded) {
-        // Save session summary before clearing
-        const thread = getLocalThread(task.id, userId);
-        const summary = buildSessionSummary(task.board || [], task.chat || []);
-        const sessionSummary: TutorSessionSummary = {
-          id: task.id,
-          taskId: task.id,
-          startTime: sessionStart || new Date().toISOString(),
-          endTime: new Date().toISOString(),
-          messageCount: (task.chat || []).filter((m) => m.role === "user").length,
-          boardEntries: (task.board || []).map((b) => b.text.trim()).filter(Boolean),
-          board: task.board || [],
-          chat: task.chat || [], // Save the full chat history
-          summary,
-          subject: task.sourceSubject,
-        };
-        saveTutorSession(sessionSummary, userId);
-        setPastSessions(getTutorSessions(userId));
-        
-        // Clear all session state
-        setTask(null);
-        setSessionStart(null);
-        setActiveSession(null);
-        setShowHistory(true);
-        setError(response.error || L("Session terminée", "Session ended"));
-        setSending(false);
-        setPendingMsg(null);
-        return;
-      }
-      
       const { task: updated, chatDelta, board, problems } = response;
       const chat = appendLocalChat(task.id, chatDelta, userId);
       const newBoard = appendLocalBoard(task.id, board, userId);
@@ -129,7 +146,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
     } finally {
       setSending(false); setPendingMsg(null);
     }
-  }, [input, sending, task, userId, L, sessionStart]);
+  }, [input, sending, task, userId, L]);
 
   const endSession = useCallback(async () => {
     if (!task || !sessionStart) return;
