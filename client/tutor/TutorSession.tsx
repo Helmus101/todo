@@ -5,7 +5,7 @@ import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProb
 import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
-import { buildSessionSummary, saveTutorSession, getTutorSessions, pastSessionsLine, type TutorSessionSummary } from "./tutorSessions.ts";
+import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
 
 /** Tutor Session (route /tutor) — the Primer-style one-to-one lesson: a chat with Otto on one side and
  *  Otto's board on the other. It reuses the free-study task as a private anchor for the thread (chat, board
@@ -210,13 +210,6 @@ export function TutorSession({ userId }: { userId: string | null }) {
         {fresh && (
           <div className="tutor-start">
             <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
-            {pastSessions.length > 0 && (
-              <p className="tutor-past-ref">
-                {L("Je me souviens de nos séances précédentes : ", "I remember our past sessions: ")}
-                {pastSessionsLine(pastSessions, L("fr", "en") as "fr" | "en")}
-              </p>
-            )}
-            <button className="btn primary" disabled={sending} onClick={() => void send(L("Bonjour Otto !", "Hello Otto!"))}>{L("Commencer", "Let's begin")}</button>
           </div>
         )}
         <div className="tutor-chat-body">
