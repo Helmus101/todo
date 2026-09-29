@@ -5,6 +5,7 @@ import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
+import { isLikelyEcho } from "../voice/echoGuard.ts";
 import { InlineProblem } from "./InlineProblem.tsx";
 
 interface AskOttoPanelProps {
@@ -39,6 +40,13 @@ interface AskOttoPanelProps {
    *  false-trigger from speaker echo or a throat-clear; two real words is intent. Kept local to Tutor
    *  Session — the per-task chat in TaskCard.tsx keeps its pause-and-resume behavior. */
   bargeIn?: boolean;
+}
+
+// The text currently being spoken aloud (the newest assistant reply) — the echo guard's reference: Otto
+// can only echo words he is saying right now, so anything he isn't saying is the student.
+function speakingNowText(task: WebTask): string {
+  const chat = task.chat || [];
+  return chat.length ? chat[chat.length - 1]?.text || "" : "";
 }
 
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
@@ -79,19 +87,34 @@ export function AskOttoPanel({
   // previous message is still in flight rather than firing a second send on top of it.
   const sendingRef = useRef(sending);
   sendingRef.current = sending;
-  // Barge-in ref — recognition's onResult needs the CURRENT speaking state, and useSpeechRecognition's
-  // options object is captured at hook-setup time, so a plain closure over synth.speaking would go stale.
+  // Barge-in refs — recognition's callbacks need the CURRENT speaking state and the text being spoken,
+  // and useSpeechRecognition's options object is captured at hook-setup time, so plain closures over
+  // synth.speaking / the last chat message would go stale.
   const speakingRef = useRef(false);
   speakingRef.current = synth.speaking;
+  const spokenRef = useRef("");
+  spokenRef.current = speakingNowText(task);
   const recog = useSpeechRecognition({
     lang: speechLang,
     onResult: (text) => {
       if (sendingRef.current) return;
-      // Barge-in (Tutor Session): a real utterance ≥2 words while Otto is talking cancels the TTS
-      // immediately instead of waiting for the utterance to finish and send — talking over the tutor
-      // should stop the tutor. The send itself still waits for the final result, as usual.
-      if (bargeIn && speakingRef.current && text.trim().split(/\s+/).length >= 2) synth.cancel();
+      if (speakingRef.current) {
+        // While Otto is speaking, a FINAL result is only student speech if it isn't his own voice coming
+        // back through the speakers (echo discrimination — see echoGuard.ts). Real student speech ALSO
+        // cancels the TTS: talking over the tutor stops the tutor, and the utterance still sends.
+        if (isLikelyEcho(spokenRef.current, text)) return;
+        if (bargeIn) synth.cancel();
+      }
       onSend(text, true);
+    },
+    // Barge-in channel: interim text streams in WHILE the student is still talking — cancel the TTS the
+    // instant real speech is detected instead of waiting for the browser's end-of-utterance pause. The
+    // echo guard keeps Otto's own voice (heard through the speakers while the mic is open) from
+    // triggering the cancel on itself.
+    onInterim: (text) => {
+      if (!bargeIn || !speakingRef.current || !text) return;
+      if (isLikelyEcho(spokenRef.current, text)) return;
+      if (text.trim().split(/\s+/).length >= 2) synth.cancel();
     },
   });
   // Assigned only AFTER recog exists — the mount-time autoVoice effect above reads this ref (it must never
@@ -115,16 +138,16 @@ export function AskOttoPanel({
     else { recog.abort(); synth.cancel(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceModeOn]);
-  // Pause listening while Otto is actually talking (avoids the mic picking up Otto's own voice from the
-  // speakers and treating it as the next thing to respond to), and resume the instant he's done — the
-  // whole point of "always on" is the student never has to tap anything between turns.
+  // Barge-in keeps the mic OPEN while Otto talks — the student's voice has to reach a live recognizer for
+  // an interruption to exist at all (the old pause-the-mic-during-TTS design made barge-in structurally
+  // impossible: abort() killed the recognizer, so nothing the student said while Otto spoke was ever
+  // heard). Echo from the speakers is handled by isLikelyEcho above, not by deafness. When barge-in is
+  // OFF (Study Mode / per-task chats), keep the old pause-and-resume behavior: safer against echo on
+  // devices without headphones, and there's nothing to interrupt anyway. The 400ms settle delay before
+  // reopening stays for the non-barge-in path (see TaskCard.tsx's identical effect for the full history).
   const wasSpeakingRef = useRef(false);
   useEffect(() => {
-    if (!voiceModeOn) return;
-    // abort() (not stop()) so no buffered audio from the moment TTS starts gets finalized into a result,
-    // and a short settle delay before restarting so speaker echo has time to die down before the mic
-    // reopens — without both, Otto's own voice was occasionally getting transcribed and re-sent as if the
-    // student had said it. See the identical fix in TaskCard.tsx's TaskChat for the full explanation.
+    if (!voiceModeOn || bargeIn) return;
     if (synth.speaking && !wasSpeakingRef.current) {
       recog.abort();
     } else if (!synth.speaking && wasSpeakingRef.current) {
@@ -134,7 +157,7 @@ export function AskOttoPanel({
     }
     wasSpeakingRef.current = synth.speaking;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [synth.speaking, voiceModeOn]);
+  }, [synth.speaking, voiceModeOn, bargeIn]);
   // Speak the reply once it arrives — tracked by chat length so a re-render (not a new message) never
   // re-triggers it, and so turning voice mode on mid-conversation only speaks FUTURE replies, not the
   // whole history at once.

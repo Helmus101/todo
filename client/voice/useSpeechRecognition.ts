@@ -29,6 +29,12 @@ export interface UseSpeechRecognitionOptions {
    *  speech — marks a result `isFinal`), not once per start()/stop() cycle. In continuous/always-on mode
    *  this can fire many times across one long-running listen session. Never fires with empty/whitespace text. */
   onResult: (transcript: string) => void;
+  /** Fires on EVERY recognition event with the live, not-yet-final text ("" between utterances) — the
+   *  barge-in channel. Final results only arrive after the browser's pause detection, which is far too
+   *  late to interrupt a sentence mid-word; interim text streams in word by word while the utterance is
+   *  still being spoken, so a caller watching THIS can cancel TTS the instant real student speech is
+   *  detected. Purely advisory — not firing it changes nothing else. */
+  onInterim?: (text: string) => void;
 }
 
 export interface UseSpeechRecognition {
@@ -48,7 +54,7 @@ export interface UseSpeechRecognition {
 /** Always-on speech-to-text via the browser's free, built-in Web Speech API — no server round trip, no paid
  *  STT vendor. Feature-detects: `supported` is false on browsers with no SpeechRecognition (Firefox, most
  *  notably) so callers can hide voice UI entirely rather than show a mic button that silently does nothing. */
-export function useSpeechRecognition({ lang, onResult }: UseSpeechRecognitionOptions): UseSpeechRecognition {
+export function useSpeechRecognition({ lang, onResult, onInterim }: UseSpeechRecognitionOptions): UseSpeechRecognition {
   const Ctor = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : undefined;
   const supported = !!Ctor;
   const [listening, setListening] = useState(false);
@@ -56,6 +62,8 @@ export function useSpeechRecognition({ lang, onResult }: UseSpeechRecognitionOpt
   const recRef = useRef<SpeechRecognitionLike | null>(null);
   const onResultRef = useRef(onResult);
   onResultRef.current = onResult;
+  const onInterimRef = useRef(onInterim);
+  onInterimRef.current = onInterim;
   // Set true for the duration of an intended listening session (from start() to stop()/abort()) — onend
   // checks this to decide "the browser dropped the session on its own, restart it" vs "the user/app actually
   // wanted this to stop." Without this distinction, mic-always-on mode would silently go dead the moment
@@ -83,6 +91,9 @@ export function useSpeechRecognition({ lang, onResult }: UseSpeechRecognitionOpt
         }
       }
       setInterimTranscript(interim);
+      // Live interim text out (barge-in channel) — trimmed, and "" when nothing is pending so callers
+      // can treat empty as "no speech in flight".
+      onInterimRef.current?.(interim.trim());
     };
     rec.onerror = (e) => {
       // "no-speech" fires constantly in always-on mode (every silent gap) — not a real error, just Chrome's
@@ -106,6 +117,7 @@ export function useSpeechRecognition({ lang, onResult }: UseSpeechRecognitionOpt
       // a superseded one's onend is a no-op.
       if (recRef.current !== rec) return;
       setInterimTranscript("");
+      onInterimRef.current?.("");
       if (keepAliveRef.current) {
         // The recognizer stopped on its own (session cap / blip) but the app still wants to be listening —
         // restart transparently. A brief microtask delay avoids some browsers' "already started" race when

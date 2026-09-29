@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
+import { isLikelyEcho, normalizeForEcho } from "../client/voice/echoGuard.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1277,23 +1278,30 @@ section("Study Mode: chat + Board always present, board write reliability (sourc
 section("Board renders each entry ONCE (the duplicated render block is gone) + pinned focus");
 {
   const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  // Extracted component so entries and problems share ONE rendering of a problem (state lives in
+  // BoardArtifact, keyed by id — survives the flow re-sorting and re-renders).
+  check("a single ProblemBlock renders every problem in the flow (no duplicated inline problem JSX)", /function ProblemBlock\(/.test(boardSrc) && (boardSrc.match(/sm-board-problem-label/g) || []).length === 1);
   // Reported live: the board-entries JSX existed TWICE in this file (a merge accident) — every entry the
   // tutor wrote rendered twice. The dedupe-by-id inside each copy couldn't catch it: both copies matched
   // the same entries. This pin counts the actual render sites so a future merge can't reintroduce it.
-  check("the board entries render block appears exactly once", (boardSrc.match(/flowEntries\.map\(/g) || []).length === 1);
+  check("board items render through the ONE merged flow, never a separate problem section", (boardSrc.match(/flowItems\.map\(/g) || []).length === 1 && !/flowEntries\.map\(/.test(boardSrc) && !/dedupedProblems\.map\(/.test(boardSrc));
   check("the old duplicated inline filter/render block is really gone", (boardSrc.match(/deduplicate by id to prevent duplicates/g) || []).length === 0);
   // Problems never had the id-dedupe the entries block always had — a double-responded turn stacked the
-  // same problem twice in the board's unified problem list.
-  check("problems are deduped by id before rendering, same as entries", /dedupedProblems\.map\(/.test(boardSrc) && /arr\.findIndex\(x => x\.id === p\.id\) === i/.test(boardSrc));
+  // same problem twice. Dedupe happens BEFORE the merge, and the merged flow is the only render path.
+  check("problems are deduped by id before the flow merge, same as entries", /dedupedProblems = problems\.filter\(\(p, i, arr\) => arr\.findIndex\(x => x\.id === p\.id\) === i\)/.test(boardSrc));
   // Reported live: "problems on board show twice" — the "Problème actuel / Current problem" block always
   // rendered the LATEST problem, and the show-all list below rendered ALL of them again, so the newest
   // problem appeared twice (and a one-problem board showed its only problem twice, period). "Current
   // problem" is a single-question-mode concept: gated to that mode now.
-  check("the 'current problem' block renders in single-question mode only (show-all already lists every problem)", /singleQuestionMode && currentProblem && \(\(\) => \{/.test(boardSrc));
+  // (The old single-question-mode pin retired with the mode itself: problems are flow items now, and the
+  // 'current problem' duplicate-render trap the pin guarded against no longer exists in the file.)
   // Dual coding / document structure: kind:"focus" is the lesson's heading — pinned at the top as a
   // header strip, excluded from the flowing entries, latest wins if a session ever writes a second one.
   check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-pin/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
   check("the latest focus wins when more than one exists", /latestFocus/.test(boardSrc));
+  // Direct request: problems should sit IN the board's flow (between the entries around them), not pinned
+  // at the top — the board is one document telling the lesson's story in the order it happened.
+  check("problems are flow items, not a pinned section (no 'Current problem' block, no mode toggle)", !/Problème actuel/.test(boardSrc) && !/singleQuestionMode/.test(boardSrc) && /createdAt \|\| ""\) \|\| Number\.MAX_SAFE_INTEGER/.test(boardSrc));
 }
 
 section("isDuplicateBoardEntry — content-level duplicate prevention for board writes (server/claude.ts)");
@@ -1343,6 +1351,41 @@ section("shouldNudgeBoardWrite — a confirmed student math step must land on th
   // round, latched, feeding the model back its own reply so the write actually happens mid-turn.
   check("the nudge is a ONE-SHOT corrective round inside the tool loop", /boardNudgeDone = false;/.test(claudeSrc5) && /!boardNudgeDone && !lastRound && shouldNudgeBoardWrite\(textContent, message, result\.board\.length > 0\)/.test(claudeSrc5) && /boardNudgeDone = true;/.test(claudeSrc5));
   check("the prompt names the confirmation moment as a board moment", /"YES — EXACTLY THAT" IS A BOARD MOMENT TOO/.test(claudeSrc5));
+}
+
+section("isLikelyEcho — textual echo discrimination for real barge-in (client/voice/echoGuard.ts)");
+{
+  // Barge-in keeps the mic OPEN while Otto speaks — so the mic hears Otto through the speakers too. The
+  // only reliable discriminator the Web Speech API allows is textual: Otto can only echo words he is
+  // currently saying, so heard text contained in the spoken reply is echo; anything else is the student.
+  const spoken = "Yes — exactly that. 1 − cos²θ is sin²θ, straight from sin²θ + cos²θ = 1. So the whole fraction is now sin²θ over sinθ·cosθ. What does that cancel down to?";
+  check("Otto's own words coming back are classified as echo", isLikelyEcho(spoken, "exactly that is sin"));
+  check("the student talking over him is NOT echo (even mid-reply)", !isLikelyEcho(spoken, "wait can you explain the fraction again"));
+  check("a one-word interjection is never echo (a student's 'stop' must always get through)", !isLikelyEcho(spoken, "stop"));
+  check("a partial prefix of the spoken text is echo (recognizer landing mid-utterance)", isLikelyEcho("The derivative gives the rate of change", "the derivative gives"));
+  check("normalizeForEcho keeps French accents but drops punctuation", normalizeForEcho("Oui — c'est ça !") === "oui c est ça");
+  check("empty spoken text or empty heard text is never echo", !isLikelyEcho("", "hello there") && !isLikelyEcho(spoken, "  "));
+
+  const taskCardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  // The per-task chat got the same treatment: interruptible everywhere, not just in Tutor Session.
+  check("TaskChat is interruptible too (echo-guarded barge-in, mic never paused during TTS)", /isLikelyEcho\(spokenRef\.current, text\)/.test(taskCardSrc) && !/wasSpeakingRef/.test(taskCardSrc));
+}
+
+section("Tutor Session — sessions never auto-start, and past boards read at a glance (source pins)");
+{
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  // Direct request: "sessions should not auto start" — /api/study/free MINTS a session when none is
+  // active, so the mount now does a READ-ONLY peek (GET /api/tasks): an active session resumes, none
+  // stays on the landing screen. Creating a session is only ever the Start button's job.
+  check("the mount peek is read-only (api.tasks), never the session-minting route", /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(tutorSrc) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc));
+  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc));
+  check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
+  // Direct request: "refine ui for past boards" — each history item shows the board AT A GLANCE (first
+  // few entries as compact lines) before the full reopenable board behind the View button.
+  check("past sessions show the board at a glance (capped 3-line preview)", /tutor-history-takeaways/.test(tutorSrc) && /tutor-history-board/.test(tutorSrc) && /slice\(0, 3\)/.test(tutorSrc));
+  check("history modals are subject-titled (which lesson's board/chat am I reopening?)", /openBoardSession\.subject \? ` · \$\{openBoardSession\.subject\}`/.test(tutorSrc));
+  const stylesSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the at-a-glance history styles actually exist", /\.tutor-history-takeaways/.test(stylesSrc) && /\.tutor-history-board li::before/.test(stylesSrc));
 }
 
 section("Voice-mode board rules — gesture research, not dictation (prompt pins)");
@@ -1471,29 +1514,32 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // Reported live: "session should not auto start" — the mount used to call /api/study/free, whose
   // resume-first route MINTS a session when none is active, so merely OPENING /tutor started one. The
   // passive mount is now a read-only peek at GET /api/tasks (resume-only), and the ONE studyFreeSession
-  // call left in the file is the Start button's explicit create. fresh:true stays forbidden — even that
-  // explicit create relies on the route's own resume-first to never discard a session that appeared in
-  // the window between the mount peek and the click.
+  // call left in the file is the Start button's explicit create.
   check("opening /tutor does NOT create a session (mount is a read-only api.tasks peek; Start is the only creator)", /api\.tasks\(\)\.then/.test(tutorSrc) && (tutorSrc.match(/api\.studyFreeSession\(/g) || []).length === 1);
-  check("even the explicit Start-button create never passes fresh:true (an active session resumes, never discards)", !/api\.studyFreeSession\(true\)/.test(tutorSrc));
+  // Reported live: Start resumed an old "forces" thread instead of starting blank, and never asked what
+  // subject. Start must require a picked subject and pass fresh:true (plus that subject) — a NEW lesson is
+  // always a BLANK session, never a resume of an old one; resuming an in-progress session remains the
+  // mount peek's job.
+  check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc) && /if \(!selectedSubject( \|\| \w+)?\) return;/.test(tutorSrc));
 }
 
-section("Tutor Session — voice-first by default, and the board survives ending a session (source pins)");
+section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto-on), and the board survives ending a session (source pins)");
 {
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  // Direct request: "make chat really for oral usage" — the Tutor's whole premise is a spoken lesson
-  // (unlike a per-task chat, where voice is an opt-in extra), so it starts already listening.
-  check("Tutor Session starts in voice mode automatically", /startInVoiceMode/.test(tutorSrc));
+  // Direct request: "voice should not be auto on" — the earlier voice-first auto-start (mic on with the
+  // session) is REVERSED. Starting or resuming a session must never enable voice; the mic toggle in the
+  // chat panel is the student's explicit choice. Everything else voice (board-pane pill, barge-in,
+  // voice-primary layout) still activates the moment they turn it on themselves.
+  check("Tutor Session does NOT auto-enable voice (no startInVoiceMode prop, no wantVoice forcing)", !/startInVoiceMode=/.test(tutorSrc) && !/setWantVoice/.test(tutorSrc));
   const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
-  check("startInVoiceMode is applied exactly once (a ref-gated effect, never fights a deliberate manual toggle-off)", /autoVoiceAppliedRef/.test(askOtto));
+  check("startInVoiceMode (where a caller still passes it) is applied exactly once (a ref-gated effect, never fights a deliberate manual toggle-off)", /autoVoiceAppliedRef/.test(askOtto));
   // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.
   check("ending a session saves the FULL board (diagrams/equations intact), not just flattened text", /board: task\.board \|\| \[\]/.test(tutorSrc));
   check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
-  // One-tap hands-free: starting OR resuming a session is the tap — the mic turns on with the session and
-  // stays on (AskOttoPanel's ref-gate applies it once and never fights a deliberate toggle-off).
-  check("starting (or resuming) a session turns voice on — one tap, then hands-free", /setWantVoice\(true\)/.test(tutorSrc) && /startInVoiceMode=\{wantVoice\}/.test(tutorSrc));
+  // Voice stays off through start/resume — the student turns it on with the mic toggle themselves.
+  check("starting or resuming a session leaves voice OFF (explicit mic tap to enable)", !/setWantVoice\(true\)/.test(tutorSrc));
   // The voice state pill lives on the BOARD pane header: in a voice-first session the student's eyes are
   // on the board, so "am I being heard?" has to be answerable where they're actually looking.
   check("voice state is reported up and shown on the board pane", /onVoiceStateChange/.test(tutorSrc) && /tutor-voice-pill/.test(tutorSrc));
@@ -1503,7 +1549,13 @@ section("Tutor Session — voice-first by default, and the board survives ending
   // Barge-in: talking over Otto cancels the TTS mid-sentence, like interrupting a human tutor. Threshold
   // is 2+ words so speaker echo / a throat-clear doesn't cut him off.
   const askOttoSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
-  check("barge-in: ≥2-word utterance while Otto speaks cancels the speech", /bargeIn && speakingRef\.current && text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2/.test(askOttoSrc));
+  const recogSrc = readFileSync(new URL("../client/voice/useSpeechRecognition.ts", import.meta.url), "utf8");
+  // Barge-in v2 (real interruption): the mic STAYS OPEN while Otto speaks and interim text streams in
+  // live — the old version aborted the recognizer during TTS, which made interruption structurally
+  // impossible (no audio reaches a dead mic). Echo from the speakers is classified textually.
+  check("mic stays open during speech when barge-in is on (pause-the-mic is gated off)", /if \(!voiceModeOn \|\| bargeIn\) return;/.test(askOttoSrc));
+  check("live interim text cancels the TTS mid-sentence (≥2 words, echo-guarded)", /onInterim: \(text\) =>/.test(askOttoSrc) && /isLikelyEcho\(spokenRef\.current, text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
+  check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
   check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));
 }
 

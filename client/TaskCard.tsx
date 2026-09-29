@@ -20,6 +20,7 @@ import {
   withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, CondensedUserMessage, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
 } from "./ui.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
+import { isLikelyEcho } from "./voice/echoGuard.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
@@ -1278,35 +1279,39 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
   const sendingRef = useRef(sending);
   sendingRef.current = sending;
-  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => { if (!sendingRef.current) onSend(text, true); } });
+  // Barge-in (same design as AskOttoPanel's — see that file): the mic stays OPEN while Otto speaks, so
+  // the student can talk over him. Echo from the speakers is classified by isLikelyEcho (Otto can only
+  // echo words he is currently saying), not by deafness; onResult/onInterim need the CURRENT speaking
+  // state and spoken text, hence the refs.
+  const speakingRef = useRef(false);
+  speakingRef.current = synth.speaking;
+  const spokenRef = useRef("");
+  spokenRef.current = task.chat?.length ? task.chat[task.chat.length - 1]?.text || "" : "";
+  const recog = useSpeechRecognition({
+    lang: speechLang,
+    onResult: (text) => {
+      if (sendingRef.current) return;
+      if (speakingRef.current) {
+        if (isLikelyEcho(spokenRef.current, text)) return;
+        synth.cancel(); // the student talked over Otto — stop the speech; the utterance still sends
+      }
+      onSend(text, true);
+    },
+    onInterim: (text) => {
+      if (!speakingRef.current || !text) return;
+      if (isLikelyEcho(spokenRef.current, text)) return;
+      if (text.trim().split(/\s+/).length >= 2) synth.cancel();
+    },
+  });
   useEffect(() => {
     if (voiceModeOn) recog.start();
     else { recog.abort(); synth.cancel(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceModeOn]);
-  const wasSpeakingRef = useRef(false);
-  useEffect(() => {
-    if (!voiceModeOn) return;
-    // Otto's own TTS output was getting picked up by the still-listening mic and re-sent as if the
-    // student had said it. Two gaps in the old stop()/start() pair let that happen: (1) recog.stop()
-    // waits for the recognizer to finish processing whatever audio it already has buffered instead of
-    // cutting it off — if that buffer included the first fraction of a second of Otto's own voice (the
-    // stop() call and speechSynthesis actually becoming audible aren't perfectly synchronized), it could
-    // still fire as a "final" result. abort() discards the buffer instead of finalizing it. (2) even once
-    // playback ends, speaker output lingers briefly as room echo/reverb (worse without headphones) — the
-    // mic reopening on the same tick as synth.speaking flips false could still catch that tail. A short
-    // settle delay before restarting gives it time to die down; the delay is cancelled if voice mode is
-    // toggled off or speech starts again before it fires.
-    if (synth.speaking && !wasSpeakingRef.current) {
-      recog.abort();
-    } else if (!synth.speaking && wasSpeakingRef.current) {
-      const t = setTimeout(() => { if (voiceModeOn && !synth.speaking) recog.start(); }, 400);
-      wasSpeakingRef.current = synth.speaking;
-      return () => clearTimeout(t);
-    }
-    wasSpeakingRef.current = synth.speaking;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [synth.speaking, voiceModeOn]);
+  // The old pause-the-mic-while-Otto-speaks effect is GONE here: TaskChat always runs barge-in, so the
+  // mic stays open during TTS and echo is handled textually (isLikelyEcho above). Pausing the recognizer
+  // was the thing that made interruption impossible — no audio reaches a dead mic — and its settle-delay
+  // reopen only existed to serve that pause. The voiceModeOn effect above still aborts on toggle-off.
   const spokenCountRef = useRef(0);
   useEffect(() => {
     const chat = task.chat || [];

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
-import type { WebTask, DiagramOp } from "../../../shared/types.ts";
+import type { WebTask, BoardEntry, TaskProblem, DiagramOp } from "../../../shared/types.ts";
 import { renderChatText, useLang, FirstTimeHint, stripStrayMarkdown } from "../../ui.tsx";
 
 // A guarded DYNAMIC import, not a static `import "katex/dist/katex.min.css"` — this module is also pulled
@@ -85,31 +85,132 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
   }
 }
 
+/** One CREATE_PROBLEM block as it renders IN THE BOARD FLOW (no longer a pinned "current problem" section
+ *  above everything — the user's request: problems are part of the lesson's story, interleaved exactly where
+ *  they were created between the entries around them). State lives in BoardArtifact (keyed by problem id)
+ *  so answers survive the flow being re-sorted or the same problem re-rendering. */
+interface ProblemBlockProps {
+  problem: TaskProblem;
+  state: { picked: number | null; textAnswer: string; submitted: boolean };
+  hintShown: boolean;
+  isCorrect: boolean;
+  onShowHint: () => void;
+  onPick: (picked: number) => void;
+  onTextAnswer: (text: string) => void;
+  onSubmit: () => void;
+  en: boolean;
+}
+
+function ProblemBlock({ problem, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en }: ProblemBlockProps) {
+  const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
+  const answered = problemIsMCQ ? state.picked !== null : state.submitted;
+  return (
+    <div className="sm-board-problem">
+      <div className="sm-board-problem-label">{en ? "Problem" : "Problème"}</div>
+      <div className="sm-board-problem-q">{stripStrayMarkdown(problem.question)}</div>
+      {problem.format && !answered ? <div className="sm-board-problem-format">{problem.format}</div> : null}
+      {problem.hint && !answered ? (
+        <div className="sm-board-problem-hint-row">
+          {hintShown ? (
+            <div className="sm-board-problem-hint">{stripStrayMarkdown(problem.hint)}</div>
+          ) : (
+            <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={onShowHint}>
+              {en ? "Hint" : "Indice"}
+            </button>
+          )}
+        </div>
+      ) : null}
+      {problemIsMCQ ? (
+        <div className="sm-board-problem-opts">
+          {problem.options!.map((opt, oi) => {
+            const optState = !answered ? "" : oi === problem.correct ? "correct" : oi === state.picked ? "wrong" : "";
+            return (
+              <button
+                key={oi}
+                type="button"
+                className={`quiz-opt ${optState}`}
+                disabled={answered}
+                onClick={() => onPick(oi)}
+              >
+                <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
+                {optState === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
+                {optState === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗</span>}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="sm-board-problem-free">
+          {answered ? (
+            <div className={`sm-inline-problem-result ${isCorrect ? "correct" : "wrong"}`}>
+              {isCorrect
+                ? (en ? "Correct !" : "Correct!")
+                : (en ? `Not quite — the answer was: ${problem.answer}` : `Non — la réponse était : ${problem.answer}`)}
+            </div>
+          ) : (
+            <div className="sm-inline-problem-input-row">
+              <input
+                type="text"
+                className="sm-inline-problem-input"
+                placeholder={en ? "Your answer…" : "Ta réponse…"}
+                value={state.textAnswer}
+                onChange={e => onTextAnswer(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && state.textAnswer.trim()) onSubmit(); }}
+                disabled={answered}
+              />
+              <button
+                type="button"
+                className="sm-btn sm-btn-primary sm-btn-sm"
+                disabled={!state.textAnswer.trim()}
+                onClick={onSubmit}
+              >
+                {en ? "Check" : "Vérifier"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {answered && problem.why ? (
+        <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
+      ) : null}
+    </div>
+  );
+}
+
 /** The persistent tutor Board (WRITE_TO_BOARD, server/claude.ts) — a general-purpose surface Otto writes
  *  to at its own discretion, any time: formulas, instructions, running summaries of the student's own reasoning,
- *  and practice problems. Merged canvas functionality - the board now shows both board entries and canvas problems
- *  in one unified surface. */
+ *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
+ *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
+ *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
 export function BoardArtifact({ task }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
   const problems = task.problems || [];
   // Content-level dedupe on RENDER (by id): sync merges (tasks.ts's unionStudyArtifacts) and a
-  // double-responded turn can hand back an array containing the same entry/problem twice. Entries ALSO
-  // drop kind:"focus" (pinned above as the board's header strip — a lesson page leads with its goal, not
-  // burying it at the bottom of the flow) and kind:"problem" (problems render in their own blocks below).
-  // Every problem RENDER/NAVIGATION surface reads the deduped list — single-question mode navigates by
-  // index into this same array, so iterating the raw `problems` there would cycle a duplicated problem
-  // twice (the same "shows twice" failure this file's dedupe exists to prevent, just one mode over).
+  // double-responded turn can hand back an array containing the same entry/problem twice. Entries drop
+  // kind:"focus" (pinned above as the board's header strip) and any legacy kind:"problem" rows (problems
+  // render as flow items from task.problems — never twice). Every problem surface reads the DEDUPED list.
   const dedupedProblems = problems.filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
   const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
   const flowEntries = entries
     .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-    .filter(e => e.kind !== "focus");
+    .filter(e => e.kind !== "focus" && (e.kind as string) !== "problem");
+
+  // THE FLOW: entries (by their `at`) and problems (by `createdAt`) merged and sorted by timestamp —
+  // the board reads top-to-bottom in the order the session actually happened. A missing/unparseable
+  // timestamp sorts to the end (defensive; both writers always stamp).
+  const flowItems = useMemo(() => {
+    const items: Array<{ key: string; at: number; entry?: BoardEntry; problem?: TaskProblem }> = [];
+    for (const e of flowEntries) items.push({ key: e.id, at: Date.parse(e.at || "") || Number.MAX_SAFE_INTEGER, entry: e });
+    for (const p of dedupedProblems) items.push({ key: p.id, at: Date.parse(p.createdAt || "") || Number.MAX_SAFE_INTEGER, problem: p });
+    items.sort((a, b) => a.at - b.at);
+    return items;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries.length, problems.length]);
+
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
   const [problemState, setProblemState] = useState<{ [key: string]: { picked: number | null; textAnswer: string; submitted: boolean } }>({});
-  const [singleQuestionMode, setSingleQuestionMode] = useState(false);
-  const [currentProblemIndex, setCurrentProblemIndex] = useState(0);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
@@ -125,6 +226,17 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
 
   const submitProblem = (problemId: string) => {
     setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
+  };
+
+  const getProblemState = (problemId: string) => problemState[problemId] || { picked: null, textAnswer: "", submitted: false };
+
+  // Free-response check: trimmed, case-insensitive comparison
+  const checkFreeResponse = (problemId: string): boolean => {
+    const problem = problems.find(p => p.id === problemId);
+    if (!problem || !problem.answer) return false;
+    const state = getProblemState(problemId);
+    const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    return normalize(state.textAnswer) === normalize(problem.answer);
   };
 
   const hint = (
@@ -154,165 +266,15 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
     );
   }
 
-  const activeProblem = dedupedProblems.length > 0 ? dedupedProblems[dedupedProblems.length - 1] : null;
-  const isMCQ = activeProblem && Array.isArray(activeProblem.options) && activeProblem.options.length >= 2;
-
-  // In single-question mode, show only the current problem with navigation
-  const currentProblem = singleQuestionMode && dedupedProblems.length > 1
-    ? dedupedProblems[currentProblemIndex]
-    : activeProblem;
-
-  const getProblemState = (problemId: string) => problemState[problemId] || { picked: null, textAnswer: "", submitted: false };
-
-  // Free-response check: trimmed, case-insensitive comparison
-  const checkFreeResponse = (problemId: string): boolean => {
-    const problem = problems.find(p => p.id === problemId);
-    if (!problem || !problem.answer) return false;
-    const state = getProblemState(problemId);
-    const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
-    return normalize(state.textAnswer) === normalize(problem.answer);
-  };
+  const en = L("fr", "en") === "en";
 
   return (
     <div className="sm-board-body">
       {hint}
 
-      {/* Single-question mode toggle when there are multiple problems */}
-      {dedupedProblems.length > 1 && (
-        <div className="sm-board-problem-mode-toggle">
-          <button
-            type="button"
-            className={`sm-btn sm-btn-ghost sm-btn-sm ${singleQuestionMode ? "active" : ""}`}
-            onClick={() => setSingleQuestionMode(true)}
-          >
-            {L("Une question à la fois", "One question at a time")}
-          </button>
-          <button
-            type="button"
-            className={`sm-btn sm-btn-ghost sm-btn-sm ${!singleQuestionMode ? "active" : ""}`}
-            onClick={() => setSingleQuestionMode(false)}
-          >
-            {L("Tout afficher", "Show all")}
-          </button>
-        </div>
-      )}
-
-      {/* The ONE-problem view (single-question mode only). In "show all" mode this block must NOT render:
-          the full list below already contains every problem — rendering the latest one here too made each
-          session's most recent problem appear TWICE on the board (and a one-problem board showed its only
-          problem twice, period). "Current problem" is a single-question-mode concept. */}
-      {singleQuestionMode && currentProblem && (() => {
-        const state = getProblemState(currentProblem.id);
-        const currentIsMCQ = Array.isArray(currentProblem.options) && currentProblem.options.length >= 2;
-        const isCorrect = currentIsMCQ ? state.picked === currentProblem.correct : state.submitted ? checkFreeResponse(currentProblem.id) : false;
-        const answered = currentIsMCQ ? state.picked !== null : state.submitted;
-
-        return (
-          <div className="sm-board-problem">
-            <div className="sm-board-problem-label">{L("Problème actuel", "Current problem")}</div>
-            <div className="sm-board-problem-q">{stripStrayMarkdown(currentProblem.question)}</div>
-            {currentProblem.format && !answered ? <div className="sm-board-problem-format">{currentProblem.format}</div> : null}
-            {currentProblem.hint && !answered ? (
-              <div className="sm-board-problem-hint-row">
-                {showHint[currentProblem.id] ? (
-                  <div className="sm-board-problem-hint">{stripStrayMarkdown(currentProblem.hint)}</div>
-                ) : (
-                  <button
-                    type="button"
-                    className="sm-btn sm-btn-ghost sm-btn-sm"
-                    onClick={() => setShowHint(prev => ({ ...prev, [currentProblem.id]: true }))}
-                  >
-                    {L("Indice", "Hint")}
-                  </button>
-                )}
-              </div>
-            ) : null}
-            {currentIsMCQ ? (
-              <div className="sm-board-problem-opts">
-                {currentProblem.options!.map((opt, oi) => {
-                  const optState = !answered ? "" : oi === currentProblem.correct ? "correct" : oi === state.picked ? "wrong" : "";
-                  return (
-                    <button
-                      key={oi}
-                      type="button"
-                      className={`quiz-opt ${optState}`}
-                      disabled={answered}
-                      onClick={() => setProblemPicked(currentProblem.id, oi)}
-                    >
-                      <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
-                      {optState === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
-                      {optState === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="sm-board-problem-free">
-                {answered ? (
-                  <div className={`sm-inline-problem-result ${isCorrect ? "correct" : "wrong"}`}>
-                    {isCorrect
-                      ? L("Correct !", "Correct!")
-                      : L(`Non — la réponse était : ${currentProblem.answer}`, `Not quite — the answer was: ${currentProblem.answer}`)}
-                  </div>
-                ) : (
-                  <div className="sm-inline-problem-input-row">
-                    <input
-                      type="text"
-                      className="sm-inline-problem-input"
-                      placeholder={L("Ta réponse…", "Your answer…")}
-                      value={state.textAnswer}
-                      onChange={e => setProblemTextAnswer(currentProblem.id, e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter" && state.textAnswer.trim()) submitProblem(currentProblem.id); }}
-                      disabled={answered}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      className="sm-btn sm-btn-primary sm-btn-sm"
-                      disabled={!state.textAnswer.trim()}
-                      onClick={() => submitProblem(currentProblem.id)}
-                    >
-                      {L("Vérifier", "Check")}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            {answered && currentProblem.why ? (
-              <div className="sm-inline-problem-why">{stripStrayMarkdown(currentProblem.why)}</div>
-            ) : null}
-          </div>
-        );
-      })()}
-
-      {/* Navigation controls for single-question mode */}
-      {singleQuestionMode && dedupedProblems.length > 1 && (
-        <div className="sm-board-problem-nav">
-          <button
-            type="button"
-            className="sm-btn sm-btn-ghost sm-btn-sm"
-            disabled={currentProblemIndex === 0}
-            onClick={() => setCurrentProblemIndex(Math.max(0, currentProblemIndex - 1))}
-          >
-            {L("← Précédent", "← Previous")}
-          </button>
-          <span className="sm-board-problem-nav-counter">
-            {currentProblemIndex + 1} / {dedupedProblems.length}
-          </span>
-          <button
-            type="button"
-            className="sm-btn sm-btn-ghost sm-btn-sm"
-            disabled={currentProblemIndex === dedupedProblems.length - 1}
-            onClick={() => setCurrentProblemIndex(Math.min(dedupedProblems.length - 1, currentProblemIndex + 1))}
-          >
-            {L("Suivant →", "Next →")}
-          </button>
-        </div>
-      )}
-
       {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
-          a lesson page: the day's arc stays visible no matter how long the entry flow below grows. The
-          latest focus wins if a session ever writes a second one. */}
+          a lesson page: the day's arc stays visible no matter how long the flow below grows. The latest
+          focus wins if a session ever writes a second one. */}
       {latestFocus ? (
         <div className="sm-board-focus-pin">
           <span className="sm-board-entry-kind">{L(...KIND_LABEL.focus)}</span>
@@ -320,113 +282,49 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
         </div>
       ) : null}
 
-      {/* Board entries — deduped, focus pinned above, problems in their own blocks below */}
-      {flowEntries.map((e) => (
-        <div key={e.id} className={`sm-board-entry sm-board-entry-${e.kind || "note"}`}>
-          {e.kind && KIND_LABEL[e.kind] ? (
-            <span className="sm-board-entry-kind">{L(...KIND_LABEL[e.kind])}</span>
-          ) : null}
-          {e.kind === "diagram" && e.diagram?.length ? (
-            <>
-              <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
-              <svg viewBox="0 0 800 600" className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
-                <defs>
-                  <marker id="sm-diagram-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                    <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
-                  </marker>
-                </defs>
-                {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} />)}
-              </svg>
-            </>
-          ) : (
-            <div className="sm-board-entry-text">{renderChatText(e.text)}</div>
-          )}
-        </div>
-      ))}
-
-      {/* Show all problems when not in single-question mode */}
-      {!singleQuestionMode && problems.length > 0 && dedupedProblems.map((problem) => {
-        const state = getProblemState(problem.id);
-        const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
-        const isCorrect = problemIsMCQ ? state.picked === problem.correct : state.submitted ? checkFreeResponse(problem.id) : false;
-        const answered = problemIsMCQ ? state.picked !== null : state.submitted;
-
-        return (
-          <div key={problem.id} className="sm-board-problem">
-            <div className="sm-board-problem-label">{L("Problème", "Problem")}</div>
-            <div className="sm-board-problem-q">{stripStrayMarkdown(problem.question)}</div>
-            {problem.format && !answered ? <div className="sm-board-problem-format">{problem.format}</div> : null}
-            {problem.hint && !answered ? (
-              <div className="sm-board-problem-hint-row">
-                {showHint[problem.id] ? (
-                  <div className="sm-board-problem-hint">{stripStrayMarkdown(problem.hint)}</div>
-                ) : (
-                  <button
-                    type="button"
-                    className="sm-btn sm-btn-ghost sm-btn-sm"
-                    onClick={() => setShowHint(prev => ({ ...prev, [problem.id]: true }))}
-                  >
-                    {L("Indice", "Hint")}
-                  </button>
-                )}
-              </div>
-            ) : null}
-            {problemIsMCQ ? (
-              <div className="sm-board-problem-opts">
-                {problem.options!.map((opt, oi) => {
-                  const optState = !answered ? "" : oi === problem.correct ? "correct" : oi === state.picked ? "wrong" : "";
-                  return (
-                    <button
-                      key={oi}
-                      type="button"
-                      className={`quiz-opt ${optState}`}
-                      disabled={answered}
-                      onClick={() => setProblemPicked(problem.id, oi)}
-                    >
-                      <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
-                      {optState === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
-                      {optState === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="sm-board-problem-free">
-                {answered ? (
-                  <div className={`sm-inline-problem-result ${isCorrect ? "correct" : "wrong"}`}>
-                    {isCorrect
-                      ? L("Correct !", "Correct!")
-                      : L(`Non — la réponse était : ${problem.answer}`, `Not quite — the answer was: ${problem.answer}`)}
-                  </div>
-                ) : (
-                  <div className="sm-inline-problem-input-row">
-                    <input
-                      type="text"
-                      className="sm-inline-problem-input"
-                      placeholder={L("Ta réponse…", "Your answer…")}
-                      value={state.textAnswer}
-                      onChange={e => setProblemTextAnswer(problem.id, e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter" && state.textAnswer.trim()) submitProblem(problem.id); }}
-                      disabled={answered}
-                    />
-                    <button
-                      type="button"
-                      className="sm-btn sm-btn-primary sm-btn-sm"
-                      disabled={!state.textAnswer.trim()}
-                      onClick={() => submitProblem(problem.id)}
-                    >
-                      {L("Vérifier", "Check")}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            {answered && problem.why ? (
-              <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
-            ) : null}
-          </div>
-        );
-      })}
+      {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
+          Problems are NOT a pinned section: a CREATE_PROBLEM sits right between the entry that set it up and
+          the insight that answered it. */}
+      {flowItems.map((item) =>
+        item.problem ? (
+          <ProblemBlock
+            key={item.key}
+            problem={item.problem}
+            state={getProblemState(item.problem.id)}
+            hintShown={!!showHint[item.problem.id]}
+            isCorrect={checkFreeResponse(item.problem.id)}
+            onShowHint={() => setShowHint(prev => ({ ...prev, [item.problem!.id]: true }))}
+            onPick={(picked) => setProblemPicked(item.problem!.id, picked)}
+            onTextAnswer={(text) => setProblemTextAnswer(item.problem!.id, text)}
+            onSubmit={() => submitProblem(item.problem!.id)}
+            en={en}
+          />
+        ) : (() => {
+          const e = item.entry!;
+          return (
+            <div key={item.key} className={`sm-board-entry sm-board-entry-${e.kind || "note"}`}>
+              {e.kind && KIND_LABEL[e.kind] ? (
+                <span className="sm-board-entry-kind">{L(...KIND_LABEL[e.kind])}</span>
+              ) : null}
+              {e.kind === "diagram" && e.diagram?.length ? (
+                <>
+                  <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+                  <svg viewBox="0 0 800 600" className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
+                    <defs>
+                      <marker id="sm-diagram-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+                        <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
+                      </marker>
+                    </defs>
+                    {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} />)}
+                  </svg>
+                </>
+              ) : (
+                <div className="sm-board-entry-text">{renderChatText(e.text)}</div>
+              )}
+            </div>
+          );
+        })()
+      )}
 
       <div ref={endRef} />
     </div>

@@ -14,12 +14,14 @@ import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSess
  *
  *  Sessions: each session is backed by its own freestudy task. Mounting this component RESUMES an active
  *  freestudy session if one exists (a read-only peek at GET /api/tasks) — but it NEVER CREATES one just
- *  because the page was opened: no active session shows the landing screen, and only the explicit Start
- *  button calls /api/study/free to mint one. A session only earns a place in history when it actually has
- *  substance: at least one real user message or something written on the board (a session where Otto never
- *  said a word and the board stayed empty gets dismissed silently, not memorialized). Ending a session
- *  generates a short summary from the board + chat (see tutorSessions.ts), saves it locally, and dismisses
- *  the task so the next start creates a fresh one. Past session summaries are shown in a collapsible strip. */
+ *  because the page was opened: no active session shows the landing screen, where the student picks a
+ *  SUBJECT (always asked — the subject stamps the session and gives the tutor its context) and then Start
+ *  creates a BLANK session (fresh:true — never a resume of an old thread, a new lesson starts clean). A
+ *  session only earns a place in history when it actually has substance: at least one real user message or
+ *  something written on the board (a session where Otto never said a word and the board stayed empty gets
+ *  dismissed silently, not memorialized). Ending a session generates a short summary from the board + chat
+ *  (see tutorSessions.ts), saves it locally, and dismisses the task so the next start creates a fresh one.
+ *  Past session summaries are shown in a collapsible strip. */
 export function TutorSession({ userId }: { userId: string | null }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
@@ -34,13 +36,20 @@ export function TutorSession({ userId }: { userId: string | null }) {
   const [showHistory, setShowHistory] = useState(false);
   const [openBoardSession, setOpenBoardSession] = useState<TutorSessionSummary | null>(null);
   const [openChatSession, setOpenChatSession] = useState<TutorSessionSummary | null>(null);
-  // One-tap hands-free voice: starting a session IS the tap — the mic turns on with the session, and the
-  // student never touches the mic again. AskOttoPanel applies it exactly once per mount and never re-fights
-  // a deliberate toggle-off (see its autoVoiceAppliedRef): a student who turned voice off mid-session keeps
-  // it off for the rest of THAT session, and every new start offers voice again.
-  const [wantVoice, setWantVoice] = useState(false);
+  // The landing screen asks WHAT to study before starting — the subject is stamped onto the session
+  // (sourceSubject, visible to the tutor prompt) and carried into history as the session's label.
+  const COMMON_SUBJECTS = [
+    "Math", "Physics", "Chemistry", "Biology", "History",
+    "English", "French", "Spanish", "Geography", "Economics",
+    "Philosophy", "Computer Science", "Art", "Music", "Other",
+  ];
+  const [selectedSubject, setSelectedSubject] = useState("");
+  const [startingSession, setStartingSession] = useState(false);
+  // Voice is MANUAL here — the mic toggle in the chat panel is the student's choice, never forced on by
+  // starting a session (reported: "voice should not be auto on"). The board-pane pill, barge-in and the
+  // voice-primary layout below all still activate the moment the student turns voice on themselves.
   // Live voice-loop state, reported up by AskOttoPanel — rendered as a pill on the BOARD pane header, not
-  // the chat: in a voice-first session the student's eyes are on the board, so "am I being heard?" has to
+  // the chat: with voice on, the student's eyes are on the board, so "am I being heard?" has to
   // be answerable where they're actually looking.
   const [voiceState, setVoiceState] = useState({ listening: false, speaking: false, voiceModeOn: false, interim: "" });
   const handleVoiceState = useCallback((s: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => setVoiceState(s), []);
@@ -167,23 +176,26 @@ export function TutorSession({ userId }: { userId: string | null }) {
   }, [task, sessionStart, saveAndClose]);
 
   const startNewSession = useCallback(async () => {
+    if (!selectedSubject || startingSession) return; // Start only exists once a subject is picked
     setError(null);
-    setWantVoice(true); // starting the session is the one tap that enables hands-free voice
+    setStartingSession(true);
     try {
-      // The EXPLICIT create path — the only caller of /api/study/free in this component. Resume-first on
-      // the server, so in the rare window where a session appeared between the mount peek and this click
-      // it resumes that one instead of discarding it; otherwise it mints the fresh session the student
-      // asked for.
-      const list = await api.studyFreeSession();
-      const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy") : undefined;
+      // The EXPLICIT create path — the only caller of /api/study/free in this component. The student asked
+      // for a NEW lesson on a specific subject: fresh:true (a blank session, never a resume of an old
+      // thread — the route's fresh mode also clears any leftover empty shell). The mount's read-only peek
+      // remains the only resume path.
+      const list = await api.studyFreeSession(true, selectedSubject);
+      const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.sourceSubject === selectedSubject) : undefined;
       if (t) {
         setTask(hydrateLocalThreads([t], userId)[0]);
         setSessionStart(new Date().toISOString());
       }
     } catch {
       setError(L("Impossible de démarrer la séance", "Couldn't start the session"));
+    } finally {
+      setStartingSession(false);
     }
-  }, [userId, L]);
+  }, [selectedSubject, startingSession, userId, L]);
 
   if (loadError) {
     return (
@@ -203,9 +215,32 @@ export function TutorSession({ userId }: { userId: string | null }) {
           <h2>{L("Apprendre en réfléchissant", "Learn by thinking")}</h2>
           <p className="tutor-landing-sub">{L("Otto ne fait pas le travail à ta place. Il t'aide à essayer, à expliquer ton raisonnement et à transférer ce que tu apprends.", "Otto won't do the work for you. He helps you try, explain your reasoning, and transfer what you learn.")}</p>
 
-          <button className="btn primary tutor-start-btn" onClick={startNewSession}>
-            {L("Commencer une séance", "Start a session")}
-          </button>
+          <div className="tutor-subject-select">
+            <label htmlFor="tutor-subject-select">{L("Sur quelle matière veux-tu travailler ?", "Which subject do you want to work on?")}</label>
+            <select
+              id="tutor-subject-select"
+              value={selectedSubject}
+              onChange={(e) => setSelectedSubject(e.target.value)}
+              className="btn ghost"
+            >
+              <option value="">{L("Choisir une matière", "Choose a subject")}</option>
+              {COMMON_SUBJECTS.map((subj) => (
+                <option key={subj} value={subj}>{subj}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Start appears only once a subject is picked — a session without a subject has no context for
+              the tutor and no label in history. */}
+          {selectedSubject ? (
+            <button className="btn primary tutor-start-btn" onClick={startNewSession} disabled={startingSession}>
+              {startingSession
+                ? L("Démarrage…", "Starting…")
+                : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+            </button>
+          ) : (
+            <p className="tutor-landing-sub" style={{ marginTop: 8 }}>{L("Choisis une matière pour commencer.", "Pick a subject to begin.")}</p>
+          )}
 
           {pastSessions.length > 0 && (
             <div className="tutor-past-sessions">
@@ -229,6 +264,19 @@ export function TutorSession({ userId }: { userId: string | null }) {
                           {s.subject && <span className="tutor-history-subject-pill">{s.subject}</span>}
                           <span>{s.summary.split(" — ")[0]}</span>
                         </div>
+                        {/* Board at a glance — the first few things Otto actually wrote that session, as the
+                            compact scannable record (the full reopenable board is one click below). Capped at
+                            3 lines so a long session's history item stays a preview, not a transcript. */}
+                        {!!s.boardEntries?.length && (
+                          <div className="tutor-history-takeaways">
+                            <div className="tutor-history-section-label">{L("Le tableau en bref", "Board at a glance")}</div>
+                            <ul className="tutor-history-board">
+                              {s.boardEntries.filter(Boolean).slice(0, 3).map((line, bi) => (
+                                <li key={bi}>{line.length > 140 ? `${line.slice(0, 140)}…` : line}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                       {/* Full board (diagrams/equations, not just the flattened text preview above) — only
                           present for a session ended after this was added; an older saved session has no
@@ -253,12 +301,12 @@ export function TutorSession({ userId }: { userId: string | null }) {
           )}
         </div>
         {openBoardSession && (
-          <TaskModal onClose={() => setOpenBoardSession(null)} title={L("Le tableau", "Board")}>
+          <TaskModal onClose={() => setOpenBoardSession(null)} title={L("Le tableau", "Board") + (openBoardSession.subject ? ` · ${openBoardSession.subject}` : "")}>
             <BoardArtifact task={{ board: openBoardSession.board } as unknown as WebTask} />
           </TaskModal>
         )}
         {openChatSession && (
-          <TaskModal onClose={() => setOpenChatSession(null)} title={L("Le chat", "Chat")}>
+          <TaskModal onClose={() => setOpenChatSession(null)} title={L("Le chat", "Chat") + (openChatSession.subject ? ` · ${openChatSession.subject}` : "")}>
             <div className="tutor-chat-history">
               {openChatSession.chat?.map((msg, i) => (
                 <div key={i} className={`tutor-chat-message ${msg.role}`}>
@@ -298,7 +346,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
             error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
             onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
             emptyText="" placeholder={L("Écris ici…", "Type here…")}
-            startInVoiceMode={wantVoice} bargeIn onVoiceStateChange={handleVoiceState}
+            bargeIn onVoiceStateChange={handleVoiceState}
           />
         </div>
       </section>
