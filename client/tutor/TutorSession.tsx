@@ -41,9 +41,9 @@ export function TutorSession({ userId }: { userId: string | null }) {
     setPastSessions(getTutorSessions(userId));
   }, [userId]);
 
-  const loadTask = useCallback(() => {
+  const loadTask = useCallback((subject = selectedSubject) => {
     setLoadError(false);
-    api.studyFreeSession(false, selectedSubject || undefined).then((list) => {
+    api.studyFreeSession(false, subject || undefined).then((list) => {
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done") : undefined;
       if (t) {
         setTask(hydrateLocalThreads([t], userId)[0]);
@@ -103,15 +103,14 @@ export function TutorSession({ userId }: { userId: string | null }) {
   }, [task, sessionStart, userId]);
 
   const startNewSession = useCallback(() => {
-    loadTask();
-    setSelectedSubject(""); // Reset subject for next session
-  }, [loadTask]);
+    loadTask(selectedSubject);
+  }, [loadTask, selectedSubject]);
 
   if (loadError) {
     return (
       <main className="list-wrap"><div className="empty-state">
         <h3>{L("Impossible de démarrer la séance", "Couldn't start the session")}</h3>
-        <button className="btn primary" onClick={loadTask}>{L("Réessayer", "Try again")}</button>
+        <button className="btn primary" onClick={() => loadTask()}>{L("Réessayer", "Try again")}</button>
       </div></main>
     );
   }
@@ -219,7 +218,9 @@ export function TutorSession({ userId }: { userId: string | null }) {
         </div>
         {fresh && (
           <div className="tutor-start">
-            <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
+            <p>{task.sourceSubject
+              ? L(`Salut ! Je suis Otto, ton tuteur. On va travailler sur ${task.sourceSubject}. Par quoi veux-tu commencer ?`, `Hi! I'm Otto, your tutor. We'll work on ${task.sourceSubject}. What would you like to start with?`)
+              : L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
           </div>
         )}
         <div className="tutor-chat-body">
