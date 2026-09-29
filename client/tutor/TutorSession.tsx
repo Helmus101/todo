@@ -29,6 +29,13 @@ export function TutorSession({ userId }: { userId: string | null }) {
   const [endingSession, setEndingSession] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [openBoardSession, setOpenBoardSession] = useState<TutorSessionSummary | null>(null);
+  const [selectedSubject, setSelectedSubject] = useState<string>("");
+
+  const COMMON_SUBJECTS = [
+    "Math", "Physics", "Chemistry", "Biology", "History",
+    "English", "French", "Spanish", "Geography", "Economics",
+    "Philosophy", "Computer Science", "Art", "Music", "Other"
+  ];
 
   useEffect(() => {
     setPastSessions(getTutorSessions(userId));
@@ -36,7 +43,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
 
   const loadTask = useCallback(() => {
     setLoadError(false);
-    api.studyFreeSession().then((list) => {
+    api.studyFreeSession(false, selectedSubject || undefined).then((list) => {
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done") : undefined;
       if (t) {
         setTask(hydrateLocalThreads([t], userId)[0]);
@@ -46,7 +53,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
         setSessionStart(null);
       }
     }).catch(() => setLoadError(true));
-  }, [userId]);
+  }, [userId, selectedSubject]);
 
   useEffect(() => {
     loadTask();
@@ -85,6 +92,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
         boardEntries: (task.board || []).map((b) => b.text.trim()).filter(Boolean),
         board: task.board || [],
         summary,
+        subject: task.sourceSubject,
       };
       saveTutorSession(sessionSummary, userId);
       setPastSessions(getTutorSessions(userId));
@@ -100,6 +108,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
 
   const startNewSession = useCallback(() => {
     loadTask();
+    setSelectedSubject(""); // Reset subject for next session
   }, [loadTask]);
 
   if (loadError) {
@@ -118,6 +127,20 @@ export function TutorSession({ userId }: { userId: string | null }) {
         <div className="tutor-landing-inner">
           <h2>{L("Séance de tutorat", "Tutoring session")}</h2>
           <p className="tutor-landing-sub">{L("Travaille avec Otto sur ce que tu veux apprendre. Il te guide, te pose des questions, et retient ce que tu fais à chaque séance.", "Work with Otto on whatever you'd like to learn. He guides you, asks questions, and remembers what you accomplish each session.")}</p>
+          <div className="tutor-subject-select">
+            <label htmlFor="subject-select">{L("Matière (optionnel)", "Subject (optional)")}</label>
+            <select
+              id="subject-select"
+              value={selectedSubject}
+              onChange={(e) => setSelectedSubject(e.target.value)}
+              className="btn ghost"
+            >
+              <option value="">{L("— Aucune —", "— None —")}</option>
+              {COMMON_SUBJECTS.map((subj) => (
+                <option key={subj} value={subj}>{subj}</option>
+              ))}
+            </select>
+          </div>
           <button className="btn primary tutor-start-btn" onClick={startNewSession}>
             {L("Commencer une séance", "Start a session")}
           </button>
@@ -133,6 +156,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
                     <li key={s.id} className="tutor-history-item">
                       <div className="tutor-history-date">
                         {new Date(s.endTime).toLocaleDateString(L("fr-FR", "en-US"), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        {s.subject && <span className="tutor-history-subject"> · {s.subject}</span>}
                       </div>
                       <div className="tutor-history-summary">{s.summary}</div>
                       {s.boardEntries.length > 0 && (

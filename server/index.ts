@@ -2295,6 +2295,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     if (old.source === "freestudy" && !isHandled(old.status)) { old.status = "dismissed"; old.updatedAt = now; }
   }
   const en = req.session.profile?.language === "en";
+  const subject = req.body?.subject as string | undefined;
   const e = tasks.eisenhower(0, 0);
   const id = randomUUID();
   const t: WebTask = {
@@ -2303,6 +2304,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     source: "freestudy", risk: "low",
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
     createdAt: now, anchorKey: `freestudy:${id}`,
+    sourceSubject: subject,
   };
   list.push(t);
   req.session.tasks = list;

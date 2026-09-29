@@ -18,6 +18,7 @@ export interface TutorSessionSummary {
   // field existed (older localStorage entries) — history views must degrade to the text-only boardEntries.
   board?: BoardEntry[];
   summary: string;          // a short auto-generated recap
+  subject?: string;         // the subject selected when starting the session
 }
 
 const BASE_KEY = "otto-tutor-sessions";
@@ -44,7 +45,9 @@ export function buildSessionSummary(board: BoardEntry[], chat: NonNullable<WebTa
   const boardTexts = board.map((b) => b.text.trim()).filter(Boolean);
   const parts: string[] = [];
   if (boardTexts.length) {
-    parts.push(boardTexts.slice(0, 8).join(" · "));
+    // Preserve line breaks and structure instead of flattening with " · "
+    // Take first 6 entries to keep it compact but readable
+    parts.push(boardTexts.slice(0, 6).join("\n"));
   }
   const userMsgs = chat.filter((m) => m.role === "user").length;
   if (userMsgs) parts.push(`${userMsgs} message${userMsgs > 1 ? "s" : ""}`);
@@ -68,7 +71,10 @@ export function getTutorSessions(userId: string | null = null): TutorSessionSumm
 export function pastSessionsLine(sessions: TutorSessionSummary[], lang: "fr" | "en"): string {
   if (!sessions.length) return "";
   const recent = sessions.slice(0, 5);
-  const topics = recent.map((s) => s.summary).filter(Boolean);
+  const topics = recent.map((s) => {
+    // For the compact context line, collapse newlines to keep it one-line
+    return s.summary.replace(/\n/g, " · ");
+  }).filter(Boolean);
   if (!topics.length) return "";
   return lang === "en"
     ? `Previous sessions: ${topics.join(" | ")}`

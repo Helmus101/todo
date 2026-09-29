@@ -95,10 +95,25 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
   const entries = task.board || [];
   const problems = task.problems || [];
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
+  const [problemState, setProblemState] = useState<{ [key: string]: { picked: number | null; textAnswer: string; submitted: boolean } }>({});
+  const [singleQuestionMode, setSingleQuestionMode] = useState(false);
+  const [currentProblemIndex, setCurrentProblemIndex] = useState(0);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
   }, [entries.length, problems.length]);
+
+  const setProblemPicked = (problemId: string, picked: number | null) => {
+    setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, picked, submitted: false } }));
+  };
+
+  const setProblemTextAnswer = (problemId: string, textAnswer: string) => {
+    setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, textAnswer, submitted: false } }));
+  };
+
+  const submitProblem = (problemId: string) => {
+    setProblemState(prev => ({ ...prev, [problemId]: { ...prev[problemId] || { picked: null, textAnswer: "", submitted: false }, submitted: true } }));
+  };
 
   const hint = (
     <FirstTimeHint
@@ -130,43 +145,263 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
   const activeProblem = problems.length > 0 ? problems[problems.length - 1] : null;
   const isMCQ = activeProblem && Array.isArray(activeProblem.options) && activeProblem.options.length >= 2;
 
+  // In single-question mode, show only the current problem with navigation
+  const currentProblem = singleQuestionMode && problems.length > 1
+    ? problems[currentProblemIndex]
+    : activeProblem;
+
+  const getProblemState = (problemId: string) => problemState[problemId] || { picked: null, textAnswer: "", submitted: false };
+
+  // Free-response check: trimmed, case-insensitive comparison
+  const checkFreeResponse = (problemId: string): boolean => {
+    const problem = problems.find(p => p.id === problemId);
+    if (!problem || !problem.answer) return false;
+    const state = getProblemState(problemId);
+    const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    return normalize(state.textAnswer) === normalize(problem.answer);
+  };
+
   return (
     <div className="sm-board-body">
       {hint}
-      
-      {/* Show active problem if exists */}
-      {activeProblem && (
-        <div className="sm-board-problem">
-          <div className="sm-board-problem-label">{L("Problème actuel", "Current problem")}</div>
-          <div className="sm-board-problem-q">{stripStrayMarkdown(activeProblem.question)}</div>
-          {activeProblem.format ? <div className="sm-board-problem-format">{activeProblem.format}</div> : null}
-          {isMCQ ? (
-            <div className="sm-board-problem-opts">
-              {activeProblem.options!.map((opt, oi) => (
-                <div key={oi} className="sm-board-problem-opt">
-                  <span className="sm-board-problem-opt-letter">{String.fromCharCode(65 + oi)}</span>
-                  <span>{stripStrayMarkdown(opt)}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {activeProblem.hint ? (
-            <div className="sm-board-problem-hint-row">
-              {showHint[activeProblem.id] ? (
-                <div className="sm-board-problem-hint">{stripStrayMarkdown(activeProblem.hint)}</div>
-              ) : (
-                <button 
-                  type="button" 
-                  className="sm-btn sm-btn-ghost sm-btn-sm" 
-                  onClick={() => setShowHint(prev => ({ ...prev, [activeProblem.id]: true }))}
-                >
-                  {L("Indice", "Hint")}
-                </button>
-              )}
-            </div>
-          ) : null}
+
+      {/* Single-question mode toggle when there are multiple problems */}
+      {problems.length > 1 && (
+        <div className="sm-board-problem-mode-toggle">
+          <button
+            type="button"
+            className={`sm-btn sm-btn-ghost sm-btn-sm ${singleQuestionMode ? "active" : ""}`}
+            onClick={() => setSingleQuestionMode(true)}
+          >
+            {L("Une question à la fois", "One question at a time")}
+          </button>
+          <button
+            type="button"
+            className={`sm-btn sm-btn-ghost sm-btn-sm ${!singleQuestionMode ? "active" : ""}`}
+            onClick={() => setSingleQuestionMode(false)}
+          >
+            {L("Tout afficher", "Show all")}
+          </button>
         </div>
       )}
+
+      {/* Show active problem if exists */}
+      {currentProblem && (() => {
+        const state = getProblemState(currentProblem.id);
+        const currentIsMCQ = Array.isArray(currentProblem.options) && currentProblem.options.length >= 2;
+        const isCorrect = currentIsMCQ ? state.picked === currentProblem.correct : state.submitted ? checkFreeResponse(currentProblem.id) : false;
+        const answered = currentIsMCQ ? state.picked !== null : state.submitted;
+
+        return (
+          <div className="sm-board-problem">
+            <div className="sm-board-problem-label">{L("Problème actuel", "Current problem")}</div>
+            <div className="sm-board-problem-q">{stripStrayMarkdown(currentProblem.question)}</div>
+            {currentProblem.format && !answered ? <div className="sm-board-problem-format">{currentProblem.format}</div> : null}
+            {currentProblem.hint && !answered ? (
+              <div className="sm-board-problem-hint-row">
+                {showHint[currentProblem.id] ? (
+                  <div className="sm-board-problem-hint">{stripStrayMarkdown(currentProblem.hint)}</div>
+                ) : (
+                  <button
+                    type="button"
+                    className="sm-btn sm-btn-ghost sm-btn-sm"
+                    onClick={() => setShowHint(prev => ({ ...prev, [currentProblem.id]: true }))}
+                  >
+                    {L("Indice", "Hint")}
+                  </button>
+                )}
+              </div>
+            ) : null}
+            {currentIsMCQ ? (
+              <div className="sm-board-problem-opts">
+                {currentProblem.options!.map((opt, oi) => {
+                  const optState = !answered ? "" : oi === currentProblem.correct ? "correct" : oi === state.picked ? "wrong" : "";
+                  return (
+                    <button
+                      key={oi}
+                      type="button"
+                      className={`quiz-opt ${optState}`}
+                      disabled={answered}
+                      onClick={() => setProblemPicked(currentProblem.id, oi)}
+                    >
+                      <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
+                      {optState === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
+                      {optState === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="sm-board-problem-free">
+                {answered ? (
+                  <div className={`sm-inline-problem-result ${isCorrect ? "correct" : "wrong"}`}>
+                    {isCorrect
+                      ? L("Correct !", "Correct!")
+                      : L(`Non — la réponse était : ${currentProblem.answer}`, `Not quite — the answer was: ${currentProblem.answer}`)}
+                  </div>
+                ) : (
+                  <div className="sm-inline-problem-input-row">
+                    <input
+                      type="text"
+                      className="sm-inline-problem-input"
+                      placeholder={L("Ta réponse…", "Your answer…")}
+                      value={state.textAnswer}
+                      onChange={e => setProblemTextAnswer(currentProblem.id, e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter" && state.textAnswer.trim()) submitProblem(currentProblem.id); }}
+                      disabled={answered}
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="sm-btn sm-btn-primary sm-btn-sm"
+                      disabled={!state.textAnswer.trim()}
+                      onClick={() => submitProblem(currentProblem.id)}
+                    >
+                      {L("Vérifier", "Check")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {answered && currentProblem.why ? (
+              <div className="sm-inline-problem-why">{stripStrayMarkdown(currentProblem.why)}</div>
+            ) : null}
+          </div>
+        );
+      })()}
+
+      {/* Navigation controls for single-question mode */}
+      {singleQuestionMode && problems.length > 1 && (
+        <div className="sm-board-problem-nav">
+          <button
+            type="button"
+            className="sm-btn sm-btn-ghost sm-btn-sm"
+            disabled={currentProblemIndex === 0}
+            onClick={() => setCurrentProblemIndex(Math.max(0, currentProblemIndex - 1))}
+          >
+            {L("← Précédent", "← Previous")}
+          </button>
+          <span className="sm-board-problem-nav-counter">
+            {currentProblemIndex + 1} / {problems.length}
+          </span>
+          <button
+            type="button"
+            className="sm-btn sm-btn-ghost sm-btn-sm"
+            disabled={currentProblemIndex === problems.length - 1}
+            onClick={() => setCurrentProblemIndex(Math.min(problems.length - 1, currentProblemIndex + 1))}
+          >
+            {L("Suivant →", "Next →")}
+          </button>
+        </div>
+      )}
+
+      {/* Show board entries */}
+      {entries.map((e) => (
+        <div key={e.id} className={`sm-board-entry sm-board-entry-${e.kind || "note"}`}>
+          {e.kind && KIND_LABEL[e.kind] ? (
+            <span className="sm-board-entry-kind">{L(...KIND_LABEL[e.kind])}</span>
+          ) : null}
+          {e.kind === "diagram" && e.diagram?.length ? (
+            <>
+              <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
+              <svg viewBox="0 0 800 600" className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
+                <defs>
+                  <marker id="sm-diagram-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+                    <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
+                  </marker>
+                </defs>
+                {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} />)}
+              </svg>
+            </>
+          ) : (
+            <div className="sm-board-entry-text">{renderChatText(e.text)}</div>
+          )}
+        </div>
+      ))}
+
+      {/* Show all problems when not in single-question mode */}
+      {!singleQuestionMode && problems.map((problem) => {
+        const state = getProblemState(problem.id);
+        const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
+        const isCorrect = problemIsMCQ ? state.picked === problem.correct : state.submitted ? checkFreeResponse(problem.id) : false;
+        const answered = problemIsMCQ ? state.picked !== null : state.submitted;
+
+        return (
+          <div key={problem.id} className="sm-board-problem">
+            <div className="sm-board-problem-label">{L("Problème", "Problem")}</div>
+            <div className="sm-board-problem-q">{stripStrayMarkdown(problem.question)}</div>
+            {problem.format && !answered ? <div className="sm-board-problem-format">{problem.format}</div> : null}
+            {problem.hint && !answered ? (
+              <div className="sm-board-problem-hint-row">
+                {showHint[problem.id] ? (
+                  <div className="sm-board-problem-hint">{stripStrayMarkdown(problem.hint)}</div>
+                ) : (
+                  <button
+                    type="button"
+                    className="sm-btn sm-btn-ghost sm-btn-sm"
+                    onClick={() => setShowHint(prev => ({ ...prev, [problem.id]: true }))}
+                  >
+                    {L("Indice", "Hint")}
+                  </button>
+                )}
+              </div>
+            ) : null}
+            {problemIsMCQ ? (
+              <div className="sm-board-problem-opts">
+                {problem.options!.map((opt, oi) => {
+                  const optState = !answered ? "" : oi === problem.correct ? "correct" : oi === state.picked ? "wrong" : "";
+                  return (
+                    <button
+                      key={oi}
+                      type="button"
+                      className={`quiz-opt ${optState}`}
+                      disabled={answered}
+                      onClick={() => setProblemPicked(problem.id, oi)}
+                    >
+                      <span className="quiz-opt-text">{stripStrayMarkdown(opt)}</span>
+                      {optState === "correct" && <span className="quiz-opt-mark" aria-hidden="true">✓</span>}
+                      {optState === "wrong" && <span className="quiz-opt-mark" aria-hidden="true">✗</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="sm-board-problem-free">
+                {answered ? (
+                  <div className={`sm-inline-problem-result ${isCorrect ? "correct" : "wrong"}`}>
+                    {isCorrect
+                      ? L("Correct !", "Correct!")
+                      : L(`Non — la réponse était : ${problem.answer}`, `Not quite — the answer was: ${problem.answer}`)}
+                  </div>
+                ) : (
+                  <div className="sm-inline-problem-input-row">
+                    <input
+                      type="text"
+                      className="sm-inline-problem-input"
+                      placeholder={L("Ta réponse…", "Your answer…")}
+                      value={state.textAnswer}
+                      onChange={e => setProblemTextAnswer(problem.id, e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter" && state.textAnswer.trim()) submitProblem(problem.id); }}
+                      disabled={answered}
+                    />
+                    <button
+                      type="button"
+                      className="sm-btn sm-btn-primary sm-btn-sm"
+                      disabled={!state.textAnswer.trim()}
+                      onClick={() => submitProblem(problem.id)}
+                    >
+                      {L("Vérifier", "Check")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            {answered && problem.why ? (
+              <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
+            ) : null}
+          </div>
+        );
+      })}
 
       {/* Show board entries */}
       {entries.map((e) => (

@@ -6366,7 +6366,23 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-history-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 10px; }
 .tutor-history-item { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px; text-align: left; background: var(--surface); }
 .tutor-history-date { font-size: 0.8rem; color: var(--ink-2); margin-bottom: 4px; }
-.tutor-history-summary { font-size: 0.95rem; font-weight: 500; }
-.tutor-history-board { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 2px; }
-.tutor-history-board li { font-size: 0.85rem; color: var(--ink-2); padding-left: 12px; position: relative; }
+.tutor-history-subject { font-size: 0.75rem; color: var(--accent); font-weight: 500; }
+.tutor-history-summary { font-size: 0.95rem; font-weight: 500; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
+.tutor-history-board { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.tutor-history-board li { font-size: 0.85rem; color: var(--ink-2); padding-left: 12px; position: relative; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.4; }
 .tutor-history-board li::before { content: "·"; position: absolute; left: 2px; }
+
+/* Tutor landing page */
+.tutor-subject-select { margin: 16px 0; }
+.tutor-subject-select label { display: block; font-size: 0.9rem; color: var(--ink-2); margin-bottom: 6px; }
+.tutor-subject-select select { width: 100%; max-width: 300px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font-size: 0.95rem; cursor: pointer; }
+.tutor-subject-select select:hover { border-color: var(--ink-2); }
+.tutor-subject-select select:focus { outline: none; border-color: var(--ink); }
+
+/* Board problem mode toggle */
+.sm-board-problem-mode-toggle { display: flex; gap: 8px; margin-bottom: 12px; }
+.sm-board-problem-mode-toggle .sm-btn.active { background: var(--ink-2); color: var(--surface); }
+
+/* Board problem navigation */
+.sm-board-problem-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.sm-board-problem-nav-counter { font-size: 0.85rem; color: var(--ink-2); }

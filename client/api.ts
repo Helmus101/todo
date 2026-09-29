@@ -255,7 +255,7 @@ export const api = {
   // default resumes an already-active freestudy session instead of silently discarding it. See the route's
   // own comment (server/index.ts) for why this default changed: a passive mount (route remount, StrictMode
   // double-invoke) used to be indistinguishable from "the student wants a fresh session" and wiped it.
-  studyFreeSession: (fresh?: boolean): Promise<WebTask[]> => post("/api/study/free", fresh ? { fresh: true } : {}),
+  studyFreeSession: (fresh?: boolean, subject?: string): Promise<WebTask[]> => post("/api/study/free", fresh ? { fresh: true, subject } : { subject }),
   // Server-side text extraction for a document material's URL (a Google Doc, a Padlet board, a generic
   // webpage) — so Ask Otto can reference what's actually IN it, same as it already can for uploaded PDFs
   // (client-side, pdfText.ts). Best-effort: "" is a normal, valid result (a login-walled page, a non-text
