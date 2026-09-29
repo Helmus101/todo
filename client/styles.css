@@ -6376,9 +6376,15 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-history-date { font-size: 0.8rem; color: var(--ink-2); margin-bottom: 4px; }
 .tutor-history-subject { font-size: 0.75rem; color: var(--accent); font-weight: 500; }
 .tutor-history-summary { font-size: 0.95rem; font-weight: 500; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
-.tutor-history-board { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
-.tutor-history-board li { font-size: 0.85rem; color: var(--ink-2); padding-left: 12px; position: relative; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.4; }
-.tutor-history-board li::before { content: "·"; position: absolute; left: 2px; }
+.tutor-history-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: var(--ink-2); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.tutor-history-message-count { flex: 0 0 auto; color: var(--ink-3); font-size: 0.7rem; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.tutor-history-topic { display: flex; align-items: flex-start; gap: 8px; line-height: 1.45; }
+.tutor-history-subject-pill { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: 0.72rem; font-weight: 700; line-height: 1.4; }
+.tutor-history-takeaways { margin-top: 12px; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.tutor-history-section-label { margin-bottom: 5px; color: var(--ink-2); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.tutor-history-board { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 5px; }
+.tutor-history-board li { font-size: 0.85rem; color: var(--ink-2); padding-left: 14px; position: relative; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.4; }
+.tutor-history-board li::before { content: ""; position: absolute; left: 1px; top: 0.58em; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 
 /* Tutor landing page */
 .tutor-subject-select { margin: 16px 0; }
