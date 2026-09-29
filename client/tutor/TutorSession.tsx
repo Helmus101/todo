@@ -12,14 +12,14 @@ import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSess
  *  and problems persist locally, keyed by task id — see localChatBoard.ts), and talks to the SAME chat
  *  endpoint as everywhere else, with `primer: true` so the server swaps in the Primer persona.
  *
- *  Sessions: each session is backed by its own freestudy task. Mounting this component RESUMES any active
- *  freestudy session by default (/api/study/free's resume-first contract) — a remount is just as often a
- *  route re-render or a StrictMode double-invoke as an explicit "new session" request, so passive loads
- *  NEVER pass fresh:true. A session only earns a place in history when it actually has substance: at least
- *  one real user message or something written on the board (a session where Otto never said a word and the
- *  board stayed empty gets dismissed silently, not memorialized). Ending a session generates a short
- *  summary from the board + chat (see tutorSessions.ts), saves it locally, and dismisses the task so the
- *  next start creates a fresh one. Past session summaries are shown in a collapsible strip. */
+ *  Sessions: each session is backed by its own freestudy task. Mounting this component RESUMES an active
+ *  freestudy session if one exists (a read-only peek at GET /api/tasks) — but it NEVER CREATES one just
+ *  because the page was opened: no active session shows the landing screen, and only the explicit Start
+ *  button calls /api/study/free to mint one. A session only earns a place in history when it actually has
+ *  substance: at least one real user message or something written on the board (a session where Otto never
+ *  said a word and the board stayed empty gets dismissed silently, not memorialized). Ending a session
+ *  generates a short summary from the board + chat (see tutorSessions.ts), saves it locally, and dismisses
+ *  the task so the next start creates a fresh one. Past session summaries are shown in a collapsible strip. */
 export function TutorSession({ userId }: { userId: string | null }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
@@ -44,18 +44,17 @@ export function TutorSession({ userId }: { userId: string | null }) {
   // be answerable where they're actually looking.
   const [voiceState, setVoiceState] = useState({ listening: false, speaking: false, voiceModeOn: false, interim: "" });
   const handleVoiceState = useCallback((s: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => setVoiceState(s), []);
-  // StrictMode + resume-by-default guard: the mount effect below fetches /api/study/free, which mints a
-  // freestudy task when none is active. StrictMode deliberately double-invokes effects in dev, so without
-  // a ref gate the second invoke could mint a second task (the first, still pending, wasn't in the list
-  // yet — same class of race StandaloneStudyEntry guards against). Runs once per component lifetime.
+  // StrictMode guard for the mount peek below (a double-invoke would just be a wasted duplicate GET, but
+  // the guard also keeps the read strictly once-per-mount). Runs once per component lifetime.
   const mountFetchStartedRef = useRef(false);
 
-  // Passive mount load — ALWAYS resume-first (never fresh:true): an active freestudy session comes back,
-  // otherwise the route creates one. A remount must never discard a conversation in progress.
-  useEffect(() => {
-    if (mountFetchStartedRef.current) return;
-    mountFetchStartedRef.current = true;
-    api.studyFreeSession().then((list) => {
+  // Passive mount load — READ-ONLY peek: resume an active freestudy session if one exists, otherwise stay
+  // on the landing screen. Deliberately does NOT call /api/study/free here: that route mints a session
+  // when none is active, which made simply OPENING the tutor page start one (reported as "session should
+  // not auto start"). Creating a session is only ever the Start button's job.
+  const peekForActiveSession = useCallback(() => {
+    setLoadError(false);
+    api.tasks().then((list) => {
       const t = Array.isArray(list)
         ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
@@ -63,9 +62,14 @@ export function TutorSession({ userId }: { userId: string | null }) {
         setTask(hydrateLocalThreads([t], userId)[0]);
         setSessionStart(new Date().toISOString());
       }
-      // No task found (shouldn't happen — the route mints one) → stay on the landing screen.
+      // No active session → stay on the landing screen; Start is what creates one.
     }).catch(() => setLoadError(true));
-    // userId only: a mid-session account switch remounts this component anyway (App.tsx re-keys on user).
+  }, [userId]);
+
+  useEffect(() => {
+    if (mountFetchStartedRef.current) return;
+    mountFetchStartedRef.current = true;
+    peekForActiveSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -166,9 +170,10 @@ export function TutorSession({ userId }: { userId: string | null }) {
     setError(null);
     setWantVoice(true); // starting the session is the one tap that enables hands-free voice
     try {
-      // Resume-first: this is only ever reachable from the landing screen, where no session is active
-      // (mount resumed one if there was one, or the route mints one when none exists) — so this simply
-      // creates the session, never discarding an in-progress conversation.
+      // The EXPLICIT create path — the only caller of /api/study/free in this component. Resume-first on
+      // the server, so in the rare window where a session appeared between the mount peek and this click
+      // it resumes that one instead of discarding it; otherwise it mints the fresh session the student
+      // asked for.
       const list = await api.studyFreeSession();
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy") : undefined;
       if (t) {
@@ -184,7 +189,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
     return (
       <main className="list-wrap"><div className="empty-state">
         <h3>{L("Impossible de démarrer la séance", "Couldn't start the session")}</h3>
-        <button className="btn primary" onClick={() => { setLoadError(false); mountFetchStartedRef.current = false; startNewSession(); }}>{L("Réessayer", "Try again")}</button>
+        <button className="btn primary" onClick={() => { mountFetchStartedRef.current = false; peekForActiveSession(); }}>{L("Réessayer", "Try again")}</button>
       </div></main>
     );
   }

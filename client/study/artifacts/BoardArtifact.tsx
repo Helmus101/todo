@@ -98,6 +98,9 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
   // double-responded turn can hand back an array containing the same entry/problem twice. Entries ALSO
   // drop kind:"focus" (pinned above as the board's header strip — a lesson page leads with its goal, not
   // burying it at the bottom of the flow) and kind:"problem" (problems render in their own blocks below).
+  // Every problem RENDER/NAVIGATION surface reads the deduped list — single-question mode navigates by
+  // index into this same array, so iterating the raw `problems` there would cycle a duplicated problem
+  // twice (the same "shows twice" failure this file's dedupe exists to prevent, just one mode over).
   const dedupedProblems = problems.filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
   const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
   const flowEntries = entries
@@ -151,12 +154,12 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
     );
   }
 
-  const activeProblem = problems.length > 0 ? problems[problems.length - 1] : null;
+  const activeProblem = dedupedProblems.length > 0 ? dedupedProblems[dedupedProblems.length - 1] : null;
   const isMCQ = activeProblem && Array.isArray(activeProblem.options) && activeProblem.options.length >= 2;
 
   // In single-question mode, show only the current problem with navigation
-  const currentProblem = singleQuestionMode && problems.length > 1
-    ? problems[currentProblemIndex]
+  const currentProblem = singleQuestionMode && dedupedProblems.length > 1
+    ? dedupedProblems[currentProblemIndex]
     : activeProblem;
 
   const getProblemState = (problemId: string) => problemState[problemId] || { picked: null, textAnswer: "", submitted: false };
@@ -175,7 +178,7 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
       {hint}
 
       {/* Single-question mode toggle when there are multiple problems */}
-      {problems.length > 1 && (
+      {dedupedProblems.length > 1 && (
         <div className="sm-board-problem-mode-toggle">
           <button
             type="button"
@@ -194,8 +197,11 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
         </div>
       )}
 
-      {/* Show active problem if exists */}
-      {currentProblem && (() => {
+      {/* The ONE-problem view (single-question mode only). In "show all" mode this block must NOT render:
+          the full list below already contains every problem — rendering the latest one here too made each
+          session's most recent problem appear TWICE on the board (and a one-problem board showed its only
+          problem twice, period). "Current problem" is a single-question-mode concept. */}
+      {singleQuestionMode && currentProblem && (() => {
         const state = getProblemState(currentProblem.id);
         const currentIsMCQ = Array.isArray(currentProblem.options) && currentProblem.options.length >= 2;
         const isCorrect = currentIsMCQ ? state.picked === currentProblem.correct : state.submitted ? checkFreeResponse(currentProblem.id) : false;
@@ -280,7 +286,7 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
       })()}
 
       {/* Navigation controls for single-question mode */}
-      {singleQuestionMode && problems.length > 1 && (
+      {singleQuestionMode && dedupedProblems.length > 1 && (
         <div className="sm-board-problem-nav">
           <button
             type="button"
@@ -291,13 +297,13 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
             {L("← Précédent", "← Previous")}
           </button>
           <span className="sm-board-problem-nav-counter">
-            {currentProblemIndex + 1} / {problems.length}
+            {currentProblemIndex + 1} / {dedupedProblems.length}
           </span>
           <button
             type="button"
             className="sm-btn sm-btn-ghost sm-btn-sm"
-            disabled={currentProblemIndex === problems.length - 1}
-            onClick={() => setCurrentProblemIndex(Math.min(problems.length - 1, currentProblemIndex + 1))}
+            disabled={currentProblemIndex === dedupedProblems.length - 1}
+            onClick={() => setCurrentProblemIndex(Math.min(dedupedProblems.length - 1, currentProblemIndex + 1))}
           >
             {L("Suivant →", "Next →")}
           </button>

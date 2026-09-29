@@ -1953,6 +1953,34 @@ export function isDuplicateBoardEntry(existing: BoardEntry[], incoming: { text?:
   return existing.some((e) => (inKind === undefined || kindOf(e.kind) === inKind) && norm(e.text) === inText);
 }
 
+/** True when a finished chat reply is exactly the moment the board's reasoning-trace rule exists for:
+ *  Otto just CONFIRMED the student's own step was right ("Yes — exactly that", "bien joué", "parfait")
+ *  and there's real math in play — but nothing was written to the board this turn. This is the live-reported
+ *  miss: the confirmation and the worked algebra ("1 − cos²θ is sin²θ, so the fraction is sin²θ over
+ *  sinθ·cosθ — what does that cancel down to?") stay in chat, and the board never records the student's
+ *  own reasoning or the formula the step established — the session document stalls at the last thing OTTO
+ *  wrote instead of reflecting the student's thinking. Deliberately conservative, because the corrective
+ *  round costs a round trip and a false positive injects an instruction into a flowing conversation:
+ *  - CONFIRMATION: an affirmative opener (English + French, the two account languages). Replies that
+ *    explain from scratch ("Let's start with...") or only ask the next question are the normal coaching
+ *    loop, not a miss — never triggered.
+ *  - MATH IN PLAY: a math marker anywhere in the reply or the student's message (an equals sign, greek
+ *    letters/superscripts, function names like sin/cos/log, or formula vocabulary). A confirmed step in a
+ *    literature essay isn't board content; the derivation is what the board holds.
+ *  - NOTHING WRITTEN: `wroteToBoardThisTurn` false — if Otto already wrote, the rule is satisfied; never nag.
+ *  Pure; unit-tested in tests/run.mjs. Consumed by chatAboutTask's tool loop as a ONE-SHOT corrective
+ *  round (same posture as the empty-board-claim fix — a prompt line alone was reported-live ignorable). */
+export function shouldNudgeBoardWrite(reply: string, lastStudentMessage: string, wroteToBoardThisTurn: boolean): boolean {
+  if (wroteToBoardThisTurn) return false;
+  const text = `${reply}\n${lastStudentMessage}`;
+  const mathInPlay = /=/.test(text)
+    || /[\^√πθ²³±×÷≤≥]/.test(text)
+    || /\b(sin|cos|tan|log|ln|exp|lim|deriv\w*|dériv\w*|factor\w*|simplif\w*|cancel\w*)\b/i.test(text)
+    || /\b(formula|formule|equation|équation|square|carré)\b/i.test(text);
+  if (!mathInPlay) return false;
+  return /^\s*(yes|yeah|yep|exactly|correct|right|nice|perfect|well done|good|bravo|that'?s (it|right|correct)|oui|ouais|exact|exactement|c'est (ça|ca|exact|correct)|parfait|bien joué|très bien|nickel)\b/i.test(reply.trim());
+}
+
 const MAX_DIAGRAM_OPS = 15;
 const clampCoord = (n: unknown, lo: number, hi: number): number => Math.max(lo, Math.min(hi, Number.isFinite(Number(n)) ? Number(n) : 0));
 const clampX = (n: unknown) => clampCoord(n, 0, 800);
@@ -6399,6 +6427,12 @@ export async function chatAboutTask(
     `"- isolated x on one side\\n- sign flips when dividing by a negative\\n- checked by substituting back" — ` +
     `scannable, which is the entire point of something read later out of context. Skip it only when nothing ` +
     `was resolved (still stuck, or just chatting).\n` +
+    `"YES — EXACTLY THAT" IS A BOARD MOMENT TOO. When you confirm the student's own step was right and there's ` +
+    `math in play, the confirmation lands in chat but the CONTENT belongs on the board: the step they got ` +
+    `right (kind:"insight" — their construction, e.g. "1 − cos²θ = sin²θ → tout devient sin²θ/(sinθ·cosθ)") ` +
+    `or the formula the step established (kind:"formula"). A reply that only confirms in chat leaves the ` +
+    `board stuck at the last thing YOU wrote — the student's own reasoning never appears in the document ` +
+    `that's supposed to be a record of THEIR thinking.\n` +
     `THE SPINE OF THE DOCUMENT, in the order a session unfolds: kind:"focus" ONCE at the start — today's arc ` +
     `in one line, where you start and what you're building toward; kind:"definition" the FIRST time a key ` +
     `term appears — term in **bold**, then the gloss, nothing more; kind:"formula" for each equation worth ` +
@@ -6564,6 +6598,7 @@ export async function chatAboutTask(
     // gets ONE corrective round to write it for real (see CHAT_CLAIMS_BOARD's own comment). Latched so a
     // model that keeps doing it can't spin the loop.
     let boardClaimCorrected = false;
+    let boardNudgeDone = false;
     let truncationRetried = false;
     for (let round = 0; round < CHAT_MAX_ROUNDS; round++) {
       if (result.tokens.in + result.tokens.out > CHAT_TOKEN_CEILING) {
@@ -6769,6 +6804,18 @@ export async function chatAboutTask(
           } catch (e: any) { content = `ERROR: ${e?.message || "that call failed"}.`; }
         } else content = "ERROR: unknown tool.";
         messages.push({ role: "tool", tool_call_id: tc.id || `tool_${Date.now()}`, content: untrustedToolResult(String(content).slice(0, 2000)) });
+      }
+      // The board's reasoning-trace rule, enforced in code (same posture as the empty-board-claim fix in
+      // the no-tool branch below — the prompt line alone was ignored live: Otto confirmed the student's
+      // own trig step in chat and wrote nothing, so the board never showed THEIR reasoning or the formula
+      // in play). ONE corrective round, latched, same shape as that fix: add the entry, or continue
+      // unchanged if the exchange genuinely produced nothing board-worthy.
+      if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(textContent, message, result.board.length > 0)) {
+        boardNudgeDone = true;
+        console.log(`${new Date().toISOString()} [chat] round ${round}: reply confirms the student's math step but nothing was written to the board — asking for the write`);
+        messages.push({ role: "assistant", content: textContent });
+        messages.push({ role: "user", content: "You just confirmed the student's own step was right, and there's math in play — but you didn't write anything on the board this turn. The session document should show THEIR reasoning and the formula in play, not just your explanations. Call WRITE_TO_BOARD now with ONE short entry — the step they got right (kind:\"insight\", their construction/words) or the formula the step established (kind:\"formula\") — then continue your reply. If nothing from this exchange genuinely belongs on the board, just continue unchanged. Don't mention this correction either way." });
+        continue;
       }
     }
     // Shouldn't normally be reachable — lastRound strips `tools` from the request, which should force a

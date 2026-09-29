@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1285,6 +1285,11 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // Problems never had the id-dedupe the entries block always had — a double-responded turn stacked the
   // same problem twice in the board's unified problem list.
   check("problems are deduped by id before rendering, same as entries", /dedupedProblems\.map\(/.test(boardSrc) && /arr\.findIndex\(x => x\.id === p\.id\) === i/.test(boardSrc));
+  // Reported live: "problems on board show twice" — the "Problème actuel / Current problem" block always
+  // rendered the LATEST problem, and the show-all list below rendered ALL of them again, so the newest
+  // problem appeared twice (and a one-problem board showed its only problem twice, period). "Current
+  // problem" is a single-question-mode concept: gated to that mode now.
+  check("the 'current problem' block renders in single-question mode only (show-all already lists every problem)", /singleQuestionMode && currentProblem && \(\(\) => \{/.test(boardSrc));
   // Dual coding / document structure: kind:"focus" is the lesson's heading — pinned at the top as a
   // header strip, excluded from the flowing entries, latest wins if a session ever writes a second one.
   check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-pin/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
@@ -1318,6 +1323,26 @@ section("isDuplicateBoardEntry — content-level duplicate prevention for board 
   // Completion effect (Sweller): a worked example ending in a gap beats a fully worked one — the student
   // does the last step, which is where the learning happens.
   check("worked examples end in a completion gap, not a finished line", /completion effect/.test(claudeSrc3) && /= \?/.test(claudeSrc3));
+}
+
+section("shouldNudgeBoardWrite — a confirmed student math step must land on the board (server/claude.ts)");
+{
+  // The live-reported miss, verbatim: Otto confirmed the student's own trig step in chat and wrote nothing
+  // to the board — the session document never showed THEIR reasoning or the formula the step established.
+  const liveReply = "Yes — exactly that. 1 − cos²θ is sin²θ, straight from sin²θ + cos²θ = 1.\n\nSo the whole fraction is now sin²θ over sinθ·cosθ. What does that cancel down to?";
+  check("the exact live miss (confirmation + worked math + no write) triggers the nudge", shouldNudgeBoardWrite(liveReply, "so 1 - cos^2 theta = sin^2 theta right?", false));
+  check("a French confirmation with math triggers it too", shouldNudgeBoardWrite("Parfait — donc tout devient sin²θ sur sinθ·cosθ. Tu simplifies comment ?", "1 − cos²θ = sin²θ ?", false));
+  check("already wrote to the board this turn → never nudged", !shouldNudgeBoardWrite(liveReply, "1 − cos²θ = sin²θ ?", true));
+  check("confirmation without math in play → no nudge (an essay insight isn't board content)", !shouldNudgeBoardWrite("Yes — exactly that, well put.", "so the author is being ironic?", false));
+  check("math but no confirmation → no nudge (normal coaching loop, not a miss)", !shouldNudgeBoardWrite("Let's start with sin²θ + cos²θ = 1 — what does that give you for 1 − cos²θ?", "i don't know where to start", false));
+  check("a question-only reply with math from the student → no nudge", !shouldNudgeBoardWrite("What do you get when you cancel sinθ?", "sin²θ / (sinθ·cosθ) = ?", false));
+  check("lowercase/casual confirmations count (yeah, oui, c'est ça)", shouldNudgeBoardWrite("yeah — that's the identity. x = 2.", "x = 2?", false) && shouldNudgeBoardWrite("oui c'est ça ! donc 2x = 4", "2x = 4 ?", false));
+
+  const claudeSrc5 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // Enforcement in code, not just the prompt — same posture as the empty-board-claim fix: one corrective
+  // round, latched, feeding the model back its own reply so the write actually happens mid-turn.
+  check("the nudge is a ONE-SHOT corrective round inside the tool loop", /boardNudgeDone = false;/.test(claudeSrc5) && /!boardNudgeDone && !lastRound && shouldNudgeBoardWrite\(textContent, message, result\.board\.length > 0\)/.test(claudeSrc5) && /boardNudgeDone = true;/.test(claudeSrc5));
+  check("the prompt names the confirmation moment as a board moment", /"YES — EXACTLY THAT" IS A BOARD MOMENT TOO/.test(claudeSrc5));
 }
 
 section("Voice-mode board rules — gesture research, not dictation (prompt pins)");
@@ -1443,7 +1468,14 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("Tutor Session's passive loadTask() does NOT force fresh (so a remount resumes, never discards)", /api\.studyFreeSession\(\)\.then/.test(tutorSrc) && !/api\.studyFreeSession\(true\)/.test(tutorSrc));
+  // Reported live: "session should not auto start" — the mount used to call /api/study/free, whose
+  // resume-first route MINTS a session when none is active, so merely OPENING /tutor started one. The
+  // passive mount is now a read-only peek at GET /api/tasks (resume-only), and the ONE studyFreeSession
+  // call left in the file is the Start button's explicit create. fresh:true stays forbidden — even that
+  // explicit create relies on the route's own resume-first to never discard a session that appeared in
+  // the window between the mount peek and the click.
+  check("opening /tutor does NOT create a session (mount is a read-only api.tasks peek; Start is the only creator)", /api\.tasks\(\)\.then/.test(tutorSrc) && (tutorSrc.match(/api\.studyFreeSession\(/g) || []).length === 1);
+  check("even the explicit Start-button create never passes fresh:true (an active session resumes, never discards)", !/api\.studyFreeSession\(true\)/.test(tutorSrc));
 }
 
 section("Tutor Session — voice-first by default, and the board survives ending a session (source pins)");
