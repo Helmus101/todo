@@ -417,12 +417,12 @@ export const api = {
   // `board`/`problems`: THIS turn's local copy of what's currently on the board — sent so the tutor can see
   // what it's already written (see chatAboutTask's boardBlock) instead of writing blind, which read live as
   // Otto asking the student to describe its own board back to it.
-  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; guardrailTripped: boolean; task: WebTask }> =>
+  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; guardrailTripped: boolean; task: WebTask }> =>
     post(`/api/tasks/${id}/chat`, {
       message, history: history.map((h) => ({ role: h.role, text: h.text })),
       board: board.map((b) => ({ text: b.text, kind: b.kind })),
       problems: problems.map((p) => ({ question: p.question, options: p.options })),
-      stepIndex, materials, voiceMode, canvasMode,
+      stepIndex, materials, voiceMode, canvasMode, primer,
     }),
   // The flashcard/quiz "ask for a hint" sidebar — stateless server-side, so the client passes its own
   // short local history each turn. No client-side timeout (matches `chat`): the server's own 2-minute

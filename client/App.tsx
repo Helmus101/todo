@@ -14,6 +14,7 @@ import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyCont
 import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
+import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { 
   LayoutDashboard,
@@ -979,6 +980,14 @@ export function App() {
             <BookOpen />
             {status?.language === "en" ? "Journal" : "Journal"}
           </a>
+          <a
+            className={`sidebar-item ${route === "tutor" ? "active" : ""}`}
+            href="/tutor"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <GraduationCap />
+            {status?.language === "en" ? "Tutor" : "Tuteur"}
+          </a>
           {STUDY_MODE_ENABLED && (
             <a
               className={`sidebar-item ${route === "study" ? "active" : ""}`}
@@ -1033,6 +1042,7 @@ export function App() {
             if (route === "settings") return en ? "Settings" : "Réglages";
             if (route === "log") return en ? "Journal" : "Journal";
             if (route === "study") return en ? "Study" : "Réviser";
+            if (route === "tutor") return en ? "Tutor" : "Tuteur";
             if (route === "errorlog") return en ? "Error log" : "Erreurs";
             return en ? "Tasks" : "Tâches";
           })()}</div>
@@ -1058,6 +1068,8 @@ export function App() {
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} />
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} />
+      ) : route === "tutor" ? (
+        <TutorSession userId={status?.user || null} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (

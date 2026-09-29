@@ -19,6 +19,9 @@ interface AskOttoPanelProps {
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
+  /** Optional overrides (Tutor Session) for the empty-state line and input placeholder. */
+  emptyText?: string;
+  placeholder?: string;
 }
 
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
@@ -29,7 +32,7 @@ interface AskOttoPanelProps {
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -120,7 +123,7 @@ export function AskOttoPanel({
       <div className="sm-ai-chat" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
         {!task.chat?.length && !pendingMsg ? (
           <p className="sm-ai-empty">
-            {`Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`}
+            {emptyText ?? `Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`}
           </p>
         ) : task.chat?.map((m, i) => (
           <div key={i} className={`sm-ai-msg sm-ai-msg-${m.role}`}>
@@ -174,7 +177,7 @@ export function AskOttoPanel({
           className="sm-ai-input"
           rows={1}
           aria-label={L("Ton message à Otto", "Your message to Otto")}
-          placeholder={L("De quoi as-tu besoin ?", "What do you need help with?")}
+          placeholder={placeholder ?? L("De quoi as-tu besoin ?", "What do you need help with?")}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
