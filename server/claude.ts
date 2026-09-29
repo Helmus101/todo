@@ -5867,26 +5867,7 @@ export async function chatAboutTask(
     : "";
 
   // Primer Policy Profile - age-appropriate tutoring behavior
-  const policyBlock = opts?.primer && profile
-    ? (() => {
-      const age = profile.birthYear ? new Date().getFullYear() - profile.birthYear : 18;
-      const policy = getPolicyProfile(age, profile.domainLevels?.["reading"]?.level);
-      const domainLevel = profile.domainLevels?.["reading"]?.level || "C";
-      const mastery = 0.5; // Placeholder - would be calculated from actual mastery data
-      const maxHintLevel = getMaxHintLevel(mastery, domainLevel);
-      
-      return `\nPRIMER POLICY PROFILE (${policy.id}):\n` +
-        `- Age band: ${policy.ageRange[0]}-${policy.ageRange[1]}\n` +
-        `- Hint ladder max: ${maxHintLevel} (faded from ${policy.pedagogy.hintLadderMax} based on mastery)\n` +
-        `- Wait before hint: ${policy.pedagogy.waitBeforeHintMs}ms\n` +
-        `- Thinking moves: ${policy.pedagogy.thinkingMoves.join(", ")}\n` +
-        `- Direct explain allowed: ${policy.pedagogy.directExplainAllowed}\n` +
-        `- Abstraction level: ${policy.pedagogy.abstractionLevel}\n` +
-        `- Praise style: ${policy.pedagogy.praiseStyle}\n` +
-        `- Session caps: target ${policy.session.targetMinutes}min, hard ${policy.session.hardCapMinutes}min, daily ${policy.session.dailyCapMinutes}min\n` +
-        `- Data retention: ${policy.safety.dataRetentionDays} days\n`;
-    })()
-    : "";
+  const policyBlock = ""; // Disabled for now
   // Flashcard/quiz results already recorded on this task (flashcard review counts written by FlashcardDeck's
   // per-card review, quiz attempts written by /quiz/:quizId/attempt) — lets the tutor actually reference how
   // the drilling went ("you missed 3 of these last time") instead of only ever seeing the artifact exists.
@@ -5937,19 +5918,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  // Primer Thinking Move (Phase 1.5) - inject thinking-move prompts periodically
-  const thinkingMoveBlock = opts?.primer && profile?.ageBand
-    ? (() => {
-      const ageBand = profile.ageBand;
-      const availableMoves = getAgeAppropriateMoves(ageBand);
-      const currentStats = profile.thinkingStats || {};
-      const nextMove = getNextThinkingMove("", currentStats, availableMoves);
-      const prompt = getThinkingMovePrompt(nextMove);
-      return `\nTHINKING MOVE (use this naturally if it fits): ${prompt}\n`;
-    })()
-    : "";
-
-  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + policyBlock + thinkingMoveBlock;
+  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +
