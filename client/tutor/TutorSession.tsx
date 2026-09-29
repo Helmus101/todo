@@ -55,10 +55,6 @@ export function TutorSession({ userId }: { userId: string | null }) {
     }).catch(() => setLoadError(true));
   }, [userId, selectedSubject]);
 
-  useEffect(() => {
-    loadTask();
-  }, [loadTask]);
-
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
     const message = (override ?? input).trim();
     if (!message || sending || !task) return;
@@ -232,7 +228,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
             error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
             onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
             emptyText="" placeholder={L("Écris ici…", "Type here…")}
-            startInVoiceMode
+            startInVoiceMode={false}
           />
         </div>
       </section>
