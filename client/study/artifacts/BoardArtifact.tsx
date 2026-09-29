@@ -320,7 +320,7 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
       ))}
 
       {/* Show all problems when not in single-question mode */}
-      {!singleQuestionMode && problems.map((problem) => {
+      {!singleQuestionMode && problems.length > 0 && problems.map((problem) => {
         const state = getProblemState(problem.id);
         const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
         const isCorrect = problemIsMCQ ? state.picked === problem.correct : state.submitted ? checkFreeResponse(problem.id) : false;

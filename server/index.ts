@@ -47,7 +47,6 @@ declare module "express-session" {
     orderingArmCache?: { key: string; armId: string };
     blackbaudOAuthState?: string; // CSRF nonce for the Blackbaud OAuth authorization-code flow — see server/blackbaud.ts
     primersessionStart?: number; // Timestamp for Primer session cap enforcement
-    primerlastBreakReminder?: number; // Timestamp for last break reminder
   }
 }
 
@@ -1407,22 +1406,6 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     req.session.primersessionStart = now;
   }
   
-  // Primer break reminder (Phase 1.5)
-  const breakEveryMinutes = profile?.primerSettings?.sessionCapMinutes ? 
-    Math.floor(profile.primerSettings.sessionCapMinutes / 2) : 30; // Default: break at half the cap
-  const lastBreakReminder = req.session.primerlastBreakReminder || 0;
-  const timeSinceLastReminder = (now - lastBreakReminder) / (60 * 1000);
-  let breakReminder = "";
-  
-  if (timeSinceLastReminder >= breakEveryMinutes && sessionMinutes < sessionCap - 5) {
-    // Only remind if we're not at the cap yet
-    breakReminder = M(req, 
-      "🔔 Tu as fait du bon travail ! C'est le moment de faire une petite pause.",
-      "🔔 Great work! Time for a short break."
-    );
-    req.session.primerlastBreakReminder = now;
-  }
-  
   const message = String(req.body?.message || "").trim().slice(0, 2000);
   if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
   const t = await findTaskOrReload(req, String(req.params.id));
@@ -1544,11 +1527,6 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.error && !out.reply?.trim()) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") }); return; }
     if (out.error) void recordMetric(req.session.user!, "chat_fallback_reply", 1);
     if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
-    
-    // Add break reminder to response if triggered
-    if (breakReminder) {
-      out.reply = breakReminder + "\n\n" + out.reply;
-    }
     // Score the chat-style arm: the only IMMEDIATELY observable outcome of one turn is whether the guardrail
     // held (a genuinely unhelpful/off-boundary reply) — a richer "did they send a follow-up" reward would
     // need waiting on a future request, which this best-effort, fire-and-forget scoring deliberately avoids.
