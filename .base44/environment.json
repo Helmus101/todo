@@ -2,5 +2,12 @@
   "previewPort": 3000,
   "healthPath": "/",
   "startCommand": "docker compose -f docker-compose.base44.yml up -d",
-  "secrets": []
+  "secrets": [
+    { "name": "DEEPSEEK_API_KEY", "description": "DeepSeek API key (platform.deepseek.com → API keys) — powers all AI chat/generation. App boots without it but every AI feature refuses.", "requiredAtBoot": false },
+    { "name": "SUPABASE_URL", "description": "Supabase project URL (supabase.com → Settings → API) — required for login/signup to work; without it the app renders but accounts can't be created.", "requiredAtBoot": false },
+    { "name": "SUPABASE_SERVICE_KEY", "description": "Supabase service-role key (supabase.com → Settings → API) — pairs with SUPABASE_URL.", "requiredAtBoot": false },
+    { "name": "COMPOSIO_API_KEY", "description": "Composio API key (app.composio.dev) — enables the Gmail/Calendar/Drive connect flows.", "requiredAtBoot": false },
+    { "name": "CREDENTIAL_ENCRYPTION_KEY", "description": "32-byte hex key (openssl rand -hex 32) — encrypts stored credentials like the Pronote token. Dev boots without it (plaintext, warned).", "requiredAtBoot": false },
+    { "name": "SESSION_SECRET", "description": "Random string for cookie-session signing. Dev boots without it; required in production.", "requiredAtBoot": false }
+  ]
 }

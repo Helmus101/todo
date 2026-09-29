@@ -28,6 +28,7 @@ export function FlashcardArtifact({ task, deckId, userId, onClose }: FlashcardAr
         deck={deck}
         taskId={task.id}
         onReview={(cardIndex, correct) => { void api.reviewFlashcard(task.id, deckId, cardIndex, correct).catch(() => {}); }}
+        onNotNeeded={(cardIndex) => { void api.markFlashcardNotNeeded(task.id, deckId, cardIndex).catch(() => {}); }}
         onAllCorrect={onClose}
       />
     </div>

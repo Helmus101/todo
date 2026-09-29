@@ -1,14 +1,14 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks } from "../server/claude.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
-import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
-import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile } from "../shared/types.ts";
+import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
+import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
-import { stripHtml } from "../server/pronote.ts";
+import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
@@ -33,18 +33,14 @@ const dismissed = { ...base, id: "d1", title: "Reply to Vendor Corp pricing surv
 const reworded = { title: "Respond to the Vendor Corp survey on pricing", why: "Vendor Corp wants pricing input", source: "gmail", risk: "low", urgency: 0.6, importance: 0.6, anchorKey: "gmail:bbb" };
 const out1 = foldGenerated([dismissed], [reworded]);
 check("dismissed lookalike suppressed", out1.length === 1 && out1[0].status === "dismissed");
-// Regression: pronoteToItems/plaidBillsToTasks generate the SAME title for every different item in a
-// subject/merchant ("Physique-Chimie homework", "Pay Netflix") — the loose dismissed-lookalike match above
-// used to treat every later, genuinely different assignment/charge as "the one I already dismissed" and
-// silently swallow it forever. These two sources must dedupe by anchor ONLY.
+// Regression: pronoteToItems generates the SAME title for every different item in a subject
+// ("Physique-Chimie homework") — the loose dismissed-lookalike match above used to treat every later,
+// genuinely different assignment as "the one I already dismissed" and silently swallow it forever. This
+// source must dedupe by anchor ONLY.
 const dismissedHw = { ...base, id: "hw-old", title: "Physique-Chimie homework", why: "Vu sur Pronote — pas encore marqué comme fait.", source: "pronote", status: "dismissed", anchorKey: "pronote:old-assignment" };
 const newHw = { title: "Physique-Chimie homework", why: "Vu sur Pronote — pas encore marqué comme fait.", source: "pronote", risk: "low", urgency: 0.5, importance: 0.55, anchorKey: "pronote:brand-new-assignment" };
 const outHw = foldGenerated([dismissedHw], [newHw]);
 check("a genuinely NEW Pronote assignment with an identical generic title is NOT swallowed by an old dismissed one (different anchor)", outHw.some((t) => t.anchorKey === "pronote:brand-new-assignment" && t.status === "ready"));
-const dismissedBill = { ...base, id: "bill-old", title: "Pay Netflix", why: "Recurring charge...", source: "plaid", status: "dismissed", anchorKey: "plaid:netflix-jan" };
-const newBill = { title: "Pay Netflix", why: "Recurring charge...", source: "plaid", risk: "low", urgency: 0.6, importance: 0.6, anchorKey: "plaid:netflix-feb" };
-const outBill = foldGenerated([dismissedBill], [newBill]);
-check("a genuinely NEW month's Plaid bill with an identical title is NOT swallowed by last month's dismissed one", outBill.some((t) => t.anchorKey === "plaid:netflix-feb" && t.status === "ready"));
 // The exact SAME anchor (a genuine re-dismiss-then-regenerate case) must still be suppressed for both.
 check("the SAME Pronote anchor as a dismissed one IS still suppressed", foldGenerated([dismissedHw], [{ ...newHw, anchorKey: "pronote:old-assignment" }]).every((t) => t.anchorKey !== "pronote:old-assignment" || t.status === "dismissed"));
 const doneA = { ...base, id: "a", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "done", anchorKey: "gmail:x1" };
@@ -725,6 +721,58 @@ const byVip = sortWithinQuadrant([rt({ title: "random", why: "someone asked" }),
 check("high-priority person breaks a tie", byVip[0].title === "boss");
 check("deadlineEpoch: empty sorts last", deadlineEpoch("") === Infinity && deadlineEpoch("today", RANK_NOW) === RANK_NOW.getTime());
 
+section("deadlineEpoch / normalizeWhen — the model's free-text dates, EN + FR");
+{
+  const now = new Date("2026-09-27T10:00:00Z"); // a Sunday
+  const day = (s) => { const ms = deadlineEpoch(s, now); return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : "none"; };
+  // The live bug: a bare Date.parse reads every year-less date as 2001 → 25 years overdue → max urgency.
+  check("'Oct 9' is this October, not 2001", day("Oct 9") === "2026-10-09");
+  check("'9 octobre' (French day-first) parses", day("9 octobre") === "2026-10-09");
+  check("'le 9 oct.' parses", day("le 9 oct.") === "2026-10-09");
+  check("French numeric '09/10' is 9 October, not September 10", day("09/10") === "2026-10-09");
+  check("unambiguous US '12/25' is still read correctly", day("12/25") === "2026-12-25");
+  check("'vendredi' → the coming Friday", day("vendredi") === "2026-10-02");
+  check("'demain' → tomorrow", day("demain") === "2026-09-28");
+  check("'après-demain' → in two days (not caught by the 'demain' rule)", day("après-demain") === "2026-09-29");
+  check("'dans 3 jours' → in three days", day("dans 3 jours") === "2026-09-30");
+  check("a date a week past stays THIS year (genuinely overdue), not next year", day("Sep 20") === "2026-09-20");
+  check("a date months past rolls to next year", day("Jan 15") === "2027-01-15");
+  check("'10.30am' is not misread as a date", day("10.30am") === "none");
+  check("normalizeWhen keeps an ISO value verbatim", normalizeWhen("2026-10-09T08:00:00Z", now) === "2026-10-09T08:00:00Z");
+  check("normalizeWhen returns undefined for unreadable text, so callers fall back to an estimate", normalizeWhen("avant les vacances", now) === undefined);
+
+  const folded = foldGenerated([], [{ title: "Rendre le devoir de philo", why: "Pronote", source: "pronote", risk: "low", urgency: 0.4, importance: 0.8, when: "9 octobre" }], [], now);
+  check("foldGenerated stores a model 'when' like '9 octobre' as a real ISO date", folded[0]?.when?.slice(0, 10) === "2026-10-09" && !folded[0]?.whenApprox);
+  const vague = foldGenerated([], [{ title: "Réviser le chapitre 3", why: "Pronote", source: "pronote", risk: "low", urgency: 0.4, importance: 0.8, when: "soon" }], [], now);
+  check("an unreadable model 'when' falls back to a flagged estimate instead of being stored raw", !Number.isNaN(Date.parse(vague[0]?.when || "")) && vague[0]?.whenApprox === true);
+
+  const yearless = { when: "Oct 9", urgency: 0.3, importance: 0.8, quadrant: "schedule", score: 2.5, status: "ready" };
+  applyDeadlineUrgency([yearless], now);
+  check("a year-less date 12 days out gets the moderate urgency boost, NOT max 'overdue' urgency", yearless.urgency === 0.5);
+  const fri = { when: "vendredi", urgency: 0.3, importance: 0.8, quadrant: "schedule", score: 2.5, status: "ready" };
+  applyDeadlineUrgency([fri], now);
+  check("'vendredi' (5 days out) now gets a deadline boost at all", fri.urgency === 0.7);
+  const pr = { when: "", sourceDue: "2026-09-28T00:00:00Z", urgency: 0.3, importance: 0.8, quadrant: "schedule", score: 2.5, status: "needs_review" };
+  applyDeadlineUrgency([pr], now);
+  check("Pronote's own sourceDue drives urgency even when `when` is empty", pr.urgency >= 0.95);
+
+  const sameQuadrant = sortWithinQuadrant([
+    { title: "important, due in 6 days", score: 2.9, when: "2026-10-03T12:00:00Z" },
+    { title: "slightly less important, due tomorrow", score: 2.6, when: "2026-09-28T12:00:00Z" },
+  ], [], now);
+  check("same quadrant: a real deadline tomorrow outranks a slightly higher score due in 6 days", sameQuadrant[0].title.startsWith("slightly"));
+  const approx = sortWithinQuadrant([
+    { title: "important", score: 2.9, when: "2026-10-03T12:00:00Z" },
+    { title: "estimated date only", score: 2.6, when: "2026-09-28T12:00:00Z", whenApprox: true },
+  ], [], now);
+  check("an ESTIMATED deadline never jumps the queue on its own", approx[0].title === "important");
+  const crossQuadrant = sortWithinQuadrant([
+    { title: "due tomorrow but 'later' quadrant", score: 0.5, when: "2026-09-28T12:00:00Z" },
+    { title: "do-now quadrant", score: 3.2, when: "2026-10-03T12:00:00Z" },
+  ], [], now);
+  check("the Eisenhower quadrant still dominates across quadrants", crossQuadrant[0].title === "do-now quadrant");
+}
+
 // ── Guardrail: shared-doc edits fail CLOSED, never open ───────────────────────
 // isArtifactShared backs the "Otto may edit its own artifact" carve-out (integrations.ts). Any error —
 // including "integrations not configured" (COMPOSIO_API_KEY unset here) — must be treated as SHARED, so
@@ -916,6 +964,41 @@ check("the plain 2-digit numeric entity still works", stripHtml("group&#39;s doc
 check("hex numeric entity decodes", stripHtml("group&#x27;s document") === "group's document");
 check("common named entities still decode", stripHtml("&quot;quoted&quot; &amp; &lt;tag&gt;") === "\"quoted\" & <tag>");
 check("br/block tags become a space, not glued text", stripHtml("<div>Line one<br>Line two</div>").trim() === "Line one Line two");
+
+section("applyPronoteGrades — merges Pronote averages into profile.grades in place");
+{
+  const p1 = { grades: [] };
+  applyPronoteGrades(p1, [{ subject: "Maths", average: 15, outOf: 20 }, { subject: "Physique-Chimie", average: 12, outOf: 20 }]);
+  check("creates one row per subject", p1.grades.length === 2);
+  check("row is marked source: pronote", p1.grades.every((g) => g.source === "pronote"));
+  check("deterministic id keyed by lowercased subject", p1.grades.find((g) => g.subject === "Maths")?.id === "pronote:maths");
+
+  // The exact live-reported bug this function exists to close: a second sync for the SAME subject must
+  // overwrite the existing row in place, never append a duplicate (previously observed as "Anglais · 40
+  // grades" after ~40 days of daily syncs — see the id comment in applyPronoteGrades itself).
+  applyPronoteGrades(p1, [{ subject: "Maths", average: 17, outOf: 20 }]);
+  check("re-syncing the same subject overwrites in place, no duplicate row", p1.grades.filter((g) => g.subject === "Maths").length === 1);
+  check("the overwritten row carries the new average", p1.grades.find((g) => g.subject === "Maths")?.grade === 17);
+  check("an unrelated subject from the first sync survives untouched", p1.grades.some((g) => g.subject === "Physique-Chimie" && g.grade === 12));
+
+  // Subject matching must be case-insensitive — Pronote's own casing for a subject name isn't guaranteed
+  // stable across two overview fetches.
+  const p2 = { grades: [{ id: "pronote:anglais", subject: "Anglais", grade: 10, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "pronote" }] };
+  applyPronoteGrades(p2, [{ subject: "ANGLAIS", average: 14, outOf: 20 }]);
+  check("case-insensitive subject match overwrites the existing row instead of duplicating", p2.grades.length === 1 && p2.grades[0].grade === 14);
+
+  // A manually-logged grade for the same subject is a separate historical data point (source: "manual")
+  // and must never be touched or merged by a Pronote sync.
+  const p3 = { grades: [{ id: "m1", subject: "Maths", grade: 9, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "manual" }] };
+  applyPronoteGrades(p3, [{ subject: "Maths", average: 15, outOf: 20 }]);
+  check("a manual entry for the same subject is left untouched", p3.grades.some((g) => g.id === "m1" && g.grade === 9 && g.source === "manual"));
+  check("a separate pronote row is added alongside it, not merged into the manual one", p3.grades.some((g) => g.source === "pronote" && g.grade === 15) && p3.grades.length === 2);
+
+  // An empty Pronote result (e.g. connection error swallowed upstream) must never wipe existing grades.
+  const p4 = { grades: [{ id: "pronote:svt", subject: "SVT", grade: 16, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "pronote" }] };
+  applyPronoteGrades(p4, []);
+  check("an empty grade list is a no-op — never clears existing grades", p4.grades.length === 1);
+}
 
 section("hasAssignmentText — real énoncé vs synthesized placeholder");
 check("real assignment text passes", hasAssignmentText("Exercices 12 à 15 p.87 — mécanique du point"));
@@ -1188,7 +1271,7 @@ section("Study Mode: chat + Board always present, board write reliability (sourc
   // The board-write prompt used to leave EVERY write entirely to the model's own per-turn judgment call —
   // strengthened so a genuine topic resolution always leaves a "lessons learned" record, not just when it
   // happens to occur to the model.
-  check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE BOARD WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
+  check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
 }
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
@@ -1200,6 +1283,151 @@ section("loadState survives a missing-column schema-drift error (source pins)");
   check("supabase.sql adds studySessions double-quoted (not silently lowercased)", /add column if not exists "studySessions"/.test(supabaseSql));
   check("supabase.sql adds studyProfile double-quoted (not silently lowercased)", /add column if not exists "studyProfile"/.test(supabaseSql));
   check("loadState retries with a narrower select on a missing-column error, instead of returning empty immediately", /does not exist.*\n[\s\S]{0,400}load-narrow/.test(storeSrc));
+}
+section("server/index.ts error responses — French/English aware, no leaked operator-only detail (source pins)");
+{
+  // Reported live via audit: server/index.ts's res.status().json({error:...}) calls were hardcoded English
+  // across virtually the whole file, so a French account saw raw English text in toasts whenever one of
+  // these paths fired (client/api.ts's error handling always prefers a server-sent message over its own
+  // bilingual fallback, by design — so the fix has to be at the SOURCE, not the client). `M(req, fr, en)`
+  // is the fix; this pins that the highest-traffic clusters (auth flow, the AI-paused/budget/not-configured
+  // checks hit by every AI-calling route, and generic 404s) were actually converted, not just that the
+  // helper exists unused somewhere.
+  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("reqLang/M bilingual-error helper exists", /function reqLang\(req: express\.Request\)/.test(src) && /function M\(req: express\.Request, fr: string, en: string\)/.test(src));
+  check("signup's validation errors are bilingual, not hardcoded English", /M\(req, "Entre un email valide et un mot de passe/.test(src));
+  check("login's wrong-password error is bilingual", /M\(req, "Email ou mot de passe incorrect\."/.test(src));
+  check("every AI-paused 403 now goes through M(), not a hardcoded English string", !/error: "AI is paused/.test(src));
+  check("every generic 404 now goes through M(), not a hardcoded \"not found\"", !/error: "not found"/.test(src));
+  check("every 'AI isn't configured' 503 now goes through M()", !/error: "AI isn't configured\."/.test(src) && !/error: "AI isn't set up on this server yet\."/.test(src));
+  // The budget message used to be a single hardcoded English string that leaked an OPERATOR-ONLY instruction
+  // ("Raise MONTHLY_AI_BUDGET_USD to lift it") straight into a student's toast — meaningless to them, and
+  // never translated even though the rest of the app is French-first. Now a real bilingual, student-facing
+  // message via budgetMsg(req), with no internal env-var detail.
+  const budgetMsgIdx = src.indexOf("const budgetMsg = (req: express.Request)");
+  const budgetMsgBody = src.slice(budgetMsgIdx, src.indexOf(";", budgetMsgIdx) + 1);
+  check("budgetMsg() is bilingual and never mentions the internal env var to a student", budgetMsgIdx > 0 && !/MONTHLY_AI_BUDGET_USD/.test(budgetMsgBody));
+  check("every over-budget 402 call site uses budgetMsg(req), not a raw hardcoded constant", !/error: BUDGET_MSG/.test(src));
+  // Completeness pass (this round): every remaining error response in the file — the ~130 one-off catch-
+  // block fallbacks this section didn't individually pin above — must go through M()/e?.message, never a
+  // bare hardcoded string or template literal, for BOTH capitalized ("Couldn't save...") and lowercase
+  // ("not found") English validation strings, plus template-literal ones interpolating a variable.
+  check("no remaining bare capitalized-English error string literals anywhere in the file", !/error: "[A-Z]/.test(src));
+  check("no remaining bare lowercase-English error string literals anywhere in the file", !/error: "[a-z]/.test(src));
+  check("no remaining bare English error TEMPLATE LITERALS anywhere in the file", !/error: `[A-Za-z]/.test(src));
+  // One string was already French-only (not bilingual at all) before this pass — Otto's own chat-completion
+  // fallback message. Confirms it's bilingual now, not just moved.
+  check("the chat fallback reply message (previously French-only, never bilingual) is now bilingual", /M\(req, "Otto n'a pas réussi à répondre\.", "Otto couldn't come up with a reply\."\)/.test(src));
+}
+
+section("Client-side i18n completeness — client/study/ hardcoded English strings (source pins)");
+{
+  // Audit found these as the areas that never got folded into the L()/useLang() system used everywhere else
+  // in client/App.tsx/TaskCard.tsx — aria-labels and placeholders a French student would see in raw English.
+  const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("AskOttoPanel's aria-labels and placeholder are bilingual, not hardcoded English", !/aria-label="[A-Z]/.test(askOtto) && !/placeholder="[A-Z]/.test(askOtto));
+  const studySetup = readFileSync(new URL("../client/study/StudySetup.tsx", import.meta.url), "utf8");
+  check("StudySetup's link/label placeholders are bilingual", /placeholder=\{L\(/.test(studySetup));
+  const dict = readFileSync(new URL("../client/study/artifacts/DictionaryArtifact.tsx", import.meta.url), "utf8");
+  check("DictionaryArtifact's search placeholder is language-aware, not hardcoded English", !/placeholder="Search a word"/.test(dict));
+  const citation = readFileSync(new URL("../client/study/artifacts/CitationArtifact.tsx", import.meta.url), "utf8");
+  check("CitationArtifact's field placeholders are bilingual, not hardcoded English", !/placeholder="[A-Z]/.test(citation));
+  const camera = readFileSync(new URL("../client/study/artifacts/CameraArtifact.tsx", import.meta.url), "utf8");
+  check("CameraArtifact's aria-label is bilingual, not hardcoded English", !/aria-label="[A-Z]/.test(camera));
+}
+
+section("DueReviews (Journal tab) — capped at 3 decks/day (source pin)");
+{
+  // Reported live: a student with accumulated review debt saw every single overdue deck stacked at the top
+  // of the Journal tab (7+ chips), crowding out the actual journal entry below. Capped to the top 3 by
+  // review count (most cards due first — the review that's gone stalest, not just whichever deck sorts first).
+  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const start = appSrc.indexOf("function DueReviews(");
+  const body = appSrc.slice(start, appSrc.indexOf("\nfunction ", start + 10));
+  check("DueReviews caps the shown decks at 3", /\.slice\(0, 3\)/.test(body));
+  check("DueReviews sorts by review count descending before capping (worst-behind deck first)", /sort\(\(a, b\) => b\[1\]\.count - a\[1\]\.count\)/.test(body));
+}
+
+section("Locale-aware date formatting — fmtDate/relTime/fmtWhen/fmtDay take the caller's own language (source pins)");
+{
+  // These used to call toLocaleDateString(undefined, ...), which uses the BROWSER's own default locale —
+  // not the same thing as the app's own language setting (a French-language account on an English-locale
+  // browser got English month names). Now each takes the same optional L(fr, en) every caller already has
+  // from useLang(), used only to pick "fr-FR"/"en-US", never to translate text.
+  const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  check("fmtDate takes an optional L and never calls toLocaleDateString(undefined, ...)", /export const fmtDate = \(iso: string, L\?/.test(ui) && !/toLocaleDateString\(undefined/.test(ui));
+  check("relTime takes an optional L and localizes the relative-time WORDS too, not just the date fallback", /export const relTime = \(iso: string, L\?/.test(ui) && /à l'instant/.test(ui) && /il y a \$\{m\}min/.test(ui));
+  check("fmtWhen takes an optional L", /export function fmtWhen\(when: string, L\?/.test(ui));
+  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("fmtDay takes an optional L and never calls toLocaleDateString(undefined, ...)", /function fmtDay\(iso: string, L\?/.test(appSrc) && !/toLocaleDateString\(undefined/.test(appSrc));
+}
+
+section("/api/study/free — resumes an active freestudy session by default, only 'fresh' forces a new one (source pin)");
+{
+  // Reported live: navigating away from /tutor and back (or React 18 StrictMode's deliberate double-invoke
+  // of mount effects in dev) silently discarded whatever the student was mid-conversation on, because this
+  // route used to UNCONDITIONALLY dismiss any existing freestudy task and mint a fresh one on every single
+  // call — a passive remount looked identical to "the student wants a clean slate." Also the likely source
+  // of a live 404: a stale client closure sending a chat message to a task id that had just been silently
+  // dismissed out from under it. Fixed to find-or-resume by default; `fresh: true` (StandaloneStudyEntry's
+  // explicit "Enter study mode" click, which SHOULD always start clean) keeps the old unconditional behavior.
+  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const start = src.indexOf('app.post("/api/study/free"');
+  const body = src.slice(start, src.indexOf("}));", start) + 4);
+  check("resumes (returns the list unchanged) when an active freestudy task already exists and fresh wasn't requested", /const active = list\.find\(\(t\) => t\.source === "freestudy" && !isHandled\(t\.status\)\);/.test(body) && /if \(active\) \{ res\.json\(list\); return; \}/.test(body));
+  check("fresh:true still forces the old dismiss-and-mint-new behavior", /const fresh = req\.body\?\.fresh === true;/.test(body));
+  const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean\)/.test(apiSrc));
+  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("Tutor Session's passive loadTask() does NOT force fresh (so a remount resumes, never discards)", /api\.studyFreeSession\(\)\.then/.test(tutorSrc) && !/api\.studyFreeSession\(true\)/.test(tutorSrc));
+}
+
+section("Tutor Session — voice-first by default, and the board survives ending a session (source pins)");
+{
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  // Direct request: "make chat really for oral usage" — the Tutor's whole premise is a spoken lesson
+  // (unlike a per-task chat, where voice is an opt-in extra), so it starts already listening.
+  check("Tutor Session starts in voice mode automatically", /startInVoiceMode/.test(tutorSrc));
+  const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("startInVoiceMode is applied exactly once (a ref-gated effect, never fights a deliberate manual toggle-off)", /autoVoiceAppliedRef/.test(askOtto));
+  // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
+  // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
+  // diagram/equation structure; the real board is now saved too and reopenable.
+  check("ending a session saves the FULL board (diagrams/equations intact), not just flattened text", /board: task\.board \|\| \[\]/.test(tutorSrc));
+  check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
+}
+
+section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote connect URL");
+{
+  // A student can type ANY url as their school's Pronote address, and connectPronote makes a real outbound
+  // request to it server-side — this is what stops that from being pointed at an internal address (cloud
+  // metadata, an internal service) instead of a real school's Pronote server.
+  check("blocks loopback", isPrivateOrReservedIp("127.0.0.1"));
+  check("blocks the cloud metadata address (169.254.169.254)", isPrivateOrReservedIp("169.254.169.254"));
+  check("blocks RFC1918 10.x", isPrivateOrReservedIp("10.0.0.5"));
+  check("blocks RFC1918 172.16-31.x", isPrivateOrReservedIp("172.20.1.1"));
+  check("blocks RFC1918 192.168.x", isPrivateOrReservedIp("192.168.1.1"));
+  check("blocks 0.0.0.0/8", isPrivateOrReservedIp("0.0.0.0"));
+  check("allows a real public IP", !isPrivateOrReservedIp("8.8.8.8"));
+  check("allows another real public IP (a school's own server)", !isPrivateOrReservedIp("203.0.113.42"));
+  check("blocks IPv6 loopback", isPrivateOrReservedIp("::1"));
+  check("blocks IPv6 link-local", isPrivateOrReservedIp("fe80::1"));
+  check("blocks IPv6 unique-local", isPrivateOrReservedIp("fd12:3456:789a::1"));
+  check("blocks an IPv4-mapped private address", isPrivateOrReservedIp("::ffff:10.0.0.1"));
+  check("rejects garbage input rather than treating it as safe", isPrivateOrReservedIp("not-an-ip"));
+}
+section("connectPronote — SSRF guard is wired in before the outbound login request (source pin)");
+{
+  const src = readFileSync(new URL("../server/pronote.ts", import.meta.url), "utf8");
+  const start = src.indexOf("export async function connectPronote(");
+  const body = src.slice(start, src.indexOf("\n}", src.indexOf("return withPronoteLock", start)) + 2);
+  const urlIdx = body.indexOf("const url = normalizePronoteUrl(");
+  const guardIdx = body.indexOf("assertSafeExternalUrl(url)");
+  const loginIdx = body.indexOf("pronote.loginCredentials(");
+  check("connectPronote calls the SSRF guard on the normalized url", guardIdx > urlIdx && urlIdx >= 0);
+  check("the guard runs BEFORE the real outbound login request, not after", guardIdx > 0 && loginIdx > guardIdx);
 }
 section("Pronote connection durability — connection columns + uncached reads (source pins)");
 {
@@ -1239,15 +1467,15 @@ section("Pronote connection durability — connection columns + uncached reads (
   // The real protection, tested behaviourally rather than by grep: a save that means to update ONE
   // connection must never quietly clear the others. `{ ...loadedState, blackbaud }` is the shape that did
   // this — a loaded state carries every connection key, as undefined when unset.
-  const loadedWithPronoteOnly = { profile: {}, tasks: [], pronote: { url: "u", username: "n", kind: 6, token: "t", deviceUUID: "d" }, google: undefined, plaid: undefined, blackbaud: undefined };
+  const loadedWithPronoteOnly = { profile: {}, tasks: [], pronote: { url: "u", username: "n", kind: 6, token: "t", deviceUUID: "d" }, google: undefined, blackbaud: undefined };
   const hourlyBlackbaudRefresh = connectionColumnUpdates({ ...loadedWithPronoteOnly, blackbaud: { accessToken: "a", connectedAt: "now" } });
-  check("updating one connection does not clear an unrelated one (the hourly-wipe bug)", !("google" in hourlyBlackbaudRefresh) && !("plaid" in hourlyBlackbaudRefresh));
+  check("updating one connection does not clear an unrelated one (the hourly-wipe bug)", !("google" in hourlyBlackbaudRefresh));
   check("...and still writes the connection it actually meant to update", hourlyBlackbaudRefresh.blackbaud?.accessToken === "a");
   check("...while leaving the live Pronote connection intact, not nulled", hourlyBlackbaudRefresh.pronote !== null && hourlyBlackbaudRefresh.pronote?.username === "n");
   // The exact reported failure: the cached read predates a connect that landed on another instance, so
   // `pronote` comes back undefined. The hourly Blackbaud token refresh then spreads that stale state and,
   // under the old rule, wrote pronote: null — permanently disconnecting a connection that was actually live.
-  const staleRead = { profile: {}, tasks: [], pronote: undefined, google: undefined, plaid: undefined, blackbaud: { accessToken: "old", connectedAt: "then" } };
+  const staleRead = { profile: {}, tasks: [], pronote: undefined, google: undefined, blackbaud: { accessToken: "old", connectedAt: "then" } };
   const refreshOnStaleRead = connectionColumnUpdates({ ...staleRead, blackbaud: { accessToken: "new", connectedAt: "then" } });
   check("a stale read's undefined pronote is never written as null (the reported hourly disconnect)", !("pronote" in refreshOnStaleRead));
   // A plain profile/tasks save (commit()'s shape, ~20 call sites) must touch no connection column at all.
@@ -1296,7 +1524,7 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   // writeStepsFromContext's separate pipeline) need the same sequencing instruction.
   check("runTask's step-4 prompt instructs sequencing attempt-before-review steps", /SEQUENCE STEPS IN THE ORDER THE STUDENT WILL ACTUALLY DO THEM/.test(runTaskBody));
   const writeStepsStart = src.indexOf("export async function writeStepsFromContext(");
-  const writeStepsBody = src.slice(writeStepsStart, src.indexOf("\nasync function decideArtifact", writeStepsStart));
+  const writeStepsBody = src.slice(writeStepsStart, src.indexOf("\nexport async function expandStep", writeStepsStart));
   check("writeStepsFromContext's prompt instructs the same attempt-before-review sequencing", /SEQUENCE steps in the order the student will actually do them/.test(writeStepsBody));
   // All four taskType classification sites must offer/accept the same full 15-value enum — this is the
   // actual root cause of the live bug (three of four were truncated to the old 10-value list, so
@@ -1317,6 +1545,66 @@ section("runTask wiring — step-quality filters + taskType enum sync (source-or
   // Total-outage detection: every ask() call failing used to silently return a normal-looking RunOutput
   // instead of throwing, bypassing server/tasks.ts's actual retry/backoff machinery entirely.
   check("runTask throws when every AI call in the run failed (total-outage detection)", /askCalls > 0 && askFailures === askCalls/.test(runTaskBody));
+
+  // Human-judgment layer added this round (step quality, first-move, diagnose-before-prescribing) — pinned
+  // so a future prompt edit can't silently drop them the way the flashcard-veto/board-write rules almost
+  // did earlier this session. These are prompt-only additions (deliberately NOT new typed state — see the
+  // "implementation discipline" reasoning this round: prefer prompt judgment over speculative abstractions
+  // for behavior an LLM can already reason about directly).
+  // NOTE: these live in runTask's OWN "STEP 4" ask() prompt (the RULES: bullet list). A first pass at this
+  // round's rules was accidentally added to a DEAD prompt constant (RUN_SYSTEM, alongside the equally dead
+  // RUN_TOOLS/planResearch/decideArtifact — all declared, never wired into any actual chat.completions.create
+  // call, since deleted) and silently had ZERO effect until caught by this exact test failing.
+  check("runTask's real step-4 prompt has the STEP QUALITY rule (start-immediately/concrete/produces-output/self-checking-done)", /STEP QUALITY.{0,60}for every step, internally check/.test(runTaskBody));
+  check("runTask's real step-4 prompt has the FIRST-MOVE rule with its example", /FIRST STEP MUST BE STARTABLE RIGHT NOW/.test(runTaskBody));
+  check("runTask's real step-4 prompt has the diagnose-before-assuming-relearn rule for uncertain-mastery tasks", /WHEN MASTERY IS GENUINELY UNCERTAIN/.test(runTaskBody));
+}
+section("Flashcard/artifact-selection prompts carry the retrieval-quality and error-targeting rules (source pins)");
+{
+  const src2 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const cardsToolIdx = src2.indexOf("const CREATE_FLASHCARDS_TOOL = {");
+  const cardsToolBody = src2.slice(cardsToolIdx, src2.indexOf("\n};", cardsToolIdx));
+  check("flashcard tool description requires ONE RETRIEVABLE UNIT per card, not just 'one idea'", /ONE RETRIEVABLE UNIT per card/.test(cardsToolBody));
+  check("flashcard tool description requires testing retrieval over recognition", /TEST RETRIEVAL, NOT RECOGNITION/.test(cardsToolBody));
+  check("flashcard tool description asks for varied retrieval direction", /VARY RETRIEVAL DIRECTION/.test(cardsToolBody));
+  check("flashcard tool description asks for a contrast/discrimination card on a recurring confusion, not a duplicate definition card", /CONTRAST\/DISCRIMINATION card/.test(cardsToolBody));
+
+  const problemToolIdx = src2.indexOf("const CREATE_PROBLEM_TOOL = {");
+  const problemToolBody = src2.slice(problemToolIdx, src2.indexOf("\n};", problemToolIdx));
+  check("practice-problem tool frames the problem as a measurement of the student's understanding, not just practice", /THINK OF THIS AS A MEASUREMENT, NOT JUST PRACTICE/.test(problemToolBody));
+}
+section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosis + mastery-stop rules (source pins)");
+{
+  const src3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const chatStart = src3.indexOf("export async function chatAboutTask(");
+  const chatBody = src3.slice(chatStart, src3.indexOf("\nexport async function", chatStart + 10));
+  check("tutor prompt distinguishes never-learned/forgot/cant-start/dont-understand-the-question before responding to 'I don't know'", /"I DON'T KNOW" IS NOT ONE THING/.test(chatBody));
+  check("tutor prompt repairs a prerequisite gap instead of re-explaining the advanced skill built on it", /that prerequisite gap is the actual problem/.test(chatBody));
+  check("tutor prompt has an explicit mastery-stop rule (perform + explain-why + transfer → move on)", /KNOW WHEN TO STOP TEACHING/.test(chatBody));
+  // Explicit 3-rung hint ladder + numeric escalation/release conditions, restructured this round to match
+  // a research-grounded reference spec (Orient/Narrow/Model-the-next-move, escalate only on a genuine
+  // attempt, release on: two unproductive rungs on the same point / explicit repeat request / checking
+  // completed work / a genuine attempt needing verification).
+  check("tutor prompt has the explicit HINT LADDER header with all three rungs", /## HINT LADDER[\s\S]{0,150}1\. ORIENT[\s\S]{0,400}2\. NARROW[\s\S]{0,400}3\. MODEL THE NEXT MOVE/.test(chatBody));
+  check("hint ladder only escalates on a genuine attempt, not a bare 'I don't know'", /ESCALATE ONLY ON A GENUINE ATTEMPT/.test(chatBody));
+  check("hint ladder has explicit, enumerated answer-release conditions (not an open-ended gate)", /RELEASE THE ANSWER when ANY of these hold/.test(chatBody));
+  check("tutor treats only a clean UNAIDED attempt as proof of learning (Bastani et al.)", /THE REAL TEST IS UNAIDED/.test(chatBody));
+  check("voice mode writes spoken notation to the board instead of leaving it unwritten", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(chatBody));
+  // Reported live: a reply cut off mid-sentence ("One version with a twist, to make sure the method
+  // travels:" then nothing) — DeepSeek's hidden reasoning tokens ate most of max_tokens before the visible
+  // reply started, so finish_reason came back "length" on a non-empty (so the separate empty-completion
+  // retry never fired) but truncated reply, and it shipped to the student exactly as cut off.
+  check("chat retries once on a non-empty but truncated (finish_reason:length) reply instead of shipping it cut off", /finish_reason === "length" && textContent\.trim\(\)/.test(chatBody) && /Continue from EXACTLY where it stopped/.test(chatBody));
+  check("the truncation retry is latched to fire at most once per turn", /let truncationRetried = false;/.test(chatBody) && /truncationRetried = true;/.test(chatBody));
+  check("board adds a complementary representation instead of restating the chat", /A DIFFERENT REPRESENTATION, NOT THE SAME ONE TWICE/.test(chatBody));
+  check("board is kept curated in long sessions", /KEEP IT CURATED/.test(chatBody));
+  // Per direct request ("ask questions if need") — the learning loop's own step 1 now says to ask rather
+  // than guess when there's genuinely not enough context, instead of relying only on the implicit
+  // diagnose-before-explaining framing elsewhere in the prompt.
+  check("tutor prompt explicitly says to ASK when there's genuinely not enough context, instead of guessing", /ASK, in one short question, rather than guessing/.test(chatBody));
+  // Milestones (Profile.milestones, extracted from journal entries) surfaced into chat so the tutor builds
+  // on real per-topic progress instead of re-teaching it from scratch every session.
+  check("chat context includes milestoneLine (per-topic progress from the journal)", /milestoneLine\(profile, task\.sourceSubject\)/.test(chatBody));
 }
 // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
 // source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification
@@ -1401,6 +1689,7 @@ section("CHAT_DOES_WORK / DOES_STUDENT_WORK — true positives without false pos
 check("catches an EN reply that hands over the essay", CHAT_DOES_WORK.test("Here's your essay introduction, ready to submit"));
 check("catches a FR reply that hands over the intro", CHAT_DOES_WORK.test("Voici l'introduction :"));
 check("does NOT flag legitimate structural help", !CHAT_DOES_WORK.test("Voici comment structurer ton introduction"));
+check("catches 'Voici le corrigé' — regression: JS \\b is ASCII-only, so a naive \\bcorrigé\\b silently never matches", CHAT_DOES_WORK.test("Voici le corrigé"));
 check("DOES_STUDENT_WORK catches an EN claim of having done the homework", DOES_STUDENT_WORK.test("I solved all the problems for you"));
 check("DOES_STUDENT_WORK catches a FR claim of having written the dissertation", DOES_STUDENT_WORK.test("J'ai rédigé ta dissertation pour toi"));
 check("DOES_STUDENT_WORK catches a FR claim of having finished the homework", DOES_STUDENT_WORK.test("J'ai terminé le devoir de maths"));
@@ -1414,6 +1703,138 @@ check("catches a FR answer announcement", CHAT_STATES_ANSWER.test("La réponse e
 check("catches a FR MCQ conclusion", CHAT_STATES_ANSWER.test("C'est donc l'option B."));
 check("does NOT flag ordinary tutoring text with a number in it", !CHAT_STATES_ANSWER.test("That's the same rule we used on step 3 — try applying it here."));
 check("does NOT flag a focusing question", !CHAT_STATES_ANSWER.test("What do you think happens if you substitute that back in?"));
+
+section("CHAT_CLAIMS_BOARD — catches Otto pointing at a board write that never happened");
+check("catches EN 'on your screen'", CHAT_CLAIMS_BOARD.test("The problem is on your screen now, just above."));
+check("catches EN 'just above'", CHAT_CLAIMS_BOARD.test("Take a look just above — that's the setup."));
+check("catches FR 'au tableau'", CHAT_CLAIMS_BOARD.test("Regarde au tableau, j'ai noté la formule."));
+check("catches FR 'ci-dessus'", CHAT_CLAIMS_BOARD.test("La formule ci-dessus te donne la réponse."));
+check("does NOT flag an ordinary sentence using 'above' in a math sense", !CHAT_CLAIMS_BOARD.test("the term above the fraction line cancels out"));
+
+section("CHAT_CLAIMS_DIAGRAM — catches Otto referring to a figure it never actually drew");
+check("catches 'the diagram I drew'", CHAT_CLAIMS_DIAGRAM.test("Look at the diagram I drew — the altitude splits the triangle in two."));
+check("catches 'I just sketched [a diagram]'", CHAT_CLAIMS_DIAGRAM.test("I just sketched a diagram to show where -3 sits."));
+check("catches FR 'le triangle que j'ai dessiné'", CHAT_CLAIMS_DIAGRAM.test("Regarde le triangle que j'ai dessiné pour toi."));
+check("does NOT flag ordinary prose mentioning a shape by name", !CHAT_CLAIMS_DIAGRAM.test("A triangle has three sides — can you name them?"));
+
+section("Flashcards the student doesn't NEED to learn (card.notNeeded) — excluded, fed back, scoped");
+{
+  const deck = (cards) => ({ id: "d1", title: "Vocab", createdAt: "2026-09-01", cards });
+  const tasksList = [
+    { id: "a", title: "Histoire ch.2", sourceSubject: "Histoire", status: "ready", createdAt: "2026-09-01", flashcards: [deck([
+      { front: "Date of the Treaty of Westphalia?", back: "1648", notNeeded: true },
+      { front: "Who was Robespierre?", back: "...", review: { seen: 2, correct: 0, box: 1 } },
+    ])] },
+    { id: "b", title: "Maths", sourceSubject: "Maths", status: "ready", createdAt: "2026-09-01", flashcards: [deck([
+      { front: "Derivative of ln x?", back: "1/x", notNeeded: true },
+    ])] },
+  ];
+  const hist = notNeededFronts(tasksList, "Histoire");
+  check("notNeededFronts collects the subject's not-needed cards", hist.length === 1 && hist[0].includes("Westphalia"));
+  check("notNeededFronts never leaks another subject's cards", !hist.some((f) => f.includes("ln x")));
+  check("notNeededLine is empty when there's nothing to avoid (no prompt noise)", notNeededLine([]) === "");
+  check("notNeededLine tells the model these are out of scope, not gaps", /OUT OF SCOPE/.test(notNeededLine(hist)) && /Westphalia/.test(notNeededLine(hist)));
+  const shaky = weakCardLine({ flashcards: [deck([
+    { front: "Not needed but box 1", back: "x", notNeeded: true, review: { seen: 3, correct: 0, box: 1 } },
+    { front: "Real gap", back: "y", review: { seen: 3, correct: 0, box: 1 } },
+  ])] });
+  check("a not-needed card is never reported as 'still shaky'", /Real gap/.test(shaky) && !/Not needed but box 1/.test(shaky));
+
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("runTask's deck prompt scopes cards to what this student is actually expected to know", /SCOPE — ONLY WHAT THIS STUDENT IS ACTUALLY EXPECTED TO KNOW/.test(src));
+  const ui = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  check("FlashcardDeck offers the 'not something I need to learn' escape hatch", /deck-btn-not-needed/.test(ui) && /onNotNeeded\?\.\(cardIndex\)/.test(ui));
+  check("a not-needed card leaves the score's denominator", /right\.length \/ inScope/.test(ui));
+}
+
+section("inAppContextFor — the student's own in-app history reaches task planning");
+{
+  const now = new Date("2026-09-27T10:00:00Z");
+  const task = { id: "t", title: "Réviser la Révolution", sourceSubject: "Histoire", status: "ready", createdAt: "2026-09-20", when: "2026-10-03T12:00:00Z",
+    steps: [{ text: "Relire le chapitre 3", automatable: false, done: true }, { text: "Faire le quiz", automatable: false }],
+    flashcards: [{ id: "d", title: "Dates clés", createdAt: "2026-09-20", cards: [{ front: "1789?", back: "x", review: { seen: 4, correct: 3, box: 2 } }] }] };
+  const list = [task,
+    { id: "o", title: "Dissertation Louis XIV", sourceSubject: "Histoire", status: "done", createdAt: "2026-09-10", notes: [{ id: "n", title: "Fiche absolutisme", body: "…", createdAt: "2026-09-10" }] },
+    { id: "c", title: "DM de maths", sourceSubject: "Maths", status: "ready", createdAt: "2026-09-25", when: "2026-09-30T12:00:00Z" },
+    { id: "far", title: "Exposé anglais", status: "ready", createdAt: "2026-09-25", when: "2026-11-30T12:00:00Z" },
+  ];
+  const profile = { grades: [{ id: "g", subject: "Histoire", grade: 11, scale: 20, updatedAt: "2026-09-15" }] };
+  const block = inAppContextFor(list, task, profile, now);
+  check("reports what's already done on THIS task", /1\/2 steps done/.test(block) && /Relire le chapitre 3/.test(block));
+  check("reports this task's existing deck and how the drilling went", /Dates clés/.test(block) && /75% correct/.test(block));
+  check("surfaces earlier work in the same subject (so it isn't redone)", /Dissertation Louis XIV/.test(block) && /Fiche absolutisme/.test(block));
+  check("includes the student's grades in this subject", /Grades in Histoire: average 11\.0\/20/.test(block));
+  check("lists other deadlines competing for the same days", /Also due by then \(1\)/.test(block) && /DM de maths/.test(block));
+  check("never lists a deadline AFTER this one as competing", !/Exposé anglais/.test(block));
+  check("an empty history produces no block at all", inAppContextFor([], { id: "x", title: "x", status: "ready", createdAt: "2026-09-27" }, undefined, now) === "");
+}
+
+section("ensureArtifactUseSteps — a deck/quiz Otto made is always tied into the plan");
+{
+  const base = [{ text: "Relire le cours", automatable: false }];
+  const withDeck = ensureArtifactUseSteps(base, { decks: [{ title: "Vocab ch.4", count: 12 }] }, true);
+  check("adds a drill step when a deck was made and no step uses it", withDeck.length === 2 && /Vocab ch\.4/.test(withDeck[1].text) && withDeck[1].minutes === 18);
+  const already = ensureArtifactUseSteps([{ text: "Réviser les flashcards du chapitre", automatable: false }], { decks: [{ title: "Vocab", count: 10 }] }, true);
+  check("doesn't duplicate when a step already points at the flashcards", already.length === 1);
+  const full = ensureArtifactUseSteps(Array.from({ length: 6 }, (_, i) => ({ text: `step ${i}`, automatable: false })), { decks: [{ title: "V", count: 5 }] }, false);
+  check("never grows a plan past 6 steps", full.length === 6);
+  check("with nothing created, the plan is unchanged", ensureArtifactUseSteps(base, {}, true).length === 1);
+}
+
+section("runTask actually uses its inputs (source pins)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const start = src.indexOf("export async function runTask(");
+  const body = src.slice(start, src.indexOf("\nexport async function writeStepsFromContext", start));
+  // `focus` (revision requests, the granularity arm, runStep's single-step scoping + the student's answer)
+  // was accepted and never read — every one of those silently did nothing.
+  check("runTask reads `focus` into the shared context every ask() sees", /const focusBlock = focus\?\.trim\(\)/.test(body) && /\+ focusBlock;/.test(body));
+  check("runTask feeds the in-app history block into its context", /personalization\?\.inApp/.test(body));
+  check("runTask's live step prompt asks for a time estimate on every step", /"minutes" on EVERY step/.test(body) && /"minutes": 15/.test(body));
+  check("runTask's live step prompt asks for the firstAction on-ramp", /"firstAction": \{"text"/.test(body));
+  check("runTask returns firstAction (it used to only come from the rarely-used regenerate route)", /firstAction: \{\s*text: firstActionText/.test(body));
+  check("runTask ties created decks/quizzes into the plan", /steps = ensureArtifactUseSteps\(steps/.test(body));
+  check("the live step prompt applies the implementation-intentions finding (concrete cue)", /NAME THE CONCRETE CUE/.test(body));
+}
+
+section("makeDiagramEntry — DRAW_ON_BOARD validation/clamping (server/claude.ts)");
+{
+  const ok = makeDiagramEntry({ caption: "Right triangle", ops: [
+    { op: "line", x1: 100, y1: 500, x2: 400, y2: 500 },
+    { op: "label", x: 250, y: 520, text: "base" },
+  ] });
+  check("accepts a valid figure and tags it kind:diagram", "entry" in ok && ok.entry.kind === "diagram" && ok.entry.diagram?.length === 2);
+  check("caption becomes the entry's caption text", "entry" in ok && ok.entry.text === "Right triangle");
+
+  const empty = makeDiagramEntry({ caption: "x", ops: [] });
+  check("rejects an empty ops array", "error" in empty);
+
+  const noCaption = makeDiagramEntry({ caption: "", ops: [{ op: "circle", cx: 10, cy: 10, r: 5 }] });
+  check("rejects a missing caption", "error" in noCaption);
+
+  const tooMany = makeDiagramEntry({ caption: "x", ops: Array.from({ length: 16 }, () => ({ op: "label", x: 0, y: 0, text: "a" })) });
+  check("rejects more than 15 ops instead of silently truncating", "error" in tooMany);
+
+  const offCanvas = makeDiagramEntry({ caption: "x", ops: [{ op: "circle", cx: 5000, cy: -200, r: 9000 }] });
+  check("clamps an off-canvas/oversized op into the 0-800x0-600 space instead of dropping it",
+    "entry" in offCanvas && offCanvas.entry.diagram?.[0].op === "circle" &&
+    offCanvas.entry.diagram[0].cx <= 800 && offCanvas.entry.diagram[0].cy >= 0 && offCanvas.entry.diagram[0].r <= 400);
+
+  const oneBadOp = makeDiagramEntry({ caption: "x", ops: [{ op: "not_a_real_op" }, { op: "label", x: 1, y: 1, text: "ok" }] });
+  check("drops one unrecognized op but keeps the rest of the figure", "entry" in oneBadOp && oneBadOp.entry.diagram?.length === 1);
+
+  const allBad = makeDiagramEntry({ caption: "x", ops: [{ op: "not_a_real_op" }] });
+  check("errors when NO op in the figure is valid", "error" in allBad);
+
+  const eq = makeDiagramEntry({ caption: "Combine the fractions", ops: [
+    { op: "equation", x: 50, y: 100, latex: "\\frac{2}{x-1} + \\frac{3}{x+2} = \\frac{5x+1}{(x-1)(x+2)}" },
+  ] });
+  check("accepts a real 'equation' op for KaTeX rendering", "entry" in eq && eq.entry.diagram?.[0].op === "equation" && eq.entry.diagram[0].latex.includes("\\frac"));
+  const eqDollars = makeDiagramEntry({ caption: "x", ops: [{ op: "equation", x: 0, y: 0, latex: "$x^2$" }] });
+  check("strips $ delimiters the model included anyway — latex is meant to be bare", "entry" in eqDollars && eqDollars.entry.diagram[0].latex === "x^2");
+  const eqEmpty = makeDiagramEntry({ caption: "x", ops: [{ op: "equation", x: 0, y: 0, latex: "" }] });
+  check("rejects an empty equation", "error" in eqEmpty);
+}
 
 section("revealsAnswer — studyHelp's code-level backstop against leaking the real answer");
 {
@@ -1659,6 +2080,34 @@ const finFAOutOfRangeMinutes = finalize({ context: "c", synthesis: "s", did: [],
   { text: "Pick which store list to use", automatable: false },
 ], links: [], sendables: [], firstAction: { text: "Do the tiny thing", minutes: 90 } }, "", []);
 check("out-of-range firstAction minutes dropped, text kept", finFAOutOfRangeMinutes.firstAction?.text === "Do the tiny thing" && finFAOutOfRangeMinutes.firstAction?.minutes === undefined);
+
+section("expandStep prompt — substeps get the same task-decomposition quality bar as real steps (source pin)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const expandStepStart = src.indexOf("export async function expandStep(");
+  const expandStepBody = src.slice(expandStepStart, src.indexOf("\nexport async function runSubstep", expandStepStart));
+  // Substeps used to be generated with a thinner prompt than real steps — no dependency ordering, no
+  // self-checking-done criterion, no concrete-cue guidance — even though the same task-decomposition
+  // research (GTD-style single "next action", implementation-intention specificity) applies at any
+  // granularity. Direct request: "do research on how to create good subtasks for steps and implement that."
+  check("substeps are ordered by dependency, same check as real steps", /ORDER THEM IN THE SEQUENCE THE STUDENT WILL ACTUALLY DO THEM/.test(expandStepBody));
+  check("substeps require one deliverable each, not an 'and'/'then' compound", /ONE DELIVERABLE PER SUB-ACTION/.test(expandStepBody));
+  check("substeps must be self-checking (a concrete, verifiable outcome)", /SELF-CHECKING: the student should be able to tell/.test(expandStepBody));
+  check("substeps should name the concrete material/page/document when known", /NAME THE CONCRETE CUE/.test(expandStepBody));
+}
+
+section("Step-5 artifact selection — a note is never auto-added without real substance to write (source pin)");
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const idx = src.indexOf("For academic tasks that don't match the discrete-facts pattern");
+  const block = src.slice(idx, idx + 1400);
+  // Reported live pattern this closes: EVERY academic task that didn't match the discrete-facts regex got
+  // a note auto-added regardless of whether the model itself had just said "none" for a good reason — a
+  // "not every task needs a brief" violation. Now gated on the context actually having enough real material
+  // (same 400-char floor already used for the practical-task/isNoteOnly branch just below it) to write
+  // something substantive, instead of firing for every academic-looking task unconditionally.
+  check("the academic note fallback requires real context substance before firing (not unconditional)", block.includes('isAcademic && `${context || ""}`.trim().length > 400'));
+}
 
 section("expandStep substep url — bounded to the task's own links");
 {
@@ -2118,6 +2567,59 @@ section("normalizeProfile — self-heals duplicated Pronote grade rows (the '40 
   check("a normal, already-clean grade list is untouched", normalizeProfile({ grades: [{ id: "a", subject: "Maths", grade: 15, scale: 20, updatedAt: "2026-01-01T00:00:00Z", source: "pronote" }] }).grades.length === 1);
 }
 
+section("normalizeProfile — milestones: dedupe by topic, cap length, reject incomplete rows");
+{
+  const raw = [
+    { subject: "Maths", topic: "factoring quadratics", label: "Can factor any quadratic with integer roots", achievedAt: "2026-01-10T00:00:00Z" },
+    // Same subject+topic, reworded, logged later — should collapse into ONE row keeping the OLDER achievedAt
+    // (that's when it actually first landed) but this newer label wording.
+    { subject: "maths", topic: "Factoring Quadratics", label: "Solid on factoring quadratics now", achievedAt: "2026-02-01T00:00:00Z" },
+    { subject: "Maths", topic: "completing the square", label: "Can complete the square unaided", achievedAt: "2026-01-15T00:00:00Z" },
+    { subject: "", topic: "no subject", label: "should be dropped" },
+    { subject: "Physique", topic: "", label: "no topic, should be dropped" },
+  ];
+  const cleaned = normalizeProfile({ milestones: raw }).milestones;
+  check("collapses same subject+topic (case-insensitive) into one row", cleaned.filter((m) => m.topic.toLowerCase() === "factoring quadratics").length === 1);
+  const collapsed = cleaned.find((m) => m.topic.toLowerCase() === "factoring quadratics");
+  check("keeps the OLDER achievedAt on collapse (when it actually first landed)", collapsed.achievedAt === "2026-01-10T00:00:00Z");
+  check("keeps the newer label wording on collapse", collapsed.label === "Solid on factoring quadratics now");
+  check("a genuinely different topic in the same subject survives as its own row", cleaned.some((m) => m.topic === "completing the square"));
+  check("a row missing subject is dropped", !cleaned.some((m) => m.topic === "no subject"));
+  check("a row missing topic is dropped", !cleaned.some((m) => m.label === "no topic, should be dropped"));
+  check("every kept row got a real id", cleaned.every((m) => typeof m.id === "string" && m.id.length > 0));
+  const many = Array.from({ length: 400 }, (_, i) => ({ subject: "S", topic: `topic-${i}`, label: "x", achievedAt: "2026-01-01T00:00:00Z" }));
+  check("hard-caps at 300 rows even when every topic is genuinely distinct", normalizeProfile({ milestones: many }).milestones.length === 300);
+}
+
+section("milestoneLine — surfaces per-topic progress into the tutor's chat context, subject-matched");
+{
+  const profile = { milestones: [
+    { id: "1", subject: "Maths", topic: "quadratics", label: "Can factor any quadratic with integer roots", achievedAt: "2026-01-01T00:00:00Z" },
+    { id: "2", subject: "Français", topic: "subjonctif", label: "Uses it correctly after 'il faut que'", achievedAt: "2026-01-02T00:00:00Z" },
+  ] };
+  check("no subject → empty (nothing to match against)", milestoneLine(profile, undefined) === "");
+  check("a subject with no tracked milestones → empty, not a forced empty section", milestoneLine(profile, "Physique") === "");
+  const line = milestoneLine(profile, "Maths");
+  check("matched subject includes its topic and label", line.includes("quadratics") && line.includes("Can factor any quadratic"));
+  check("case-insensitive subject match", milestoneLine(profile, "maths").includes("quadratics"));
+  check("doesn't leak a different subject's milestone in", !milestoneLine(profile, "Maths").includes("subjonctif"));
+  check("undefined profile → empty, never throws", milestoneLine(undefined, "Maths") === "");
+}
+
+section("milestonesBySubject — grouping/ordering for the tutor-context and UI readers");
+{
+  const list = [
+    { id: "1", subject: "Maths", topic: "quadratics", label: "a", achievedAt: "2026-01-01T00:00:00Z" },
+    { id: "2", subject: "Maths", topic: "derivatives", label: "b", achievedAt: "2026-02-01T00:00:00Z" },
+    { id: "3", subject: "Français", topic: "subjonctif", label: "c", achievedAt: "2026-01-15T00:00:00Z" },
+  ];
+  const groups = milestonesBySubject(list);
+  check("groups by subject", groups.length === 2);
+  check("subject with the most milestones sorts first", groups[0].subject === "Maths");
+  check("within a subject, most-recently-achieved topic sorts first", groups[0].entries[0].topic === "derivatives");
+  check("empty/undefined input returns an empty array, not a throw", milestonesBySubject(undefined).length === 0);
+}
+
 section("leadingArm — honest, deterministic 'what does the bandit currently believe' for Settings display");
 {
   const key = contextKey(new Date("2026-01-05T09:00:00"));
@@ -2137,79 +2639,6 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   const again = leadingArm(POMODORO_ARMS, state, key);
   check("deterministic — the same state always yields the same leading arm (no resampling)", again?.arm.id === leading?.arm.id && again?.confidence === leading?.confidence);
   check("a never-touched context key is its own independent cold start", leadingArm(POMODORO_ARMS, state, "afternoon|weekday|other") === null);
-}
-
-section("/finance (Plaid) — plaidToItems + plaidBillsToTasks, and that NONE of it needs an AI call");
-{
-  const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
-  const daysFromNow = (n) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
-  // A genuinely recurring monthly charge, last seen ~2 days ago (so the NEXT one is due imminently) —
-  // exactly the "detected from real history, deterministic, no model involved" case.
-  const recurring = [
-    { id: "1", name: "NETFLIX.COM 12345", amount: 13.49, date: daysAgo(60), pending: false },
-    { id: "2", name: "NETFLIX.COM 67890", amount: 13.49, date: daysAgo(30), pending: false }, // ~30-day gap → next due ~today
-  ];
-  const items = plaidToItems(recurring);
-  check("detects a recurring charge seen 2+ times, due soon, as a candidate", items.length === 1 && items[0].sourceApp === "plaid");
-  check("normalizes merchant names (strips the trailing store/reference numbers)", items[0].anchorKey === "plaid:netflix com");
-  check("candidate title is a plain, real reminder, not a generic placeholder", /netflix/i.test(items[0].title));
-
-  check("a single one-off purchase produces NO candidate — one data point isn't a pattern", plaidToItems([{ id: "3", name: "Librairie Gibert", amount: 24.9, date: daysAgo(3), pending: false }]).length === 0);
-  check("a pending transaction is ignored (not a settled charge yet)", plaidToItems([
-    { id: "4", name: "Spotify", amount: 10.99, date: daysAgo(30), pending: false },
-    { id: "5", name: "Spotify", amount: 10.99, date: daysAgo(1), pending: true },
-  ]).length === 0);
-  check("a deposit/refund (amount <= 0, Plaid's credit convention) is never treated as a bill", plaidToItems([
-    { id: "6", name: "Payroll", amount: -500, date: daysAgo(30), pending: false },
-    { id: "7", name: "Payroll", amount: -500, date: daysAgo(1), pending: false },
-  ]).length === 0);
-  check("a recurring charge not due for weeks yet produces no candidate (not relevant TODAY)", plaidToItems([
-    { id: "8", name: "Insurance", amount: 40, date: daysAgo(45), pending: false },
-    { id: "9", name: "Insurance", amount: 40, date: daysAgo(15), pending: false }, // 30-day gap, last seen 15 days ago → next due ~15 days from now
-  ]).length === 0);
-
-  // plaidBillsToTasks — the AI-free conversion into an actual task. Must land at "needs_review" (never
-  // "ready") so it can NEVER be auto-run through the agent pipeline, and must come with its own step
-  // pre-written (no AI-authored steps at all).
-  const plaidCandidate = { sourceApp: "plaid", anchorKey: "plaid:netflix", title: "Pay Netflix", snippet: "Recurring charge...", timestamp: daysFromNow(1) };
-  const billTasks = plaidBillsToTasks([plaidCandidate], []);
-  check("produces exactly one task from one candidate", billTasks.length === 1);
-  check("status is needs_review, NEVER ready — structurally cannot be auto-run by the agent pipeline", billTasks[0].status === "needs_review");
-  check("comes with its own pre-written step — never needs an AI run to be actionable", billTasks[0].steps.length === 1 && !!billTasks[0].steps[0].text);
-  check("respects an already-covered anchor (no duplicate for an existing task)", plaidBillsToTasks([plaidCandidate], ["plaid:netflix"]).length === 0);
-  check("ignores a non-Plaid candidate entirely, even if handed one by mistake", plaidBillsToTasks([{ ...plaidCandidate, sourceApp: "gmail" }], []).length === 0);
-
-  // plaidSuspiciousToItems — the deterministic "worth a second look" detector: unusually large charges
-  // (relative to the account's OWN median, never a fixed dollar figure) and possible duplicate charges
-  // (same merchant+amount, days apart, not months — the opposite pattern from a recurring bill).
-  const typicalSpend = Array.from({ length: 6 }, (_, i) => ({ id: `t${i}`, name: "Boulangerie", amount: 8 + i, date: daysAgo(10 + i), pending: false }));
-  const bigCharge = { id: "big1", name: "Electronics Store", amount: 900, date: daysAgo(1), pending: false };
-  const alerts = plaidSuspiciousToItems([...typicalSpend, bigCharge]);
-  check("flags a charge well above the account's own median as suspicious", alerts.some((a) => a.externalId === "big1" && a.labels.includes("suspicious")));
-  check("does NOT flag ordinary small purchases that make up the account's normal spending", !alerts.some((a) => a.externalId.startsWith("t")));
-  check("a low-spend account isn't flagged over a proportionally-large-but-tiny charge (floored at $50)", plaidSuspiciousToItems([
-    { id: "s1", name: "Snack", amount: 4, date: daysAgo(10), pending: false },
-    { id: "s2", name: "Bakery", amount: 5, date: daysAgo(4), pending: false }, // different merchant/amount — no duplicate match
-    { id: "s3", name: "Coffee", amount: 22, date: daysAgo(1), pending: false }, // ~5x median but under the $50 floor
-  ]).length === 0);
-
-  const dupeCharges = [
-    { id: "d1", name: "SHOP #4471", amount: 45, date: daysAgo(2), pending: false },
-    { id: "d2", name: "SHOP #4471", amount: 45, date: daysAgo(1), pending: false }, // same merchant+amount, 1 day apart
-  ];
-  const dupeAlerts = plaidSuspiciousToItems(dupeCharges);
-  check("flags the same merchant+amount charged twice within a few days as a possible duplicate", dupeAlerts.length === 1 && dupeAlerts[0].externalId === "d2");
-  check("a genuinely monthly-recurring charge (the plaidToItems case) is NOT flagged as a duplicate", plaidSuspiciousToItems(recurring).length === 0);
-  check("the same pair charged months apart is NOT a duplicate (that's normal recurring billing, plaidToItems' job)", plaidSuspiciousToItems([
-    { id: "m1", name: "Insurance", amount: 40, date: daysAgo(60), pending: false },
-    { id: "m2", name: "Insurance", amount: 40, date: daysAgo(30), pending: false },
-  ]).length === 0);
-
-  // plaidBillsToTasks on a "suspicious" candidate — same AI-free/needs_review guarantee, different framing.
-  const alertCandidate = { sourceApp: "plaid", anchorKey: "plaid-alert:big1", title: "Check Electronics Store", snippet: "Unusually large charge...", timestamp: daysAgo(1), labels: ["suspicious"] };
-  const alertTasks = plaidBillsToTasks([alertCandidate], []);
-  check("a suspicious-charge candidate also lands at needs_review, never auto-run", alertTasks.length === 1 && alertTasks[0].status === "needs_review");
-  check("a suspicious-charge task's step is 'go verify', not 'go pay'", /confirm|check|v[ée]rifie/i.test(alertTasks[0].steps[0].text));
 }
 
 // ── Step-generation repair pass: artifact dedupe, extras carry-over, and the runTask wiring ────────

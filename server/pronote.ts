@@ -22,6 +22,8 @@
  * through the same explicit-approval machinery as everything else, not be added quietly to this file.
  */
 import { randomUUID } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 // Uses @blockshub/pawnote-lts, a maintained fork of the original `pawnote` library (by the Papillon team,
 // a French school-app project) — kept API-compatible so it's a drop-in replacement. The original `pawnote`
 // stopped working against Pronote servers from ~2026.2.5 onward: those servers changed the login handshake
@@ -65,7 +67,7 @@ function isExpectedPronoteError(e: unknown): boolean {
   return e instanceof pronote.BadCredentialsError || e instanceof pronote.AccountDisabledError ||
     e instanceof pronote.SuspendedIPError || e instanceof pronote.RateLimitedError ||
     e instanceof pronote.SecurityError || e instanceof pronote.SessionExpiredError ||
-    e instanceof pronote.PageUnavailableError;
+    e instanceof pronote.PageUnavailableError || e instanceof pronote.ServerSideError;
 }
 
 /** Turn pawnote's typed errors into something a user can actually act on. */
@@ -79,6 +81,7 @@ function humanizeError(e: unknown): string {
   if (e instanceof pronote.PageUnavailableError) {
     return "Impossible de contacter Pronote à cette adresse — vérifie l'URL (ex : https://0000000a.index-education.net/pronote/eleve.html), copiée depuis la page de connexion de ton établissement.";
   }
+  if (e instanceof pronote.ServerSideError) return "Le serveur Pronote de ton établissement a rencontré une erreur — réessaie dans un instant.";
   const msg = (e as any)?.message || String(e);
   return `Impossible de contacter Pronote : ${msg}`.slice(0, 200);
 }
@@ -118,6 +121,56 @@ function normalizePronoteUrl(url: string, kind: number): string {
   return /\/pronote$/i.test(trimmed) ? `${trimmed}/${page}` : `${trimmed}/pronote/${page}`;
 }
 
+// SSRF guard: a Pronote URL is student-supplied free text (a school's own domain, self-hosted anywhere —
+// can't be a fixed allowlist the way a single-vendor integration could) and this server makes a REAL
+// outbound request to it (pawnote's loginCredentials). Without this check, an authenticated student could
+// point "connect Pronote" at an internal address (a cloud metadata endpoint, an internal service on the
+// same network) and have this server fetch it on their behalf. Only http(s) schemes are ever allowed, and
+// both a literal IP in the URL and the DNS-resolved address of a hostname are checked against private/
+// loopback/link-local/reserved ranges — a hostname is not enough to trust, since DNS rebinding or an
+// internal-only DNS record can still resolve a normal-looking domain to an internal address.
+const PRIVATE_IPV4_RANGES: [number, number][] = [
+  [0x00000000, 0x00ffffff], // 0.0.0.0/8
+  [0x0a000000, 0x0affffff], // 10.0.0.0/8
+  [0x7f000000, 0x7fffffff], // 127.0.0.0/8 (loopback)
+  [0xa9fe0000, 0xa9feffff], // 169.254.0.0/16 (link-local, incl. cloud metadata 169.254.169.254)
+  [0xac100000, 0xac1fffff], // 172.16.0.0/12
+  [0xc0a80000, 0xc0a8ffff], // 192.168.0.0/16
+  [0xc0000000, 0xc00000ff], // 192.0.0.0/24 (IETF protocol assignments, incl. some cloud metadata setups)
+];
+function ipv4ToInt(ip: string): number | null {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+export function isPrivateOrReservedIp(ip: string): boolean {
+  if (isIP(ip) === 4) {
+    const n = ipv4ToInt(ip);
+    return n === null || PRIVATE_IPV4_RANGES.some(([lo, hi]) => n >= lo && n <= hi);
+  }
+  if (isIP(ip) === 6) {
+    const lower = ip.toLowerCase();
+    // ::1 (loopback), fe80::/10 (link-local), fc00::/7 (unique local) — covers the realistic internal-IPv6 cases.
+    return lower === "::1" || lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd") ||
+      lower.startsWith("::ffff:") && isPrivateOrReservedIp(lower.slice(7)); // IPv4-mapped IPv6
+  }
+  return true; // not a recognizable IP at all — refuse rather than guess
+}
+async function assertSafeExternalUrl(rawUrl: string): Promise<void> {
+  let parsed: URL;
+  try { parsed = new URL(rawUrl); } catch { throw new Error("URL invalide."); }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("URL invalide — seuls http(s) sont acceptés.");
+  const host = parsed.hostname;
+  if (host === "localhost" || host.endsWith(".localhost")) throw new Error("Cette adresse n'est pas autorisée.");
+  if (isIP(host)) {
+    if (isPrivateOrReservedIp(host)) throw new Error("Cette adresse n'est pas autorisée.");
+    return;
+  }
+  let addresses: { address: string }[];
+  try { addresses = await dnsLookup(host, { all: true }); } catch { throw new Error("Impossible de résoudre cette adresse."); }
+  if (!addresses.length || addresses.some((a) => isPrivateOrReservedIp(a.address))) throw new Error("Cette adresse n'est pas autorisée.");
+}
+
 /** Connect a Pronote account: log in ONCE with the real credentials (never stored past this call), then
  *  persist only the rotating token pawnote issues in their place. */
 export async function connectPronote(email: string, opts: { url: string; username: string; password: string; kind?: number }): Promise<{ ok: boolean; error?: string; connected?: boolean; username?: string }> {
@@ -134,6 +187,7 @@ export async function connectPronote(email: string, opts: { url: string; usernam
   if (!rawUrl || !username || !opts.password) return { ok: false, error: "L'URL, l'identifiant et le mot de passe sont requis." };
   const kind = opts.kind === pronote.AccountKind.PARENT ? pronote.AccountKind.PARENT : pronote.AccountKind.STUDENT;
   const url = normalizePronoteUrl(rawUrl, kind);
+  try { await assertSafeExternalUrl(url); } catch (e: any) { return { ok: false, error: e?.message || "URL invalide." }; }
   const deviceUUID = randomUUID();
   return withPronoteLock(email, async () => {
     try {
@@ -509,14 +563,26 @@ export async function pronoteGrades(email: string): Promise<PronoteGradeItem[]> 
     const periodsToTry = current ? [current, ...orderedPeriods.filter((p) => p !== current)] : orderedPeriods;
     for (const period of periodsToTry) {
       const overview = await pronote.gradesOverview(session, period);
-      const grades = (overview.subjectsAverages || [])
-        .filter((s) => s.student && s.outOf?.points)
-        .map((s): PronoteGradeItem => ({
-          subject: s.subject?.name || "Matière",
-          average: Math.round((s.student!.points / (s.outOf!.points || 20)) * 20 * 10) / 10,
-          outOf: 20,
-        }));
-      if (grades.length) return grades;
+      const isRealGrade = (g?: pronote.GradeValue) => !!g && g.kind === 0;
+      const bySubject = new Map<string, PronoteGradeItem>();
+      for (const s of overview.subjectsAverages || []) {
+        if (!isRealGrade(s.student) || !isRealGrade(s.outOf)) continue;
+        const name = s.subject?.name || "Matière";
+        bySubject.set(name, { subject: name, average: Math.round((s.student!.points / (s.outOf!.points || 20)) * 20 * 10) / 10, outOf: 20 });
+      }
+      const rawBySubject = new Map<string, { pts: number; outOf: number }[]>();
+      for (const g of overview.grades || []) {
+        if (!isRealGrade(g.value)) continue;
+        const outOf = isRealGrade(g.outOf) ? g.outOf.points : (isRealGrade(g.defaultOutOf) ? g.defaultOutOf!.points : 20);
+        if (!outOf) continue;
+        const name = g.subject?.name || "Matière";
+        if (!bySubject.has(name)) (rawBySubject.get(name) || rawBySubject.set(name, []).get(name)!).push({ pts: g.value.points, outOf });
+      }
+      for (const [name, entries] of rawBySubject) {
+        const scaledAvg = entries.reduce((sum, entry) => sum + (entry.pts / entry.outOf) * 20, 0) / entries.length;
+        bySubject.set(name, { subject: name, average: Math.round(scaledAvg * 10) / 10, outOf: 20 });
+      }
+      if (bySubject.size) return [...bySubject.values()];
     }
     return [];
   });

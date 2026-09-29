@@ -242,6 +242,20 @@ input:focus, textarea:focus {
   transition-duration: var(--duration-instant);
 }
 
+/* Cross-fade for route swaps (Tasks ↔ Journal ↔ Study ↔ Settings, App.tsx's navigate()) via the native View
+   Transitions API — a plain opacity fade, not a slide/zoom, since the old and new sections have completely
+   different layouts and a positional transform between them would look like a glitch, not a polish. Skipped
+   entirely for prefers-reduced-motion (navigate() itself doesn't call startViewTransition in that case), so
+   nothing here needs its own reduced-motion guard. */
+::view-transition-old(root), ::view-transition-new(root) {
+  animation-duration: var(--duration-slow);
+  animation-timing-function: var(--ease-out);
+}
+::view-transition-old(root) { animation-name: otto-fade-out; }
+::view-transition-new(root) { animation-name: otto-fade-in; }
+@keyframes otto-fade-out { to { opacity: 0; } }
+@keyframes otto-fade-in { from { opacity: 0; } }
+
 /* Apple Design §14 — reduced-motion ≠ no feedback. Replace vestibular slides/springs with short
    opacity crossfades so the UI still communicates state changes without triggering motion sensitivity.
    Keep opacity/color changes that aid comprehension. */
@@ -311,12 +325,15 @@ input:focus, textarea:focus {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease);
+  transition: background var(--duration-fast) var(--ease), border-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease), opacity var(--duration-fast) var(--ease), transform var(--duration-instant) var(--ease-spring);
   white-space: nowrap; text-decoration: none; user-select: none;
   -webkit-touch-callout: none;
 }
 .btn:hover { background: var(--bg-2); }
-.btn:active { background: var(--bg-3); }
+/* Apple Design §1 — instant tactile feedback on press. Previously this scale-down only existed inside the
+   prefers-reduced-motion block below (meant to stay as the one motion reduced-motion users keep), which
+   left everyone else with NO press feedback at all on the single most-clicked element in the app. */
+.btn:active { background: var(--bg-3); transform: scale(0.97); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .btn.primary {
@@ -540,11 +557,15 @@ input:focus, textarea:focus {
    further in the min-width:641px block below. */
 /* Matches Settings' own max-width (680px) — one consistent "single centered column" width across the
    app at every screen size, instead of the dashboard uniquely stretching wide on a big screen. */
+/* Anchored near the sidebar with a generous but bounded gutter, NOT dead-centered in the whole remaining
+   viewport — `margin: 0 auto` on a wide screen (the content area starts at 220px, the sidebar's width, and
+   can run to 2000px+) left a huge, unbalanced dead-space gap that made the column look like it was floating
+   disconnected from the rest of the app instead of sitting in it. */
 .list-wrap {
   width: 100%;
   max-width: 680px;
-  margin: 0 auto;
-  padding: clamp(32px, 6vh, 72px) var(--space-5) var(--space-8);
+  margin: 0;
+  padding: clamp(32px, 6vh, 72px) clamp(var(--space-5), 5vw, 64px) var(--space-8);
   animation: pageIn var(--duration-spring) var(--ease) backwards;
 }
 .dash-head { margin-bottom: var(--space-5); }
@@ -641,6 +662,12 @@ input:focus, textarea:focus {
 .exam-days { font-family: var(--mono, ui-monospace, monospace); font-size: var(--text-md); font-weight: 700; flex: none; }
 .exam-chip.soon .exam-days { color: var(--accent); }
 .exam-subject { font-size: 13px; font-weight: var(--weight-medium); color: var(--ink); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Milestone chips (MilestonesStrip, client/App.tsx) reuse .exam-chip's base but read as progress, not a
+   deadline — no left-flag urgency color, and the subject/topic pair needs its own two-part layout instead
+   of .exam-days' number-first one. */
+.milestone-chip { border-left-color: var(--accent); flex-wrap: wrap; row-gap: 2px; cursor: default; }
+.milestone-chip .exam-subject { flex: none; color: var(--ink-3); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
+.milestone-topic { font-size: 13px; font-weight: var(--weight-medium); color: var(--ink); }
 .exam-when { font-size: var(--text-xs); color: var(--ink-3); text-transform: capitalize; flex: none; }
 .exam-more, .milestone-more { flex: none; align-self: center; white-space: nowrap; }
 
@@ -771,6 +798,15 @@ input:focus, textarea:focus {
   /* Apple Design §4 — spring animation with staggered delay */
   animation: appleRise var(--duration-spring) var(--ease-spring) 0.05s backwards;
 }
+/* A genuine, already-computed "up" trend surfaced as a quiet acknowledgment — same rise-in as .dash-line,
+   deliberately NOT a pill/badge (this is warmth, not a status signal like overdue/working). */
+.dash-momentum {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--accent, var(--ink-2));
+  animation: appleRise var(--duration-spring) var(--ease-spring) 0.08s backwards;
+}
 .dash-late, .dash-working {
   font-family: var(--mono);
   font-size: 11.5px;
@@ -807,11 +843,10 @@ input:focus, textarea:focus {
   padding: var(--space-6);
   margin: var(--space-5) 0 var(--space-6);
   border-radius: var(--radius);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--bg-2);
+  border: none;
   box-shadow: none;
   animation: appleRise var(--duration-spring) var(--ease) 0.05s backwards;
-  transition: border-color var(--duration-base) var(--ease);
 }
 .dash-hero-kicker {
   font-size: 11.5px;
@@ -851,6 +886,9 @@ input:focus, textarea:focus {
   gap: var(--space-2);
   margin-top: var(--space-3);
 }
+/* Minimalist meta line — the subject + due date carry the context; the quadrant label is
+   noise on top of them, so it doesn't render at any width. */
+.dash-hero-meta .card-quadrant { display: none; }
 .dash-hero-cta {
   margin-top: var(--space-5);
 }
@@ -861,7 +899,7 @@ input:focus, textarea:focus {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
   background: var(--accent-soft);
-  border: 1px solid var(--line-glass);
+  border: none;
   font-size: 13px;
   line-height: 1.45;
   color: var(--ink-2);
@@ -878,7 +916,7 @@ input:focus, textarea:focus {
 .chip-tasktype {
   background: var(--surface-glass);
   color: var(--ink-2);
-  border: 1px solid var(--line-glass);
+  border: none;
   text-transform: capitalize;
   font-size: 11px;
   font-weight: 600;
@@ -952,17 +990,12 @@ input:focus, textarea:focus {
 /* ─── Apple Add Task Bar ──────────────────────────────────────────────────── */
 .add-task-row {
   display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); margin-bottom: var(--space-6);
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--bg-2);
+  border: none;
   border-radius: var(--radius);
   box-shadow: none;
-  transition: border-color var(--duration-fast) var(--ease);
-}
-@media (hover: hover) {
-  .add-task-row:hover { border-color: var(--ink-3); }
 }
 .add-task-row:focus-within {
-  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .add-plus { color: var(--ink-3); font-size: var(--text-xl); font-weight: 300; line-height: 1; flex: none; transition: color var(--duration-fast) var(--ease-spring); }
@@ -1215,6 +1248,8 @@ input:focus, textarea:focus {
 }
 .quiz-mistake-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); outline: none; }
 .deck-btn-back { display: block; margin: var(--space-2) auto 0; }
+/* Deliberately quieter than Wrong/Correct — an escape hatch for an off-syllabus card, not a third grade. */
+.deck-btn-not-needed { display: block; margin: var(--space-1) auto 0; color: var(--ink-3); font-size: 12px; }
 .study-help { margin-top: var(--space-3); border-top: 1px solid var(--line-soft); padding-top: var(--space-2); }
 .study-help-toggle { display: block; margin: 0 auto; }
 .study-help-panel { margin-top: var(--space-2); background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: var(--space-3); }
@@ -1418,6 +1453,10 @@ input:focus, textarea:focus {
 .tf-title { font-size: var(--text-xl); font-weight: var(--weight-semibold); letter-spacing: -0.02em; line-height: 1.3; margin: 0 34px 0 0; }
 .tf-why { font-size: var(--text-base); color: var(--ink-2); line-height: 1.45; margin: -2px 34px 0 0; }
 .tf-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+/* Minimalist meta line — the subject + due date carry the context; the task-type chip and
+   quadrant label are noise on top of them, so they don't render at any width. */
+.tf-meta .chip-tasktype,
+.tf-meta .card-quadrant { display: none; }
 .tf-study-btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: var(--radius-sm); border: 1px solid var(--line);
@@ -1434,10 +1473,10 @@ input:focus, textarea:focus {
    cluster above — see .task-focus's comment. */
 .step-hero {
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3);
-  background: var(--bg-2); border: 1px solid var(--line-glass);
+  background: var(--bg-2); border: none;
   border-radius: var(--radius-lg, 22px); padding: var(--space-5) var(--space-5);
   margin-top: var(--space-3);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   /* Apple Design §4 — spring transitions for interactive elements */
   transition: box-shadow var(--duration-base) var(--ease-spring), border-color var(--duration-base) var(--ease-spring);
 }
@@ -1453,7 +1492,7 @@ input:focus, textarea:focus {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px;
   font-size: var(--text-sm); color: var(--ink-2); line-height: 1.45;
   margin: -2px 0 0; padding: 10px 14px; background: var(--accent-soft); border-radius: var(--radius-sm);
-  border: 1px solid rgba(var(--accent-rgb), 0.16);
+  border: none;
 }
 .first-action-label { flex: none; font-weight: var(--weight-semibold); color: var(--accent); }
 .first-action-minutes { flex: none; color: var(--ink-3); margin-left: auto; }
@@ -1469,6 +1508,18 @@ input:focus, textarea:focus {
 /* No longer a collapsed disclosure — a calm, always-visible chip row directly below the hero/first-action,
    same quiet chip styling as before, just not hidden behind a click. */
 .tf-prepared-inline { margin-top: var(--space-3); }
+/* BoardArtifact.tsx reused outside Study Mode (see TaskCard.tsx) — its own .sm-board-body assumes a fixed-
+   height artifact window (height: 100%, which is simply ignored/auto here since this parent has no explicit
+   height, so it just sizes to content — no clipping), styled here to read as a normal card on the page
+   instead of a borderless full-bleed panel. */
+.tf-board-inline {
+  margin-top: var(--space-3);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--bg-2);
+  max-height: 360px;
+  overflow: auto;
+}
 .tf-panels { display: flex; flex-direction: column; margin-top: var(--space-3); }
 .disclosure { border-top: 1px solid var(--line-soft); }
 .disclosure:last-child { border-bottom: 1px solid var(--line-soft); }
@@ -1564,10 +1615,10 @@ input:focus, textarea:focus {
 .chat-msg-toggle:hover { opacity: 1; }
 .chat-user {
   align-self: flex-end;
-  background: linear-gradient(180deg, #FB923C 0%, var(--accent-2) 100%);
+  background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 100%);
   color: #fff;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 2px 8px rgba(var(--accent-2-rgb), 0.25);
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.25);
 }
 .chat-assistant {
   align-self: flex-start;
@@ -1884,8 +1935,9 @@ input:focus, textarea:focus {
 .settings-page {
   width: 100%;
   max-width: 660px;
-  margin: 0 auto;
-  padding: clamp(32px, 6vh, 88px) 16px 120px;
+  margin: 0;
+  /* Same fix as .list-wrap above: anchored near the sidebar, not dead-centered in the whole viewport. */
+  padding: clamp(32px, 6vh, 88px) clamp(16px, 5vw, 64px) 120px;
   /* Apple Design §4 — spring animation for entrance */
   animation: appleRise var(--duration-spring) var(--ease-spring) backwards;
 }
@@ -1906,9 +1958,9 @@ input:focus, textarea:focus {
   padding: 22px 24px;
   margin-bottom: var(--space-5);
   background: var(--surface-glass);
-  border: 1px solid var(--line-glass);
+  border: none;
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
+  box-shadow: none;
   /* Apple Design §12 — glass material */
   backdrop-filter: blur(var(--blur)) saturate(180%);
   -webkit-backdrop-filter: blur(var(--blur)) saturate(180%);
@@ -2063,11 +2115,14 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .int-cat { font-size: 11px; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; margin: 20px 0 8px; }
 .int-count { margin-bottom: 10px; }
 .int-grid { display: flex; flex-direction: column; }
+/* Vertical gap does the job of separating tiles — a border-top on every single one (stacked with the
+   Sources card's own outer border, plus each connected-account row's own border below) read as "too many
+   borders" nested inside each other. One outer border per card is enough. */
 .int-tile { display: flex; align-items: center; gap: var(--space-3); padding: 11px 0; }
-.int-tile + .int-tile { border-top: 1px solid var(--line-soft); }
+.int-tile + .int-tile { margin-top: 4px; }
 .int-tile-skel { height: 46px; border-radius: var(--radius-sm); background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3, var(--line-soft)) 37%, var(--bg-2) 63%); background-size: 400% 100%; animation: int-skel-shine 1.4s ease infinite; }
 @keyframes int-skel-shine { 0% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-.int-tile-block + .int-tile-block .int-tile { border-top: 1px solid var(--line-soft); }
+.int-tile-block + .int-tile-block .int-tile { margin-top: 4px; }
 .int-logo { width: 24px; height: 24px; border-radius: var(--radius-sm); flex: none; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
 /* PRONOTE's logo is a wide wordmark (not a square icon like the others) — contain + a white backing so
    it stays legible regardless of theme, instead of stretching to fill a square box. */
@@ -2080,7 +2135,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .int-blurb.warn { color: var(--warn); -webkit-line-clamp: 3; }
 /* Multi-Gmail: the connected accounts under the Gmail tile */
 .int-accounts { display: flex; flex-direction: column; margin: 2px 0 8px 36px; }
-.int-acct { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 7px 0; border-top: 1px solid var(--line-soft); }
+.int-acct { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 5px 0; }
 .int-acct-email { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .int-acct-actions { flex: none; display: flex; align-items: center; gap: var(--space-2); }
 
@@ -2111,6 +2166,10 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .errorlog-entry:first-child { border-top: none; }
 .errorlog-entry p { margin: 3px 0; font-size: var(--text-sm); line-height: 1.5; }
 .errorlog-entry-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.exam-grades-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.exam-grades-heading .settings-hint { margin: 0; }
+@media (max-width: 560px) { .exam-grades-heading { align-items: flex-start; flex-direction: column; } }
+
 .grade-list { list-style: none; margin: 4px 0 12px; }
 .grade-row { padding: 9px 0; }
 .grade-row + .grade-row { border-top: 1px solid var(--line-soft); }
@@ -2203,7 +2262,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .chip-bad { background: var(--bg-2); color: var(--ink); }
 .chip-good { background: var(--bg-2); color: var(--ink-3); }
 
-/* ─── Login & Auth ─────────────────────────────────────────────────────────── */
+/* ─── Login & Auth ───────────────────────────────────────────────────────── */
 .login-page { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; background: var(--bg); position: relative; }
 .login-main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .login-card {
@@ -3765,6 +3824,16 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .hero-cta { flex-direction: column; width: 100%; }
 .hero-cta .btn { width: 100%; }
 .landing-sec { padding: 40px 20px; }
+
+/* ─── Mobile sizing trims ────────────────────────────────────────────────────
+   The minimalist border removal (tints + spacing instead of nested boxes, quiet meta lines) lives
+   with each component's base rule above and applies at EVERY width — it is not a phone-only look.
+   All that remains phone-specific here is tighter sizing around the one thing that matters. */
+@media (max-width: 640px) {
+  /* Tighter step-hero padding on mobile — less air around the one thing that matters. */
+  .step-hero { padding: var(--space-4); border-radius: var(--radius); }
+  .hero-step { font-size: 18px; }
+}
 
 /* ─── Desktop / tablet upgrades ────────────────────────────────────────────────
    Everything above is the phone layout. Controls stay touch-sized at every width now — this is meant to
@@ -5527,17 +5596,35 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--ink-3);
   font-size: var(--text-sm);
 }
-.sm-board-body { height: 100%; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
-.sm-board-entry {
-  padding: var(--space-3);
-  background: var(--bg-2);
-  border-radius: var(--radius-xs);
-  border-left: 3px solid var(--line);
+/* No gap here — entries are separated by their own border-bottom hairline now (see .sm-board-entry below),
+   so the page reads as one continuous document flowing downward, not a stack of individually-spaced cards. */
+.sm-board-body { height: 100%; overflow: auto; padding: var(--space-4); display: flex; flex-direction: column; }
+/* Each new entry eases in under the last one, so the board FEELS like a document being written onto —
+   Otto adds the next line and the page grows. Keyed by entry id, so the animation only runs when an entry
+   first mounts, never when older entries re-render. */
+@keyframes sm-board-entry-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.sm-board-entry-instruction { border-left-color: var(--accent); }
-.sm-board-entry-formula { border-left-color: var(--warn, #d97706); font-family: var(--mono, monospace); }
-.sm-board-entry-summary { border-left-color: var(--ok, #16a34a); }
-.sm-board-entry-problem { border-left-color: var(--ink-3); }
+/* Deliberately NOT a boxed card (no background, no border-radius, no colored left rule) — a per-entry card
+   made the board read as a pile of separate clippings instead of one document you scroll down through. A
+   thin bottom hairline is the only separator, same as a section break on a page of notes; the "kind" label
+   still names what the section is without needing its own visual container. */
+.sm-board-entry {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+  animation: sm-board-entry-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.sm-board-entry:last-child { border-bottom: none; }
+.sm-board-entry-formula { font-family: var(--mono, monospace); }
+/* The session document's OPENING heading — "Today's focus". Slightly larger/bolder, like a page title, but
+   still just text sitting on the page — nothing about it is boxed differently from any other entry. */
+.sm-board-entry-focus .sm-board-entry-kind { color: var(--accent); margin-bottom: 6px; }
+.sm-board-entry-focus .sm-board-entry-text { font-size: var(--text-base); font-weight: 600; line-height: 1.45; color: var(--ink); }
+/* The STUDENT's own aha, credited by name — reads as a highlight on the page (accent-colored label + a soft
+   inline background strictly behind the text, not a separate boxed container) rather than another note. */
+.sm-board-entry-insight .sm-board-entry-kind { color: var(--accent); }
+.sm-board-entry-insight .sm-board-entry-text { background: var(--accent-soft); border-radius: var(--radius-xs); padding: 2px 6px; margin: -2px -6px; display: inline; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .sm-board-entry-kind {
   display: block;
   font-size: 10px;
@@ -5549,6 +5636,27 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 }
 .sm-board-entry-text { font-size: var(--text-sm); color: var(--ink); line-height: 1.5; }
 .sm-board-entry-text p { margin: 0; }
+/* DRAW_ON_BOARD's real figures (DiagramOpSVG, BoardArtifact.tsx) — a real drawing, not ASCII-in-a-box, so
+   it gets its own contained box with a light border (distinguishing it from the flowing-text entries around
+   it) rather than the borderless/backgroundless treatment those use. Fixed aspect ratio matches the 800x600
+   coordinate space every op is authored/clamped against server-side. */
+.sm-board-diagram-caption { margin-bottom: 6px; font-style: italic; color: var(--ink-2); }
+.sm-board-diagram {
+  display: block;
+  width: 100%;
+  aspect-ratio: 800 / 600;
+  color: var(--ink);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+}
+/* The "equation" DiagramOp (DRAW_ON_BOARD, real KaTeX typesetting — actual stacked fractions/exponents, not
+   the plain-text approximation formatMath does for chat). foreignObject can't auto-size to fit its HTML, so
+   the box is sized generously and this just centers whatever KaTeX actually produces inside it. */
+.sm-board-eq-box { width: 100%; height: 100%; display: flex; align-items: center; overflow: visible; }
+.sm-board-eq { color: currentColor; font-size: 15px; }
+.sm-board-eq .katex { color: inherit; }
+.sm-board-eq-fallback { font-family: var(--mono, monospace); font-size: 13px; color: var(--ink-2); white-space: pre-wrap; }
 
 /* Problem display in board (merged canvas functionality) */
 .sm-board-problem {
@@ -5703,10 +5811,45 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   color: var(--accent);
 }
 .sm-calc-zero { grid-column: span 2; }
+/* .sm-pdf-body/.sm-document-body (PDFArtifact.tsx/DocumentArtifact.tsx) had no layout rules at all — a
+   plain block div, so `.sm-embed`'s `height: 100%` resolved against an `auto`-height parent (invalid per
+   spec) and fell back to the iframe's tiny intrinsic default height (~150px). The PDF toolbar + a sliver of
+   the actual page rendered up top, then the rest of the window sat blank — reported live as "PDF only shows
+   half". Flex column + `flex: 1` on the embed makes it actually claim the remaining height. */
+.sm-pdf-body, .sm-document-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
 .sm-embed {
   width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   border: 0;
+}
+/* Same missing-layout-CSS shape as .sm-pdf-body/.sm-document-body above: .sm-notes-body/.sm-notes-textarea
+   had no rules at all, so the textarea sat at its browser-default intrinsic size (a few rows) inside
+   whatever space the artifact window actually had, instead of filling it — "text box should fill up the
+   space". */
+.sm-notes-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.sm-notes-textarea {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  resize: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: var(--sp-3, 12px);
+  box-sizing: border-box;
 }
 .sm-pdf-fallback-link,
 .sm-document-fallback-link {
@@ -6191,3 +6334,55 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .practice-problem-verdict.wrong { color: var(--ink-2); }
 
 
+
+/* ── Tutor Session (Primer-style: chat + board) ─────────────────────────────── */
+.tutor-session { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px 20px; height: calc(100vh - 64px); box-sizing: border-box; }
+.tutor-chat, .tutor-board { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.tutor-pane-title { padding: 10px 16px; font-weight: 600; border-bottom: 1px solid var(--line); }
+.tutor-chat-body, .tutor-board-body { flex: 1; min-height: 0; overflow: hidden; padding: 8px; }
+.tutor-board-body { overflow: auto; }
+.tutor-start { padding: 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; border-bottom: 1px solid var(--line); }
+.tutor-start p { margin: 0; font-size: 1.1rem; }
+@media (max-width: 800px) { .tutor-session { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; height: auto; min-height: calc(100vh - 64px); } }
+
+/* Tutor landing (no active session) */
+.tutor-landing { display: flex; align-items: center; justify-content: center; }
+.tutor-landing-inner { max-width: 560px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.tutor-landing-inner h2 { margin: 0; font-size: 1.6rem; }
+.tutor-landing-sub { margin: 0; color: var(--ink-2); font-size: 1rem; line-height: 1.5; }
+.tutor-start-btn { font-size: 1.05rem; padding: 10px 28px; }
+
+/* End-session button in the chat pane title bar */
+.tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tutor-end-btn { font-size: 13px; padding: 4px 12px; font-weight: 500; }
+
+/* Past-session reference shown on a fresh session start */
+.tutor-past-ref { font-size: 0.9rem; color: var(--ink-2); font-style: italic; }
+
+/* Past sessions history (collapsible) */
+.tutor-past-sessions { width: 100%; text-align: left; margin-top: 8px; }
+.tutor-history-toggle { background: none; border: none; color: var(--ink-2); font-size: 0.9rem; cursor: pointer; padding: 4px 0; font-family: inherit; }
+.tutor-history-toggle:hover { color: var(--ink); }
+.tutor-history-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 10px; }
+.tutor-history-item { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px; text-align: left; background: var(--surface); }
+.tutor-history-date { font-size: 0.8rem; color: var(--ink-2); margin-bottom: 4px; }
+.tutor-history-subject { font-size: 0.75rem; color: var(--accent); font-weight: 500; }
+.tutor-history-summary { font-size: 0.95rem; font-weight: 500; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
+.tutor-history-board { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.tutor-history-board li { font-size: 0.85rem; color: var(--ink-2); padding-left: 12px; position: relative; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.4; }
+.tutor-history-board li::before { content: "·"; position: absolute; left: 2px; }
+
+/* Tutor landing page */
+.tutor-subject-select { margin: 16px 0; }
+.tutor-subject-select label { display: block; font-size: 0.9rem; color: var(--ink-2); margin-bottom: 6px; }
+.tutor-subject-select select { width: 100%; max-width: 300px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); font-size: 0.95rem; cursor: pointer; }
+.tutor-subject-select select:hover { border-color: var(--ink-2); }
+.tutor-subject-select select:focus { outline: none; border-color: var(--ink); }
+
+/* Board problem mode toggle */
+.sm-board-problem-mode-toggle { display: flex; gap: 8px; margin-bottom: 12px; }
+.sm-board-problem-mode-toggle .sm-btn.active { background: var(--ink-2); color: var(--surface); }
+
+/* Board problem navigation */
+.sm-board-problem-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.sm-board-problem-nav-counter { font-size: 0.85rem; color: var(--ink-2); }

@@ -19,6 +19,14 @@ interface AskOttoPanelProps {
   onOpenNote: (id: string, title: string) => void;
   onOpenDeck: (id: string, title: string) => void;
   onOpenQuiz: (id: string, title: string) => void;
+  /** Optional overrides (Tutor Session) for the empty-state line and input placeholder. */
+  emptyText?: string;
+  placeholder?: string;
+  /** Tutor Session only — a spoken lesson is the whole premise of that surface (unlike a normal per-task
+   *  chat, which is text-first with voice as an opt-in extra), so it starts the session already listening
+   *  instead of making the student find and tap the mic toggle themselves. Applied once, on mount, via the
+   *  SAME toggle a manual tap would use — never forces it back on if the student explicitly turns it off. */
+  startInVoiceMode?: boolean;
 }
 
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
@@ -29,7 +37,7 @@ interface AskOttoPanelProps {
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, startInVoiceMode,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -40,6 +48,16 @@ export function AskOttoPanel({
   const speechLang = en ? "en-US" : "fr-FR";
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
+  // Applied once — a ref (not state) so it can never re-fire and fight a student who deliberately turns
+  // voice mode back off mid-session.
+  const autoVoiceAppliedRef = useRef(false);
+  useEffect(() => {
+    if (startInVoiceMode && !voiceModeOn && !autoVoiceAppliedRef.current) {
+      autoVoiceAppliedRef.current = true;
+      toggleVoiceMode();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startInVoiceMode]);
   const L = useLang();
   // Fires per detected utterance while listening — ignore a stray recognition result that lands while a
   // previous message is still in flight rather than firing a second send on top of it.
@@ -92,21 +110,6 @@ export function AskOttoPanel({
     spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.chat?.length, voiceModeOn]);
-  // A one-shot spoken filler for the wait — NOT the cycling thinking-word text (that changes every 1.4s;
-  // speaking a new phrase every 1.4s would be unusable), just a single line so a voice-mode student isn't
-  // sitting in total silence during the 15-20s+ a multi-step tutor turn can take (see runTask's own latency
-  // notes in server/claude.ts — this app has no streaming yet, so the reply arrives as one block). Real
-  // replies in voice mode are also told server-side (the `voiceMode` flag sent with the message) to answer
-  // in 2-3 short spoken sentences, so this filler is covering seconds, not the old worst-case full length.
-  const spokenFillerRef = useRef(false);
-  useEffect(() => {
-    if (sending && voiceModeOn && !spokenFillerRef.current) {
-      synth.speak(en ? "Let me think about that." : "Laisse-moi réfléchir.");
-      spokenFillerRef.current = true;
-    }
-    if (!sending) spokenFillerRef.current = false;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sending, voiceModeOn]);
   // Grows up to 3 lines (CSS max-height on .sm-ai-input) then scrolls internally — was a single-line
   // <input>, so anything longer than one line just scrolled sideways out of view while typing. Re-measured
   // on every `input` change (typing AND a programmatic clear after send), not just onChange, so sending a
@@ -132,10 +135,10 @@ export function AskOttoPanel({
 
   return (
     <div className="sm-ai-embed">
-      <div className="sm-ai-chat" role="log" aria-live="polite" aria-label="Conversation with Otto" ref={chatContainerRef} onScroll={handleScroll}>
+      <div className="sm-ai-chat" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
         {!task.chat?.length && !pendingMsg ? (
           <p className="sm-ai-empty">
-            {`Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`}
+            {emptyText ?? `Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`}
           </p>
         ) : task.chat?.map((m, i) => (
           <div key={i} className={`sm-ai-msg sm-ai-msg-${m.role}`}>
@@ -164,7 +167,7 @@ export function AskOttoPanel({
         ))}
         {pendingMsg ? <div className="sm-ai-msg sm-ai-msg-user sm-ai-msg-pending">{pendingMsg}</div> : null}
         {sending ? (
-          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label="Otto is thinking">
+          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
             <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
             {/* The cycling word itself already reads as "still actively working" (it keeps changing), so it
                 replaces the old static "still thinking…"/"might be putting something together…" text
@@ -188,8 +191,8 @@ export function AskOttoPanel({
           ref={inputRef}
           className="sm-ai-input"
           rows={1}
-          aria-label="Your message to Otto"
-          placeholder="What do you need help with?"
+          aria-label={L("Ton message à Otto", "Your message to Otto")}
+          placeholder={placeholder ?? L("De quoi as-tu besoin ?", "What do you need help with?")}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}
@@ -206,7 +209,7 @@ export function AskOttoPanel({
           en={en}
         />
         <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
-          Send
+          {L("Envoyer", "Send")}
         </button>
       </div>
     </div>

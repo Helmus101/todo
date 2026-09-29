@@ -1,6 +1,18 @@
 import type { WebTask } from "../../shared/types.ts";
 import { withInlineLinks, stripStrayMarkdown, stripHtml, useSmClose, SmSurface, useLang, openTab } from "../ui.tsx";
 
+// "context" (and sourceDetail) is plain text, but often several distinct chunks of information run together
+// as one dense wall — split on the AI's own paragraph breaks (newlines) so it reads as short paragraphs
+// instead of one block. The generation prompt asks for "- " bullets, but older/already-generated tasks (and
+// occasional model slips) run them together with no real newline at all — for those, also split on a
+// " - "/" – " bullet marker mid-string as a fallback, so a wall of text still breaks up instead of staying
+// one dense paragraph forever until the task is regenerated.
+function Paragraphs({ text }: { text: string }) {
+  let parts = text.split(/\n{2,}/).flatMap((p) => p.split(/\n/)).map((p) => p.trim()).filter(Boolean);
+  if (parts.length <= 1) parts = text.split(/\s+[-–]\s+(?=\S)/).map((p) => p.trim()).filter(Boolean);
+  return <>{(parts.length ? parts : [text]).map((p, i) => <p key={i}>{p}</p>)}</>;
+}
+
 interface TaskDetailDrawerProps {
   task: WebTask;
   onClose: () => void;
@@ -34,13 +46,13 @@ export function TaskDetailDrawer({ task, onClose, onToggleStep, onToggleSubstep,
         {task.sourceDetail && (
           <div className="sm-task-detail-section">
             <h4>{L("Consignes", "Instructions")}</h4>
-            <p>{stripStrayMarkdown(stripHtml(task.sourceDetail))}</p>
+            <Paragraphs text={stripStrayMarkdown(stripHtml(task.sourceDetail))} />
           </div>
         )}
         {task.context && (
           <div className="sm-task-detail-section">
             <h4>{L("Contexte", "Context")}</h4>
-            <p>{stripStrayMarkdown(task.context)}</p>
+            <Paragraphs text={stripStrayMarkdown(task.context)} />
           </div>
         )}
         {task.links?.length ? (

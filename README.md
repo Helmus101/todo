@@ -12,7 +12,7 @@ Les to-do lists classiques te demandent de tout retaper toi-même. Les IA qui "f
 
 ## Ce que fait Otto
 
-Otto tourne même quand ton ordi est fermé — un job queue durable (Supabase) le fait travailler en arrière-plan. Par défaut il vérifie Pronote une fois par jour ; réglable jusqu'à 4x/jour (soit toutes les 6h) dans Réglages, et un rafraîchissement manuel marche à tout moment.
+Otto tourne même quand ton ordi est fermé — un job queue durable (Supabase) le fait travailler en arrière-plan. La vérification automatique (Pronote + Gmail + Calendar + Drive) est fixée à une fois par jour, 16h heure locale ; un rafraîchissement manuel marche à tout moment. **En pratique, cette fois par jour est garantie par le cron serveur** (`server/jobs.ts`) — sur le plan gratuit ("Hobby") de Vercel, un cron ne peut tourner qu'une fois par 24h, donc c'est la seule exécution garantie quel que soit l'appareil ; ouvrir l'app dans la journée déclenche aussi ce check si ce n'est pas déjà fait, et une extension Chrome/Android installée peut occasionnellement en obtenir une de plus via l'API Periodic Background Sync du navigateur (best-effort, non garanti, absent sur iOS). Pour une vérification plus fréquente que 1x/jour en production, passe au plan Vercel Pro (cron plus fin) ou héberge ailleurs avec ton propre planificateur.
 
 **4 intégrations, 4 seulement :**
 
@@ -27,7 +27,7 @@ Notion est supporté côté serveur mais volontairement caché de l'interface po
 
 ## Mode Étude
 
-Un bureau de travail plein écran, sans navigateur ni onglets à jongler : clique "Étudier" sur une tâche et tout ce qu'il faut pour l'avancer arrive sur un seul bureau — matériaux (PDF, liens, fiches/decks/quiz qu'Otto a déjà préparés), notes, brouillon libre, minuteur (dont Pomodoro auto), fond d'écran perso, et une petite sélection d'outils ouverts à la demande (calculatrice, Desmos, dictionnaire bilingue, tableau blanc, post-it, générateur de citations APA/MLA/Chicago). "Demander à Otto" y fonctionne exactement comme sur la carte de tâche — même tuteur, mêmes garde-fous ("il explique, il ne donne pas la réponse"). Tout est sauvegardé en local (IndexedDB) par tâche, donc tu retrouves ton bureau exactement comme tu l'as laissé.
+Un bureau de travail plein écran, sans navigateur ni onglets à jongler : clique "Étudier" sur une tâche et tout ce qu'il faut pour l'avancer arrive sur un seul bureau — matériaux (PDF, liens, fiches/decks/quiz qu'Otto a déjà préparés), notes, brouillon libre, minuteur (dont Pomodoro auto), fond d'écran perso, et une petite sélection d'outils ouverts à la demande (calculatrice, Desmos, dictionnaire bilingue, tableau blanc, post-it, générateur de citations APA/MLA/Chicago). "Demander à Otto" y fonctionne comme un vrai tuteur socratique — il pose des questions, s'adapte quand une approche ne marche pas, jamais la réponse directe (mêmes garde-fous que sur la carte de tâche) — et écrit à l'occasion sur le **Tableau**, une surface toujours visible où se construit, entrée par entrée, un vrai document de séance : objectif du jour, définitions et formules clés, tes propres déclics, résumé de ton raisonnement une fois un exercice résolu. Tout est sauvegardé en local (IndexedDB pour le bureau, `localStorage` pour la conversation et le tableau — jamais envoyés au cloud) par tâche, donc tu retrouves ton bureau exactement comme tu l'as laissé, sur cet appareil.
 
 ## Journal d'apprentissage
 
@@ -120,6 +120,7 @@ Marche sur n'importe quel hébergeur Node (Render, Railway, Fly, une VM, ou Dock
 - `CREDENTIAL_ENCRYPTION_KEY` renseignée si tu veux que Pronote fonctionne — sinon la connexion Pronote refuse poliment plutôt que de stocker en clair.
 - `supabase.sql` exécuté ; `SUPABASE_SERVICE_KEY` renseignée ; clés anon/service jamais envoyées au client.
 - `CRON_SECRET` renseignée (Vercel Cron vide la file d'attente — une fois par jour sur le plan Hobby, plus souvent sur Pro).
+- **`SENTRY_DSN` (+ `VITE_SENTRY_DSN` côté client) renseignées.** Documentées comme optionnelles dans `.env.example`, elles ne devraient pas l'être en pratique : sans elles, un sweep/job qui échoue en silence (le job queue avale l'erreur pour ne jamais bloquer le pipeline) ne remonte NULLE PART — pas de log consulté, pas d'alerte. C'est le scénario exact qui casse "proactif" sans que personne ne le remarque. Gratuit jusqu'à un volume correct sur [sentry.io](https://sentry.io) ou auto-hébergeable.
 - Sécurité en place : CSP + headers de sécurité, rate-limiting sur l'auth, mots de passe bcrypt, cookies `httpOnly`/`secure`, aucun secret dans le bundle client, RLS verrouillée par défaut, AES-256-GCM sur le seul identifiant qu'on stocke nous-mêmes (jeton Pronote), plus le chiffrement au repos par défaut de Postgres/Supabase sur chaque table.
 - `/privacy` et `/terms` publiées dans l'app — **requis pour la vérification OAuth Google.**
 - **Google OAuth :** Gmail/Calendar/Drive sont des scopes sensibles. Soumets l'écran de consentement OAuth avec ton URL de politique de confidentialité + ta page d'accueil ; tant que ce n'est pas vérifié, Google plafonne l'app à 100 utilisateurs et affiche un écran "app non vérifiée".
@@ -130,7 +131,7 @@ Marche sur n'importe quel hébergeur Node (Render, Railway, Fly, une VM, ou Dock
 - 🔒 Jamais irréversible sans toi : envoyer un mail, inviter à un événement, supprimer → toujours un tap d'approbation.
 - 🎓 Ne fait jamais le travail noté à ta place : pas de dissertation rédigée, pas d'exercice corrigé, pas de réponse de contrôle — les documents créés sont des guides, et l'exercice reste toujours une étape pour toi.
 - 🧠 Passe au crible Pronote/Gmail/Calendar/Drive pour les faits ; seul ce qui a *vraiment besoin de toi* remonte.
-- 🗂️ Données stockées par compte, chiffrées au repos (Postgres/Supabase par défaut, plus AES-256-GCM applicatif sur le seul identifiant qu'on stocke nous-mêmes) ; rien n'est partagé, revendu, ou utilisé pour entraîner des modèles.
+- 🗂️ Données stockées par compte, chiffrées au repos (Postgres/Supabase par défaut, plus AES-256-GCM applicatif sur le seul identifiant qu'on stocke nous-mêmes) ; rien n'est partagé, revendu, ou utilisé pour entraîner des modèles. La conversation avec Otto et le Tableau du Mode Étude restent en local sur l'appareil (`localStorage`, jamais synchronisés) — ils ne suivent pas d'un appareil à l'autre, par choix.
 - 📤 RGPD intégré : consentement explicite à l'inscription, export complet de tes données en un clic (`/api/account/export` — tâches, jobs, connexions, jamais les jetons/mots de passe), et suppression de compte instantanée et définitive depuis Réglages.
 
 ## Extension Chrome Otto Tabs (optionnelle)

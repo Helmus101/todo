@@ -10,20 +10,12 @@ import type { BanditState } from "./bandit.ts";
 /** A persisted Google connection for an account (incl. the refresh token, so it stays connected). */
 export interface StoredGoogle { tokens: Credentials; email?: string; }
 
-/** A persisted Plaid connection (bank-linking, /finance) — `accessToken` is the long-lived credential Plaid
- *  issues after Link succeeds, protected the SAME way Pronote's token is: RLS + service-role-only write path
- *  AND app-level AES-256-GCM encryption (server/crypto.ts), transparent in loadState/saveState below. This
- *  interface always holds the LIVE plaintext token in memory; only the DB row is encrypted. Sandbox-only for
- *  now (see server/plaid.ts) — production use needs a real Plaid business approval and, for this app's
- *  actual French-lycée audience, confirmed bank coverage first. */
-export interface StoredPlaid { accessToken: string; itemId: string; institutionName?: string; connectedAt: string; }
-
 /** A persisted Blackbaud (school Education Management / SKY API) connection — MOCK-ONLY for now, see
  *  server/blackbaud.ts's file-level comment for why: unlike Pronote (a student's own username/password is
- *  enough for the unofficial client) or Plaid (a self-service developer sandbox), Blackbaud's real SKY API
- *  needs a registered developer subscription key AND, for most endpoints, the SCHOOL's own admin enabling
- *  API access for that app — neither exists yet. Same encrypted-at-rest posture as Pronote/Plaid's tokens
- *  regardless (loadState/saveState below), so the real-credential path is ready the moment access exists. */
+ *  enough for the unofficial client), Blackbaud's real SKY API needs a registered developer subscription key
+ *  AND, for most endpoints, the SCHOOL's own admin enabling API access for that app — neither exists yet.
+ *  Same encrypted-at-rest posture as Pronote's tokens regardless (loadState/saveState below), so the
+ *  real-credential path is ready the moment access exists. */
 export interface StoredBlackbaud {
   accessToken: string;
   /** Real OAuth connections only (absent for the mock connection) — SKY API access tokens expire after
@@ -114,24 +106,6 @@ export async function peekSessionCsrfToken(sid: string): Promise<string | null> 
   try {
     const { data } = await client.from(SESSIONS).select("sess").eq("sid", sid).maybeSingle();
     return (data?.sess as any)?.csrfToken ?? null;
-  } catch { return null; }
-}
-
-/** Bypass-cache read of ONE task's chat thread, straight from the account row (TABLE, not the session
- *  store) — same self-heal posture as peekSessionCsrfToken above, for the same underlying race but on a
- *  DIFFERENT cache: loadState's own stateCache (also 3min, per-instance) can leave `req.session.tasks`
- *  (itself sourced from the ALSO-cached session store) missing chat entries another instance already wrote.
- *  Reported live as chat messages appearing to "delete themselves" mid-conversation — the /chat route was
- *  building its response from stale local history, not from a genuine loss (mergeTasks's chat union means
- *  nothing is ever actually dropped from the DB — see tasks.ts's unionChat), but the STALE instance kept
- *  rendering an incomplete thread back to the client for the rest of its cache window. Returns null (never
- *  throws) on any failure — callers must treat that as "can't confirm," never as "genuinely empty". */
-export async function peekTaskChat(email: string, taskId: string): Promise<{ role: string; text: string; at: string }[] | null> {
-  if (!client) return null;
-  try {
-    const { data } = await client.from(TABLE).select("tasks").eq("email", email).maybeSingle();
-    const t = (data?.tasks as any[])?.find((x) => x?.id === taskId);
-    return Array.isArray(t?.chat) ? t.chat : null;
   } catch { return null; }
 }
 
@@ -297,10 +271,10 @@ export async function deleteAuthUser(email: string): Promise<void> {
 
 /** Connection fields accept `null` to mean "clear this connection" — see saveState: `undefined` (or absent)
  *  leaves the column untouched, only an explicit `null` wipes it. That distinction exists because the
- *  natural way to write one connection is `saveState(email, { ...loadedState, plaid })`, and a loaded state
- *  ALWAYS carries the other connection keys — as `undefined` when they aren't set. Under the old
+ *  natural way to write one connection is `saveState(email, { ...loadedState, blackbaud })`, and a loaded
+ *  state ALWAYS carries the other connection keys — as `undefined` when they aren't set. Under the old
  *  "key present ⇒ write it" rule, that spread nulled every OTHER connection the account had. */
-export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle | null; pronote?: StoredPronote | null; plaid?: StoredPlaid | null; blackbaud?: StoredBlackbaud | null; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
+export interface AccountState { profile: Profile; tasks: WebTask[]; google?: StoredGoogle | null; pronote?: StoredPronote | null; blackbaud?: StoredBlackbaud | null; studySessions?: StudySession[]; studyProfile?: StudyProfile; }
 
 // A transient network drop (undici "terminated"/"fetch failed", a reset socket) is NOT the same as "no
 // data" — but Supabase surfaces it both as a thrown error AND, sometimes, as a returned {error}. Treating
@@ -361,7 +335,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   const cached = opts?.bypassCache ? undefined : stateCache.get(email);
   if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
   let { data, error } = await withRetry("load", async () =>
-    client!.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud,studySessions,studyProfile").eq("email", email).maybeSingle());
+    client!.from(TABLE).select("profile,tasks,google,pronote,blackbaud,studySessions,studyProfile").eq("email", email).maybeSingle());
   // A missing column (schema drift — a migration that shipped in code but was never run against this
   // database; see supabase.sql's own note on studySessions/studyProfile, added after exactly this happened
   // live) is a DIFFERENT failure than "the database is unreachable." Postgres fails the ENTIRE query when
@@ -372,7 +346,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   if (error && /column .*(studySessions|studyProfile).* does not exist/i.test(error.message || "")) {
     console.warn("[store] studySessions/studyProfile column missing — falling back to a narrower select. Run supabase.sql against this database to fix properly.");
     const retry = await withRetry("load-narrow", async () =>
-      client!.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud").eq("email", email).maybeSingle());
+      client!.from(TABLE).select("profile,tasks,google,pronote,blackbaud").eq("email", email).maybeSingle());
     data = retry.data as any; error = retry.error;
   }
   if (error) { console.warn("[store] load failed:", error.message); reportError("load-state", error, { email }); return { profile: emptyProfile(), tasks: [] }; }
@@ -381,13 +355,10 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
   const pronote = d?.pronote && d.pronote.token
     ? { ...(d.pronote as StoredPronote), token: decryptSecret(d.pronote.token), ...(d.pronote.password ? { password: decryptSecret(d.pronote.password) } : {}) }
     : undefined;
-  const plaid = d?.plaid && d.plaid.accessToken
-    ? { ...(d.plaid as StoredPlaid), accessToken: decryptSecret(d.plaid.accessToken) }
-    : undefined;
   const blackbaud = d?.blackbaud && d.blackbaud.accessToken
     ? { ...(d.blackbaud as StoredBlackbaud), accessToken: decryptSecret(d.blackbaud.accessToken) }
     : undefined;
-  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, plaid, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
+  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
   cacheSetState(email, result);
   return result;
 }
@@ -399,7 +370,7 @@ export async function loadState(email?: string, opts?: { bypassCache?: boolean }
  *
  *  This USED to key off `"pronote" in state`, i.e. "the key is present, so write it." That looked safe but
  *  wasn't: a loaded AccountState always CONTAINS every connection key (as `undefined` when unset), so the
- *  completely natural `saveState(email, { ...state, blackbaud: updated })` — the shape used by plaid.ts,
+ *  completely natural `saveState(email, { ...state, blackbaud: updated })` — the shape used by
  *  blackbaud.ts and the account-import route — silently wrote `pronote: null` and `google: null` alongside
  *  the one connection it meant to update. Blackbaud's SKY token refreshes roughly hourly, so that path alone
  *  quietly wiped a live Pronote connection about once an hour, which is exactly how this was reported:
@@ -414,9 +385,6 @@ export function connectionColumnUpdates(state: AccountState): Record<string, unk
   if (state.pronote !== undefined) {
     out.pronote = state.pronote === null ? null
       : { ...state.pronote, token: encryptSecret(state.pronote.token), ...(state.pronote.password ? { password: encryptSecret(state.pronote.password) } : {}) };
-  }
-  if (state.plaid !== undefined) {
-    out.plaid = state.plaid === null ? null : { ...state.plaid, accessToken: encryptSecret(state.plaid.accessToken) };
   }
   if (state.blackbaud !== undefined) {
     out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) };

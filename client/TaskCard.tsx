@@ -11,7 +11,7 @@
  */
 import { useEffect, useState, useRef, useContext, useCallback, type ReactNode, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import type { WebTask, TaskStep, Profile } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, deadlineEpoch } from "../shared/types.ts";
 import { api } from "./api.ts";
 import { BookOpen } from "lucide-react";
 import {
@@ -22,6 +22,8 @@ import {
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
+import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
+import { appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "./localChatBoard.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
 
 /**
@@ -93,7 +95,7 @@ function useTaskLeave(
  *  at all, which read as incomplete/broken next to every other card that has one. Falls back to a relative
  *  "Added <when>" from `createdAt`, which every task has unconditionally. */
 const taskDateLabel = (t: WebTask, L: (fr: string, en: string) => string): string =>
-  t.when ? (t.whenApprox ? `~${fmtWhen(t.when)}` : fmtWhen(t.when)) : t.createdAt ? L(`Ajoutée ${relTime(t.createdAt)}`, `Added ${relTime(t.createdAt)}`) : "";
+  t.when ? (t.whenApprox ? `~${fmtWhen(t.when, L)}` : fmtWhen(t.when, L)) : t.createdAt ? L(`Ajoutée ${relTime(t.createdAt, L)}`, `Added ${relTime(t.createdAt, L)}`) : "";
 
 // "Open example.com ↗" instead of a bare "Open ↗" — the user sees WHERE each step goes before clicking.
 const urlHost = (u?: string) => { try { return u ? new URL(u).hostname.replace(/^www\./, "") : ""; } catch { return ""; } };
@@ -215,7 +217,8 @@ export function TaskCardRow({ task, onChange, onTask, retrying, onConfirmed, isN
   const w = taskDateLabel(task, L);
   // Days-to-deadline, not urgency score, drives the visual — same anti-procrastination curve as
   // the server's applyDeadlineUrgency, so a card LOOKS as urgent as it's actually ranked.
-  const daysLeft = task.when ? (Date.parse(task.when) - Date.now()) / 86_400_000 : NaN;
+  const dueMs = deadlineEpoch(task.when);
+  const daysLeft = Number.isFinite(dueMs) ? (dueMs - Date.now()) / 86_400_000 : NaN;
   const soon = !isDone && !isNaN(daysLeft) && daysLeft <= 3;
   const next = !isDone ? (task.steps || []).find((s) => !s.done) : undefined;
   const secondary = next ? L(`Suivant : ${next.text}`, `Next: ${next.text}`) : subtitle(task);
@@ -295,7 +298,7 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
       <div className="dash-hero-kicker">{L("Ta priorité", "Your next priority")}</div>
       <h2 className="dash-hero-title">{stripStrayMarkdown(task.title)}</h2>
       {task.goal ? <div className="task-goal-banner"><span className="task-goal-tag">{L("Objectif", "Goal")}:</span> {stripStrayMarkdown(task.goal)}</div> : null}
-      {task.why ? <p className="dash-hero-why">{stripStrayMarkdown(task.why)}</p> : null}
+      {(task.nudgeLine || task.why) ? <p className="dash-hero-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
       {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
       {(task.sourceSubject || w || showChip || task.taskType) ? (
         <div className="dash-hero-meta">
@@ -315,10 +318,26 @@ export function TaskHero({ task, onOpen }: { task: WebTask; onOpen: () => void }
 
 /* ─────────────────────────────── the focused task view ─────────────────────────────── */
 
-export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode }: {
+export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfirmed, onLeft, onEnterStudyMode, userId }: {
   task: WebTask; onChange: (t: WebTask[]) => void; onTask: (t: WebTask) => void; retrying?: boolean;
   onConfirmed?: (id: string) => void; onLeft?: (id: string) => void; onEnterStudyMode?: () => void;
+  /** Scopes the local-only chat/board/problems store (client/localChatBoard.ts) to this account, so a
+   *  shared browser can't leak one student's conversations into another's after a sign-out/sign-in. */
+  userId?: string | null;
 }) {
+  // Defensive read-through, independent of whether the `tasks` list upstream (App.tsx) already hydrated
+  // this task from local storage: chat/board/problems are local-only now, and this is the actual place
+  // they're displayed, so read them straight from local storage here rather than trust every upstream path
+  // to have already merged it in. Reported live as "chat still deletes" — this can't fix a bug in how a
+  // message got lost from storage, but it does close off "the message IS in storage but this render is
+  // looking at a stale/un-hydrated copy of the task" as a way for it to look deleted.
+  const local = getLocalThread(taskProp.id, userId ?? null);
+  const task = (local.chat.length || local.board.length || local.problems.length)
+    ? { ...taskProp,
+        ...(local.chat.length ? { chat: local.chat } : {}),
+        ...(local.board.length ? { board: local.board } : {}),
+        ...(local.problems.length ? { problems: local.problems } : {}) }
+    : taskProp;
   const L = useLang();
   const notify = useNotify();
   const cardEn = useContext(LangContext) === "en";
@@ -330,6 +349,7 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
   const [openNote, setOpenNote] = useState<string | null>(null);
   const [openDeck, setOpenDeck] = useState<string | null>(null);
   const [openQuiz, setOpenQuiz] = useState<string | null>(null);
+  const [openChat, setOpenChat] = useState(false);
   // Lifted: the hero edits the CURRENT step's decision box, the step list edits any step's.
   const [decided, setDecided] = useState<Record<number, string>>({});
 
@@ -487,9 +507,17 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
     if (!message || chatSending) return;
     const stepIndex = chatStep; // captured before clearing
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message); setChatStep(null);
-    // Merge the WHOLE returned task, not just `chat` — a tutor turn can create notes/decks/quizzes, and the
-    // assistant's chat entry references them by id (task.notes/flashcards/quizzes).
-    try { const { task: updated } = await api.chat(task.id, message, stepIndex ?? undefined, undefined, voiceMode); onTask({ ...task, ...updated }); }
+    // Merge the WHOLE returned task (steps/notes/decks/quizzes are still cloud-synced), then layer this
+    // turn's chat/board/problems on top from LOCAL storage — those three are local-only now (never sent to
+    // the cloud account, see localChatBoard.ts), so the server response only carries this turn's delta,
+    // not the full arrays.
+    try {
+      const { task: updated, chatDelta, board, problems } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex ?? undefined, undefined, voiceMode);
+      const chat = appendLocalChat(task.id, chatDelta, userId ?? null);
+      const newBoard = appendLocalBoard(task.id, board, userId ?? null);
+      const newProblems = appendLocalProblems(task.id, problems, userId ?? null);
+      onTask({ ...task, ...updated, chat, board: newBoard, problems: newProblems });
+    }
     catch (e: any) { setChatError(e?.message || L("Envoi impossible — réessaie.", "Couldn't send that — try again.")); setChatInput(message); }
     finally { setChatSending(false); setPendingMsg(null); }
   };
@@ -545,12 +573,12 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
             <span className="task-goal-tag">{L("Objectif de fin", "Definition of Done")}:</span> {stripStrayMarkdown(task.goal)}
           </div>
         ) : null}
-        {task.why ? <p className="tf-why">{stripStrayMarkdown(task.why)}</p> : null}
+        {(task.nudgeLine || task.why) ? <p className="tf-why">{stripStrayMarkdown(task.nudgeLine || task.why)}</p> : null}
         {sourceAttributionLine(task, cardEn) ? <p className="card-source-attribution">{sourceAttributionLine(task, cardEn)}</p> : null}
         <div className="tf-meta">
           {task.taskType ? <span className="chip chip-tasktype">{task.taskType.replace(/_/g, " ")}</span> : null}
           {task.sourceSubject ? <span className="card-subject">{task.sourceSubject}</span> : null}
-          {taskDateLabel(task, L) ? <span className={`when ${task.when && (Date.parse(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
+          {taskDateLabel(task, L) ? <span className={`when ${(deadlineEpoch(task.when) - Date.now()) / 86_400_000 <= 3 ? "when-soon" : ""}`}>{taskDateLabel(task, L)}</span> : null}
           {!isDone ? <span className={`card-quadrant card-quadrant-${task.quadrant}`}>{quadrantLabel(task.quadrant, cardEn)}</span> : null}
           {chip ? <span className={`chip chip-${chip.tone}`}>{chip.label}</span> : null}
           {task.audit?.some((a) => a.kind === "guardrail") ? <span className="row-guardrail" title={L("Otto a refusé de faire cette tâche à ta place ici — voir le journal d'activité", "Otto declined to do this one for you here — see the activity log")} aria-hidden="true">✦</span> : null}
@@ -622,23 +650,37 @@ export function TaskFocus({ task, onChange, onTask, retrying, onConfirmed, onLef
         ) : null}
       </div>
 
-      {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away.
-          Hidden entirely for a /finance (Plaid) task — the server refuses this call anyway (no AI ever
-          touches bank data, see the /api/tasks/:id/chat route's own comment), so don't even offer the
-          input for something that can only ever come back as an error. */}
-      {!isDone && task.source !== "plaid" ? (
-        <TaskChat
-          task={task} input={chatInput} setInput={setChatInput} sending={chatSending} error={chatError}
-          pendingMsg={pendingMsg} slow={chatSlow} verySlow={chatVerySlow} onSend={sendChat}
-          inputRef={chatInputRef} endRef={chatEndRef}
-          onOpenNote={setOpenNote} onOpenDeck={setOpenDeck} onOpenQuiz={setOpenQuiz}
-        />
+      {/* The tutor's Board (WRITE_TO_BOARD, server/claude.ts) was already persisted onto task.board/
+          task.problems by every chat turn — but outside Study Mode, nothing ever RENDERED it. A student
+          asking a question in the plain task chat (not Study Mode) who got told "look at the board above"
+          saw nothing at all, because there was no "above" for it to be. Same component Study Mode's desk
+          uses; only shown once there's actually something on it, same "count > 0" gating as PreparedPanel. */}
+      {(task.board?.length || task.problems?.length) ? (
+        <div className="tf-board-inline">
+          <BoardArtifact task={task} />
+        </div>
+      ) : null}
+
+      {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away. */}
+      {!isDone ? (
+        <button type="button" className="btn ghost" onClick={() => setOpenChat(true)}>{L("Demander à Otto", "Ask Otto")}</button>
+      ) : null}
+
+      {openChat ? (
+        <TaskModal onClose={() => setOpenChat(false)} nested title={L("Demander à Otto", "Ask Otto")}>
+          <TaskChat
+            task={task} input={chatInput} setInput={setChatInput} sending={chatSending} error={chatError}
+            pendingMsg={pendingMsg} slow={chatSlow} verySlow={chatVerySlow} onSend={sendChat}
+            inputRef={chatInputRef} endRef={chatEndRef}
+            onOpenNote={setOpenNote} onOpenDeck={setOpenDeck} onOpenQuiz={setOpenQuiz}
+          />
+        </TaskModal>
       ) : null}
 
       {/* (F) the quiet exit. "C'est bon" lives in the hero's done state, not down here. */}
       <div className="tf-foot">
         {isDone ? (
-          <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt)}` : ""}</span>
+          <span className="done-footer">{task.status === "dismissed" ? L("Ignorée", "Dismissed") : L("Terminée", "Done")}{task.updatedAt ? ` ${relTime(task.updatedAt, L)}` : ""}</span>
         ) : (
           <button className="btn xs ghost" title={L("Retirer cette tâche", "Remove this task")} onClick={() => void leave(() => api.dismiss(task.id), "dismiss", task)}>{L("Ignorer", "Dismiss")}</button>
         )}
@@ -813,7 +855,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
     const autoStarting = isInFlight(task.status);
     return (
       <div className="step-hero hero-empty">
-        <p className="hero-line">{stripStrayMarkdown(subtitle(task) || task.why || "")}</p>
+        <p className="hero-line">{stripStrayMarkdown(subtitle(task) || task.nudgeLine || task.why || "")}</p>
         {autoStarting ? (
           <p className="hero-sub">{L("Otto prépare ça…", "Otto is getting this ready…")}</p>
         ) : (
@@ -857,7 +899,7 @@ function StepHero({ task, steps, currentIdx, isDone, cStatus, retrying, running,
       <p className="hero-step">{withInlineLinks(s.text)}</p>
       {/* NOTE: doneWhen is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
       {/* NOTE: checkpoint is no longer displayed on individual steps - it belongs on the main task's Definition of Done */}
-      {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
+      {s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate, L)}`, `by ${fmtDate(s.targetDate, L)}`)}</span> : null}
       {s.minutes ? <SessionTimer key={currentIdx} minutes={s.minutes} /> : null}
       {s.result ? <span className="step-result note">{s.result}</span> : null}
       {/* A step Otto can DO but is missing ONE piece of info for (server sets `question`, optionally
@@ -1007,7 +1049,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
             const late = !s.done && s.targetDate! < todayIso();
             const state = s.done ? "done" : late ? "late" : i === doneIdx ? "current" : "upcoming";
             return (
-              <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate)}${late ? ` (${L("en retard", "overdue")})` : ""}` : ""}`}>
+              <div key={i} role="listitem" className={`milestone-segment ${state}`} title={`${s.text}${s.targetDate ? ` — ${L("d'ici le", "by")} ${fmtDate(s.targetDate, L)}${late ? ` (${L("en retard", "overdue")})` : ""}` : ""}`}>
                 <span className="milestone-segment-bar" />
                 <span className="milestone-segment-label">{s.text}</span>
               </div>
@@ -1032,7 +1074,7 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 className={`step-mark ${!s.done && !blk ? "tickable" : ""}`}
                 aria-label={blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : markLabel}
                 aria-pressed={s.done}
-                title={s.done ? L(`Fait${s.doneAt ? " " + relTime(s.doneAt) : ""} — cliquer pour annuler`, `Done${s.doneAt ? " " + relTime(s.doneAt) : ""} — click to undo`) : blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : L("Cliquer pour marquer comme fait", "Click to mark done")}
+                title={s.done ? L(`Fait${s.doneAt ? " " + relTime(s.doneAt, L) : ""} — cliquer pour annuler`, `Done${s.doneAt ? " " + relTime(s.doneAt, L) : ""} — click to undo`) : blk ? L("En attente d'une étape précédente", "Waiting on an earlier step") : L("Cliquer pour marquer comme fait", "Click to mark done")}
                 disabled={blk}
                 onClick={() => { if (blk) return; s.done ? onUndo(i) : onStepDone(i); }}
               >
@@ -1045,8 +1087,8 @@ function StepList({ task, steps, decided, setDecided, onStepDone, onUndo, onAsk,
                 </div>
                 {/* NOTE: doneWhen no longer displayed on individual steps */}
                 {/* NOTE: checkpoint no longer displayed on individual steps */}
-                {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt)}`, `done ${relTime(s.doneAt)}`)}</span> : null}
-                {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate)}`, `by ${fmtDate(s.targetDate)}`)}</span> : null}
+                {s.done && s.doneAt ? <span className="step-when">{L(`fait ${relTime(s.doneAt, L)}`, `done ${relTime(s.doneAt, L)}`)}</span> : null}
+                {!s.done && s.targetDate ? <span className="step-target">{L(`d'ici le ${fmtDate(s.targetDate, L)}`, `by ${fmtDate(s.targetDate, L)}`)}</span> : null}
                 {/* 2-minute rule: a step this short shouldn't just sit in the checklist waiting its turn —
                     flag it so it's obviously worth knocking out right now instead of scheduling for later. */}
                 {!s.done && s.minutes ? (
@@ -1275,15 +1317,6 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
     spokenCountRef.current = chat.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task.chat?.length, voiceModeOn]);
-  const spokenFillerRef = useRef(false);
-  useEffect(() => {
-    if (sending && voiceModeOn && !spokenFillerRef.current) {
-      synth.speak(en ? "Let me think about that." : "Laisse-moi réfléchir.");
-      spokenFillerRef.current = true;
-    }
-    if (!sending) spokenFillerRef.current = false;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sending, voiceModeOn]);
   return (
     <section className="task-chat">
       <h3>{L("Demander à Otto", "Ask Otto")}</h3>
@@ -1556,6 +1589,12 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
       if (fresh) onTask(fresh);
     }).catch(() => {});
   } : undefined;
+  const onNotNeeded = deck ? (cardIndex: number) => {
+    void api.markFlashcardNotNeeded(task.id, deck.id, cardIndex).then((list) => {
+      const fresh = list.find((t) => t.id === task.id);
+      if (fresh) onTask(fresh);
+    }).catch(() => {});
+  } : undefined;
   return (
     <>
       {note ? (
@@ -1566,7 +1605,7 @@ function ArtifactPopups({ task, onTask, openNote, openDeck, openQuiz, setOpenNot
           </div>
         </TaskModal>
       ) : null}
-      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} /></TaskModal> : null}
+      {deck ? <TaskModal onClose={() => setOpenDeck(null)} nested title={deck.title}><FlashcardDeck deck={deck} onReview={onReview} onNotNeeded={onNotNeeded} taskId={task.id} onAllCorrect={() => setOpenDeck(null)} /></TaskModal> : null}
       {quiz ? <TaskModal onClose={() => setOpenQuiz(null)} nested title={quiz.title}><QuizPlayer quiz={quiz} taskId={task.id} subject={task.sourceSubject} /></TaskModal> : null}
     </>
   );

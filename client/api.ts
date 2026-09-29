@@ -1,4 +1,4 @@
-import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile } from "../shared/types.ts";
+import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, BoardEntry, TaskProblem } from "../shared/types.ts";
 import { normalizeProfile } from "../shared/types.ts";
 
 export interface IntegrationItem { key: string; name: string; blurb: string; category: string; logo: string; connected: boolean; accounts?: ConnectedAccount[]; }
@@ -195,7 +195,8 @@ const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: st
 
 export const api = {
   status: (): Promise<ConnectionStatus> => req("/api/status").then(j).then((s: ConnectionStatus) => { if (s.csrfToken) csrfToken = s.csrfToken; return s; }),
-  signup: (email: string, password: string, consent: boolean) => authPost("/api/auth/signup", { email, password, consent }),
+  signup: (email: string, password: string, consent: boolean, isChildAccount?: boolean, birthYear?: number, parentalConsent?: boolean) => 
+    authPost("/api/auth/signup", { email, password, consent, isChildAccount, birthYear, parentalConsent }),
   login: (email: string, password: string) => authPost("/api/auth/login", { email, password }),
   // Always resolves {ok:true} on a validly-formatted email — the server never reveals whether an account
   // actually exists (see server/index.ts's own comment on why), so the client can't and shouldn't try to
@@ -207,6 +208,9 @@ export const api = {
   integrationAccounts: (app: string): Promise<{ accounts: ConnectedAccount[] }> => req(`/api/integrations/${app}/accounts`).then(j),
   disconnectIntegration: (app: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect`),
   disconnectAccount: (app: string, accountId: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect/${accountId}`),
+  // Primer: Get dependence metrics for parent dashboard
+  primerDependence: (): Promise<{ metrics: Array<{ domain: string; helpRatio: number; answerSeekRate: number; unaidedRate: number; fadeIndex: number; trend: string }>; summary: { totalDomains: number; warningCount: number; goodCount: number; hasWarning: boolean } }> =>
+    req("/api/primer/dependence").then(j),
   // Pronote — no OAuth, so this is a credential form rather than a redirect (see server/pronote.ts).
   pronoteStatus: (): Promise<{ connected: boolean; username?: string }> => req("/api/integrations/pronote/status").then(j),
   connectPronote: (url: string, username: string, password: string, kind?: number): Promise<{ ok: boolean; error?: string }> =>
@@ -216,14 +220,6 @@ export const api = {
   // server/pronote.ts's touchPronoteSession for why: the daily cron alone leaves the token idle too long).
   // Fire-and-forget from every caller's point of view; the server itself is what rate-gates the real work.
   pronoteTouch: (): Promise<{ ok: boolean }> => req("/api/pronote/touch").then(j).catch(() => ({ ok: false })),
-  // /finance (Plaid) — sandbox-only for now, see server/plaid.ts's own comment.
-  plaidStatus: (): Promise<{ connected: boolean; institutionName?: string; configured: boolean }> => req("/api/integrations/plaid/status").then(j),
-  plaidLinkToken: (): Promise<{ linkToken: string }> => post("/api/integrations/plaid/link-token"),
-  plaidExchange: (publicToken: string): Promise<{ ok: boolean }> => post("/api/integrations/plaid/exchange", { publicToken }),
-  plaidConnectMock: (): Promise<{ ok: boolean }> => post("/api/integrations/plaid/connect-mock"),
-  plaidDisconnect: (): Promise<{ ok: boolean }> => post("/api/integrations/plaid/disconnect"),
-  financeSnapshot: (): Promise<{ accounts: { id: string; name: string; type: string; balance: number | null }[]; transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[] }> =>
-    req("/api/finance/snapshot").then(j),
   // Blackbaud (school Education Management) — MOCK ONLY for now, see server/blackbaud.ts's own comment:
   // no real SKY API credential path exists yet, only a demo connection.
   blackbaudStatus: (): Promise<{ connected: boolean; schoolName?: string; configured: boolean; realAuthAvailable: boolean }> => req("/api/integrations/blackbaud/status").then(j),
@@ -231,12 +227,14 @@ export const api = {
   blackbaudDisconnect: (): Promise<{ ok: boolean }> => post("/api/integrations/blackbaud/disconnect"),
   pronoteTests: (): Promise<{ tests: { subject: string; deadline: string }[] }> => req("/api/pronote/tests").then(j),
   pronoteGrades: (): Promise<{ grades: { subject: string; average: number; outOf: number }[] }> => req("/api/pronote/grades").then(j),
+  syncPronoteGrades: (): Promise<{ grades: { subject: string; average: number; outOf: number }[]; synced: boolean }> => post("/api/pronote/grades/sync"),
   workload: (): Promise<{ days: { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number }[] }> =>
     req("/api/workload").then(j),
   rescheduleTask: (id: string, when: string): Promise<WebTask[]> => post(`/api/tasks/${id}/reschedule`, { when }),
   setGrade: (subject: string, grade: number, scale?: number): Promise<Profile> => post("/api/profile/grade", { subject, grade, scale }).then(normalizeProfile),
   deleteGrade: (subject: string): Promise<Profile> => req(`/api/profile/grade/${encodeURIComponent(subject)}`, { method: "DELETE" }).then(j).then(normalizeProfile),
   reviewFlashcard: (taskId: string, deckId: string, cardIndex: number, correct: boolean): Promise<WebTask[]> => post(`/api/tasks/${taskId}/flashcard/${deckId}/${cardIndex}/review`, { correct }),
+  markFlashcardNotNeeded: (taskId: string, deckId: string, cardIndex: number, notNeeded = true): Promise<WebTask[]> => post(`/api/tasks/${taskId}/flashcard/${deckId}/${cardIndex}/not-needed`, { notNeeded }),
   // One call per completed quiz pass (not per question) — persists the score so it survives closing the
   // popup and so the tutor chat can reference it later (see chatAboutTask's artifactsBlock).
   recordQuizAttempt: (taskId: string, quizId: string, score: number, total: number, wrong?: number[]): Promise<WebTask[]> =>
@@ -245,7 +243,9 @@ export const api = {
   // A student's own hand-written note — "what I got wrong, what to remember" — no AI call, lands in the
   // same task.notes the AI's own fiches use so it shows up as a normal chip in "What Otto prepared".
   addNote: (taskId: string, title: string, body: string): Promise<WebTask[]> => post(`/api/tasks/${taskId}/notes`, { title, body }),
-  reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] }> => req("/api/reviews/due").then(j),
+  // setsShown/setCap: server caps how many distinct flashcard decks it surfaces per day (see
+  // MAX_DUE_SETS_PER_DAY in server/index.ts) — still-due decks beyond the cap simply reappear tomorrow.
+  reviewsDue: (): Promise<{ due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[]; setsShown?: number; setCap?: number }> => req("/api/reviews/due").then(j),
   // Study log: daily "what I learned today" → auto flashcards (see server/index.ts's /api/studylog/*).
   // Saving empty text clears that day's entry+deck; non-empty text (re)generates the deck server-side.
   studyLogDay: (date: string, text: string): Promise<WebTask[]> => post("/api/studylog/day", { date, text }),
@@ -255,7 +255,11 @@ export const api = {
   studyLogMonth: (start: string): Promise<{ month: string; weeks: WebTask[]; summary: WebTask | null }> =>
     req(`/api/studylog/month?start=${encodeURIComponent(start)}`).then(j),
   studyLogMonthSummary: (monthStart: string): Promise<WebTask[]> => post("/api/studylog/month-summary", { monthStart }),
-  studyFreeSession: (): Promise<WebTask[]> => post("/api/study/free", {}),
+  // `fresh: true` forces a brand-new session even if one is already active (dismisses the old one) — the
+  // default resumes an already-active freestudy session instead of silently discarding it. See the route's
+  // own comment (server/index.ts) for why this default changed: a passive mount (route remount, StrictMode
+  // double-invoke) used to be indistinguishable from "the student wants a fresh session" and wiped it.
+  studyFreeSession: (fresh?: boolean, subject?: string): Promise<WebTask[]> => post("/api/study/free", fresh ? { fresh: true, subject } : { subject }),
   // Server-side text extraction for a document material's URL (a Google Doc, a Padlet board, a generic
   // webpage) — so Ask Otto can reference what's actually IN it, same as it already can for uploaded PDFs
   // (client-side, pdfText.ts). Best-effort: "" is a normal, valid result (a login-walled page, a non-text
@@ -412,9 +416,22 @@ export const api = {
   usage: (): Promise<{ in: number; out: number; total: number; runs: number; since: string | null; monthCostUsd: number; budgetUsd: number; over: boolean; renewsOn: string; byCategory: Partial<Record<"sweep" | "autorun" | "chat" | "manual_refine" | "other", number>> }> => req("/api/usage").then(j),
   taskEvents: (id: string): Promise<{ kind: string; message?: string; at: string }[]> => req(`/api/tasks/${id}/events`).then(j),
   // stepIndex: set by the per-step "Aide" button (see F) — the server validates the range itself.
-  // Returns the WHOLE updated task, not just `chat` — a tutor turn can now create notes/decks/quizzes,
-  // and the chat entries reference them by id, so the client needs task.notes/flashcards/quizzes too.
-  chat: (id: string, message: string, stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean): Promise<{ chat: WebTask["chat"]; task: WebTask }> => post(`/api/tasks/${id}/chat`, { message, stepIndex, materials, voiceMode, canvasMode }),
+  // `history` is THIS BROWSER's own local chat thread (client/localChatBoard.ts) — chat/board/problems are
+  // local-only now (direct request: never sent to the cloud account), so the server has nothing of its own
+  // to read the conversation from and needs it passed in every time, same pattern study-help already used.
+  // `task` in the response still carries the real cloud-synced fields (steps/notes/flashcards/quizzes) a
+  // tutor turn can change; `chatDelta`/`board`/`problems` are this turn's new local-only content for the
+  // caller to append to its own local store (see localChatBoard.ts's append* functions).
+  // `board`/`problems`: THIS turn's local copy of what's currently on the board — sent so the tutor can see
+  // what it's already written (see chatAboutTask's boardBlock) instead of writing blind, which read live as
+  // Otto asking the student to describe its own board back to it.
+  chat: (id: string, message: string, history: NonNullable<WebTask["chat"]>, board: BoardEntry[], problems: TaskProblem[], stepIndex?: number, materials?: { label: string; text: string }[], voiceMode?: boolean, canvasMode?: boolean, primer?: boolean): Promise<{ reply: string; chatDelta: NonNullable<WebTask["chat"]>; board: BoardEntry[]; problems: TaskProblem[]; guardrailTripped: boolean; task: WebTask }> =>
+    post(`/api/tasks/${id}/chat`, {
+      message, history: history.map((h) => ({ role: h.role, text: h.text })),
+      board: board.map((b) => ({ text: b.text, kind: b.kind })),
+      problems: problems.map((p) => ({ question: p.question, options: p.options })),
+      stepIndex, materials, voiceMode, canvasMode, primer,
+    }),
   // The flashcard/quiz "ask for a hint" sidebar — stateless server-side, so the client passes its own
   // short local history each turn. No client-side timeout (matches `chat`): the server's own 2-minute
   // deadline is the real backstop, and a hint arriving late still beats a hard-cut error mid-drill.

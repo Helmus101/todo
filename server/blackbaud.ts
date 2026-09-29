@@ -5,7 +5,7 @@
  * SKY API, it does NOT authorize access to anyone's data; that needs a separate OAuth "Application"
  * registered in the Blackbaud developer portal, giving BLACKBAUD_CLIENT_ID + BLACKBAUD_CLIENT_SECRET. Until
  * all three env vars are set, realCredentialsConfigured() stays false and only BLACKBAUD_MOCK works —
- * same "don't pretend it's ready" posture as plaid.ts's sandbox-only stance, just for a different reason
+ * same "don't pretend it's ready" posture other mock-only integrations take, just for a different reason
  * (missing app registration, not missing sandbox access).
  *
  * OAuth endpoints/flow verified against Blackbaud's own documentation and community references (not hand-
@@ -130,7 +130,7 @@ async function ensureFreshToken(email: string): Promise<string | null> {
 }
 
 /** The only connect path that works with zero real credentials — see the file-level comment. Mirrors
- *  plaid.ts's connectMock/pronote.ts's mock-URL connect: only does anything when BLACKBAUD_MOCK=1. */
+ *  pronote.ts's mock-URL connect: only does anything when BLACKBAUD_MOCK=1. */
 export async function connectMock(email: string): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!MOCK_ENABLED) return { ok: false, error: "Demo mode isn't enabled on this server." };
   const state = await loadState(email);
@@ -153,7 +153,7 @@ export interface BlackbaudAssignment {
 }
 
 // One overdue-feeling assignment (due tomorrow) and one further out — same "one weak, one strong"
-// demonstration posture as pronote.ts's mockGrades / plaid.ts's mockSnapshot.
+// demonstration posture as pronote.ts's mockGrades.
 function mockAssignments(): BlackbaudAssignment[] {
   const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
   return [
@@ -163,7 +163,7 @@ function mockAssignments(): BlackbaudAssignment[] {
 }
 
 /** Read-only assignment list — what discover.ts's blackbaudToItems reasons over for proactive task
- *  candidates, same role as pronoteHomework/plaidSnapshot. Best-effort: never throws into the discovery
+ *  candidates, same role as pronoteHomework. Best-effort: never throws into the discovery
  *  pipeline. Real-mode call shape is best-effort/unverified — see the file-level comment. */
 export async function blackbaudAssignments(email: string): Promise<BlackbaudAssignment[]> {
   const { blackbaud } = await loadState(email);

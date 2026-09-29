@@ -24,6 +24,7 @@ import { BreakScreen } from "./BreakScreen.tsx";
 import { EndSessionModal } from "./EndSessionModal.tsx";
 import { SubtaskSubmit } from "./SubtaskSubmit.tsx";
 import { api } from "../api.ts";
+import { appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
 import { NoisePlayer, type NoiseType } from "./noise.ts";
 import { tileWithinBounds } from "./tileLayout.ts";
 import { extractPdfText } from "./pdfText.ts";
@@ -45,7 +46,31 @@ interface StudyModeProps {
 }
 
 // ── Detect task type from task title/description ──────────────────────────────
-function detectTemplate(task: WebTask): WorkspaceTemplate {
+// task.taskType is the AI's OWN classification of this exact task (server/claude.ts's 5-step pipeline
+// assigns it from the real title + why + context, not a handful of keywords) — it's already sitting on the
+// task, so using it here means Study Mode's desk is generated per-task by the AI, not re-guessed locally.
+// Reported live as "no templates, AI should generate based on task name" — the old version only ever ran a
+// fixed regex over the title and fell into the same few buckets ("always does the same thing"), which
+// missed a lot (no English/French synonym could cover everything) and never improved as the pipeline's own
+// classification did. The regex survives ONLY as a fallback for a task saved before taskType existed.
+const TASK_TYPE_TEMPLATE: Partial<Record<NonNullable<WebTask["taskType"]>, WorkspaceTemplate>> = {
+  write: "WRITING",
+  learn_understand: "READING",
+  practice: "PROBLEM_SOLVING",
+  homework_problem_set: "PROBLEM_SOLVING",
+  problem_solve: "PROBLEM_SOLVING",
+  review: "REVISION",
+  prepare_assessment: "REVISION",
+  research: "RESEARCH",
+  analyze: "RESEARCH",
+  create: "PROJECT",
+  project: "PROJECT",
+  administrative: "STANDARD",
+  decide: "STANDARD",
+  logistics: "STANDARD",
+  maintain: "STANDARD",
+};
+function detectTemplateFromKeywords(task: WebTask): WorkspaceTemplate {
   const text = `${task.title} ${task.why || ""} ${task.context || ""}`.toLowerCase();
   if (/essay|write|rédiger|rédaction|écrire|writing/.test(text)) return "WRITING";
   if (/read|lecture|chapter|textbook|pdf|article|lire/.test(text)) return "READING";
@@ -54,6 +79,10 @@ function detectTemplate(task: WebTask): WorkspaceTemplate {
   if (/research|recherche|study|source|investigate/.test(text)) return "RESEARCH";
   if (/project|projet|presentation|présentation/.test(text)) return "PROJECT";
   return "STANDARD";
+}
+function detectTemplate(task: WebTask): WorkspaceTemplate {
+  if (task.taskType && TASK_TYPE_TEMPLATE[task.taskType]) return TASK_TYPE_TEMPLATE[task.taskType]!;
+  return detectTemplateFromKeywords(task);
 }
 
 // ── Build initial artifact layout from template ───────────────────────────────
@@ -88,78 +117,86 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
   switch (template) {
     case "WRITING":
       return [
-        {
+        // Only open the document viewer when there's an actual document to show — with no material,
+        // `source` was left `undefined` and the artifact still opened, taking up the primary pane just to
+        // show "no document attached". Reported live as "auto-adding tools always does the same thing...
+        // shouldn't open a blank source". Same fix applied to every template's pdf/document tile below.
+        ...(firstDoc ? [{
           ...base,
           id: `${envId}-doc`,
-          type: "document",
-          title: firstDoc?.label || "Document",
+          type: "document" as const,
+          title: firstDoc.label || "Document",
           x: 60, y: 10,
           width: 65, height: 80,
-          source: firstDoc?.url,
-          sourceLabel: firstDoc?.label,
-        },
+          source: firstDoc.url,
+          sourceLabel: firstDoc.label,
+        }] : []),
         {
           ...base,
           id: `${envId}-notes`,
           type: "notes",
           title: "Notes",
-          x: 0, y: 10,
-          width: 25, height: 80,
-          dockSide: "left",
+          x: firstDoc ? 0 : 20, y: 10,
+          width: firstDoc ? 25 : 60, height: firstDoc ? 80 : 75,
+          dockSide: firstDoc ? "left" : "none",
           zIndex: 2,
         },
         ...chatAndBoard,
       ];
 
-    case "READING":
+    case "READING": {
+      const source = firstPDF?.objectUrl || firstPDF?.url;
       return [
-        {
+        ...(source ? [{
           ...base,
           id: `${envId}-pdf`,
-          type: "pdf",
-          title: firstPDF?.label || (lang === "en" ? "Reading" : "Lecture"),
+          type: "pdf" as const,
+          title: firstPDF!.label || (lang === "en" ? "Reading" : "Lecture"),
           x: 10, y: 5,
           width: 80, height: 88,
-          source: firstPDF?.objectUrl || firstPDF?.url,
-          sourceLabel: firstPDF?.label,
+          source,
+          sourceLabel: firstPDF!.label,
           maximized: !firstVideo,
-        },
+        }] : []),
         {
           ...base,
           id: `${envId}-notes`,
           type: "notes",
           title: "Notes",
-          x: 70, y: 5,
-          width: 28, height: 88,
-          dockSide: "right",
+          x: source ? 70 : 20, y: source ? 5 : 10,
+          width: source ? 28 : 60, height: source ? 88 : 75,
+          dockSide: source ? "right" : "none",
           zIndex: 2,
         },
         ...chatAndBoard,
       ];
+    }
 
-    case "PROBLEM_SOLVING":
+    case "PROBLEM_SOLVING": {
+      const source = firstPDF?.objectUrl || firstPDF?.url;
       return [
-        {
+        ...(source ? [{
           ...base,
           id: `${envId}-pdf`,
-          type: "pdf",
-          title: firstPDF?.label || (lang === "en" ? "Problem Set" : "Exercices"),
+          type: "pdf" as const,
+          title: firstPDF!.label || (lang === "en" ? "Problem Set" : "Exercices"),
           x: 2, y: 5,
           width: 57, height: 85,
-          source: firstPDF?.objectUrl || firstPDF?.url,
-        },
+          source,
+        }] : []),
         {
           ...base,
           id: `${envId}-scratch`,
           type: "scratchpad",
           title: lang === "en" ? "Scratchpad" : "Brouillon",
-          x: 61, y: 5,
-          width: 36, height: 85,
-          dockSide: "right",
+          x: source ? 61 : 20, y: source ? 5 : 10,
+          width: source ? 36 : 60, height: source ? 85 : 75,
+          dockSide: source ? "right" : "none",
           zIndex: 2,
         },
         ...chatAndBoard,
       ];
+    }
 
     case "REVISION":
       return [
@@ -174,29 +211,31 @@ function buildInitialArtifacts(template: WorkspaceTemplate, envId: string, taskI
         ...chatAndBoard,
       ];
 
-    case "RESEARCH":
+    case "RESEARCH": {
+      const source = firstPDF?.objectUrl || firstPDF?.url;
       return [
-        {
+        ...(source ? [{
           ...base,
           id: `${envId}-pdf`,
-          type: "pdf",
-          title: firstPDF?.label || "Source",
+          type: "pdf" as const,
+          title: firstPDF!.label || "Source",
           x: 2, y: 5,
           width: 60, height: 85,
-          source: firstPDF?.objectUrl || firstPDF?.url,
-        },
+          source,
+        }] : []),
         {
           ...base,
           id: `${envId}-notes`,
           type: "notes",
           title: "Notes",
-          x: 64, y: 5,
-          width: 34, height: 85,
-          dockSide: "right",
+          x: source ? 64 : 20, y: source ? 5 : 10,
+          width: source ? 34 : 60, height: source ? 85 : 75,
+          dockSide: source ? "right" : "none",
           zIndex: 2,
         },
         ...chatAndBoard,
       ];
+    }
 
     default: // STANDARD, PROJECT
       return [
@@ -226,7 +265,17 @@ export const AUDIO_OPTIONS: { id: NoiseType; label: [string, string] }[] = [
 ];
 
 // ── Main StudyMode component ───────────────────────────────────────────────────
-export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr", betaFeatures = false }: StudyModeProps) {
+export function StudyMode({ task: taskProp, onExit, onTaskUpdate, userId, language = "fr", betaFeatures = false }: StudyModeProps) {
+  // Same defensive read-through as TaskCard.tsx's TaskFocus (see its own comment) — chat/board/problems are
+  // local-only now, so read them straight from local storage here rather than trust the `task` prop to
+  // already carry the latest copy.
+  const local = getLocalThread(taskProp.id, userId ?? null);
+  const task = (local.chat.length || local.board.length || local.problems.length)
+    ? { ...taskProp,
+        ...(local.chat.length ? { chat: local.chat } : {}),
+        ...(local.board.length ? { board: local.board } : {}),
+        ...(local.problems.length ? { problems: local.problems } : {}) }
+    : taskProp;
   const [phase, setPhase] = useState<"setup" | "session">("setup");
   const [env, setEnv] = useState<StudyEnvironment | null>(null);
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>("idle");
@@ -956,10 +1005,10 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
   const removeArtifact = useCallback((id: string) => {
     setEnv(prev => {
       if (!prev) return prev;
-      // Prevent removing the chat artifact - it should always be available
-      const chatArtifact = prev.artifacts.find(a => a.id === id && a.type === "chat");
-      if (chatArtifact) return prev;
-      
+      // Chat (Ask Otto) used to be permanently pinned — its × button did nothing, which read as broken
+      // ("user should be able to close Otto in study mode"). It's closable like any other artifact now;
+      // the BottomBar's "Ask Otto" button (openOrFocusChat) still brings it right back on demand, so
+      // closing it isn't a dead end.
       // Closing one tool frees its share of the desk — auto-enlarge the remaining freeform ones to fill
       // it, the same tiling pass as adding one, just shrinking the tile count by one instead of growing it.
       const remaining = prev.artifacts.filter(a => a.id !== id);
@@ -970,18 +1019,6 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       return updated;
     });
   }, [persistEnv]);
-
-  // Ensure the chat artifact is always present during a session — it should never randomly disappear.
-  // If a background sync or re-tile somehow removes it, re-create it immediately.
-  useEffect(() => {
-    if (!env || phase !== "session") return;
-    const hasChat = env.artifacts.some((a) => a.type === "chat");
-    if (!hasChat) {
-      const base = { environmentId: env.id, taskId: task.id, zIndex: 100, minimized: false, maximized: false, dockSide: "none" as const, contentState: {} };
-      const chatArtifact: ArtifactState = { ...base, id: crypto.randomUUID(), type: "chat", title: "Ask Otto", x: 55, y: 10, width: 38, height: 78 };
-      updateEnv({ artifacts: [...env.artifacts, chatArtifact] });
-    }
-  }, [env?.artifacts.length, phase]);
 
   // A PDF uploaded in StudySetup gets its text extracted asynchronously (pdfText.ts — can take a moment for
   // a longer file) WHILE the student is still on the setup screen; if "Start Studying" is clicked before
@@ -1059,8 +1096,11 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
     const materials = env.materials.filter((m) => m.text?.trim()).map((m) => ({ label: m.label, text: m.text! }));
     setChatInput(""); setChatSending(true); setChatError(null); setPendingMsg(message);
     try {
-      const { task: updated } = await api.chat(task.id, message, stepIndex, materials.length ? materials : undefined, voiceMode, canvasMode);
-      onTaskUpdate({ ...task, ...updated });
+      const { task: updated, chatDelta, board, problems } = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], stepIndex, materials.length ? materials : undefined, voiceMode, canvasMode);
+      const chat = appendLocalChat(task.id, chatDelta, userId ?? null);
+      const newBoard = appendLocalBoard(task.id, board, userId ?? null);
+      const newProblems = appendLocalProblems(task.id, problems, userId ?? null);
+      onTaskUpdate({ ...task, ...updated, chat, board: newBoard, problems: newProblems });
       // Auto-open new quizzes on the canvas — when the tutor creates a quiz mid-conversation, pop it open
       // on the desk immediately (the student doesn't have to find and click the chip). Also opens a
       // scratchpad alongside so they can work through problems by hand, like a real exam desk.
@@ -1085,8 +1125,9 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
       // not a new artifact every time) rather than leaving the student to notice it was updated on their
       // own. This is what makes "always accessible" actually mean something beyond "reachable if you go
       // looking" — the first time it's genuinely relevant, it comes to them.
-      const oldBoardLen = task.board?.length || 0;
-      if ((updated.board?.length || 0) > oldBoardLen) openOrFocusBoard();
+      // `board`/`problems` are this turn's local-only delta — `updated` is the cloud task, which never carries
+      // new board writes anymore (see localChatBoard.ts), so comparing its length never fired.
+      if (board.length || problems.length) openOrFocusBoard();
     } catch (e: any) {
       setChatError(e?.message || "Couldn't send that — try again.");
       setChatInput(message);
@@ -1409,6 +1450,7 @@ export function StudyMode({ task, onExit, onTaskUpdate, userId, language = "fr",
               playing={env.audioPlaying}
               customAudioName={env.customAudioName}
               spotifyEmbedUrl={env.spotifyEmbedUrl}
+              open={openPanel === "audio"}
               onClose={() => setOpenPanel(null)}
               onChange={setAudio}
               onUploadAudio={(file) => void uploadAudio(file)}

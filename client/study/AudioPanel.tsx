@@ -9,13 +9,17 @@ interface AudioPanelProps {
   playing: boolean;
   customAudioName?: string;
   spotifyEmbedUrl?: string;
+  /** Whether the drawer is CURRENTLY meant to be visible — this component stays mounted even while hidden
+   *  when Spotify is active (see StudyMode.tsx), so it needs its own signal to reset the one-shot close
+   *  animation latch on reopen; see useSmClose's `reopenKey` param. */
+  open: boolean;
   onClose: () => void;
   onChange: (type: string, volume: number, playing: boolean) => void;
   onUploadAudio: (file: File) => void;
   onSetSpotify: (embedUrl: string) => void;
 }
 
-export function AudioPanel({ audioType, volume, playing, customAudioName, spotifyEmbedUrl, onClose, onChange, onUploadAudio, onSetSpotify }: AudioPanelProps) {
+export function AudioPanel({ audioType, volume, playing, customAudioName, spotifyEmbedUrl, open, onClose, onChange, onUploadAudio, onSetSpotify }: AudioPanelProps) {
   const L = useLang();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [spotifyInput, setSpotifyInput] = useState("");
@@ -28,7 +32,7 @@ export function AudioPanel({ audioType, volume, playing, customAudioName, spotif
     setSpotifyInput("");
     onSetSpotify(embed);
   };
-  const { closing, doClose } = useSmClose(onClose, 240);
+  const { closing, doClose } = useSmClose(onClose, 240, open);
   return (
     <SmSurface variant="drawer" closing={closing} className="sm-drawer sm-drawer-audio">
       <div className="sm-drawer-header">

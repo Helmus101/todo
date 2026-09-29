@@ -35,6 +35,48 @@ export interface Profile {
   preferences: string[];  // e.g. "concise emails", "no meetings before 10am"
   people: string[];       // key people + relationship ("Sarah — my manager")
   projects: string[];     // ongoing projects / goals
+
+  // === Primer-specific fields (Phase 1 foundation) ===
+  // Developmental position - per-domain level, not a single "grade"
+  domainLevels?: Record<string, { level: string; phase: string; updatedAt: string }>; // reading, math, reasoning, etc.
+  // Age band for policy selection (if different from birth year calculation)
+  ageBand?: "A" | "B" | "C" | "D" | "E" | "F";
+  // Birth year (not full DOB to minimize PII)
+  birthYear?: number;
+  // Home languages (for dual-language support)
+  homeLanguages?: string[];
+  // Thinking-skills profile - per thinking-move frequency and quality
+  thinkingStats?: Record<string, { nUsed: number; qualityAvg: number; lastUsed: string }>;
+  // Calibration accuracy (confidence vs correctness)
+  calibration?: Record<string, { bucket: string; n: number; accuracy: number }>;
+  // Policy profile ID currently in effect
+  policyProfileId?: string;
+  // Guardrails & permissions
+  primerSettings?: {
+    blockedTopics?: string[];
+    sessionCapMinutes?: number;
+    dailyCapMinutes?: number;
+    quietHours?: { start: string; end: string };
+    parentViewLevel?: "full" | "summary" | "none";
+  };
+  // Dependence metrics (anti-dependence system from Primer §6.9)
+  dependenceMetrics?: Record<string, {
+    week: string;
+    helpRatio: number;  // hint requests / attempts
+    answerSeekRate: number;  // "just tell me" requests
+    unaidedRate: number;  // success without hints
+    fadeIndex: number;  // are hint levels trending down?
+  }>;
+  // Consent records (parental/guardian consent for under-13s)
+  consentRecords?: {
+    guardianId?: string;
+    scope: string[];
+    grantedAt: string;
+    revokedAt?: string;
+    method: "clickwrap" | "signature" | "other";
+  }[];
+  // Data retention settings
+  dataRetentionDays?: number;
   // Per-course/class behavioral patterns — the "gets smarter every semester" memory: a professor's grading
   // quirks or communication style, how far ahead of a deadline the student ACTUALLY starts (not what they
   // say), which subtask types they stall on. Kept as its own bucket (not lumped into `projects`) so a
@@ -98,6 +140,20 @@ export interface Profile {
   // whenever the local day changes; count is the number of tasks auto-enqueued so far THAT day.
   autoRunDay?: string;
   autoRunCount?: number;
+  // Which flashcard decks have already counted against today's MAX_DUE_SETS_PER_DAY cap (see /api/reviews/due
+  // in server/index.ts) — persisted (not just computed fresh per request) so that reviewing a card, which
+  // moves its dueAt into the future and would otherwise make its deck stop looking "due", can't silently free
+  // up a slot for a 4th deck on the same day. Reset (like autoRunDay/autoRunCount above) whenever the local
+  // day changes.
+  reviewSetsDay?: string;
+  reviewSetDeckIds?: string[];
+  // Stamped every write to reviewSetDeckIds — lets mergeProfileStates use latest-write-wins (like pausedAt/
+  // lastSweepAt above) instead of unioning two devices' admitted sets. A single write is always ≤
+  // MAX_DUE_SETS_PER_DAY by construction (the route only ever admits up to the cap); a same-day UNION of two
+  // independent writes is not, and could blow the cap past 3 across devices. Latest-write-wins keeps the
+  // invariant intact at the cost of possibly dropping a losing device's admissions from a genuinely
+  // simultaneous race — an acceptable trade for a soft daily-dose cap, not a spend/security guard.
+  reviewSetsUpdatedAt?: string;
   // No longer drives sweep cadence — automatic generation is now fixed at once/day, 16:00 local (see
   // server/jobs.ts's sweepDue) rather than this 1-4x/day setting. Field kept (not removed) since it's
   // still a harmless, settable preference with no UI exposing it either way — not worth a wider removal
@@ -190,6 +246,16 @@ export interface Profile {
   // surveillance-adjacent field in the app, so hiding it would be inconsistent with that precedent. NEVER
   // used for grading, a parent-facing view, or any priority/auto-archive decision — tutoring tone only.
   studentModel?: { summary: string; updatedAt: string; basedOnActivityAt?: string };
+  // Durable, per-TOPIC progress markers — "mastered factoring quadratics", "can now conjugate the
+  // subjonctif" — the granularity below `subject` that nothing else in the app tracks (grades/errorLog/
+  // subjectActivityHours are all flat per-SUBJECT). Extracted alongside the existing journal→profile.courses
+  // pipeline (extractJournalMemory, server/claude.ts) — same AI call, same "journal/study mode" spend
+  // window (see studentModel's own comment on the 3 confined windows), no new cost. ACCUMULATES like
+  // errorLog/grades (never overwritten) so the tutor can see real progression over the term, not just the
+  // latest state. Read back into chat via milestoneLine (server/claude.ts) so Otto can build on what's
+  // already landed instead of re-teaching it, and shown to the student directly (Journal tab) so the
+  // "remembering" is visible, not just a black box.
+  milestones?: { id: string; subject: string; topic: string; label: string; achievedAt: string }[];
   // Last time this student did something a tutor would call "real activity" — sent a chat message, saved a
   // journal entry, attempted a quiz/flashcard review. Distinct from activityHours (an hour-of-day histogram,
   // no absolute timestamp) — this is the single stamp shouldRefreshStudentModel compares against
@@ -288,6 +354,21 @@ function dedupePronoteGrades<T extends { id: string; subject: string; grade: num
   }
   return [...manual, ...newestPronote.values()];
 }
+/** Same-topic milestones extracted from different journal entries over the term shouldn't pile up as
+ *  separate rows (e.g. "grasped the chain rule" logged three different weeks in slightly different words) —
+ *  key on subject+topic (case-insensitive), keep the OLDEST achievedAt (that's when it was actually first
+ *  reached) but the newest label wording (closer to how the student described it most recently). */
+type MilestoneEntry = { id: string; subject: string; topic: string; label: string; achievedAt: string };
+function dedupeMilestones(list: MilestoneEntry[]): MilestoneEntry[] {
+  const byKey = new Map<string, MilestoneEntry>();
+  for (const m of list) {
+    const key = `${m.subject.toLowerCase()}::${m.topic.toLowerCase()}`;
+    const prev = byKey.get(key);
+    if (!prev) { byKey.set(key, m); continue; }
+    byKey.set(key, { ...m, achievedAt: Date.parse(prev.achievedAt) <= Date.parse(m.achievedAt) ? prev.achievedAt : m.achievedAt });
+  }
+  return [...byKey.values()];
+}
 export function normalizeProfile(p: any): Profile {
   const arr = (v: any): string[] => Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
   return {
@@ -313,6 +394,12 @@ export function normalizeProfile(p: any): Profile {
     activityDecayedAt: typeof p?.activityDecayedAt === "string" ? p.activityDecayedAt : undefined,
     autoRunDay: typeof p?.autoRunDay === "string" ? p.autoRunDay : undefined,
     autoRunCount: Number.isFinite(Number(p?.autoRunCount)) ? Math.max(0, Math.round(Number(p.autoRunCount))) : undefined,
+    reviewSetsDay: typeof p?.reviewSetsDay === "string" ? p.reviewSetsDay : undefined,
+    // Clamped to MAX_DUE_SETS_PER_DAY — every real write already respects this (the route only ever admits
+    // up to the cap), so this only ever bites a hand-edited/replayed /api/account/import file trying to
+    // plant more admitted decks than the app itself would ever persist.
+    reviewSetDeckIds: Array.isArray(p?.reviewSetDeckIds) ? arr(p.reviewSetDeckIds).slice(0, MAX_DUE_SETS_PER_DAY) : undefined,
+    reviewSetsUpdatedAt: typeof p?.reviewSetsUpdatedAt === "string" ? p.reviewSetsUpdatedAt : undefined,
     genPerDay: Number.isFinite(Number(p?.genPerDay)) ? Math.min(4, Math.max(1, Math.round(Number(p.genPerDay)))) : undefined,
     timezone: typeof p?.timezone === "string" && isValidTz(p.timezone) ? p.timezone : undefined,
     // Structured preferences
@@ -376,6 +463,15 @@ export function normalizeProfile(p: any): Profile {
           basedOnActivityAt: typeof p.studentModel.basedOnActivityAt === "string" ? p.studentModel.basedOnActivityAt : undefined,
         }
       : undefined,
+    milestones: Array.isArray(p?.milestones)
+      ? dedupeMilestones(p.milestones.map((m: any) => ({
+          id: typeof m?.id === "string" && m.id ? m.id : newId(),
+          subject: String(m?.subject || "").trim().slice(0, 60),
+          topic: String(m?.topic || "").trim().slice(0, 80),
+          label: String(m?.label || "").trim().slice(0, 200),
+          achievedAt: typeof m?.achievedAt === "string" ? m.achievedAt : new Date().toISOString(),
+        })).filter((m: MilestoneEntry) => m.subject && m.topic && m.label)).slice(0, 300)
+      : undefined,
     lastTutorActivityAt: typeof p?.lastTutorActivityAt === "string" ? p.lastTutorActivityAt : undefined,
     track: ["ib", "bac", "other"].includes(p?.track) ? p.track : undefined,
     yearLevel: typeof p?.yearLevel === "string" ? p.yearLevel.trim().slice(0, 40) || undefined : undefined,
@@ -434,6 +530,21 @@ export function errorLogBySubject(log: NonNullable<Profile["errorLog"]> | undefi
   })).sort((a, b) => b.entries.length - a.entries.length);
 }
 
+/** Group milestones by subject, most-recently-achieved topic first within each subject, subject with the
+ *  most milestones first — same "most-progress-first" ordering as errorLogBySubject's "most-mistakes-first"
+ *  (mirrors it, but the opposite signal: this is what's GOING well). */
+export interface SubjectMilestones { subject: string; entries: NonNullable<Profile["milestones"]>; }
+export function milestonesBySubject(list: NonNullable<Profile["milestones"]> | undefined): SubjectMilestones[] {
+  const map = new Map<string, NonNullable<Profile["milestones"]>>();
+  for (const m of list || []) {
+    const key = m.subject.toLowerCase();
+    (map.get(key) || map.set(key, []).get(key)!).push(m);
+  }
+  return [...map.values()].map((entries) => ({
+    subject: entries[0].subject,
+    entries: [...entries].sort((a, b) => Date.parse(b.achievedAt) - Date.parse(a.achievedAt)),
+  })).sort((a, b) => b.entries.length - a.entries.length);
+}
 /** Is this a resolvable IANA timezone? (Intl throws on an unknown zone.) */
 export function isValidTz(tz: string): boolean {
   try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return true; } catch { return false; }
@@ -691,23 +802,105 @@ export function dedupeFacts(list: string[]): string[] {
 // soonest first. Unparseable / empty → +Infinity (sorts last). Deliberately simple: only needs relative
 // ORDER, and the model already emits real dates from the source item (never invented). Shared so the
 // server ordering and the client list sort identically.
-const RANK_MONTHS: Record<string, number> = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+// Accent-stripped keys, so "février"/"fevrier" and "août"/"aout" both hit.
+const RANK_MONTHS: Record<string, number> = {
+  jan: 0, january: 0, janvier: 0, feb: 1, february: 1, fevrier: 1, fev: 1, mar: 2, march: 2, mars: 2,
+  apr: 3, april: 3, avril: 3, avr: 3, may: 4, mai: 4, jun: 5, june: 5, juin: 5, jul: 6, july: 6, juillet: 6, juil: 6,
+  aug: 7, august: 7, aout: 7, sep: 8, sept: 8, september: 8, septembre: 8, oct: 9, october: 9, octobre: 9,
+  nov: 10, november: 10, novembre: 10, dec: 11, december: 11, decembre: 11,
+};
+// No bare "mar" here — it's March in English, and "mar." for mardi is rare enough not to be worth the clash.
+const RANK_WEEKDAYS: Record<string, number> = {
+  sun: 0, sunday: 0, dimanche: 0, mon: 1, monday: 1, lundi: 1, tue: 2, tues: 2, tuesday: 2, mardi: 2,
+  wed: 3, wednesday: 3, mercredi: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, jeudi: 4,
+  fri: 5, friday: 5, vendredi: 5, sat: 6, saturday: 6, samedi: 6,
+};
+const MONTH_ALT = Object.keys(RANK_MONTHS).sort((a, b) => b.length - a.length).join("|");
+const WEEKDAY_ALT = Object.keys(RANK_WEEKDAYS).sort((a, b) => b.length - a.length).join("|");
+const MONTH_DAY_RE = new RegExp(`\\b(${MONTH_ALT})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th|er)?\\b(?:,?\\s+(20\\d{2}))?`);
+const DAY_MONTH_RE = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th|er)?\\s+(${MONTH_ALT})\\.?(?:\\s+(20\\d{2}))?\\b`);
+const WEEKDAY_RE = new RegExp(`\\b(${WEEKDAY_ALT})\\b`);
+const DAY_MS = 864e5;
+
+/** Calendar date at noon UTC — the same convention extractDateFromText (server/tasks.ts) uses, so the date
+ *  lands on the right calendar day in every realistic timezone instead of rolling back a day west of UTC. */
+function noonUtc(y: number, m: number, d: number): number { return Date.UTC(y, m, d, 12, 0, 0); }
+
+/** A year-less month/day → this year's occurrence, unless that's more than ~2 months gone (then it's next
+ *  year's). A homework "due Sep 20" read on Sep 27 is genuinely OVERDUE and must stay this year; a "Jan 15"
+ *  read in November is next January, not ten months overdue. */
+function inferYear(m: number, d: number, now: Date): number {
+  const t = noonUtc(now.getUTCFullYear(), m, d);
+  return t < now.getTime() - 60 * DAY_MS ? noonUtc(now.getUTCFullYear() + 1, m, d) : t;
+}
+
+/** Parse a task's free-text `when` into a sortable epoch — soonest first; unparseable/empty → +Infinity.
+ *  `when` is often the MODEL's own free text ("Oct 9", "9 octobre", "vendredi", "demain", "09/10"), and a
+ *  bare Date.parse gets nearly all of those wrong in Node: every year-less date ("Oct 9", "9 octobre")
+ *  parses as year 2001 — so the task read as 25 years overdue and pinned to max urgency — while weekday
+ *  names and "tomorrow"/"demain" parse as NaN and got no deadline at all. French numeric "09/10" (9 Oct)
+ *  was read US-style as Sep 10. This is the ONE parser every deadline consumer should go through. */
 export function deadlineEpoch(when: string | undefined, now: Date = new Date()): number {
-  const s = String(when || "").trim().toLowerCase();
-  if (!s) return Infinity;
-  if (/\btoday\b|\btonight\b|\bnow\b/.test(s)) return now.getTime();
-  if (/\btomorrow\b/.test(s)) return now.getTime() + 864e5;
-  // A string with an explicit 4-digit year is unambiguous → trust Date.parse ("2026-07-24", "June 30 2026").
-  if (/\b20\d{2}\b/.test(s)) { const iso = Date.parse(s); if (!isNaN(iso)) return iso; }
-  // Month + day WITHOUT a year → current year (or next if already well past). Must run BEFORE a bare
-  // Date.parse — Node parses "july 30" to year 2001, which would sort a summer deadline into the past.
-  const md = s.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})/);
-  if (md && RANK_MONTHS[md[1]] !== undefined) {
-    const d = new Date(now.getFullYear(), RANK_MONTHS[md[1]], Number(md[2]));
-    if (d.getTime() < now.getTime() - 180 * 864e5) d.setFullYear(now.getFullYear() + 1); // next occurrence
-    return d.getTime();
+  const raw = String(when || "").trim();
+  if (!raw) return Infinity;
+  // Real ISO timestamps (Pronote's own dates, estimateWhen's output) are unambiguous — trust them as-is.
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) { const iso = Date.parse(raw); return Number.isNaN(iso) ? Infinity : iso; }
+  const s = raw.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+  if (/\bapres[- ]demain\b|\bday after tomorrow\b/.test(s)) return now.getTime() + 2 * DAY_MS;
+  if (/\btomorrow\b|\bdemain\b/.test(s)) return now.getTime() + DAY_MS;
+  if (/\btoday\b|\btonight\b|\bnow\b|\basap\b|\baujourd'?hui\b|\bce soir\b|\btout de suite\b/.test(s)) return now.getTime();
+  const inDays = s.match(/\b(?:in|dans)\s+(\d{1,2})\s+(?:days?|jours?)\b/);
+  if (inDays) return now.getTime() + Number(inDays[1]) * DAY_MS;
+  if (/\bnext week\b|\bsemaine prochaine\b/.test(s)) return now.getTime() + 7 * DAY_MS;
+
+  // Month + day, both orders, EN + FR, optional year: "Oct 9", "October 9th, 2026", "9 octobre", "le 9 oct."
+  const md = s.match(MONTH_DAY_RE);
+  const dm = md ? null : s.match(DAY_MONTH_RE);
+  if (md || dm) {
+    const month = RANK_MONTHS[(md ? md[1] : dm![2])];
+    const day = Number(md ? md[2] : dm![1]);
+    const year = md ? md[3] : dm![3];
+    if (month !== undefined && day >= 1 && day <= 31) return year ? noonUtc(Number(year), month, day) : inferYear(month, day, now);
   }
+
+  // Numeric dates, European day-first (this is a French-first app: "09/10" is 9 October). Only swapped to
+  // month-first when the second number can't be a month (> 12), i.e. the string is unambiguously US-style.
+  // Slash only — a dotted "10.30" is far more often a time than a date.
+  const num = s.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (num) {
+    let day = Number(num[1]), month = Number(num[2]);
+    if (month > 12 && day <= 12) [day, month] = [month, day];
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      const y = num[3] ? (num[3].length === 2 ? 2000 + Number(num[3]) : Number(num[3])) : undefined;
+      return y ? noonUtc(y, month - 1, day) : inferYear(month - 1, day, now);
+    }
+  }
+
+  // A weekday name → its NEXT occurrence (today if it IS that weekday, a week out if "next"/"prochain").
+  const wd = s.match(WEEKDAY_RE);
+  if (wd) {
+    const target = RANK_WEEKDAYS[wd[1]];
+    let ahead = (target - now.getDay() + 7) % 7;
+    if (ahead === 0 && /\bnext\b|\bprochain/.test(s)) ahead = 7;
+    return now.getTime() + ahead * DAY_MS;
+  }
+
+  if (/\b20\d{2}\b/.test(s)) { const p = Date.parse(raw); if (!Number.isNaN(p)) return p; }
   return Infinity;
+}
+
+/** Normalize a model-written `when` to an ISO timestamp at ingestion, so every downstream consumer (client
+ *  date labels, workload, raw Date.parse callers) sees a real date instead of re-parsing free text. An
+ *  already-ISO value is kept VERBATIM. Unparseable text ("soon", "avant les vacances") returns undefined —
+ *  callers treat that as "no stated deadline" and fall through to their own estimate, rather than storing
+ *  a string nothing downstream can read (which silently exempted the task from the urgency curve). */
+export function normalizeWhen(when: string | undefined, now: Date = new Date()): string | undefined {
+  const raw = String(when || "").trim();
+  if (!raw) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw) && !Number.isNaN(Date.parse(raw))) return raw;
+  const ms = deadlineEpoch(raw, now);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
 /**
@@ -717,9 +910,15 @@ export function deadlineEpoch(when: string | undefined, now: Date = new Date()):
  * deterministic — used by BOTH the server ordering and the client list, so the sort is identical
  * everywhere. It reorders; it changes NO layout.
  */
-export function sortWithinQuadrant<T extends { score: number; when?: string; source?: string; why?: string; title?: string; updatedAt?: string; createdAt?: string }>(
+export function sortWithinQuadrant<T extends { score: number; when?: string; whenApprox?: boolean; sourceDue?: string; source?: string; why?: string; title?: string; updatedAt?: string; createdAt?: string }>(
   list: T[], highPriorityPeople: string[] = [], now: Date = new Date(),
 ): T[] {
+  // A REAL deadline (not one estimateWhen invented) within the next week — Pronote's own ISO date first.
+  const realDue = (t: T): number => {
+    if (t.whenApprox) return Infinity;
+    const ms = t.sourceDue && !Number.isNaN(Date.parse(t.sourceDue)) ? Date.parse(t.sourceDue) : deadlineEpoch(t.when, now);
+    return ms - now.getTime() <= 7 * DAY_MS ? ms : Infinity;
+  };
   const vipTokens = highPriorityPeople.flatMap((v) => {
     const email = v.toLowerCase().match(/[\w.+-]+@[\w.-]+\.\w+/)?.[0];
     const name = v.split(/[—\-(,]/)[0].trim().toLowerCase();
@@ -728,6 +927,14 @@ export function sortWithinQuadrant<T extends { score: number; when?: string; sou
   const isVip = (t: T) => { const hay = `${t.why || ""} ${t.title || ""} ${t.source || ""}`.toLowerCase(); return vipTokens.some((tok) => hay.includes(tok)); };
   const fresh = (t: T) => Date.parse(t.updatedAt || t.createdAt || "") || 0;
   return [...list].sort((a, b) => {
+    // Same quadrant → a real deadline in the next week that's at least a day sooner wins over a slightly
+    // higher importance/urgency blend. Before this, deadline was only an exact-score tie-break, which almost
+    // never fires on a continuous score — so a task due tomorrow could sit below one due in 6 days just
+    // because the model rated the latter a touch more important. Quadrant still dominates everything.
+    if (Math.floor(a.score) === Math.floor(b.score)) {
+      const ra = realDue(a), rb = realDue(b);
+      if ((Number.isFinite(ra) || Number.isFinite(rb)) && Math.abs(ra - rb) >= DAY_MS) return ra - rb;
+    }
     if (Math.abs(b.score - a.score) > 1e-6) return b.score - a.score;          // Eisenhower quadrant + weight
     const da = deadlineEpoch(a.when, now), db = deadlineEpoch(b.when, now);
     if (da !== db) return da - db;                                             // soonest deadline first
@@ -1016,6 +1223,11 @@ export interface WebTask {
    *  synthetic zeroth step would shift every other step's index and silently corrupt any TaskStep.dependsOn
    *  already pointing at them on an existing task. */
   firstAction?: { text: string; minutes?: number };
+  /** Computed fresh on every GET /api/tasks (see stallNudgeLine in server/patterns.ts) — NEVER persisted,
+   *  NEVER set by a mutation handler. A "spark" reframe to show INSTEAD of `why` when this task is already
+   *  a single easy action that's sat untouched for days (a motivation problem, not a clarity one). Absent
+   *  means "no override" — the client falls back to `why` as always. */
+  nudgeLine?: string;
   /** Procrastination-latency signal for the personalization/bandit work (see server/bandit.ts): `shownAt`
    *  is stamped the first time this task is returned to the client in a "live" (not done/dismissed) state
    *  (GET /api/tasks), `firstActionAt` the first time the student actually acts on it (confirm, tick a
@@ -1050,6 +1262,12 @@ export interface TaskNote {
 // (optimistic update) and server (source of truth).
 export const LEITNER_INTERVAL_DAYS = [1, 7];
 export const LEITNER_BOX_LABEL = ["Learning", "Known"] as const;
+// Cap on distinct flashcard decks surfaced per day by GET /api/reviews/due (server/index.ts) — see
+// Profile.reviewSetDeckIds's own comment. Single source of truth (imported by server/index.ts) so
+// normalizeProfile below can clamp to the SAME number: without that, a hand-edited /api/account/import
+// file could plant more admitted-deck ids than the route itself would ever write, letting an imported
+// profile show more than the intended daily dose after merge.
+export const MAX_DUE_SETS_PER_DAY = 3;
 export function nextLeitnerReview(prevBox: number | undefined, correct: boolean, now: Date = new Date()): { box: number; dueAt: string } {
   const box = correct ? Math.min(2, (prevBox || 0) + 1) : 1;
   const days = LEITNER_INTERVAL_DAYS[box - 1];
@@ -1068,6 +1286,11 @@ export interface TaskFlashcards {
      *  schedule, not a separate SM-2 ease calculation — `ease` stays unused groundwork for a future, more
      *  precise scheduler). `seen`/`correct` remain the raw "how am I doing on this deck" counts. */
     review?: { seen: number; correct: number; lastAt?: string; dueAt?: string; ease?: number; box?: number };
+    /** The student marked this card "not something I need to learn" (outside their course/level) — as
+     *  opposed to "wrong" (something they DO need and don't know yet). Excluded from scoring, due-review
+     *  lists and every "still shaky" signal, and fed back into future deck generation as content to avoid
+     *  (see notNeededFronts in server/tasks.ts / notNeededLine in server/claude.ts). */
+    notNeeded?: boolean;
   }[];
   createdAt: string;
   lastReviewedAt?: string;
@@ -1155,14 +1378,38 @@ export interface TaskProblem {
  *  a formula, an instruction ("start working through part a"), a running summary of the student's
  *  reasoning, or a plain note — whatever's worth writing down rather than only saying in chat. Entries are
  *  append-only and rendered as a running log (client/study/artifacts/BoardArtifact.tsx), oldest first. */
+/** One drawable primitive in an Otto-authored diagram (DRAW_ON_BOARD tool). Coordinates are in a fixed
+ *  0-800 x 0-600 space so the model never has to reason about the container's actual pixel size — the
+ *  renderer scales the viewBox to fit. */
+export type DiagramOp =
+  | { op: "line"; x1: number; y1: number; x2: number; y2: number; arrow?: boolean; color?: string }
+  | { op: "rect"; x: number; y: number; w: number; h: number; fill?: boolean; color?: string }
+  | { op: "circle"; cx: number; cy: number; r: number; fill?: boolean; color?: string }
+  | { op: "polyline"; points: { x: number; y: number }[]; color?: string }
+  | { op: "label"; x: number; y: number; text: string; size?: "sm" | "md" | "lg" }
+  | { op: "axes"; x: number; y: number; w: number; h: number; xLabel?: string; yLabel?: string }
+  /** Real typeset math (KaTeX), not the plain-text approximation formatMath (client/ui.tsx) does for chat.
+   *  `latex` is raw LaTeX with no surrounding $/\( \) delimiters — e.g. "\\frac{2}{x-1} + \\frac{3}{x+2}". */
+  | { op: "equation"; x: number; y: number; latex: string };
+
 export interface BoardEntry {
   id: string;
   /** Plain text/markdown-lite (renderChatText already handles this) — not restricted to any one format,
-   *  since a formula, an instruction, and a summary all need different shapes. */
+   *  since a formula, an instruction, and a summary all need different shapes. When kind === "diagram" this
+   *  is still a one-line caption (not the figure itself — see `diagram` below), so the entry reads sensibly
+   *  even before the SVG renders or if the ops fail validation. */
   text: string;
   /** Loose styling hint only, not a hard schema — lets the UI render a formula differently from an
-   *  instruction without forcing Otto into a rigid structure for what's meant to be a free-form board. */
-  kind?: "note" | "instruction" | "formula" | "summary";
+   *  instruction without forcing Otto into a rigid structure for what's meant to be a free-form board.
+   *  "focus" opens a session's document (today's arc), "definition" records a key term the first time it
+   *  comes up, "insight" credits the STUDENT's own aha by name — together with formula/summary these make
+   *  the board read like a document being built entry by entry, not a pile of disconnected notes. "diagram"
+   *  is a real drawn figure (see `diagram`) rather than text/ASCII. */
+  kind?: "note" | "instruction" | "formula" | "summary" | "focus" | "insight" | "definition" | "diagram";
+  /** Present only when kind === "diagram" — the figure's shapes, rendered as SVG (BoardArtifact.tsx). Capped
+   *  at 15 ops server-side (makeDiagramEntry, server/claude.ts): enough for a labeled triangle or a small
+   *  graph, not enough to build a full illustration op-by-op. */
+  diagram?: DiagramOp[];
   at: string;
 }
 
@@ -1200,6 +1447,44 @@ function contrastRatio(hex1: string, hex2: string): number {
 }
 const THEME_INK_FIXED = "#101317"; // matches :root's --ink in client/styles.css — never itself overridable
 const THEME_HEX_RE = /^#[0-9a-f]{6}$/i;
+
+// ── Primer-specific types (Phase 1 foundation) ─────────────────────────────────────────────────────
+
+/** Dependence metrics for anti-dependence system (Primer §6.9) */
+export interface DependenceMetric {
+  week: string;  // ISO week identifier
+  domain: string;  // e.g., "reading", "math"
+  helpRatio: number;  // hint requests / attempts (rising is a warning)
+  answerSeekRate: number;  // "just tell me" style requests
+  unaidedRate: number;  // success rate on fresh problems without hints
+  fadeIndex: number;  // are hint levels needed trending down per skill?
+}
+
+/** Thinking-move statistics (Primer §6.1) */
+export interface ThinkingStat {
+  move: string;  // e.g., "notice", "wonder", "predict", "explain"
+  nUsed: number;
+  qualityAvg: number;  // 0-2 scale
+  lastUsed: string;  // ISO timestamp
+}
+
+/** Calibration accuracy for metacognition (Primer §6.6) */
+export interface CalibrationMetric {
+  domain: string;
+  bucket: string;  // confidence bucket: "a_little", "pretty", "very"
+  n: number;
+  accuracy: number;  // proportion of times confidence matched actual correctness
+}
+
+/** Consent record for parental/guardian consent (Primer §10.3) */
+export interface ConsentRecord {
+  childId: string;
+  guardianId?: string;
+  scope: string[];  // what data/features consent covers
+  grantedAt: string;
+  revokedAt?: string;
+  method: "clickwrap" | "signature" | "other";
+}
 export function validateThemeTokens(raw: unknown): ThemeTokens {
   const out: ThemeTokens = {};
   if (!raw || typeof raw !== "object") return out;

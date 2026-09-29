@@ -1,13 +1,20 @@
 import { useEffect, useState, useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import type { WebTask, ConnectionStatus, Profile, TaskFlashcards, FocusSession } from "../shared/types.ts";
-import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject } from "../shared/types.ts";
+import { canonStatus, isHandled, isInFlight, sortWithinQuadrant, errorLogBySubject, milestonesBySubject } from "../shared/types.ts";
 import { api, type IntegrationItem, type ConnectedAccount } from "./api.ts";
 import { saveDeckLocally, getAllLocalDecks, clearLocalDecks } from "./localDecks.ts";
 import { saveQuizLocally, getAllLocalQuizzes, clearLocalQuizzes, getLocalQuiz } from "./localQuizzes.ts";
+// Deliberately NOT cleared on sign-out like localDecks/localQuizzes below — those are backup CACHES of data
+// the cloud still owns, safe to drop; chat/board are the ONLY copy (local-only, by direct request), so
+// clearing them on sign-out would permanently destroy conversation history the moment someone logs out.
+// Keyed by userId same as the others, so a different account signing in on the same browser never sees it.
+import { hydrateLocalThreads } from "./localChatBoard.ts";
 import { pushError } from "./errorLog.ts";
 import { LangContext, useLang, todayIso, fmtDate, relTime, TaskModal, NotifyContext, useNotify, FlashcardDeck, QuizPlayer, PracticeProblemCard, PageInfoHint } from "./ui.tsx";
+import { t } from "./i18n.ts";
 import { TaskCardRow, TaskFocus, TaskHero } from "./TaskCard.tsx";
 import { StudyMode } from "./study/StudyMode.tsx";
+import { TutorSession } from "./tutor/TutorSession.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { 
   LayoutDashboard,
@@ -110,10 +117,12 @@ function todayLong(lang?: string): string {
   return new Date().toLocaleDateString(lang === "en" ? "en-US" : "fr-FR", { weekday: "long", month: "long", day: "numeric" });
 }
 
-// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date.
-function fmtDay(iso: string): string {
+// A "YYYY-MM-DD" (or ISO) date → "Aug 1". Used for the AI-budget renewal date. Optional `L(fr, en)` (same
+// one every caller already has from useLang()) picks the locale — a French account no longer falls back to
+// whatever locale the BROWSER happens to be set to, which isn't necessarily the same language at all.
+function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
   const d = new Date(/T/.test(iso) ? iso : `${iso}T00:00:00`);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 }
 
 // Open a URL in a new tab. Prefers the Otto Chrome extension (web/extension/) — it sets a DOM flag and
@@ -123,6 +132,11 @@ function fmtDay(iso: string): string {
 // one-click execution of them — the card shows the plan as a checklist for the user to work through
 // themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.
 const EXECUTION_ENABLED = false;
+
+/** Temporary: Study Mode's entry points (the sidebar "Réviser"/"Study" item and the per-task Study Mode
+ *  buttons) are hidden while the tutor rework is underway. Nothing is deleted — the /study route still
+ *  works by URL, and flipping this back to true restores every button and the nav item. */
+const STUDY_MODE_ENABLED = false;
 
 
 
@@ -180,8 +194,8 @@ const CACHED_STATUS: ConnectionStatus | null = (() => {
 
 const GREETING = (lang?: "fr" | "en") => {
   const h = new Date().getHours();
-  if (lang === "en") return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-  return h < 12 ? "Bonjour" : h < 18 ? "Bon après-midi" : "Bonsoir";
+  const key = h < 12 ? "dashboard.greeting.morning" : h < 18 ? "dashboard.greeting.afternoon" : "dashboard.greeting.evening";
+  return t(key, lang === "en" ? "en" : "fr");
 };
 /** A friendly first name from the account email's local part ("tjong.willem@…" → "Tjong"). Personalizes the UI. */
 const firstName = (user?: string) => {
@@ -212,10 +226,30 @@ function writePronoteOptimistic(value: boolean | null): void {
 }
 
 /** Navigate the path router. "" → "/" (dashboard); otherwise "/<route>" (e.g. "task/<id>", "settings").
- *  pushState doesn't fire popstate, so we dispatch one to notify the router hook. */
+ *  pushState doesn't fire popstate, so we dispatch one to notify the router hook.
+ *
+ *  Every route swap (Tasks ↔ Journal ↔ Study ↔ Settings) is a hard ternary re-render in App() — the DOM for
+ *  the old section unmounts and the new one mounts in the same tick, with no transition of any kind. That's
+ *  the "ui isn't really smooth" complaint: the content area visibly snaps/flashes on every sidebar click,
+ *  unlike the spring-driven overlays (TaskModal, Study Mode drawers) already using `motion`. Restructuring
+ *  every branch of that ternary into an AnimatePresence-friendly shape is a much bigger, riskier change for
+ *  what's a purely cosmetic cross-fade — the native View Transitions API gets the same "old fades out, new
+ *  fades in" result with zero JSX changes, by snapshotting the DOM immediately before/after the mutation
+ *  React already performs. `prefers-reduced-motion` is respected by simply not opting in below (falling back
+ *  to the instant swap) rather than fighting the API's own reduced-motion handling. */
 const navigate = (r: string) => {
-  window.history.pushState({}, "", r ? `/${r}` : "/");
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  const go = () => {
+    window.history.pushState({}, "", r ? `/${r}` : "/");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const vtDocument = document as Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready: Promise<void>; updateCallbackDone: Promise<void> } };
+  if (reduceMotion || typeof vtDocument.startViewTransition !== "function") { go(); return; }
+  // A transition's `finished` (and `ready`) promise REJECTS with AbortError when a newer transition starts
+  // before it settles — expected/benign on a fast double-click or rapid sidebar navigation, but with no
+  // handler attached it surfaced as a real "Unhandled promise rejection" in production (Sentry/console).
+  // The transition itself still runs/cross-fades correctly; only the settlement promise is ever rejected.
+  vtDocument.startViewTransition(go).finished.catch(() => {});
 };
 
 // Last-known task list — hydrates the dashboard INSTANTLY on open (server truth replaces it right after).
@@ -262,6 +296,20 @@ export function App() {
       try { localStorage.setItem("otto-density-arm", d.manual ? "" : d.density); } catch { /* ignore */ }
     }).catch(() => {});
   }, [!!status]);
+  // Momentum callout — "you've kept up with math four days running" — surfaced on the dashboard itself,
+  // not buried in Settings' quiet "what Otto's learned" panel (the ONLY place subjectMastery's trend was
+  // rendered before this). A genuine, already-computed "up" trend is real rapport-building at the app level
+  // (same reasoning as chatAboutTask's growthLine in server/claude.ts, just surfaced here instead of only
+  // mid-conversation) — fetched once per load, same one-shot posture as the density suggestion above; a
+  // trend can't meaningfully change within a single session, so no need to re-poll.
+  const [momentumSubject, setMomentumSubject] = useState<string | null>(null);
+  useEffect(() => {
+    if (!status?.loggedIn) return;
+    void api.patternsSummary().then((p) => {
+      const up = p.subjectMastery.find((s) => s.trend === "up");
+      setMomentumSubject(up ? up.subject : null);
+    }).catch(() => {});
+  }, [status?.loggedIn]);
   // AI-personalized theme (opt-in, see Settings) — applied as inline custom-property overrides on <html>,
   // never a stylesheet swap. Re-applies whenever status refreshes so a change made in one tab/device shows
   // up here too, and clears cleanly (removeProperty) when customTheme is unset — e.g. after Reset.
@@ -370,7 +418,7 @@ export function App() {
   const loadBudget = useCallback(async () => { try { const u = await api.usage(); setBudget({ over: u.over, renewsOn: u.renewsOn }); } catch { /* keep last */ } }, []);
   // First-run onboarding is the ONE place Otto is explained — set on signup, cleared when the flow finishes.
   const startOnboard = () => { try { localStorage.setItem("otto-onboard", "1"); } catch { /* ignore */ } setOnboard(true); };
-  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); } catch { /* ignore */ } setOnboard(false); };
+  const finishOnboard = () => { try { localStorage.removeItem("otto-onboard"); localStorage.removeItem("otto-onboard-step"); localStorage.removeItem("otto-onboard-track"); } catch { /* ignore */ } setOnboard(false); };
   const [showCompleted, setShowCompleted] = useState(false);
   const [showAllTasks, setShowAllTasks] = useState(false);
   // Study Mode state
@@ -462,6 +510,10 @@ export function App() {
     // function) — which, from the outside, looked exactly like "my task got deleted" when the error
     // boundary reset the tree. Treat anything non-array as "no update," never crash the app over it.
     if (!Array.isArray(incoming)) return prev;
+    // Chat/board/problems are local-only now (never sent to the cloud account — see localChatBoard.ts's
+    // own comment) — overlay this browser's local copy onto every server-fetched task here, the one choke
+    // point every "fresh list from the server" path (initial load, polling, sync) already runs through.
+    incoming = hydrateLocalThreads(incoming, status?.user || null);
     const now = Date.now();
     // Prune opportunistically so this Map can't grow unbounded over a long session — every entry is either
     // reconciled well within the grace window or genuinely stale and safe to forget.
@@ -696,7 +748,7 @@ export function App() {
     // PREVIOUS account's cached tasks/status (see CACHED_TASKS/CACHED_STATUS above) before the real fetch
     // replaces them — visible, if briefly, as someone else's to-do list. None of these are needed once
     // signed out; the next session starts genuinely fresh.
-    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+    try { ["otto-tasks", "weave-status", "otto-seen-tasks", "otto-lastgen", "otto-onboard", "otto-onboard-step", "otto-onboard-track"].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
     // Clear user-specific local backups (decks, quizzes)
     const userId = status?.user || null;
     clearLocalDecks(userId);
@@ -866,6 +918,18 @@ export function App() {
   const working = tasks.filter((t) => isInFlight(t.status)).length;
   const handled = completed.length;
   const en = status?.language === "en";
+  // Translator for the (growing) slice of dashboard strings migrated to client/i18n.ts's catalog — named
+  // `T` (not `t`) because this same function has dozens of `.filter((t) => …)`/`.map((t) => …)` callbacks
+  // over tasks that shadow the module-level `t` import.
+  // Deliberately NOT useT() (which reads LangContext): App() is the component that RENDERS
+  // <LangContext.Provider value={status?.language...}> below — a component's own hook calls never see the
+  // value it provides to its own JSX subtree, only what an ANCESTOR already provided. Since nothing wraps
+  // App() itself, useT() here always read LangContext's hardcoded "fr" default regardless of the account's
+  // actual language, while GREETING/todayLong (which read status?.language directly, same as `en` above)
+  // got it right — reported live as the dashboard mixing English chrome with French sentences ("Good
+  // afternoon, Willem." next to "Ensuite : ...") for an English-language account. Deriving the same way
+  // GREETING/todayLong already do keeps every dashboard string in this function on one real source.
+  const T = (key: string, vars?: Record<string, string | number>) => t(key, en ? "en" : "fr", vars);
   // Split ONCE, outside the render tree, so "Today" and "Later/Can wait" can land in different grid
   // areas (dash-today vs dash-more) instead of one inline block — the whole point of the two-zone
   // dashboard is that Today is never sitting behind anything else, including the rail widgets on mobile.
@@ -917,13 +981,23 @@ export function App() {
             {status?.language === "en" ? "Journal" : "Journal"}
           </a>
           <a
-            className={`sidebar-item ${route === "study" ? "active" : ""}`}
-            href="/study"
+            className={`sidebar-item ${route === "tutor" ? "active" : ""}`}
+            href="/tutor"
             onClick={() => setSidebarOpen(false)}
           >
             <GraduationCap />
-            {status?.language === "en" ? "Study" : "Réviser"}
+            {status?.language === "en" ? "Tutor" : "Tuteur"}
           </a>
+          {STUDY_MODE_ENABLED && (
+            <a
+              className={`sidebar-item ${route === "study" ? "active" : ""}`}
+              href="/study"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <GraduationCap />
+              {status?.language === "en" ? "Study" : "Réviser"}
+            </a>
+          )}
           <a
             className={`sidebar-item ${route === "errorlog" ? "active" : ""}`}
             href="/errorlog"
@@ -941,6 +1015,15 @@ export function App() {
             {status?.language === "en" ? "Settings" : "Réglages"}
           </a>
         </nav>
+        <div className="sidebar-footer">
+          <a className="sidebar-user" href="/settings" onClick={() => setSidebarOpen(false)}>
+            <span className="sidebar-user-avatar">{(status.name || firstName(status.user) || "O").charAt(0).toUpperCase()}</span>
+            <span className="sidebar-user-info">
+              <span className="sidebar-user-name">{status.name || firstName(status.user) || (en ? "Account" : "Compte")}</span>
+              <span className="sidebar-user-email">{status.user || ""}</span>
+            </span>
+          </a>
+        </div>
       </aside>
 
       {/* Mobile sidebar toggle */}
@@ -955,6 +1038,14 @@ export function App() {
       {/* Main content area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <header className="topbar">
+          <div className="topbar-title">{(() => {
+            if (route === "settings") return en ? "Settings" : "Réglages";
+            if (route === "log") return en ? "Journal" : "Journal";
+            if (route === "study") return en ? "Study" : "Réviser";
+            if (route === "tutor") return en ? "Tutor" : "Tuteur";
+            if (route === "errorlog") return en ? "Error log" : "Erreurs";
+            return en ? "Tasks" : "Tâches";
+          })()}</div>
           <div className="spacer" />
           {(route === "" || route === "tasks" || route.startsWith("task/")) && (status.googleConnected || status.pronoteConnected) && <button className="btn ghost" disabled={busy} onClick={() => void generate()}>{busy ? (status?.language === "en" ? "Searching…" : "Recherche…") : (status?.language === "en" ? "Refresh" : "Actualiser")}</button>}
         </header>
@@ -977,6 +1068,8 @@ export function App() {
         <SettingsPage status={status} tasks={tasks} onSignOut={signOut} onChanged={loadStatus} onTasksChanged={setTasks} onStatusUpdate={loadStatus} />
       ) : route === "log" ? (
         <StudyLogPage lang={status?.language} tasks={tasks} status={status} />
+      ) : route === "tutor" ? (
+        <TutorSession userId={status?.user || null} />
       ) : route === "study" ? (
         <StandaloneStudyEntry tasks={tasks} setTasks={setTasks} status={status} notify={notify} navigate={navigate} />
       ) : route === "errorlog" ? (
@@ -991,21 +1084,23 @@ export function App() {
           <div className="dash-head">
             <p className="dash-date">{todayLong(status?.language)}</p>
             <h1 className="list-head">{GREETING(status?.language)}{(status.name || firstName(status.user)) ? <>, <span className="accent-num">{status.name || firstName(status.user)}</span></> : null}.</h1>
+            {momentumSubject ? (
+              <p className="dash-momentum">
+                {T("dashboard.momentum", { subject: momentumSubject })}
+              </p>
+            ) : null}
             {/* One plain sentence instead of the old "3 active · 1 processing · 5 done" mono readout —
                 that read like debug output, not like something written for a stressed 17-year-old. A second
                 sentence names what's actually next (the hero task) rather than just a count, so the line
                 reads as a real summary of where things stand, not just a tally. */}
             <p className="dash-line">
               {live.length === 0
-                ? (doneToday > 0
-                    ? (en ? "That's everything for today." : "C'est tout pour aujourd'hui.")
-                    : (en ? "You're all caught up." : "Tu es à jour."))
-                : (en
-                    ? `${live.length} thing${live.length > 1 ? "s" : ""} left today${doneToday > 0 ? ` — ${doneToday} already done` : ""}.`
-                    : `${live.length} chose${live.length > 1 ? "s" : ""} à faire aujourd'hui${doneToday > 0 ? ` — ${doneToday} déjà faite${doneToday > 1 ? "s" : ""}` : ""}.`)}
+                ? (doneToday > 0 ? T("dashboard.doneForToday") : T("dashboard.allCaughtUp"))
+                : (T("dashboard.thingsLeft", { count: live.length, plural: live.length > 1 ? "s" : "" }) +
+                   (doneToday > 0 ? T("dashboard.alreadyDone", { count: doneToday, plural: doneToday > 1 ? "s" : "" }) : "") + ".")}
               {live.length > 0 && heroTask ? (
                 <span className="dash-next">
-                  {en ? ` Next up: ${heroTask.title}.` : ` Ensuite : ${heroTask.title}.`}
+                  {T("dashboard.nextUp", { title: heroTask.title })}
                 </span>
               ) : null}
               {/* One status signal at a time, in priority order — overdue outranks in-progress work,
@@ -1049,8 +1144,8 @@ export function App() {
               <div className="intro-body">
                 <div className="intro-title">{en ? "Monthly cap reached" : "Plafond mensuel atteint"}</div>
                 <p>{en
-                  ? `Otto has paused new work — it renews ${budget?.renewsOn ? fmtDay(budget.renewsOn) : "on the 1st"}. Your tasks stay as they are.`
-                  : `Otto a mis en pause le nouveau travail — ça se renouvelle ${budget?.renewsOn ? fmtDay(budget.renewsOn) : "le 1er"}. Tes tâches restent en place.`}</p>
+                  ? `Otto has paused new work — it renews ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "on the 1st"}. Your tasks stay as they are.`
+                  : `Otto a mis en pause le nouveau travail — ça se renouvelle ${budget?.renewsOn ? fmtDay(budget.renewsOn, (fr, enS) => en ? enS : fr) : "le 1er"}. Tes tâches restent en place.`}</p>
               </div>
               <button className="btn xs ghost" onClick={() => navigate("settings")}>{en ? "Settings" : "Réglages"}</button>
             </div>
@@ -1106,7 +1201,7 @@ export function App() {
                             onChange={setTasks}
                             onTask={patchTask}
                             onConfirmed={flagJustDone}
-                            onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
+                            onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
                           />
                         ))}
                       </div>
@@ -1116,7 +1211,7 @@ export function App() {
               )}
             </div>
 
-            <WeekRailFab lang={status.language} pronoteConnected={!!status.pronoteConnected} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} tasks={tasks} />
+            <WeekRailFab lang={status.language} onTask={(u) => setTasks((prev) => prev.map((x) => (x.id === u.id ? u : x)))} tasks={tasks} />
 
             <div className="dash-more">
               {live.length > 0 && (laterToday.length > 0 || canWait.length > 0) && (
@@ -1152,7 +1247,7 @@ export function App() {
                                     onChange={setTasks}
                                     onTask={patchTask}
                                     onConfirmed={flagJustDone}
-                                    onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
+                                    onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
                                   />
                                 ))}
                               </div>
@@ -1175,7 +1270,7 @@ export function App() {
                                     onChange={setTasks}
                                     onTask={patchTask}
                                     onConfirmed={flagJustDone}
-                                    onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
+                                    onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
                                   />
                                 ))}
                               </div>
@@ -1197,7 +1292,7 @@ export function App() {
                     <button type="button" key={t.id} className={`done-row ${t.id === justDoneId ? "just-done" : ""}`} onClick={() => navigate(`task/${t.id}`)} title={t.synthesis || t.why}>
                       <span className="done-check" aria-hidden="true">✓</span>
                       <span className="done-title">{t.title}</span>
-                      <span className="done-when">{relTime(t.updatedAt || t.createdAt)}</span>
+                      <span className="done-when">{relTime(t.updatedAt || t.createdAt, (fr, enS) => en ? enS : fr)}</span>
                     </button>
                   ))}</div>
                   {completed.length > 8 && !showCompleted && (
@@ -1225,7 +1320,8 @@ export function App() {
                   onTask={patchTask}
                   onConfirmed={flagJustDone}
                   onLeft={() => navigate("")}
-                  onEnterStudyMode={() => { setStudyModeTask(openTask); navigate(`study/${openTask.id}`); }}
+                  onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(openTask); navigate(`study/${openTask.id}`); } : undefined}
+                  userId={status?.user || null}
                 />
               </TaskModal>
             );
@@ -1272,7 +1368,7 @@ function Milestones({ tasks }: { tasks: WebTask[] }) {
           const late = it.targetDate < todayIso();
           return (
             <div key={i} className={`milestone-chip ${late ? "late" : ""}`}>
-              <span className="milestone-date">{late ? L("en retard", "overdue") : fmtDate(it.targetDate)}</span>
+              <span className="milestone-date">{late ? L("en retard", "overdue") : fmtDate(it.targetDate, L)}</span>
               <span className="milestone-text">{it.text}</span>
               <span className="milestone-task">{it.taskTitle}</span>
             </div>
@@ -1288,56 +1384,11 @@ function Milestones({ tasks }: { tasks: WebTask[] }) {
   );
 }
 
-/** A horizontal strip of upcoming Pronote tests with a day-countdown — separate from the task list so
- *  crunch weeks are visible at a glance, not buried inside individual task cards. Reads straight from
- *  Pronote (not the task pipeline) so it shows the raw subject+date list. */
-function ExamCountdown({ lang }: { lang?: "fr" | "en" }) {
-  const en = lang === "en";
-  const [tests, setTests] = useState<{ subject: string; deadline: string }[] | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  // A failed fetch used to render identically to "genuinely no tests" (both `setTests([])`) — the widget
-  // just silently vanished either way, which reads as "nothing coming up" when it might actually mean the
-  // load broke. Track the two cases separately so a real failure says so instead of going quiet.
-  const [error, setError] = useState(false);
-  useEffect(() => { void api.pronoteTests().then((r) => setTests(r.tests)).catch(() => { setTests([]); setError(true); }); }, []);
-  if (error) return <div className="exam-strip-wrap"><p className="rewrite-error small">{en ? "Couldn't load upcoming tests." : "Impossible de charger les contrôles à venir."}</p></div>;
-  if (!tests?.length) return null;
-  const all = [...tests].sort((a, b) => Date.parse(a.deadline) - Date.parse(b.deadline));
-  const sorted = showAll ? all : all.slice(0, 4);
-  const daysLeft = (iso: string) => Math.ceil((Date.parse(iso) - Date.now()) / 86_400_000);
-  return (
-    // No .reveal fade here — this used to pop in as its own late "second wave" after the rest of the
-    // dashboard had already settled; it now just appears with its panel, no separate animation.
-    <div className="exam-strip-wrap">
-      <div className="exam-strip-label">{en ? "Upcoming tests" : "Contrôles à venir"}</div>
-      <div className="exam-strip">
-        {sorted.map((t, i) => {
-          const d = daysLeft(t.deadline);
-          const soon = d <= 3;
-          const when = new Date(t.deadline).toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "short", day: "numeric", month: "short" });
-          return (
-            <div key={i} className={`exam-chip ${soon ? "soon" : ""}`}>
-              <span className="exam-days">{d <= 0 ? (en ? "Today" : "Aujourd'hui") : `J-${d}`}</span>
-              <span className="exam-subject">{t.subject}</span>
-              <span className="exam-when">{when}</span>
-            </div>
-          );
-        })}
-        {!showAll && all.length > 4 && (
-          <button type="button" className="btn xs ghost exam-more" onClick={() => setShowAll(true)}>
-            {en ? `+${all.length - 4} more` : `+${all.length - 4} de plus`}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /** Always-on-screen entry point for the exam/week ambient context. Used to render inline in the task
  *  list (splitting it in two), then as a full-screen modal (too heavy for what's basically a glance-and-
  *  close panel) — this is a small floating button, fixed to the same spot at every scroll position, that
  *  opens a compact anchored popover instead of taking over the whole screen. */
-function WeekRailFab({ lang, pronoteConnected, onTask, tasks }: { lang?: "fr" | "en"; pronoteConnected: boolean; onTask: (t: WebTask) => void; tasks: WebTask[] }) {
+function WeekRailFab({ lang, onTask, tasks }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void; tasks: WebTask[] }) {
   const en = lang === "en";
   const [open, setOpen] = useState(false);
 
@@ -1357,7 +1408,6 @@ function WeekRailFab({ lang, pronoteConnected, onTask, tasks }: { lang?: "fr" | 
             {/* Temporarily hidden — rarely has anything to show outside a detected big IB project
                 (Extended Essay/TOK/CAS/IA), so it was mostly just empty space on the rail. */}
             <DueReviews lang={lang} tasks={tasks} />
-            {pronoteConnected && <ExamCountdown lang={lang} />}
             <WeekLoad lang={lang} onTask={onTask} />
           </div>
         </TaskModal>
@@ -1394,13 +1444,19 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
     const cur = byDeck.get(d.deckId);
     if (cur) cur.count++; else byDeck.set(d.deckId, { taskId: d.taskId, deckTitle: d.deckTitle, count: 1 });
   }
+  // Capped at 3 decks/day — this strip sits at the very top of the Journal tab, and a student with a lot of
+  // accumulated review debt used to see every single overdue deck at once (reported live: 7+ chips stacked
+  // above the day picker), crowding out the actual journal entry below the fold. Most decks with the most
+  // cards due first — that's the review that's actually gone stale longest, the one worth surfacing over a
+  // deck that's barely behind.
+  const dueDecks = [...byDeck.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 3);
   const openTask = openDeck ? tasks.find((t) => t.id === openDeck.taskId) : undefined;
   const openDeckObj = openTask?.flashcards?.find((f) => f.id === openDeck?.deckId);
   return (
     <div className="due-reviews">
       <div className="exam-strip-label">{en ? "Due for review" : "À réviser"}</div>
       <div className="exam-strip">
-        {[...byDeck.entries()].map(([deckId, t]) => (
+        {dueDecks.map(([deckId, t]) => (
           <button key={deckId} type="button" className="exam-chip due-review-chip" onClick={() => setOpenDeck({ taskId: t.taskId, deckId })}>
             <span className="exam-days">{t.count}</span>
             <span className="exam-subject">{t.deckTitle}</span>
@@ -1428,12 +1484,40 @@ function DueReviews({ lang, tasks }: { lang?: "fr" | "en"; tasks: WebTask[] }) {
   );
 }
 
+/** Otto's own record of what's actually landed, per topic — profile.milestones (shared/types.ts), extracted
+ *  from journal entries (extractJournalMemory, server/claude.ts) alongside the existing journal→courses fact
+ *  pipeline. Same chip strip pattern as DueReviews/exam-strip right above — one visual language for "here's
+ *  a small stack of things about your studying," not a new bespoke widget. This is the direct, visible half
+ *  of "the tutor remembers your progress" — the other half (feeding it back INTO chat so Otto builds on it
+ *  instead of re-teaching) is milestoneLine in server/claude.ts, invisible by design (a tutor doesn't
+ *  announce "per my notes...").  Own profile fetch (same pattern as MistakeLogPage/SettingsPage below) since
+ *  StudyLogPage doesn't otherwise carry profile state. */
+function MilestonesStrip({ lang }: { lang?: "fr" | "en" }) {
+  const en = lang === "en";
+  const [groups, setGroups] = useState<ReturnType<typeof milestonesBySubject> | null>(null);
+  useEffect(() => { void api.profile().then((p) => setGroups(milestonesBySubject(p.milestones))).catch(() => setGroups([])); }, []);
+  if (!groups?.length) return null;
+  return (
+    <div className="due-reviews milestones-strip">
+      <div className="exam-strip-label">{en ? "What's clicked so far" : "Ce qui a déclic jusqu'ici"}</div>
+      <div className="exam-strip">
+        {groups.flatMap((g) => g.entries.slice(0, 3).map((m) => (
+          <span key={m.id} className="exam-chip milestone-chip" title={m.label}>
+            <span className="exam-subject">{g.subject}</span>
+            <span className="milestone-topic">{m.topic}</span>
+          </span>
+        )))}
+      </div>
+    </div>
+  );
+}
+
 type WorkloadDay = { date: string; items: { kind: "homework" | "test" | "task"; subject?: string; title: string; effort: number; taskId?: string; movable?: boolean }[]; totalEffort: number };
 
 /** Deterministic "this week" strip — no AI call, just real Pronote homework/tests + open tasks bucketed
  *  by day. Answers the 4 workload gaps in one glance: what's on each day, how heavy it actually is (bar
  *  height, relative to the week — never presented as minutes), which day is a pile-up (accent chip, same
- *  visual language as ExamCountdown's "soon"), and — once expanded — a way to nudge a movable task off an
+ *  visual language for a heavy day), and — once expanded — a way to nudge a movable task off an
  *  overloaded day onto the lightest one, without any AI round-trip. */
 function WeekLoad({ lang, onTask }: { lang?: "fr" | "en"; onTask: (t: WebTask) => void }) {
   const en = lang === "en";
@@ -1641,6 +1725,18 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
     try { onChanged?.(await api.setProfilePreference("track", v)); }
     catch (e: any) { setTrackState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
   };
+  // Learning style — fully read by the tutor prompt (learningStyleLine, server/claude.ts) since it was
+  // built, but had NO write path anywhere until now: the field was architecturally complete and permanently
+  // empty. Same optimistic-save pattern as track/language above. "mixed"/unset both mean "no preference" —
+  // offered as an explicit choice so a student can consciously opt out, not just leave it blank.
+  const [learningStyle, setLearningStyleState] = useState<"visual" | "auditory" | "reading" | "kinesthetic" | "mixed" | undefined>(profile?.learningStyle);
+  useEffect(() => { setLearningStyleState(profile?.learningStyle); }, [profile?.learningStyle]);
+  const saveLearningStyle = async (v: "visual" | "auditory" | "reading" | "kinesthetic" | "mixed") => {
+    const prev = learningStyle;
+    setLearningStyleState(v);
+    try { onChanged?.(await api.setProfilePreference("learningStyle", v)); }
+    catch (e: any) { setLearningStyleState(prev); notify(e?.message || L("Ça n'a pas été enregistré — réessaie.", "That didn't save — give it another try."), "error"); }
+  };
   // Year/grade level — free text (see Profile.yearLevel's doc comment for why not a dropdown). Local draft
   // state so typing doesn't round-trip on every keystroke; saved on blur/Enter like other free-text fields.
   const [yearLevel, setYearLevelState] = useState(profile?.yearLevel || "");
@@ -1675,63 +1771,17 @@ function PreferencesFields({ profile, onChanged }: { profile: Profile | null; on
           value={yearLevel} onChange={(e) => setYearLevelState(e.target.value)}
           onBlur={() => void saveYearLevel()} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
       </label>
+      <div className="set-row">
+        <span className="set-text"><b>{L("Comment tu apprends le mieux", "How you learn best")}</b><span className="settings-hint">{L("Otto adapte comment il explique — jamais ce qu'il explique.", "Otto adapts how it explains — never what it explains.")}</span></span>
+        <select className="addinput sm" style={{ maxWidth: 180 }} value={learningStyle || "mixed"} onChange={(e) => void saveLearningStyle(e.target.value as any)}>
+          <option value="mixed">{L("Pas de préférence", "No preference")}</option>
+          <option value="visual">{L("Visuel", "Visual")}</option>
+          <option value="auditory">{L("Auditif", "Auditory")}</option>
+          <option value="reading">{L("Lecture/écriture", "Reading/writing")}</option>
+          <option value="kinesthetic">{L("En pratiquant", "Hands-on")}</option>
+        </select>
+      </div>
     </>
-  );
-}
-
-/** Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test sync, for a student
- *  whose school doesn't use it (most IB/international schools). Feeds ExamCountdown/WeekLoad via GET
- *  /api/pronote/tests and /api/workload merging manualExams server-side, so this is the ENTIRE client-side
- *  surface needed — no other component needs to know this data source exists. */
-function ExamsEditor({ profile }: { profile: Profile | null }) {
-  const L = useLang();
-  const [exams, setExams] = useState<{ subject: string; deadline: string }[]>([]);
-  const [grades, setGrades] = useState<{ subject: string; average: number; outOf: number }[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-  Promise.allSettled([api.pronoteTests(), api.pronoteGrades()])
-  .then(([testsResult, gradesResult]) => {
-  if (cancelled) return;
-  const today = new Date().toISOString().slice(0, 10);
-  if (testsResult.status === "fulfilled") {
-    setExams([...testsResult.value.tests]
-    .filter((exam) => exam.deadline >= today)
-    .sort((a, b) => a.deadline.localeCompare(b.deadline)));
-  }
-  if (gradesResult.status === "fulfilled") setGrades(gradesResult.value.grades);
-  })
-  .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
-
-  const pronoteGrades = (profile?.grades || [])
-  .filter((g) => g.source === "pronote")
-  .map((g) => ({ subject: g.subject, average: g.grade, outOf: g.scale }));
-  const allGrades = [...(grades.length > 0 ? grades : pronoteGrades)]
-  .filter((grade, index, list) => index === list.findIndex((candidate) => candidate.subject.toLowerCase() === grade.subject.toLowerCase()));
-
-  return (
-    <div className="exams-editor">
-      <p className="settings-hint" style={{ marginBottom: "8px" }}>{L("Notes d&apos;examen par matière (Pronote)", "Exam grades by subject (Pronote)")}</p>
-      {loading ? (
-        <p className="muted small">{L("Chargement…", "Loading…")}</p>
-      ) : allGrades.length > 0 ? (
-        <ul className="grade-list">
-          {allGrades.map((g, i) => (
-            <li key={`${g.subject}-${i}`} className="grade-row">
-              <div className="grade-row-top">
-                <span className="grade-subject">{g.subject}</span>
-                <span className="grade-value">{g.average}/{g.outOf}</span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="muted small">{L("Aucune note d&apos;examen par matière disponible.", "No exam grades by subject available.")}</p>
-      )}
-    </div>
   );
 }
 
@@ -1849,6 +1899,7 @@ function FlashcardsLibraryPage({ lang, tasks, embedded, userId }: { lang?: "fr" 
             deck={open.deck}
             taskId={open.taskId}
             onReview={liveOwner ? (cardIndex, correct) => { void api.reviewFlashcard(open.taskId, open.deck.id, cardIndex, correct).catch(() => {}); } : undefined}
+            onNotNeeded={liveOwner ? (cardIndex) => { void api.markFlashcardNotNeeded(open.taskId, open.deck.id, cardIndex).catch(() => {}); } : undefined}
             onAllCorrect={() => setOpenId(null)}
           />
         </TaskModal>
@@ -1977,17 +2028,27 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
   const en = status?.language === "en";
   const [taskId, setTaskId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  // Same stable-ref pattern as the main study/:id route (App.tsx's studyModeTask) — a freestudy task has no
+  // URL to re-derive from, so a background syncTasks that momentarily omits or dismisses it (e.g. right after
+  // /api/study/free's own "dismiss the previous freestudy task" step, or a plain stale/incomplete fetch) must
+  // not make `task` go null mid-session, or this component falls straight back to the landing screen — the
+  // "study mode auto gets out of it" report, for free-study sessions specifically.
+  const studyTaskRef = useRef<WebTask | null>(null);
   const start = () => {
     setStarting(true);
-    void api.studyFreeSession().then((list) => {
+    void api.studyFreeSession(true).then((list) => {
       setTasks(list);
       const t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
-      if (t) setTaskId(t.id);
+      if (t) { studyTaskRef.current = t; setTaskId(t.id); }
       else notify(en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie.", "error");
     }).catch((e: any) => notify(e?.message || (en ? "Couldn't start a study session — try again." : "Impossible de démarrer une session — réessaie."), "error"))
       .finally(() => setStarting(false));
   };
-  const task = taskId ? tasks.find((t) => t.id === taskId) : null;
+  if (taskId && studyTaskRef.current?.id === taskId) {
+    const fresh = tasks.find((t) => t.id === taskId);
+    if (fresh) studyTaskRef.current = fresh;
+  }
+  const task = taskId && studyTaskRef.current?.id === taskId ? studyTaskRef.current : null;
   if (!task) {
     return (
       <main className="list-wrap">
@@ -2299,19 +2360,20 @@ function StudyLogPage({ lang, tasks, status }: { lang?: "fr" | "en"; tasks: WebT
           existed but was buried in the dashboard's "This week" popover, nowhere near the Journal tab where
           these decks actually live. */}
       <DueReviews lang={lang} tasks={tasks} />
+      <MilestonesStrip lang={lang} />
 
       {tab === "flashcards" ? <FlashcardsLibraryPage lang={lang} tasks={tasks} embedded userId={status?.user || null} /> : (
       <>
       <div className="studylog-weeknav">
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, -7))}>{"← " + L("Semaine préc.", "Prev week")}</button>
-        <span className="studylog-weeklabel">{fmtDate(monday)} – {fmtDate(addDays(monday, 4))}</span>
+        <span className="studylog-weeklabel">{fmtDate(monday, L)} – {fmtDate(addDays(monday, 4), L)}</span>
         <button type="button" className="btn xs ghost" onClick={() => setMonday(addDays(monday, 7))}>{L("Semaine suiv.", "Next week") + " →"}</button>
       </div>
 
       <div className="studylog-days">
         {dayLabels.map((label, i) => (
           <button key={i} type="button" className={`studylog-day-btn ${selected === i ? "active" : ""} ${days[i]?.logText ? "has-entry" : ""}`} onClick={() => setSelected(i)}>
-            <span>{label}</span><span className="studylog-day-date">{fmtDate(dates[i])}</span>
+            <span>{label}</span><span className="studylog-day-date">{fmtDate(dates[i], L)}</span>
           </button>
         ))}
       </div>
@@ -2594,7 +2656,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
           <span className={`caret ${showUsage ? "open" : ""}`} aria-hidden="true">›</span>
         </button>
         {showUsage && <div className="settings-reveal">
-        {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn)}</span></div>}
+        {usage && <div className="modal-row"><span className="lbl">{L("Utilisation IA ce mois-ci", "AI usage this month")}</span><span className="val" title={L(`${usage.runs} exécutions au total`, `${usage.runs} runs total`)}>≈ {fmtEur(usage.monthCostUsd)} {L("sur", "of")} {fmtEur(usage.budgetUsd)}{usage.over ? L(" · plafond atteint", " · cap reached") : ""} · {L("renouvellement", "renews")} {fmtDay(usage.renewsOn, L)}</span></div>}
         {/* Breakdown by WHAT spent it — added after a live "why is €0.30/day being spent with no interaction"
             question that the single total above couldn't answer on its own. sweep = the daily background scan,
             autorun = tasks Otto ran on its own (no click needed anymore), chat = Ask Otto conversations,
@@ -2765,7 +2827,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             existing French users), full catalog opens up for "ib"/"other" (see GoogleTiles' `restricted`). */}
         <p className="settings-hint">{L("Otto lit ces sources et prépare le travail — ", "Otto reads these sources and preps the work — ")}<b>{L("il n'envoie et ne rend jamais rien à ta place", "it never sends or hands anything in for you")}</b>.</p>
         <PronoteTile status={status} onStatusUpdate={onStatusUpdate} />
-        <BlackbaudTile />
         <GoogleTiles onChanged={onChanged} restricted={profile?.track !== "ib" && profile?.track !== "other"} />
       </section>
 
@@ -2809,11 +2870,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
           </label>
           <PreferencesFields profile={profile} onChanged={(p) => { setProfile(p); onChanged(); }} />
         </div>
-      </section>
-
-      <section className="settings-sec reveal" style={{ ["--d" as any]: "0.13s" }}>
-        <h3>{L("Tes examens", "Your exams")}</h3>
-        <ExamsEditor profile={profile} />
       </section>
 
       {(() => {
@@ -3006,7 +3062,7 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             {profile?.studentModel?.summary ? (
               <>
                 <p className="student-model-text">{profile.studentModel.summary}</p>
-                <p className="settings-hint">{L(`Mis à jour le ${fmtDay(profile.studentModel.updatedAt)}`, `Updated ${fmtDay(profile.studentModel.updatedAt)}`)}</p>
+                <p className="settings-hint">{L(`Mis à jour le ${fmtDay(profile.studentModel.updatedAt, L)}`, `Updated ${fmtDay(profile.studentModel.updatedAt, L)}`)}</p>
                 <button type="button" className="btn xs ghost" onClick={async () => {
                   try { setProfile(await api.resetStudentModel()); }
                   catch (e: any) { notify(e?.message || L("Réinitialisation impossible — réessaie.", "Couldn't reset — try again."), "error"); }
@@ -3441,7 +3497,18 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // already good) and, from here on, whether Pronote gets framed as THE data source or as one option among
   // several. Previously never asked anywhere, so every account silently defaulted to unset/"bac"-shaped
   // assumptions regardless of what the student actually needed.
-  const [track, setTrack] = useState<"ib" | "bac" | "other" | null>(null);
+  // Persisted the same way `step` is (localStorage) — plain useState reverted to null on every reload, so a
+  // student who picked "ib" on step 1 and refreshed mid-onboarding (their track already saved server-side
+  // by then) would see step 3's pronoteIsPrimary computed from a null track again, i.e. the wrong (primary)
+  // Pronote copy for an IB student.
+  const [track, setTrackState] = useState<"ib" | "bac" | "other" | null>(() => {
+    try { return (localStorage.getItem("otto-onboard-track") as "ib" | "bac" | "other" | null) || null; }
+    catch { return null; }
+  });
+  const setTrack = (t: "ib" | "bac" | "other" | null) => {
+    setTrackState(t);
+    try { if (t) localStorage.setItem("otto-onboard-track", t); else localStorage.removeItem("otto-onboard-track"); } catch { /* best-effort */ }
+  };
   // Free text, not a dropdown — see Profile.yearLevel's doc comment: year/grade naming isn't standardized
   // across the Bac/IB/"other" tracks this asks about, and forcing one system's labels onto another would
   // just be wrong for whichever track didn't match. Saved on blur (no separate "confirm" step) since it's
@@ -3468,7 +3535,11 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
   // Pronote is a French national-education-system tool — real and worth asking about for "bac"/unset, but
   // actively misleading to lead with for an IB/other-track student whose school very likely doesn't use it
   // at all (Google Classroom, Managebac, Toddle, or just email/calendar are far more common internationally).
-  const pronoteIsPrimary = false;
+  // Previously hardcoded `false` regardless of the track picked in step 1 — every student, including "bac"
+  // ones who'd just chosen Pronote as their real primary source, saw the non-primary "if you have one"
+  // copy. Derive it from the actual selection: primary unless the student is explicitly on IB (unset track
+  // still defaults to primary, same as the "bac"/unset framing the comment above already describes).
+  const pronoteIsPrimary = track !== "ib";
 
   return (
     <div className="onboard-overlay" role="dialog" aria-modal="true">
@@ -3476,8 +3547,8 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
         <button className="onboard-skip" onClick={onDone} aria-label={L("Passer", "Skip")}>{L("Passer", "Skip")}</button>
         <div className="onboard-top">
           <div className="onboard-brand"><Logo size={20} /> <span>Otto</span></div>
-          <div className="onboard-progress" aria-hidden="true">
-            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} className={d <= step ? "on" : ""} />)}
+          <div className="onboard-progress" role="progressbar" aria-valuemin={1} aria-valuemax={OB_STEPS} aria-valuenow={step + 1} aria-label={L(`Étape ${step + 1} sur ${OB_STEPS}`, `Step ${step + 1} of ${OB_STEPS}`)}>
+            {Array.from({ length: OB_STEPS }).map((_, d) => <span key={d} aria-hidden="true" className={d <= step ? "on" : ""} />)}
           </div>
         </div>
 
@@ -3486,9 +3557,10 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
             <h2>{L("Bienvenue sur Otto", "Welcome to Otto")}</h2>
             <p className="onboard-lead">{L("Otto lit tes devoirs, contrôles et mails, transforme tout ça en un plan clair pour aujourd'hui, et t'aide à démarrer — sans jamais faire le travail à ta place. Connecte Pronote, Gmail, ou ajoute tes tâches à la main.", "Otto reads your homework, tests and emails, turns them into a clear plan for today, and helps you get started — never doing the work for you. Connect Pronote, Gmail, or add tasks by hand.")}</p>
             <label className="field onboard-name"><span>{L("Comment veux-tu qu'Otto t'appelle ?", "What should Otto call you?")}</span>
-              <input className="addinput" placeholder={L("Ton prénom", "Your first name")} value={name} maxLength={60} autoFocus
+              <input className="addinput" placeholder={L("Ton prénom (optionnel)", "Your first name (optional)")} value={name} maxLength={60} autoFocus
                 onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void saveName(); }} />
             </label>
+            <p className="muted small">{L("Tu peux le renseigner plus tard dans les Réglages.", "You can set this later in Settings.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={() => void saveName()}>{L("Commencer", "Get started")}</button></div>
           </div>
         )}
@@ -3502,6 +3574,7 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>{L("IB", "IB")}</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
             </div>
+            <p className="muted small">{L("Tu peux choisir plus tard depuis les Réglages.", "You can pick this later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
               <button className="btn primary" onClick={() => setStep(2)}>{L("Continuer", "Continue")}</button>
@@ -3696,6 +3769,9 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [consent, setConsent] = useState(false);
+  const [isChildAccount, setIsChildAccount] = useState(false);
+  const [birthYear, setBirthYear] = useState("");
+  const [parentalConsent, setParentalConsent] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   // The reset link's token lives in the URL's query string, which the app's own client-side router
@@ -3731,9 +3807,12 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
       return;
     }
     if (!email.trim() || !pw || (mode === "signup" && !consent)) return;
+    if (mode === "signup" && isChildAccount && (!birthYear || !parentalConsent)) return;
     setBusy(true); setErr("");
     try {
-      const r = mode === "signup" ? await api.signup(email.trim(), pw, consent) : await api.login(email.trim(), pw);
+      const r = mode === "signup" 
+        ? await api.signup(email.trim(), pw, consent, isChildAccount, birthYear ? parseInt(birthYear) : undefined, parentalConsent) 
+        : await api.login(email.trim(), pw);
       if (r.ok) onDone(mode === "signup"); else setErr(r.error || L("Une erreur est survenue.", "Something went wrong."));
     } catch {
       setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
@@ -3784,10 +3863,29 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
               {/* RGPD Art.8: under-15s need a parent to set the account up (see Privacy Policy) — a required,
                   recorded checkbox instead of the previous text-only claim with no actual signal captured. */}
               {mode === "signup" && (
-                <label className="field-check">
-                  <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-                  <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
-                </label>
+                <>
+                  <label className="field-check">
+                    <input type="checkbox" checked={isChildAccount} onChange={(e) => setIsChildAccount(e.target.checked)} />
+                    <span>{L("C'est un compte pour un enfant (moins de 15 ans)", "This is a child account (under 15)")}</span>
+                  </label>
+                  {isChildAccount && (
+                    <>
+                      <label className="field"><span>{L("Année de naissance", "Birth year")}</span>
+                        <input className="addinput" type="number" placeholder="2010" value={birthYear} onChange={(e) => setBirthYear(e.target.value)} />
+                      </label>
+                      <label className="field-check">
+                        <input type="checkbox" checked={parentalConsent} onChange={(e) => setParentalConsent(e.target.checked)} />
+                        <span>{L("En tant que parent, je consens à la création de ce compte.", "As a parent, I consent to this account creation.")}</span>
+                      </label>
+                    </>
+                  )}
+                  {!isChildAccount && (
+                    <label className="field-check">
+                      <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                      <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
+                    </label>
+                  )}
+                </>
               )}
               {err && <div className="autherr">{err}</div>}
               <button className="btn primary big" disabled={busy || (mode === "forgot" ? !email.trim() : mode === "reset" ? !pw : !email.trim() || !pw || (mode === "signup" && !consent))} onClick={() => void submit()}>

@@ -275,7 +275,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             <input
               className="sm-setup-input"
               type="text"
-              placeholder="Paste a link — YouTube, PDF, Google Doc, anything…"
+              placeholder={L("Colle un lien — YouTube, PDF, Google Doc, n'importe quoi…", "Paste a link — YouTube, PDF, Google Doc, anything…")}
               value={linkInput}
               onChange={e => { setLinkInput(e.target.value); setLinkError(""); }}
               onKeyDown={e => e.key === "Enter" && addLink()}
@@ -283,7 +283,7 @@ export function StudySetup({ task, existingEnv, onStart, onResume, onExit }: Stu
             <input
               className="sm-setup-input sm-setup-input-sm"
               type="text"
-              placeholder="Label (optional)"
+              placeholder={L("Étiquette (optionnel)", "Label (optional)")}
               value={linkLabel}
               onChange={e => setLinkLabel(e.target.value)}
             />

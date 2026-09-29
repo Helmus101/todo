@@ -105,22 +105,30 @@ export function useThinkingWord(active: boolean, intervalMs = 1400): string | nu
  *  convention as server/workload.ts's BARE_DATE check, so this never drifts across a timezone). */
 export const todayIso = (): string => new Date().toISOString().slice(0, 10);
 
-/** "Sep 12" — a milestone target date (YYYY-MM-DD), formatted for display. */
-export const fmtDate = (iso: string): string => {
+/** "Sep 12" — a milestone target date (YYYY-MM-DD), formatted for display. Takes the same `L(fr, en)`
+ *  function every caller already has from `useLang()` — used only to pick the right locale string
+ *  ("fr-FR"/"en-US"), never to translate text — so a French account gets "12 sept." instead of the
+ *  browser's own default locale (which previously wasn't the same thing at all, e.g. an English-locale
+ *  browser on a French-language account). Optional/omittable for the rare caller with no `L` in scope,
+ *  same fallback behavior as before. */
+export const fmtDate = (iso: string, L?: (fr: string, en: string) => string): string => {
   const d = new Date(`${iso}T00:00:00`);
-  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 };
 
-/** "just now" / "2h ago" / "Jul 3" — compact, human moment for when a step was completed. */
-export const relTime = (iso: string): string => {
+/** "à l'instant" / "il y a 2h" / "12 sept." — compact, human moment for when a step was completed. Same
+ *  optional `L` as fmtDate — also fixes the relative-time WORDS themselves ("2h ago"), which were
+ *  hardcoded English unconditionally before (a separate, larger gap than just the date-formatting locale). */
+export const relTime = (iso: string, L?: (fr: string, en: string) => string): string => {
   const ms = Date.now() - new Date(iso).getTime();
   if (!Number.isFinite(ms) || ms < 0) return "";
+  const en = L ? L("", "en") === "en" : true; // no L passed → keep the old English-default behavior
   const m = Math.floor(ms / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
+  if (m < 1) return en ? "just now" : "à l'instant";
+  if (m < 60) return en ? `${m}m ago` : `il y a ${m}min`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (h < 24) return en ? `${h}h ago` : `il y a ${h}h`;
+  return new Date(iso).toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" });
 };
 
 // "Found in Gmail · 2h ago" — the Pillar-1 (proactive, not reactive) claim made concrete on the card
@@ -220,9 +228,11 @@ export function subtitle(t: WebTask): string {
 }
 
 // Format a task's deadline: a raw ISO date/datetime → "Jul 27"; already-human text ("late July", "today") as-is.
-export function fmtWhen(when: string): string {
+// Same optional `L(fr, en)` as fmtDate/relTime — picks the locale, never translates (the "already-human
+// text" case is whatever the server already generated in the right language).
+export function fmtWhen(when: string, L?: (fr: string, en: string) => string): string {
   const s = String(when || "").trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d.getTime())) return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); }
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) { const d = new Date(s); if (!isNaN(d.getTime())) return d.toLocaleDateString(L?.("fr-FR", "en-US"), { month: "short", day: "numeric" }); }
   return s;
 }
 
@@ -733,7 +743,7 @@ function loadDeckProgress(deckId: string): { i: number; right: number[]; wrong: 
     return { i: p.i, right: p.right, wrong: p.wrong };
   } catch { return null; }
 }
-export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; taskId?: string; onAllCorrect?: () => void }) {
+export function FlashcardDeck({ deck, onReview, onNotNeeded, taskId, onAllCorrect }: { deck: TaskFlashcards; onReview?: (cardIndex: number, correct: boolean) => void; onNotNeeded?: (cardIndex: number) => void; taskId?: string; onAllCorrect?: () => void }) {
   const L = useLang();
   const saved = useRef(loadDeckProgress(deck.id)).current;
   const [i, setI] = useState(saved?.i ?? 0);
@@ -762,9 +772,15 @@ export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: 
   // re-marked correct during a retry pass moves from `wrong` to `right` as normal, which is what makes the
   // score screen you land back on after a retry pass show an updated, meaningful percentage.
   const [retryQueue, setRetryQueue] = useState<number[] | null>(null);
-  const seqLen = retryQueue ? retryQueue.length : deck.cards.length;
+  // Cards already marked "not something I need to learn" (card.notNeeded) never enter the pass at all; ones
+  // marked during THIS pass land in `dropped` and leave the score's denominator. Frozen at mount so a server
+  // re-render mid-pass can't shift which card position `i` points at.
+  const baseSeq = useRef(deck.cards.map((_, idx) => idx).filter((idx) => !deck.cards[idx].notNeeded)).current;
+  const [dropped, setDropped] = useState<number[]>([]);
+  const inScope = baseSeq.length - dropped.length;
+  const seqLen = retryQueue ? retryQueue.length : baseSeq.length;
   const done = i >= seqLen;
-  const cardIndex = retryQueue ? retryQueue[i] : i;
+  const cardIndex = retryQueue ? retryQueue[i] : baseSeq[i];
   const card = !done ? deck.cards[cardIndex] : null;
   const mark = (ok: boolean) => {
     if (!card) return;
@@ -780,11 +796,27 @@ export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: 
     setFlipped(false);
     setI((v) => v + 1);
   };
+  // "I don't know this because I don't NEED to" ≠ "I got it wrong": the card leaves scoring and review
+  // entirely instead of being drilled as a gap, and the server feeds it back into future deck generation.
+  const markNotNeeded = () => {
+    if (!card) return;
+    setDropped((prev) => [...prev.filter((x) => x !== cardIndex), cardIndex]);
+    setRight((prev) => prev.filter((x) => x !== cardIndex));
+    setWrong((prev) => prev.filter((x) => x !== cardIndex));
+    onNotNeeded?.(cardIndex);
+    setSkipFlipAnim(true);
+    setFlipped(false);
+    setI((v) => v + 1);
+  };
   // Revisit a card marked in error, or just double-check it — matches the score screen's own "you can
   // always restart" spirit, but for one card instead of the whole deck. Never removes its recorded
   // verdict on its own; re-marking it (see `mark` above) is what actually changes the score.
   const back = () => { if (i === 0) return; setFlipped(false); setI((v) => v - 1); };
   const restart = () => { setRetryQueue(null); setI(0); setFlipped(false); setRight([]); setWrong([]); };
+  // Restarting keeps `dropped` — a card marked "not needed" stays out; the pass just skips past it.
+  useEffect(() => {
+    if (!done && !retryQueue && dropped.includes(cardIndex)) setI((v) => v + 1);
+  }, [i, done, retryQueue, dropped, cardIndex]);
   // Cycle through ONLY the cards currently marked wrong, in their original deck order — right/wrong stay as
   // they are (not reset), so getting one right this time genuinely moves the needle on the score you see
   // when this pass finishes, instead of starting the whole deck's tally over.
@@ -819,17 +851,25 @@ export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: 
   // "done, no mistakes outstanding" and should close the same way). Never fires while `wrong.length > 0`,
   // so a first pass with misses always lands on the score screen for the retry button instead of vanishing.
   useEffect(() => {
-    if (done && wrong.length === 0 && deck.cards.length > 0) onAllCorrect?.();
-  }, [done, wrong.length, deck.cards.length, onAllCorrect]);
+    if (done && wrong.length === 0 && inScope > 0) onAllCorrect?.();
+  }, [done, wrong.length, inScope, onAllCorrect]);
   if (done) {
-    const pct = deck.cards.length ? Math.round((right.length / deck.cards.length) * 100) : 0;
+    if (inScope <= 0) {
+      return (
+        <div className="deck-popup deck-done">
+          <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
+          <p className="deck-score">{L("Aucune carte à réviser ici — tu les as toutes marquées hors programme.", "No cards left to review here — you marked them all as not needed.")}</p>
+        </div>
+      );
+    }
+    const pct = Math.round((right.length / inScope) * 100);
     return (
       <div className="deck-popup deck-done">
         <h3 className="note-popup-title">{stripStrayMarkdown(deck.title)}</h3>
         <div className={`deck-score-ring ${pct >= 70 ? "good" : ""}`}>
           <span className="deck-score-pct">{pct}%</span>
         </div>
-        <p className="deck-score">{L(`${right.length} / ${deck.cards.length} correctes`, `${right.length} / ${deck.cards.length} correct`)}</p>
+        <p className="deck-score">{L(`${right.length} / ${inScope} correctes`, `${right.length} / ${inScope} correct`)}</p>
         <div className="deck-acts">
           {wrong.length > 0 ? (
             <button className="btn primary" onClick={retryWrong}>{L(`Réessayer les ${wrong.length} ratées`, `Retry the ${wrong.length} you got wrong`)}</button>
@@ -874,6 +914,12 @@ export function FlashcardDeck({ deck, onReview, taskId, onAllCorrect }: { deck: 
       </div>
       {i > 0 ? (
         <button type="button" className="btn xs ghost deck-btn-back" onClick={back}>{L("‹ Carte précédente", "‹ Previous card")}</button>
+      ) : null}
+      {onNotNeeded ? (
+        <button type="button" className="btn xs ghost deck-btn-not-needed" onClick={markNotNeeded}
+          title={L("Hors programme ou pas de ton niveau — la carte sort de tes révisions et Otto évitera ce genre de carte", "Outside your course or level — the card leaves your reviews and Otto will avoid cards like it")}>
+          {L("Pas à apprendre pour moi", "Not something I need to learn")}
+        </button>
       ) : null}
       <StudyHelpPanel taskId={taskId} card={{ kind: "flashcard", front: card!.front, back: card!.back }} />
     </div>
@@ -1263,9 +1309,22 @@ export function TaskModal({ onClose, children, nested, title }: { onClose: () =>
  *  instantly on close) — asymmetric with their slide/scale entrance, the exact thing TaskModal's own history
  *  (see its comment above) already called out as reading unpolished. `exitMs` should match the `duration`
  *  passed to SmSurface below for the same `variant`. */
-export function useSmClose(onClose: () => void, exitMs: number): { closing: boolean; doClose: () => void } {
+// `reopenKey` is for the RARE surface that stays mounted across its own open/close cycle instead of being
+// unmounted by the parent when closed (AudioPanel, kept alive so a live Spotify iframe never gets destroyed
+// — see StudyMode.tsx's own comment on that). For every other drawer/modal here, closing unmounts the
+// component entirely, so `closing`/`closingRef` naturally start fresh next open — no reset needed. But a
+// surface that stays mounted keeps its OWN internal `closing` latched `true` forever after its first close
+// (doClose is intentionally a one-shot guard), so simply toggling the wrapper's visibility back on left the
+// drawer permanently stuck mid-exit-animation (translated off-screen) — reported live as "audio doesn't open
+// the second time". Passing the parent's "am I open" flag as `reopenKey` resets the latch whenever it flips.
+export function useSmClose(onClose: () => void, exitMs: number, reopenKey?: unknown): { closing: boolean; doClose: () => void } {
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
+  useEffect(() => {
+    if (reopenKey === undefined) return;
+    closingRef.current = false;
+    setClosing(false);
+  }, [reopenKey]);
   const doClose = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;

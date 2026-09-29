@@ -13,19 +13,21 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import type { WebTask, ConnectionStatus, Profile, StudySession, StudyProfile, FocusSession } from "../shared/types.ts";
-import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject } from "../shared/types.ts";
+import { emptyProfile, normalizeProfile, dedupeFacts, canonStatus, isHandled, isInFlight, isValidTz, monthCostUsd, monthlyBudgetUsd, overMonthlyBudget, overInteractiveBudget, budgetRenewsOn, tzOf, addUsage, nextLeitnerReview, practiceAnswerMatches, deadlineEpoch, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, MAX_DUE_SETS_PER_DAY } from "../shared/types.ts";
 import { computeWorkload } from "./workload.ts";
 import { aiReady, refineManualTask, chatAboutTask, expandStep, runSubstep, studyHelp, generateDailyStudyCards, generateDailyPracticeProblem, checkFeynmanGap, extractJournalMemory, generateWeeklyStudyDeck, generateWeeklyQuiz, generateMonthlyStudyDeck, generateMonthlyQuiz, generateThemeTokens, evaluateCheckpoint, needsAdaptiveReplan, detectFailurePatterns, regenerateStepsWithScaffolding, computeTaskOutcome, calculateOptimalScheduleTime, generateSchedulingSuggestion, recommendArtifactType } from "./claude.ts";
-import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken, peekTaskChat } from "./store.ts";
+import { loadState, saveState, cloudEnabled, getUser, createUser, setResetToken, getUserByResetToken, setPassHash, mirrorAuthUser, deleteAccount, makeSessionStore, getJob, getLatestJob, eventsForTask, exportJobsAndEvents, recordEvent, countActiveJobs, activeJobTaskIds, checkRateLimit, loadBanditState, saveBanditState, recordSessionOutcome, recordMetric, getStudyMetricsSummary, peekSessionCsrfToken } from "./store.ts";
 import { sendTransactionalEmail } from "./mailer.ts";
 import { contextKey as banditContextKey, chooseArm, updatePosterior, computeReward, computeCardReward, computeLatencyReward, leadingArm, POMODORO_ARMS, FLASHCARD_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, GRANULARITY_ARMS } from "./bandit.ts";
-import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost } from "./patterns.ts";
+import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, subjectFrequency, orderingBoost, weakSubjectBoost, twoMinuteRuleBoost, stallNudgeLine } from "./patterns.ts";
 import * as tasks from "./tasks.ts";
 import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
-import * as plaidSvc from "./plaid.ts";
 import * as blackbaudSvc from "./blackbaud.ts";
+import { getAgeBand, getPolicyProfileFromBirthYear } from "./policyProfiles.ts";
+import { recordConsent } from "./consentService.ts";
+import { isDependenceWarning, shouldFadeScaffolding } from "./dependenceMetrics.ts";
 
 declare module "express-session" {
   interface SessionData {
@@ -44,6 +46,8 @@ declare module "express-session" {
     // fixed for as long as that bucket does, only re-drawn when it actually changes (e.g. morning → afternoon).
     orderingArmCache?: { key: string; armId: string };
     blackbaudOAuthState?: string; // CSRF nonce for the Blackbaud OAuth authorization-code flow — see server/blackbaud.ts
+    primersessionStart?: number; // Timestamp for Primer session cap enforcement
+    primerlastBreakReminder?: number; // Timestamp for last break reminder
   }
 }
 
@@ -91,12 +95,11 @@ app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
 // (Docker/self-host) path and every API response.
 const CSP = [
   "default-src 'self'",
-  // https://cdn.plaid.com: Plaid Link's own hosted JS (client/App.tsx's FinancePage loads it directly).
   // https://cdn.jsdelivr.net: MediaPipe's tasks-vision wasm loader (client-side face/presence tracking for
   // Study Mode's opt-in focus check) — connect-src below already allowed jsdelivr for the wasm binary fetch,
   // but the loader's own <script> tag was still being blocked since script-src didn't independently list it.
-  "script-src 'self' 'wasm-unsafe-eval' https://cdn.plaid.com https://cdn.jsdelivr.net",
-  "script-src-elem 'self' https://cdn.plaid.com https://cdn.jsdelivr.net",
+  "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
+  "script-src-elem 'self' https://cdn.jsdelivr.net",
   "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
@@ -107,23 +110,21 @@ const CSP = [
   // Study Mode's in-app dictionary artifact fetches these directly from the browser (client/study/artifacts/
   // DictionaryArtifact.tsx) — a strict 'self' here silently blocked every lookup with "Failed to fetch"
   // (CSP violations don't reach the app's own try/catch as an HTTP error; the browser just refuses the fetch).
-  // https://*.plaid.com: Link's own network calls during the bank-login flow (sandbox.plaid.com etc) — the
-  // student's bank credentials go straight to Plaid over this, never through Otto's own server at all.
   // https://*.ingest.*.sentry.io: client-side Sentry (main.tsx) reports errors straight from the browser —
   // this was missing here while vercel.json's copy of this CSP (the one actually served on Vercel) already
   // had it, so client error reporting was silently CSP-blocked on the self-hosted/Docker path only.
-  "connect-src 'self' https://freedictionaryapi.com https://*.plaid.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://cdn.jsdelivr.net https://storage.googleapis.com",
+  "connect-src 'self' https://freedictionaryapi.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://cdn.jsdelivr.net https://storage.googleapis.com",
   // Study Mode embeds several things in iframes: a Spotify playlist/album/track widget (client/study/
   // spotify.ts, no OAuth needed), a Google Doc, a YouTube video, and — critically — the student's own
   // uploaded PDFs, which load from a same-page blob: URL (StudySetup's upload flow). Once frame-src is set
   // AT ALL it replaces the default-src 'self' fallback entirely rather than adding to it — setting it to
   // just the Spotify origin (as this first did) silently broke every other embed, including the student's
   // own files, with Chrome's generic "This content is blocked" — so 'self' and blob: must be listed here
-  // explicitly, not assumed to still apply. https://cdn.plaid.com: Link's own modal renders in an iframe.
+  // explicitly, not assumed to still apply.
   // https://drive.google.com: a Drive FILE preview (e.g. a PDF/image uploaded to Drive rather than a
   // native Doc/Sheet/Slide) — DocumentArtifact.tsx converts a normal .../view share link to .../preview,
   // but the CSP still has to list the origin itself or the frame never even attempts to load.
-  // Broadened to any https: origin (was a fixed allowlist: Spotify/Docs/Drive/YouTube/Desmos/Padlet/Plaid
+  // Broadened to any https: origin (was a fixed allowlist: Spotify/Docs/Drive/YouTube/Desmos/Padlet
   // only) — DocumentArtifact.tsx now deliberately attempts to embed ANY http(s) URL a student pastes as a
   // study material, and the allowlist was silently defeating that: CSP blocks the iframe before it even
   // loads, no console error a student would notice, on every host not in the list (confirmed live: a
@@ -135,7 +136,10 @@ const CSP = [
   // re-doing the isolation the sandbox already provides. 'self'/blob: kept for the student's own uploaded
   // PDFs/images (same-page blob: URLs) and same-origin needs.
   "frame-src 'self' blob: https:",
-  "font-src 'self'",
+  // data: — PDF.js (pdfjs-dist) embeds subsetted fonts as data: URIs when rendering PDFs in Study Mode;
+  // without this, every rendered PDF page silently drops its text glyphs (CSP blocks the data: font before
+  // it ever loads, no console error a student would notice — just "the PDF text looks wrong").
+  "font-src 'self' data:",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
@@ -352,7 +356,7 @@ const requireAuth: RequestHandler = (req, res, next) => {
   void requireAuthAsync(req, res, next);
 };
 async function requireAuthAsync(req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
-  if (!req.session.user) { res.status(401).json({ error: "not logged in" }); return; }
+  if (!req.session.user) { res.status(401).json({ error: M(req, "pas connecté", "not logged in") }); return; }
   // A session that (per THIS request's read) has no token yet cannot fairly be checked against a header —
   // the client can't possibly have a token that didn't exist. Mint one, skip the check for this ONE
   // request, and move on; the real check applies to every request after. This is the ONLY case where a
@@ -387,7 +391,7 @@ async function requireAuthAsync(req: express.Request, res: express.Response, nex
         // have it) lets the very next retry succeed immediately instead of depending on luck. Reported live
         // as a persistent, never-resolving 403 on routine background calls (pronote/touch, /api/metrics).
         res.setHeader(CSRF_HEADER, fresh || req.session.csrfToken || "");
-        res.status(403).json({ error: "Session expired or invalid — refresh the page and try again." });
+        res.status(403).json({ error: M(req, "Session expirée ou invalide — actualise la page et réessaie.", "Session expired or invalid — refresh the page and try again.") });
         return;
       }
     }
@@ -427,7 +431,7 @@ const rateLimit = (max: number, windowMs: number): RequestHandler => async (req,
   const result = cloud ?? inMemoryRateLimit(key, max, windowMs);
   if (!result.allowed) {
     const retry = Math.ceil(result.retryAfterMs / 1000);
-    res.set("Retry-After", String(retry)).status(429).json({ error: `Too many requests — give it ${retry}s.` });
+    res.set("Retry-After", String(retry)).status(429).json({ error: M(req, `Trop de requêtes — patiente ${retry}s.`, `Too many requests — give it ${retry}s.`) });
     return;
   }
   next();
@@ -438,25 +442,53 @@ const toolsFor = (req: express.Request) => integrations.getAgentTools(req.sessio
 // ── Email account auth ─────────────────────────────────────────────────────────
 const normEmail = (s: unknown) => String(s || "").trim().toLowerCase();
 const validEmail = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
+// Language for a SERVER-GENERATED error string — `profile.language` once a session has one; before that
+// (signup/login/reset, where no profile exists yet) fall back to a `lang` the client sends explicitly (same
+// pattern already used by /api/auth/forgot-password), then to French (the app's own default for an
+// unrecognized/absent signal — see Profile.language's own comment in shared/types.ts). This was the actual
+// root cause of French users seeing raw English error toasts: client/api.ts's error handling always prefers
+// a server-sent `error` message over its own bilingual fallback (by design — a specific validation reason
+// should win over a generic one), so a hardcoded-English server string reached the toast verbatim regardless
+// of the account's language. `M` is the fix at the source: build the string in the right language before it
+// ever leaves the server.
+function reqLang(req: express.Request): "fr" | "en" {
+  if (req.session?.profile?.language === "en") return "en";
+  if (req.session?.profile?.language === "fr") return "fr";
+  return req.body?.lang === "en" ? "en" : "fr";
+}
+function M(req: express.Request, fr: string, en: string): string { return reqLang(req) === "en" ? en : fr; }
 
 app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
-  if (!validEmail(email) || password.length < 8 || password.length > 200) { res.status(400).json({ error: "Enter a valid email and a password between 8 and 200 characters." }); return; }
-  // The Privacy Policy states under-15s need a parent to set the account up (RGPD Art.8) — this was
-  // previously enforced by text alone. Not real age verification, but a required, recorded affirmative
-  // signal beats none.
-  if (req.body?.consent !== true) { res.status(400).json({ error: "Please confirm you're 15 or older, or that a parent set this account up for you." }); return; }
-  if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
-  if (await getUser(email)) { res.status(409).json({ error: "An account with that email already exists — log in instead." }); return; }
-  if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: "Couldn't create the account." }); return; }
+  const birthYear = req.body?.birthYear ? parseInt(req.body.birthYear) : undefined;
+  const isChildAccount = req.body?.isChildAccount === true;
+  
+  if (!validEmail(email) || password.length < 8 || password.length > 200) { res.status(400).json({ error: M(req, "Entre un email valide et un mot de passe entre 8 et 200 caractères.", "Enter a valid email and a password between 8 and 200 characters.") }); return; }
+  
+  // For child accounts, require birth year and parental consent
+  if (isChildAccount) {
+    if (!birthYear || birthYear < 2000 || birthYear > new Date().getFullYear()) {
+      res.status(400).json({ error: M(req, "L'année de naissance est requise pour les comptes d'enfants.", "Birth year is required for child accounts.") }); return;
+    }
+    if (req.body?.parentalConsent !== true) {
+      res.status(400).json({ error: M(req, "Le consentement parental est requis pour les comptes d'enfants.", "Parental consent is required for child accounts.") }); return;
+    }
+  } else {
+    // Adult accounts: require 15+ consent
+    if (req.body?.consent !== true) { res.status(400).json({ error: M(req, "Confirme que tu as 15 ans ou plus, ou qu'un parent a créé ce compte.", "Please confirm you're 15 or older, or that a parent set this account up for you.") }); return; }
+  }
+  
+  if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
+  if (await getUser(email)) { res.status(409).json({ error: M(req, "Un compte existe déjà avec cet email — connecte-toi plutôt.", "An account with that email already exists — log in instead.") }); return; }
+  if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: M(req, "Impossible de créer le compte.", "Couldn't create the account.") }); return; }
   void mirrorAuthUser(email, password); // best-effort — shows the account in Supabase's own Auth tab too
   // Regenerate the session id on every privilege change (login/signup) — never write the authenticated
   // user onto a pre-existing session id. Without this, a session id fixed on a victim's browser BEFORE
   // they sign up (e.g. planted via an unrelated XSS/subdomain trick) would become a live authenticated
   // session the moment they complete signup — classic session fixation.
   req.session.regenerate((err) => {
-    if (err) { res.status(500).json({ error: "Couldn't create the account — try again." }); return; }
+    if (err) { res.status(500).json({ error: M(req, "Impossible de créer le compte — réessaie.", "Couldn't create the account — try again.") }); return; }
     req.session.user = email;
     // Must explicitly reset these, exactly like /api/auth/login does — if this browser's session cookie
     // already had another account's tasks/profile in it (e.g. someone created a new account without signing
@@ -464,7 +496,31 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
     // BRAND NEW one on the very next request (the safety-net middleware above only fills these in when
     // they're `undefined`, which they aren't in that case) — they'd even get merged into and saved onto the
     // new account's cloud row. A fresh signup always starts from empty state.
-    req.session.profile = { ...emptyProfile(), ageConsentAt: new Date().toISOString() };
+    req.session.profile = { 
+      ...emptyProfile(), 
+      ageConsentAt: new Date().toISOString(),
+      birthYear: birthYear,
+      ageBand: birthYear ? getAgeBand(birthYear) : undefined,
+      policyProfileId: birthYear ? getPolicyProfileFromBirthYear(birthYear).id : undefined,
+      primerSettings: {
+        sessionCapMinutes: birthYear ? getPolicyProfileFromBirthYear(birthYear).session.hardCapMinutes : 60,
+        dailyCapMinutes: birthYear ? getPolicyProfileFromBirthYear(birthYear).session.dailyCapMinutes : 120,
+        parentViewLevel: isChildAccount ? "full" : "none",
+      },
+      dataRetentionDays: birthYear ? getPolicyProfileFromBirthYear(birthYear).safety.dataRetentionDays : 90,
+    };
+    
+    // Record consent if this is a child account
+    if (isChildAccount && birthYear) {
+      const consent = recordConsent({
+        childId: email,
+        scope: ["account_access", "data_processing"],
+        grantedAt: new Date().toISOString(),
+        method: "clickwrap",
+      });
+      req.session.profile.consentRecords = [consent];
+    }
+    
     req.session.tasks = [];
     // Generated here (not left to /api/status's lazy path) so the VERY FIRST authenticated mutating call a
     // fresh signup makes (e.g. the onboarding flow's language preference save, which fires before the next
@@ -482,7 +538,7 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
   // Without this, getUser() always returns null when Supabase isn't configured (e.g. local dev with no
   // .env set up) and login falls straight through to "Wrong email or password" — sending you down the
   // wrong path (retyping/resetting a password that was never the actual problem). Same check signup has.
-  if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase) — sign-in can't work until that's set." }); return; }
+  if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase) — la connexion ne peut pas fonctionner tant que ce n'est pas réglé.", "Account storage isn't configured on the server (Supabase) — sign-in can't work until that's set.") }); return; }
   const u = await getUser(email);
   // Timing side-channel fix: bcrypt.compareSync used to be skipped entirely when `u` is null (no such
   // account), so a login attempt for a NONEXISTENT email returned near-instantly while a real email with a
@@ -492,12 +548,12 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
   const validPassword = bcrypt.compareSync(password, u?.pass_hash || DUMMY_PASS_HASH);
   if (!u || !validPassword) {
     void recordEvent(email, "login_failed", {}); // never the password — email only, for brute-force visibility
-    res.status(401).json({ error: "Wrong email or password." });
+    res.status(401).json({ error: M(req, "Email ou mot de passe incorrect.", "Wrong email or password.") });
     return;
   }
   // Regenerate the session id on login — see the signup handler's comment on why (session fixation).
   req.session.regenerate(async (err) => {
-    if (err) { res.status(500).json({ error: "Couldn't log you in — try again." }); return; }
+    if (err) { res.status(500).json({ error: M(req, "Impossible de te connecter — réessaie.", "Couldn't log you in — try again.") }); return; }
     req.session.user = email;
     // Bring back this account's saved profile + tasks. (App connections live in Composio, keyed by this
     // same account email, so they're already linked — nothing to restore here.)
@@ -520,8 +576,8 @@ app.post("/api/auth/login", rateLimit(10, 15 * 60_000), ah(async (req, res) => {
 // IP (rateLimit) and, inside the handler, best-effort against hammering ONE victim's inbox from many IPs.
 app.post("/api/auth/forgot-password", rateLimit(5, 60 * 60_000), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
-  if (!validEmail(email)) { res.status(400).json({ error: "Enter a valid email." }); return; }
-  if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
+  if (!validEmail(email)) { res.status(400).json({ error: M(req, "Entre un email valide.", "Enter a valid email.") }); return; }
+  if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
   try {
     const u = await getUser(email);
     if (u) {
@@ -547,17 +603,17 @@ app.post("/api/auth/forgot-password", rateLimit(5, 60 * 60_000), ah(async (req, 
 app.post("/api/auth/reset-password", rateLimit(10, 60 * 60_000), ah(async (req, res) => {
   const token = String(req.body?.token || "");
   const password = String(req.body?.password || "");
-  if (!token) { res.status(400).json({ error: "Missing or invalid reset link." }); return; }
-  if (password.length < 8 || password.length > 200) { res.status(400).json({ error: "Password must be between 8 and 200 characters." }); return; }
-  if (!cloudEnabled()) { res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." }); return; }
+  if (!token) { res.status(400).json({ error: M(req, "Lien de réinitialisation manquant ou invalide.", "Missing or invalid reset link.") }); return; }
+  if (password.length < 8 || password.length > 200) { res.status(400).json({ error: M(req, "Le mot de passe doit contenir entre 8 et 200 caractères.", "Password must be between 8 and 200 characters.") }); return; }
+  if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
   const u = await getUserByResetToken(token);
-  if (!u) { res.status(400).json({ error: "This reset link is invalid or has expired — request a new one." }); return; }
-  if (!(await setPassHash(u.email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: "Couldn't reset the password — try again." }); return; }
+  if (!u) { res.status(400).json({ error: M(req, "Ce lien de réinitialisation est invalide ou a expiré — refais-en la demande.", "This reset link is invalid or has expired — request a new one.") }); return; }
+  if (!(await setPassHash(u.email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: M(req, "Impossible de réinitialiser le mot de passe — réessaie.", "Couldn't reset the password — try again.") }); return; }
   void recordEvent(u.email, "password_reset", {});
   // Log the student straight in — same session-fixation-safe regenerate as signup/login above, so a reset
   // link doubles as an immediate "you're back in" instead of a second manual login right after.
   req.session.regenerate(async (err) => {
-    if (err) { res.status(500).json({ error: "Password reset — but couldn't log you in automatically. Log in with your new password." }); return; }
+    if (err) { res.status(500).json({ error: M(req, "Mot de passe réinitialisé — mais impossible de te reconnecter automatiquement. Connecte-toi avec ton nouveau mot de passe.", "Password reset — but couldn't log you in automatically. Log in with your new password.") }); return; }
     req.session.user = u.email;
     const restored = await loadState(u.email);
     req.session.profile = restored.profile;
@@ -603,7 +659,7 @@ app.post("/api/account/delete", requireAuth, rateLimit(5, 60_000), async (req, r
     // being fixed (Express 4 never responds to an unhandled rejection in a route handler).
     req.session.destroy(() => res.json(result));
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Couldn't delete the account — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer le compte — réessaie.", "Couldn't delete the account — try again.") });
   }
 });
 
@@ -628,7 +684,7 @@ app.get("/api/account/export", requireAuth, rateLimit(5, 60_000), async (req, re
     res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
     res.json({ email, exportedAt: new Date().toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Couldn't export your data — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'exporter tes données — réessaie.", "Couldn't export your data — try again.") });
   }
 });
 
@@ -639,7 +695,7 @@ app.get("/api/account/export", requireAuth, rateLimit(5, 60_000), async (req, re
 // (mergeTaskLists/mergeProfileStates in server/tasks.ts, also used by jobs.ts and the migration script) so
 // importing into a non-empty account never silently drops what's already there — tasks/journal entries/
 // error-log rows/flashcard decks union by id, profile facts dedupe, and per-field "most recent wins" rules
-// apply exactly as they do for a normal multi-device sync. Connection secrets (Pronote/Google/Plaid tokens)
+// apply exactly as they do for a normal multi-device sync. Connection secrets (Pronote/Google tokens)
 // are deliberately NOT imported — the export never included the live secret in the first place (see the
 // comment above /api/account/export), so this route can't accidentally move a credential into an account
 // that shouldn't have it; the user reconnects those normally after moving.
@@ -647,7 +703,7 @@ app.post("/api/account/import", requireAuth, rateLimit(5, 60_000), express.json(
   const email = req.session.user!;
   const body = req.body;
   if (!body || typeof body !== "object" || (!body.profile && !Array.isArray(body.tasks))) {
-    res.status(400).json({ error: "That doesn't look like an Otto export file." });
+    res.status(400).json({ error: M(req, "Ce fichier ne ressemble pas à un export Otto.", "That doesn't look like an Otto export file.") });
     return;
   }
   try {
@@ -665,7 +721,7 @@ app.post("/api/account/import", requireAuth, rateLimit(5, 60_000), express.json(
     void recordEvent(email, "account_imported", { message: `Imported ${incomingTasks.length} tasks` });
     res.json({ ok: true, tasksAfter: mergedTasks.length, errorLogAfter: mergedProfile.errorLog?.length || 0 });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Couldn't import that file — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'importer ce fichier — réessaie.", "Couldn't import that file — try again.") });
   }
 });
 
@@ -687,7 +743,7 @@ app.get("/api/integrations", requireAuth, ah(async (req, res) => {
 // Get connected accounts for a specific app (supports multiple accounts)
 app.get("/api/integrations/:app/accounts", requireAuth, ah(async (req, res) => {
   const app2 = String(req.params.app);
-  if (!integrations.CATALOG.some((c) => c.key === app2)) { res.status(404).json({ error: "Unknown integration." }); return; }
+  if (!integrations.CATALOG.some((c) => c.key === app2)) { res.status(404).json({ error: M(req, "Intégration inconnue.", "Unknown integration.") }); return; }
   const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2, true) : [];
   res.json({ accounts });
 }));
@@ -718,7 +774,7 @@ app.get("/api/integrations/pronote/status", requireAuth, ah(async (req, res) => 
 app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_000), async (req, res) => {
   const { url, username, password, kind } = req.body || {};
   if (typeof url !== "string" || typeof username !== "string" || typeof password !== "string") {
-    res.status(400).json({ error: "URL, username and password are required." }); return;
+    res.status(400).json({ error: M(req, "L'URL, l'identifiant et le mot de passe sont requis.", "URL, username and password are required.") }); return;
   }
   try {
     const result = await pronoteSvc.connectPronote(req.session.user!, { url, username, password, kind: Number(kind) || undefined });
@@ -735,7 +791,7 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 60_
       } catch { /* best-effort */ }
     }
     res.status(result.ok ? 200 : 400).json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't connect to Pronote — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de se connecter à Pronote — réessaie.", "Couldn't connect to Pronote — try again.") }); }
 });
 // Upcoming tests for the dashboard's exam countdown strip — a plain read, separate from the task pipeline
 // (a test already has/will have a task, but the countdown needs the raw subject+date list to lay out as a
@@ -767,19 +823,19 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
     await pronoteSvc.disconnectPronote(req.session.user!);
     pronoteSvc.invalidatePronoteStatus(req.session.user!);
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect Pronote — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter Pronote — réessaie.", "Couldn't disconnect Pronote — try again.") }); }
 });
   // Read-only: the raw Pronote grade averages, for anything that just wants to display them.
   app.post("/api/pronote/grades/sync", requireAuth, rateLimit(6, 60_000), async (req, res) => {
   try {
   const live = await pronoteSvc.pronoteGrades(req.session.user!);
-  if (!live.length) { res.status(502).json({ error: "Pronote connected successfully, but returned no subject averages in any available period. Check that grades are published for this account." }); return; }
+  if (!live.length) { res.status(502).json({ error: M(req, "Pronote n'a renvoyé aucune note publiée sur les périodes disponibles.", "Pronote connected successfully, but returned no published subject grades across available periods.") }); return; }
   const profile = (req.session.profile ||= emptyProfile());
   pronoteSvc.applyPronoteGrades(profile, live);
   await commit(req);
   res.json({ grades: live, synced: true });
   } catch (e: any) {
-  res.status(502).json({ error: e?.message || "Could not pull grades from Pronote." });
+  res.status(502).json({ error: e?.message || M(req, "Impossible de récupérer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
   }
   });
   app.get("/api/pronote/grades", requireAuth, async (req, res) => {
@@ -787,53 +843,33 @@ app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) =
   .filter((grade) => grade.source === "pronote")
   .map((grade) => ({ subject: grade.subject, average: grade.grade, outOf: grade.scale }));
   try {
-    const conn = await pronoteSvc.pronoteConnected(req.session.user!);
-  if (!conn.connected) { res.json({ grades: cached }); return; }
-  const live = await pronoteSvc.pronoteGrades(req.session.user!);
-  if (live.length) {
+    const live = await pronoteSvc.pronoteGrades(req.session.user!);
+    if (!live.length) { res.status(502).json({ error: M(req, "Pronote n'a renvoyé aucune note. Vérifie la période en cours et la connexion.", "Pronote returned no subject grades. Check the current period and connection.") }); return; }
     const profile = (req.session.profile ||= emptyProfile());
     pronoteSvc.applyPronoteGrades(profile, live);
     await commit(req);
+    res.json({ grades: live, synced: true });
+  } catch (e: any) {
+    res.status(502).json({ error: e?.message || M(req, "Impossible de récupérer les notes depuis Pronote.", "Could not pull grades from Pronote.") });
   }
-  res.json({ grades: live.length ? live : cached });
+});
+app.get("/api/pronote/grades", requireAuth, async (req, res) => {
+  const cached = (req.session.profile?.grades || [])
+    .filter((grade) => grade.source === "pronote")
+    .map((grade) => ({ subject: grade.subject, average: grade.grade, outOf: grade.scale }));
+  try {
+    const conn = await pronoteSvc.pronoteConnected(req.session.user!);
+    if (!conn.connected) { res.json({ grades: cached }); return; }
+    const live = await pronoteSvc.pronoteGrades(req.session.user!);
+    if (live.length) {
+      const profile = (req.session.profile ||= emptyProfile());
+      pronoteSvc.applyPronoteGrades(profile, live);
+      await commit(req);
+    }
+    res.json({ grades: live.length ? live : cached });
   } catch { res.json({ grades: cached }); }
 });
 
-// ── /finance (Plaid) — an ADDITIONAL proactive source, same shape as Pronote above: no OAuth redirect (Plaid
-// Link is a client-side modal, not a server redirect), so this is a link-token/exchange pair rather than a
-// single /connect. SANDBOX ONLY (see plaid.ts's own file-level comment) — never touches a real bank account
-// or costs anything. Financial data NEVER reaches an AI call anywhere in this app — see plaidBillsToTasks
-// (server/tasks.ts) and the /api/tasks/:id/chat route's own guard for the three separate places that's enforced.
-app.get("/api/integrations/plaid/status", requireAuth, ah(async (req, res) => {
-  res.json({ ...(await plaidSvc.plaidConnected(req.session.user!)), configured: plaidSvc.plaidConfigured() });
-}));
-app.post("/api/integrations/plaid/link-token", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
-  if (!plaidSvc.plaidConfigured()) { res.status(503).json({ error: "Plaid isn't configured on this server." }); return; }
-  try {
-    res.json(await plaidSvc.createLinkToken(req.session.user!));
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't start the connection." }); }
-}));
-app.post("/api/integrations/plaid/exchange", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
-  const publicToken = String(req.body?.publicToken || "");
-  if (!publicToken) { res.status(400).json({ error: "Missing token." }); return; }
-  const result = await plaidSvc.exchangePublicToken(req.session.user!, publicToken);
-  if (!result.ok) { res.status(400).json(result); return; }
-  res.json(result);
-}));
-// Dev/demo path — only actually does anything when PLAID_MOCK=1 on the server (see plaid.ts's connectMock),
-// otherwise returns its own honest error. Lets /finance be fully exercised with zero real Plaid credentials.
-app.post("/api/integrations/plaid/connect-mock", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
-  const result = await plaidSvc.connectMock(req.session.user!);
-  if (!result.ok) { res.status(400).json(result); return; }
-  res.json(result);
-}));
-app.post("/api/integrations/plaid/disconnect", requireAuth, async (req, res) => {
-  try { await plaidSvc.disconnectPlaid(req.session.user!); res.json({ ok: true }); }
-  catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
-});
-app.get("/api/finance/snapshot", requireAuth, ah(async (req, res) => {
-  res.json(await plaidSvc.plaidSnapshot(req.session.user!));
-}));
 // Blackbaud (school Education Management — assignments/grades) — see blackbaud.ts's file-level comment.
 // Real OAuth flow (auth-url → redirect → callback) needs BLACKBAUD_CLIENT_ID/SECRET on top of the
 // subscription key; connect-mock is the always-available fallback (BLACKBAUD_MOCK=1) with no credentials.
@@ -873,7 +909,7 @@ app.post("/api/integrations/blackbaud/connect-mock", requireAuth, rateLimit(10, 
 }));
 app.post("/api/integrations/blackbaud/disconnect", requireAuth, async (req, res) => {
   try { await blackbaudSvc.disconnectBlackbaud(req.session.user!); res.json({ ok: true }); }
-  catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
+  catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
 });
 // Deterministic "this week" workload view — no AI call, just real Pronote homework/tests + open tasks
 // bucketed by day with a relative effort heuristic (see server/workload.ts). Cheap enough to recompute
@@ -904,7 +940,7 @@ app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
     void recordMetric(req.session.user!, "integration_disconnected", 1, app2);
     await saveSession(req);
     res.json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); }
 });
 
 // Disconnect a specific account by ID (for multi-account support)
@@ -915,12 +951,12 @@ app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req
     // Verify the account belongs to this user and app before disconnecting
     const accounts = integrations.integrationsReady() ? await integrations.getConnectedAccounts(req.session.user!, app2) : [];
     const account = accounts.find((a) => a.id === accountId);
-    if (!account) { res.status(404).json({ error: "Account not found." }); return; }
+    if (!account) { res.status(404).json({ error: M(req, "Compte introuvable.", "Account not found.") }); return; }
     const result = await integrations.disconnectAccount(accountId);
     integrations.invalidateTools(req.session.user!);
     await saveSession(req);
     res.json(result);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't disconnect — try again." }); return; }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déconnecter — réessaie.", "Couldn't disconnect — try again.") }); return; }
 });
 
 // ── Status ──────────────────────────────────────────────────────────────────
@@ -984,7 +1020,13 @@ const overBudget = (req: express.Request): boolean => overMonthlyBudget(req.sess
 // A user-present action (Approve & Run, manual run, revise) is allowed a small reserve above the cap so the
 // human's own last step isn't the thing the budget kills — background work still stops hard at the cap.
 const overInteractive = (req: express.Request): boolean => overInteractiveBudget(req.session.profile);
-const BUDGET_MSG = "Otto's reached its monthly AI budget (including the interactive reserve) — it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
+// Student-facing budget message — this used to be a single hardcoded English string containing an
+// operator-only instruction ("Raise MONTHLY_AI_BUDGET_USD to lift it"), shown VERBATIM to the student in
+// their own toast (a config env-var name means nothing to them, and it was never translated even though the
+// rest of the app is French-first). Now a real bilingual, student-facing message with no internal detail.
+const budgetMsg = (req: express.Request): string => M(req,
+  "Otto a atteint son plafond mensuel d'IA — ça se renouvelle le 1er du mois.",
+  "Otto's reached its monthly AI budget — it resets on the 1st.");
 // Visiting /unlimited (client-side route, see App.tsx) removes this account's monthly AI spend cap.
 app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
   try {
@@ -993,7 +1035,7 @@ app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
     void recordEvent(req.session.user!, "settings_changed", { message: "unlimited enabled" });
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 
 app.post("/api/settings/pause", requireAuth, async (req, res) => {
@@ -1005,7 +1047,7 @@ app.post("/api/settings/pause", requireAuth, async (req, res) => {
     void recordMetric(req.session.user!, "ai_paused_toggled", p.paused ? 1 : 0);
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 
 // Live integration check — create → verify → clean up against the REAL connected account, on the user's
@@ -1015,7 +1057,7 @@ app.post("/api/settings/smoke", requireAuth, rateLimit(3, 60_000), async (req, r
     const results = await integrations.runSmokeTest(req.session.user!);
     void recordEvent(req.session.user!, "smoke_test", { message: `${results.filter((r) => r.ok).length}/${results.length} checks passed` });
     res.json(results);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "integration check failed" }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la vérification d'intégration", "integration check failed") }); }
 });
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
@@ -1078,9 +1120,15 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
       for (const t of req.session.tasks) { if (!t.shownAt && !isHandled(t.status)) t.shownAt = now; }
     }
   }
+  // Spark-vs-facilitator nudge (patterns.ts's stallNudgeLine) — computed fresh on every request, never
+  // stored: it depends on "how many days since shown", which changes on its own even with nothing else
+  // touched. Attached only to the OUTGOING copy, never written back onto req.session.tasks, so it can never
+  // leak into cloud storage or a cross-device merge.
+  const withNudge = (req.session.tasks || []).map((t) =>
+    !isHandled(t.status) ? { ...t, nudgeLine: stallNudgeLine(t, req.session.profile) || undefined } : t);
   // ETag: 4-second poll loops hit this on every tick — a hash-gated 304 means 0 bytes egress on the
   // overwhelming-majority of polls where nothing actually changed since the last fetch.
-  const tasksJson = JSON.stringify(req.session.tasks || []);
+  const tasksJson = JSON.stringify(withNudge);
   const etag = `"${createHash("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);
   if (req.headers["if-none-match"] === etag) { res.status(304).end(); return; }
@@ -1147,7 +1195,7 @@ app.get("/api/patterns/summary", requireAuth, ah(async (req, res) => {
 // the old in-memory inflight map — it holds across serverless instances.
 const CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1000; // min gap between background sweeps
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to sweep for new tasks." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour chercher de nouvelles tâches.", "AI is paused — resume it in Settings to sweep for new tasks.") }); return; }
   if (overBudget(req)) { res.json({ tasks: req.session.tasks || [], note: "skipped: monthly AI budget reached" }); return; }
   try {
     const user = req.session.user!;
@@ -1161,9 +1209,8 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     // Pronote-only lycéen with no Gmail connected must still be able to sweep — gating on Composio tools
     // alone used to hard-block them here even though the deterministic pipeline already supports this.
   const pronoteOn = (await pronoteSvc.pronoteConnected(user)).connected;
-  const bankingOn = (await plaidSvc.plaidConnected(user)).connected;
-  if (!extras?.tools?.length && !pronoteOn && !bankingOn) {
-    res.status(400).json({ error: "Connecte Gmail, Google Calendar, Pronote ou ta banque dans les Réglages pour qu'Otto ait quelque chose à lire." });
+  if (!extras?.tools?.length && !pronoteOn) {
+    res.status(400).json({ error: M(req, "Connecte Gmail, Google Calendar ou Pronote dans les Réglages pour qu'Otto ait quelque chose à lire.", "Connect Gmail, Google Calendar, or Pronote in Settings so Otto has something to read.") });
     return;
   }
     const job = await jobs.enqueueAndDrain(user, "sweep");
@@ -1187,13 +1234,13 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 60_000), async (req, 
     // Responds directly instead of calling next(err) — bypasses the global route-catchall (below) that
     // would otherwise report this to Sentry, so it needs its own call here.
     reportError("tasks-generate", e);
-    res.status(500).json({ error: e?.message || "generate failed" });
+    res.status(500).json({ error: e?.message || M(req, "échec de la génération", "generate failed") });
   }
 });
 
 app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   const title = String(req.body?.title || "").trim();
-  if (!title) { res.status(400).json({ error: "title required" }); return; }
+  if (!title) { res.status(400).json({ error: M(req, "titre requis", "title required") }); return; }
   // Idempotency key — the client sends its own local stub id. Without this, a retried request (the client's
   // own retry-on-dropped-response logic in api.ts's `req()`, or a plain double-click before the button
   // disabled) created a SECOND task for the same submission — reported live as "manual tasks are sometimes
@@ -1251,33 +1298,33 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 60_000), async (req, res) => {
     }
     res.json(req.session.tasks);
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Couldn't add that task — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'ajouter cette tâche — réessaie.", "Couldn't add that task — try again.") });
   }
 });
 
 // Refine an UNREFINED manual task (one added while AI was paused/unavailable) now that AI is back.
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to refine." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour affiner.", "AI is paused — resume it in Settings to refine.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
-  if (!t) { res.status(404).json({ error: "not found" }); return; }
+  if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   try {
     const refined = await refineManualTask(t.title, req.session.profile);
     if (refined) addUsage(req.session.profile ||= emptyProfile(), refined.tokens, "manual_refine");
     tasks.applyRefinement(req.session.tasks || [], t.id, refined);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't refine that task — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'affiner cette tâche — réessaie.", "Couldn't refine that task — try again.") }); }
 });
 
 // Regenerate steps for an existing task using the new architecture
 app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to regenerate." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour régénérer.", "AI is paused — resume it in Settings to regenerate.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
-  if (!t) { res.status(404).json({ error: "not found" }); return; }
+  if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   try {
     const { writeStepsFromContext } = await import("./claude.ts");
     const profile = req.session.profile || emptyProfile();
@@ -1316,7 +1363,7 @@ app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 60_000), async (
     res.json(req.session.tasks || []);
   } catch (e: any) {
     console.error("[tasks] regenerate error:", e);
-    res.status(500).json({ error: e?.message || "Couldn't regenerate steps — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de régénérer les étapes — réessaie.", "Couldn't regenerate steps — try again.") });
   }
 });
 
@@ -1339,7 +1386,7 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000),
     res.json({ cleaned: totalCleaned, tasks: req.session.tasks || [] });
   } catch (e: any) {
     console.error("[tasks] cleanup error:", e);
-    res.status(500).json({ error: e?.message || "Couldn't cleanup steps — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de nettoyer les étapes — réessaie.", "Couldn't cleanup steps — try again.") });
   }
 });
 
@@ -1348,19 +1395,53 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 60_000),
 // other interactive AI call; capped history (CHAT_CAP) keeps a long-running task's thread bounded.
 const CHAT_CAP = 60;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+  
+  // Primer session cap enforcement (Phase 1.5)
+  const profile = req.session.profile;
+  const sessionCap = profile?.primerSettings?.sessionCapMinutes || 60; // Default 60min for adults
+  const now = Date.now();
+  const sessionStart = req.session.primersessionStart || now;
+  const sessionMinutes = (now - sessionStart) / (60 * 1000);
+  
+  if (sessionMinutes >= sessionCap) {
+    res.status(403).json({ 
+      error: M(req, 
+        `Session limit reached (${sessionCap} minutes). Take a break!`,
+        `Session limit reached (${sessionCap} minutes). Take a break!`
+      ),
+      sessionCapReached: true 
+    });
+    return;
+  }
+  
+  // Set session start time if not set
+  if (!req.session.primersessionStart) {
+    req.session.primersessionStart = now;
+  }
+  
+  // Primer break reminder (Phase 1.5)
+  const breakEveryMinutes = profile?.primerSettings?.sessionCapMinutes ? 
+    Math.floor(profile.primerSettings.sessionCapMinutes / 2) : 30; // Default: break at half the cap
+  const lastBreakReminder = req.session.primerlastBreakReminder || 0;
+  const timeSinceLastReminder = (now - lastBreakReminder) / (60 * 1000);
+  let breakReminder = "";
+  
+  if (timeSinceLastReminder >= breakEveryMinutes && sessionMinutes < sessionCap - 5) {
+    // Only remind if we're not at the cap yet
+    breakReminder = M(req, 
+      "🔔 Tu as fait du bon travail ! C'est le moment de faire une petite pause.",
+      "🔔 Great work! Time for a short break."
+    );
+    req.session.primerlastBreakReminder = now;
+  }
+  
   const message = String(req.body?.message || "").trim().slice(0, 2000);
-  if (!message) { res.status(400).json({ error: "Say something first." }); return; }
+  if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
   const t = await findTaskOrReload(req, String(req.params.id));
-  if (!t) { res.status(404).json({ error: "not found" }); return; }
-  // /finance (Plaid) tasks NEVER reach the AI, full stop — not at generation (see plaidBillsToTasks in
-  // tasks.ts), and not here either: chat is PER-TASK, so opening it on a "Pay X" card would otherwise send
-  // that task's own sourceDetail (a real merchant name + amount) into the tutor's prompt, a second path to
-  // the exact leak plaidBillsToTasks's own comment describes. No AI call, no exception — a plain, honest
-  // client-side message instead of pretending to chat about something Otto never actually reasoned about.
-  if (t.source === "plaid") { res.status(403).json({ error: "Otto doesn't use AI on your bank data — this is a plain reminder, not a chat topic." }); return; }
+  if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   // The "Aide" button on a step (see F) sends its own index — validate the range server-side, never trust
   // it blindly (steps get regenerated on every rerun, so a stale index from an old page load could point
   // anywhere or nowhere).
@@ -1373,7 +1454,27 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     .filter((m: any) => m && typeof m.label === "string" && typeof m.text === "string" && m.text.trim())
     .slice(0, 8)
     .map((m: any) => ({ label: String(m.label).trim().slice(0, 120), text: String(m.text).trim().slice(0, 6000) }));
-  const history = t.chat || [];
+  // Chat history is now CLIENT-OWNED, not read from the task (t.chat is never written server-side anymore
+  // — see this route's own end-of-handler comment). The browser sends its own local thread with every
+  // message, same shape/pattern /api/tasks/:id/study-help already used for its (always-local) hint chat.
+  const historyRaw = Array.isArray(req.body?.history) ? req.body.history : [];
+  const history: { role: "user" | "assistant"; text: string }[] = historyRaw
+    .filter((h: any) => h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
+    .map((h: any) => ({ role: h.role as "user" | "assistant", text: String(h.text).slice(0, 4000) }))
+    .slice(-CHAT_CAP);
+  // Same client-owned pattern for what's CURRENTLY on the board — without this the model can write to the
+  // board but has no idea what's already there (reported live: it referenced "that triangle" and had no
+  // answer when the student said they couldn't see what it meant — it had never been told).
+  const currentBoardRaw = Array.isArray(req.body?.board) ? req.body.board : [];
+  const currentBoard = currentBoardRaw
+    .filter((b: any) => b && typeof b.text === "string" && b.text.trim())
+    .slice(-60)
+    .map((b: any) => ({ id: "", at: "", text: String(b.text).slice(0, 600), ...(typeof b.kind === "string" ? { kind: b.kind } : {}) }));
+  const currentProblemsRaw = Array.isArray(req.body?.problems) ? req.body.problems : [];
+  const currentProblems = currentProblemsRaw
+    .filter((p: any) => p && typeof p.question === "string" && p.question.trim())
+    .slice(-12)
+    .map((p: any) => ({ id: "", createdAt: "", question: String(p.question).slice(0, 600), ...(Array.isArray(p.options) ? { options: p.options.map((o: any) => String(o).slice(0, 300)).slice(0, 6) } : {}) }));
   try {
     let academic: { homework: Awaited<ReturnType<typeof pronoteSvc.pronoteHomework>>; tests: Awaited<ReturnType<typeof pronoteSvc.pronoteTests>> } | undefined;
     try {
@@ -1419,13 +1520,22 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
         if (signal) subjectSignal = { correctRate: signal.correctRate, attempts: signal.attempts, trend: signal.trend };
       }
     } catch { /* best-effort */ }
+    // Recent "what I learned today" journal entries — same list the Journal tab reads/writes (studylog
+    // tasks), not a separate store, so nothing new to keep in sync. Real daily entries only (a `week:`/
+    // `month:` logDate is a rolled-up summary task, not something the student wrote themselves this chat
+    // should quote back). Newest first, capped generously since recentJournalLine itself narrows further.
+    const recentJournal = (req.session.tasks || [])
+      .filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:") && x.logText?.trim())
+      .sort((a, b) => (b.logDate || "").localeCompare(a.logDate || ""))
+      .slice(0, 14)
+      .map((x) => ({ date: x.logDate!, text: x.logText!.trim() }));
     const out = await chatAboutTask(
       { title: t.title, why: t.why, context: t.context, steps: t.steps, source: t.source, sourceDetail: t.sourceDetail, sourceSubject: t.sourceSubject, sourceDue: t.sourceDue, flashcards: t.flashcards, quizzes: t.quizzes },
       history.map((h) => ({ role: h.role, text: h.text })),
       message,
       profile,
       academic,
-      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true },
+      { stepIndex, materials, extras, styleArm: chatStyleArm, growthTrend, subjectSignal, voiceMode: req.body?.voiceMode === true, canvasMode: req.body?.canvasMode === true, primer: req.body?.primer === true, recentJournal, currentBoard, currentProblems, notNeeded: tasks.notNeededFronts(req.session.tasks || [], t.sourceSubject) },
     );
     addUsage(profile, out.tokens, "chat"); // untracked before — a tool-calling turn can now cost like a small run
     bumpActivityHour(profile, new Date(), t.sourceSubject);
@@ -1446,9 +1556,14 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     // AND any artifacts the turn managed to create away, leaving the student with a broken "couldn't
     // reply" error and no chat bubble at all.  Instead: if we have a fallback reply, treat it as a
     // successful turn so the reply and artifacts are saved and the student always gets a response.
-    if (out.error && !out.reply?.trim()) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+    if (out.error && !out.reply?.trim()) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") }); return; }
     if (out.error) void recordMetric(req.session.user!, "chat_fallback_reply", 1);
     if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
+    
+    // Add break reminder to response if triggered
+    if (breakReminder) {
+      out.reply = breakReminder + "\n\n" + out.reply;
+    }
     // Score the chat-style arm: the only IMMEDIATELY observable outcome of one turn is whether the guardrail
     // held (a genuinely unhelpful/off-boundary reply) — a richer "did they send a follow-up" reward would
     // need waiting on a future request, which this best-effort, fire-and-forget scoring deliberately avoids.
@@ -1482,36 +1597,26 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.notes.length) t.notes = [...(t.notes || []), ...out.notes].slice(-tasks.ARTIFACT_CAP);
     if (out.flashcards.length) t.flashcards = [...(t.flashcards || []), ...out.flashcards].slice(-tasks.ARTIFACT_CAP);
     if (out.quizzes.length) t.quizzes = [...(t.quizzes || []), ...out.quizzes].slice(-tasks.ARTIFACT_CAP);
-    if (out.problems.length) t.problems = [...(t.problems || []), ...out.problems].slice(-tasks.ARTIFACT_CAP);
-    // Not part of `artifacts` above — board entries aren't per-message chips, they're a persistent surface
-    // (see BoardArtifact.tsx) always accessible regardless of which chat message wrote them. A much higher
-    // cap than ARTIFACT_CAP (12): each entry is meant to be short and frequent (a formula, an instruction, a
-    // recap), so a real tutoring session can easily produce more of these than it would whole notes/decks.
-    if (out.board.length) t.board = [...(t.board || []), ...out.board].slice(-60);
     if (out.audit.length) t.audit = [...(t.audit || []), ...out.audit].slice(-tasks.AUDIT_CAP);
-    // Guard against the cross-instance session-cache staleness race (see store.ts's peekTaskChat comment):
-    // `history` above was read from this request's `req.session.tasks`, which can be up to 3min stale on a
-    // serverless deploy — reported live as chat messages appearing to vanish mid-conversation. Bypass-read
-    // this task's REAL chat directly from the account row and union it in before appending the new turn, so
-    // a stale instance can never respond with (or persist) a thread that's missing another instance's writes.
-    let freshHistory = history;
-    if (req.session.user) {
-      const fresh = await peekTaskChat(req.session.user, t.id);
-      if (fresh && fresh.length > history.length) freshHistory = tasks.unionChat(history, fresh, CHAT_CAP) as typeof history;
-    }
-    t.chat = [
-      ...freshHistory,
+    // Chat, board entries, and practice problems (created via chat/board — see BoardArtifact.tsx) are
+    // LOCAL-ONLY now, by direct request: never written onto `t`, never part of what commit() persists to
+    // the cloud account row. The browser sent its own `history` above and is what appends this turn's new
+    // messages/board writes to ITS OWN local storage (client/localChatBoard.ts) — this response just hands
+    // back the delta for it to store. `t.updatedAt` still bumps (notes/flashcards/quizzes/audit above are
+    // still real cloud changes worth reflecting), but t.chat/t.board/t.problems are deliberately left alone
+    // — untouched here, so any legacy cloud copy just stops growing rather than being force-cleared.
+    t.updatedAt = now;
+    await commit(req);
+    const newChat = [
       { role: "user" as const, text: message, at: now, ...(stepIndex != null ? { stepIndex, stepText: t.steps![stepIndex].text.slice(0, 80) } : {}) },
       { role: "assistant" as const, text: out.reply, at: now,
         ...(artifacts.length ? { artifacts } : {}),
         ...(t.evidence?.length ? { sources: t.evidence.slice(0, 8).map((source) => ({ label: source.label, url: source.url })) } : {}),
         ...(out.guardrailTripped ? { guardrail: true } : {}) },
-    ].slice(-CHAT_CAP);
-    t.updatedAt = now;
-    await commit(req);
-    res.json({ chat: t.chat, task: t });
+    ];
+    res.json({ reply: out.reply, chatDelta: newChat, board: out.board, problems: out.problems, guardrailTripped: out.guardrailTripped, task: t });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "chat failed" });
+    res.status(500).json({ error: e?.message || M(req, "échec de la discussion", "chat failed") });
   }
 });
 
@@ -1520,11 +1625,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
 // artifacts, no persisted history. Rate-limited higher than the main chat since a student can burn through
 // several hints per card while drilling a deck.
 app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to chat." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const message = String(req.body?.message || "").trim().slice(0, 1000);
-  if (!message) { res.status(400).json({ error: "Say something first." }); return; }
+  if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
   const rawHistory = Array.isArray(req.body?.history) ? req.body.history : [];
   const history = rawHistory
     .filter((h: any) => h && (h.role === "user" || h.role === "assistant") && typeof h.text === "string")
@@ -1535,21 +1640,21 @@ app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 60_000), ah(asy
   if (kind === "flashcard") {
     const front = String(req.body?.card?.front || "").slice(0, 500);
     const back = String(req.body?.card?.back || "").slice(0, 500);
-    if (!front || !back) { res.status(400).json({ error: "Missing card." }); return; }
+    if (!front || !back) { res.status(400).json({ error: M(req, "Carte manquante.", "Missing card.") }); return; }
     card = { kind: "flashcard", front, back };
   } else if (kind === "quiz") {
     const question = String(req.body?.card?.question || "").slice(0, 500);
     const options = Array.isArray(req.body?.card?.options) ? req.body.card.options.map((o: any) => String(o).slice(0, 300)).slice(0, 10) : [];
     const correct = Number(req.body?.card?.correct);
-    if (!question || !options.length || !Number.isInteger(correct) || correct < 0 || correct >= options.length) { res.status(400).json({ error: "Missing question." }); return; }
+    if (!question || !options.length || !Number.isInteger(correct) || correct < 0 || correct >= options.length) { res.status(400).json({ error: M(req, "Question manquante.", "Missing question.") }); return; }
     card = { kind: "quiz", question, options, correct };
-  } else { res.status(400).json({ error: "Missing card." }); return; }
+  } else { res.status(400).json({ error: M(req, "Carte manquante.", "Missing card.") }); return; }
   const out = await studyHelp(card, history, message, req.session.profile);
   addUsage(req.session.profile ||= emptyProfile(), out.tokens, "chat");
   await commit(req);
   // Same fix as the main task chat route above — a real failure must surface as an error, not as the
   // generic "I'm here" line rendered like a normal hint.
-  if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: "Otto couldn't reply just now — try again in a moment." }); return; }
+  if (out.error) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") }); return; }
   res.json({ reply: out.reply });
 }));
 
@@ -1574,7 +1679,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // returns THAT job as-is, silently discarding the new input (the revise note never gets applied).
     // That used to look exactly like "revise does nothing" — no error, no effect. Say so honestly instead.
     if (job.type !== type) {
-      res.status(409).json({ error: "Otto is still working on this task — try again in a moment." });
+      res.status(409).json({ error: M(req, "Otto travaille encore sur cette tâche — réessaie dans un instant.", "Otto is still working on this task — try again in a moment.") });
       return;
     }
     // ALWAYS fold the cloud copy in and answer with the task's REAL state — a requeued-after-failure or
@@ -1588,7 +1693,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
     await saveSession(req);
     const t = (req.session.tasks || []).find((x) => x.id === id);
-    if (!t) { res.status(404).json({ error: "not found" }); return; }
+    if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
     // Only a TERMINAL job failure is an error response — the user needs the message + Retry.
     if (job.status === "failed_terminal") { res.status(500).json({ error: job.last_error || t.lastError || "run failed" }); return; }
     // A job the processor SKIPPED (paused / over budget — see processExecuteStep/processExecuteTask) still
@@ -1598,7 +1703,7 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // the job re-checks against a freshly loaded CLOUD profile and can disagree (another device just paused
     // it, or budget ticked over between the click and the drain). Surface it as the same honest error.
     const skipNote = typeof job.output?.note === "string" && job.output.note.startsWith("skipped:") ? job.output.note : null;
-    if (skipNote) { res.status(403).json({ error: skipNote.includes("budget") ? BUDGET_MSG : "AI is paused — resume it in Settings to run this." }); return; }
+    if (skipNote) { res.status(403).json({ error: skipNote.includes("budget") ? budgetMsg(req) : M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer ceci.", "AI is paused — resume it in Settings to run this.") }); return; }
     res.json(t);
   } catch (e: any) {
     console.error(`[tasks] ${type} error for task`, id, ":", e);
@@ -1606,15 +1711,15 @@ const runViaJob = async (req: express.Request, res: express.Response, type: "exe
     // directly instead of calling next(err), so it bypasses the global route-catchall's Sentry reporting.
     // Needs its own call here to cover this whole action surface.
     reportError("tasks-job-action", e, { type, taskId: id });
-    res.status(500).json({ error: e?.message || "run failed" });
+    res.status(500).json({ error: e?.message || M(req, "échec de l'exécution", "run failed") });
   }
 };
 
 // The client requests runs; the SERVER executes them (via the queue) — same queue the cron drains offline.
 // `manual: true` marks a deliberate user click, which is allowed to retry a terminally-failed task.
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run tasks." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer des tâches.", "AI is paused — resume it in Settings to run tasks.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   // Hard reset ("Réexécuter depuis le début"): the actual wipe happens INSIDE processExecuteTask (jobs.ts),
   // on the same load→mutate→commit cycle as the run itself — doing it here first and committing separately
   // got silently undone by commit()'s cross-device merge (see jobs.ts's comment on this). Just pass the
@@ -1626,9 +1731,9 @@ app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 60_000), async (req, r
 // updates the draft (and re-offers it as a sendable) before they send.
 app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 60_000), async (req, res) => {
   const note = String(req.body?.note || "").trim();
-  if (!note) { res.status(400).json({ error: "note required" }); return; }
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to revise tasks." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (!note) { res.status(400).json({ error: M(req, "note requise", "note required") }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour réviser des tâches.", "AI is paused — resume it in Settings to revise tasks.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (req.session.user) void recordMetric(req.session.user, "task_revision_requested", 1);
   await runViaJob(req, res, "revise", { note });
 });
@@ -1639,7 +1744,7 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
   const id = String(req.params.id);
   try {
     const task = await findTaskOrReload(req, id);
-    if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+    if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
     stampFirstAction(task, req.session.user, req.session.profile);
     task.status = "done";
     task.updatedAt = new Date().toISOString();
@@ -1657,30 +1762,30 @@ app.post("/api/tasks/:id/confirm", requireAuth, rateLimit(60, 60_000), async (re
     void recordMetric(req.session.user!, "task_completed", 1, task.source || "n/a");
     if (task.shownAt) void recordMetric(req.session.user!, "task_time_to_completion_seconds", (Date.now() - Date.parse(task.shownAt)) / 1000, task.source || "n/a");
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); res.status(500).json({ error: e?.message || "Couldn't confirm that task — try again." }); }
+  } catch (e: any) { reportError("tasks-confirm", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible de confirmer cette tâche — réessaie.", "Couldn't confirm that task — try again.") }); }
 });
 app.post("/api/tasks/:id/reject", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
   try {
     const task = await findTaskOrReload(req, id);
-    if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+    if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
     tasks.reject(req.session.tasks || [], id);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); res.status(500).json({ error: e?.message || "Couldn't reject that task — try again." }); }
+  } catch (e: any) { reportError("tasks-reject", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible de rejeter cette tâche — réessaie.", "Couldn't reject that task — try again.") }); }
 });
 app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
   try {
     const task = await findTaskOrReload(req, id);
-    if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+    if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
     task.status = "dismissed";
     task.updatedAt = new Date().toISOString();
     await commit(req);
     void recordEvent(req.session.user!, "dismissed", { taskId: id, message: "You dismissed it — similar tasks won't come back" });
     void recordMetric(req.session.user!, "task_dismissed", 1, task.source || "n/a");
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); res.status(500).json({ error: e?.message || "Couldn't dismiss that task — try again." }); }
+  } catch (e: any) { reportError("tasks-dismiss", e, { taskId: id }); res.status(500).json({ error: e?.message || M(req, "Impossible d'ignorer cette tâche — réessaie.", "Couldn't dismiss that task — try again.") }); }
 });
 // Auto-do ONE automatable step (focused agent run over the connected apps) — through the job queue, same
 // as full runs, so it's durably locked and audited. Enqueue-and-return, NOT enqueue-and-drain: a step run
@@ -1689,13 +1794,13 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 60_000), async (re
 // captured as the job's input (see tasks.runStep's `answer` handling) the moment it's queued. The open
 // tab's kick loop (client/App.tsx) drains queued/executing work within seconds; cron covers it offline.
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to run steps." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour lancer des étapes.", "AI is paused — resume it in Settings to run steps.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   const id = String(req.params.id);
   const index = Number(req.params.index);
   const answer = typeof req.body?.answer === "string" ? req.body.answer.slice(0, 500) : undefined;
   const task = (req.session.tasks || []).find((t) => t.id === id);
-  if (!task || !task.steps?.[index]) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
+  if (!task || !task.steps?.[index]) { res.status(404).json({ error: M(req, "Étape introuvable — elle a peut-être déjà changé ailleurs.", "Step not found — it may have already changed elsewhere.") }); return; }
   stampFirstAction(task, req.session.user, req.session.profile);
   // Routed through runViaJob (same helper /run and /revise already use) instead of a bare enqueueJob —
   // this used to only ENQUEUE and return immediately, relying entirely on the client's 4s "kick loop" (or,
@@ -1713,12 +1818,12 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
   try {
     const id = String(req.params.id);
     const index = Number(req.params.index);
-    if (!Number.isInteger(index) || index < 0) { res.status(400).json({ error: "Invalid step index." }); return; }
+    if (!Number.isInteger(index) || index < 0) { res.status(400).json({ error: M(req, "Index d'étape invalide.", "Invalid step index.") }); return; }
     const done = req.body?.done !== false;
     const result = typeof req.body?.result === "string" ? req.body.result : undefined;
     const task = await findTaskOrReload(req, id);
     const step = task?.steps?.[index];
-    if (!task || !step) { res.status(404).json({ error: "Step not found — it may have already changed elsewhere." }); return; }
+    if (!task || !step) { res.status(404).json({ error: M(req, "Étape introuvable — elle a peut-être déjà changé ailleurs.", "Step not found — it may have already changed elsewhere.") }); return; }
     if (done) stampFirstAction(task, req.session.user, req.session.profile);
     step.done = done;
     step.doneAt = done ? new Date().toISOString() : undefined;
@@ -1742,7 +1847,7 @@ app.post("/api/tasks/:id/step/:index/done", requireAuth, rateLimit(60, 60_000), 
     }
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { reportError("tasks-step-done", e); res.status(500).json({ error: e?.message || "Couldn't update the step — try again." }); }
+  } catch (e: any) { reportError("tasks-step-done", e); res.status(500).json({ error: e?.message || M(req, "Impossible de mettre à jour l'étape — réessaie.", "Couldn't update the step — try again.") }); }
 });
 // Record one flashcard review — advances/resets its Leitner box and schedules the next `dueAt` (see
 // nextLeitnerReview in shared/types.ts). Deterministic, no AI call. This is what turns flashcard decks from
@@ -1755,7 +1860,7 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   const task = await findTaskOrReload(req, id);
   const deck = task?.flashcards?.find((d) => d.id === deckId);
   const card = deck?.cards?.[cardIndex];
-  if (!task || !card) { res.status(404).json({ error: "Card not found — it may have already changed elsewhere." }); return; }
+  if (!task || !card) { res.status(404).json({ error: M(req, "Carte introuvable — elle a peut-être déjà changé ailleurs.", "Card not found — it may have already changed elsewhere.") }); return; }
   const prev = card.review;
   const { box, dueAt } = nextLeitnerReview(prev?.box, correct);
   card.review = { seen: (prev?.seen || 0) + 1, correct: (prev?.correct || 0) + (correct ? 1 : 0), lastAt: new Date().toISOString(), dueAt, box };
@@ -1772,6 +1877,21 @@ app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/review", requireAuth, rate
   if (seen >= 3) void recordMetric(req.session.user!, "flashcard_struggle", ok / seen, task.source || "n/a", card.front.slice(0, 120));
   res.json(req.session.tasks || []);
 }));
+// "Not something I need to learn" — distinct from marking a card WRONG. A wrong card is a real gap and stays
+// in the spaced-repetition rotation; a not-needed card is Otto misjudging the student's syllabus/level, so it
+// leaves scoring, due-review lists and every weak-card signal, and is fed back into future deck generation
+// as content to avoid (notNeededFronts → notNeededLine). Reversible: {notNeeded:false} restores it.
+app.post("/api/tasks/:id/flashcard/:deckId/:cardIndex/not-needed", requireAuth, rateLimit(120, 60_000), ah(async (req, res) => {
+  const task = await findTaskOrReload(req, String(req.params.id));
+  const card = task?.flashcards?.find((d) => d.id === String(req.params.deckId))?.cards?.[Number(req.params.cardIndex)];
+  if (!task || !card) { res.status(404).json({ error: M(req, "Carte introuvable — elle a peut-être déjà changé ailleurs.", "Card not found — it may have already changed elsewhere.") }); return; }
+  const notNeeded = req.body?.notNeeded !== false;
+  if (notNeeded) card.notNeeded = true; else delete card.notNeeded;
+  task.updatedAt = new Date().toISOString();
+  void recordMetric(req.session.user!, "flashcard_not_needed", notNeeded ? 1 : 0, task.sourceSubject || task.source || "n/a", card.front.slice(0, 120));
+  await commit(req, { awaitCloud: true });
+  res.json(req.session.tasks || []);
+}));
 // Record one quiz attempt (a full pass through the quiz, not per-question) — mirrors the flashcard review
 // route above: deterministic, no AI call, just persists the score so it survives closing the popup. Capped
 // at 20 attempts, newest last (TaskQuiz.attempts was already reserved for this — see shared/types.ts).
@@ -1782,10 +1902,10 @@ app.post("/api/tasks/:id/quiz/:quizId/attempt", requireAuth, rateLimit(200, 60_0
   const total = Number(req.body?.total);
   const score = Number(req.body?.score);
   const wrong = Array.isArray(req.body?.wrong) ? req.body.wrong.filter((n: any) => Number.isInteger(n)).slice(0, 50) : undefined;
-  if (!Number.isInteger(total) || total <= 0 || !Number.isInteger(score) || score < 0 || score > total) { res.status(400).json({ error: "Invalid score." }); return; }
+  if (!Number.isInteger(total) || total <= 0 || !Number.isInteger(score) || score < 0 || score > total) { res.status(400).json({ error: M(req, "Score invalide.", "Invalid score.") }); return; }
   const task = await findTaskOrReload(req, id);
   const quiz = task?.quizzes?.find((q) => q.id === quizId);
-  if (!task || !quiz) { res.status(404).json({ error: "Quiz not found �� it may have already changed elsewhere." }); return; }
+  if (!task || !quiz) { res.status(404).json({ error: M(req, "Quiz introuvable — il a peut-être déjà changé ailleurs.", "Quiz not found — it may have already changed elsewhere.") }); return; }
   quiz.attempts = [...(quiz.attempts || []), { at: new Date().toISOString(), score, total, ...(wrong?.length ? { wrong } : {}) }].slice(-QUIZ_ATTEMPT_CAP);
   task.updatedAt = new Date().toISOString();
   // Every other activity site (flashcard review, chat, journal save) feeds bumpActivityHour — a quiz attempt
@@ -1805,9 +1925,9 @@ app.post("/api/tasks/:id/notes", requireAuth, rateLimit(60, 60_000), ah(async (r
   const id = String(req.params.id);
   const title = String(req.body?.title || "").trim().slice(0, 90) || "Note";
   const body = String(req.body?.body || "").trim().slice(0, 4000);
-  if (!body) { res.status(400).json({ error: "Write something first." }); return; }
+  if (!body) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Write something first.") }); return; }
   const task = await findTaskOrReload(req, id);
-  if (!task) { res.status(404).json({ error: "Task not found — it may have already been handled elsewhere." }); return; }
+  if (!task) { res.status(404).json({ error: M(req, "Tâche introuvable — elle a peut-être déjà été traitée ailleurs.", "Task not found — it may have already been handled elsewhere.") }); return; }
   const note = { id: randomUUID(), title, body, createdAt: new Date().toISOString() };
   task.notes = [...(task.notes || []), note].slice(-tasks.ARTIFACT_CAP);
   task.updatedAt = new Date().toISOString();
@@ -1823,10 +1943,10 @@ app.post("/api/tasks/:id/notes", requireAuth, rateLimit(60, 60_000), ah(async (r
 app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 60_000), ah(async (req, res) => {
   const id = String(req.params.id);
   const answer = String(req.body?.answer || "").trim().slice(0, 200);
-  if (!answer) { res.status(400).json({ error: "Type an answer first." }); return; }
+  if (!answer) { res.status(400).json({ error: M(req, "Tape une réponse d'abord.", "Type an answer first.") }); return; }
   const task = await findTaskOrReload(req, id);
   const problem = task?.practiceProblem;
-  if (!task || !problem) { res.status(404).json({ error: "Practice problem not found — it may have already changed elsewhere." }); return; }
+  if (!task || !problem) { res.status(404).json({ error: M(req, "Problème d'entraînement introuvable — il a peut-être déjà changé ailleurs.", "Practice problem not found — it may have already changed elsewhere.") }); return; }
   const correct = practiceAnswerMatches(answer, problem.answer);
   problem.attempt = { answer, correct, at: new Date().toISOString() };
   task.updatedAt = new Date().toISOString();
@@ -1839,20 +1959,48 @@ app.post("/api/tasks/:id/practice-problem/attempt", requireAuth, rateLimit(200, 
 // Cards due for review RIGHT NOW, across every task — not scoped to one deck's own view, since spaced
 // repetition only actually compounds if the student can see everything due at a glance instead of having
 // to reopen each task to check. Cheap enough to compute on every request (no AI, just a filter/sort).
+// MAX_DUE_SETS_PER_DAY (shared/types.ts) caps distinct decks surfaced per day — spaced repetition only
+// sticks if a day's review stays doable; dumping every due deck at once (which grows unboundedly as more
+// days/weeks/months get logged) is exactly the overwhelm that makes students bail on review entirely. 3
+// sets is a deliberately small daily dose — still-due decks simply reappear the next day. Shared (not a
+// local const) so normalizeProfile can clamp Profile.reviewSetDeckIds to the same number.
 app.get("/api/reviews/due", requireAuth, ah(async (req, res) => {
   const now = Date.now();
   const due: { taskId: string; taskTitle: string; deckId: string; deckTitle: string; cardIndex: number; front: string }[] = [];
-  for (const t of req.session.tasks || []) {
+  const profile = req.session.profile ||= emptyProfile();
+  // Which decks already count against today's 3-set cap — persisted (see tasks.reviewSetDeckIdsToday/
+  // setReviewSetDeckIdsToday), NOT recomputed from scratch each request. Recomputing fresh would let
+  // reviewing a deck (which moves its cards' dueAt into the future, so it stops looking "due") silently
+  // free up its slot for a 4th deck later the SAME day — exactly the overwhelm the cap exists to prevent.
+  const admitted = new Set(tasks.reviewSetDeckIdsToday(profile, new Date(now)));
+  const admittedAtStart = admitted.size;
+  outer: for (const t of req.session.tasks || []) {
     if (isHandled(t.status)) continue;
     for (const deck of t.flashcards || []) {
-      deck.cards.forEach((c, i) => {
-        // Never-reviewed cards aren't "due" — they're simply unreviewed; a fresh deck showing up in the
-        // due list before the student has even seen it once would be confusing, not helpful.
-        if (c.review?.dueAt && Date.parse(c.review.dueAt) <= now) due.push({ taskId: t.id, taskTitle: t.title, deckId: deck.id, deckTitle: deck.title, cardIndex: i, front: c.front });
-      });
+      // Never-reviewed cards aren't "due" — they're simply unreviewed; a fresh deck showing up in the due
+      // list before the student has even seen it once would be confusing, not helpful.
+      const deckDue = deck.cards.flatMap((c, i) => (!c.notNeeded && c.review?.dueAt && Date.parse(c.review.dueAt) <= now)
+        ? [{ taskId: t.id, taskTitle: t.title, deckId: deck.id, deckTitle: deck.title, cardIndex: i, front: c.front }]
+        : []);
+      if (!deckDue.length) continue;
+      // Once today's 3-set budget is spent, stop pulling in NEW decks — but a deck already admitted (this
+      // request or persisted from an earlier one today) keeps all its own due cards.
+      if (!admitted.has(deck.id) && admitted.size >= MAX_DUE_SETS_PER_DAY) continue;
+      // Admit complete decks only when they fit the remaining 60-card response budget — a monthly-summary
+      // deck can hold more than 60 cards on its own, and slicing mid-deck would silently drop the rest of
+      // it. The very first admitted deck is let through in full even if it alone exceeds 60, so a single
+      // oversized deck still shows up instead of vanishing.
+      if (due.length > 0 && due.length + deckDue.length > 60) break outer;
+      admitted.add(deck.id);
+      due.push(...deckDue);
+      if (due.length >= 60) break outer;
     }
   }
-  res.json({ due: due.slice(0, 60) });
+  if (admitted.size !== admittedAtStart) {
+    tasks.setReviewSetDeckIdsToday(profile, [...admitted], new Date(now));
+    await commit(req, { awaitCloud: true });
+  }
+  res.json({ due, setsShown: admitted.size, setCap: MAX_DUE_SETS_PER_DAY });
 }));
 
 // ── Study log: daily "what I learned today" → auto flashcards, + a week-end summary deck ──────────────
@@ -1880,7 +2028,7 @@ function weekdayDates(monday: string): string[] {
 app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
   const date = String(req.body?.date || "");
   const text = String(req.body?.text || "").trim().slice(0, 4000);
-  if (!DATE_RE.test(date)) { res.status(400).json({ error: "Invalid date." }); return; }
+  if (!DATE_RE.test(date)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
   const list = req.session.tasks || [];
   const anchorKey = `studylog:${date}`;
   let t = list.find((x) => x.source === "studylog" && x.logDate === date);
@@ -1891,9 +2039,9 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     res.json(req.session.tasks || []);
     return;
   }
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate flashcards." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer des cartes.", "AI is paused — resume it in Settings to generate flashcards.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const now = new Date().toISOString();
   if (!t) {
     const e = tasks.eisenhower(0, 0);
@@ -1971,7 +2119,7 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
   const priorWeakCards = list
     .filter((x) => x.source === "studylog" && x.logDate && x.logDate !== date && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:"))
     .flatMap((x) => (x.flashcards || []).flatMap((deck) => deck.cards
-      .filter((c) => c.review?.dueAt && Date.parse(c.review.dueAt) <= nowMs)
+      .filter((c) => !c.notNeeded && c.review?.dueAt && Date.parse(c.review.dueAt) <= nowMs)
       .map((c) => ({ front: c.front, box: c.review!.box || 1 }))))
     .sort((a, b) => a.box - b.box)
     .slice(0, 6)
@@ -2011,6 +2159,13 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
       if (jm) {
         addUsage(req.session.profile ||= emptyProfile(), jm.tokens, "studylog");
         for (const fact of jm.facts) tasks.applyProfileUpdate(req.session.profile, { category: "course", fact });
+        // Milestones ACCUMULATE (like errorLog/grades), never overwritten — appended here and self-healed of
+        // same-topic duplicates on the next normalizeProfile pass (shared/types.ts's dedupeMilestones), same
+        // "write raw, clean up on read" posture as dedupePronoteGrades' own comment explains for grades.
+        if (jm.milestones.length) {
+          const p = req.session.profile;
+          p.milestones = [...(p.milestones || []), ...jm.milestones.map((m) => ({ id: crypto.randomUUID(), ...m, achievedAt: new Date().toISOString() }))];
+        }
       }
     } catch { /* best-effort */ }
     t.updatedAt = new Date().toISOString();
@@ -2020,11 +2175,11 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 60_000), ah(async (req,
     // old studylog artifacts on every call — see its own comment — so that no longer needs to happen here.)
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't make flashcards from that — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer des cartes à partir de ça — réessaie.", "Couldn't make flashcards from that — try again.") }); }
 }));
 app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
   const start = String(req.query.start || "");
-  if (!DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
+  if (!DATE_RE.test(start)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
   const monday = mondayOf(start);
   const dates = weekdayDates(monday);
   // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why. bypassCache:true
@@ -2045,11 +2200,11 @@ app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
   res.json({ monday, days, summary });
 }));
 app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate the summary." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer le résumé.", "AI is paused — resume it in Settings to generate the summary.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const weekStart = String(req.body?.weekStart || "");
-  if (!DATE_RE.test(weekStart)) { res.status(400).json({ error: "Invalid date." }); return; }
+  if (!DATE_RE.test(weekStart)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
   const monday = mondayOf(weekStart);
   const dates = weekdayDates(monday);
   // Reconcile with the cloud copy first — same reasoning as GET /api/tasks's own reload. This route used to
@@ -2074,16 +2229,17 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
     // visible directly in the toast instead of requiring DevTools access the student may not have/know how
     // to use. Not a permanent UX feature — the underlying mismatch found is what actually gets fixed.
     const allLogs = list.filter((x) => x.source === "studylog" && x.logDate && !x.logDate.startsWith("week:") && !x.logDate.startsWith("month:"));
+    const en2 = reqLang(req) === "en";
     const found = allLogs.length
-      ? allLogs.map((x) => `${x.logDate}${x.logText?.trim() ? "" : " (empty)"}`).sort().join(", ")
-      : "none at all";
-    res.status(400).json({ error: `No entries logged this week yet. (Looked for ${dates.join(", ")} — entries that actually exist: ${found})` });
+      ? allLogs.map((x) => `${x.logDate}${x.logText?.trim() ? "" : en2 ? " (empty)" : " (vide)"}`).sort().join(", ")
+      : (en2 ? "none at all" : "aucune");
+    res.status(400).json({ error: M(req, `Aucune entrée cette semaine pour l'instant. (Recherché : ${dates.join(", ")} — entrées existantes : ${found})`, `No entries logged this week yet. (Looked for ${dates.join(", ")} — entries that actually exist: ${found})`) });
     return;
   }
   const boxBreakdown = tasks.leitnerBoxBreakdown(dayTasks);
   try {
     const result = await generateWeeklyStudyDeck(dayTasks.map((dt) => ({ date: dt.logDate!, logText: dt.logText! })), boxBreakdown, req.session.profile);
-    if (!result) { res.status(500).json({ error: "Couldn't build the week summary — try again." }); return; }
+    if (!result) { res.status(500).json({ error: M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); return; }
     addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
     const deck = result.deck;
     const anchorKey = `studylog:week:${monday}`;
@@ -2123,7 +2279,7 @@ app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 60_000), ah(as
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the week summary — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer le résumé de la semaine — réessaie.", "Couldn't build the week summary — try again.") }); }
 }));
 
 // YYYY-MM of the month containing `dateStr` — used to group weekly decks (keyed by their Monday) into a
@@ -2137,7 +2293,7 @@ function monthOf(dateStr: string): string { return dateStr.slice(0, 7); }
 const MONTH_RE = /^\d{4}-\d{2}$/;
 app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
   const start = String(req.query.start || "");
-  if (!MONTH_RE.test(start) && !DATE_RE.test(start)) { res.status(400).json({ error: "Invalid date." }); return; }
+  if (!MONTH_RE.test(start) && !DATE_RE.test(start)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
   const month = monthOf(start);
   // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
   if (req.session.user && cloudEnabled()) {
@@ -2153,11 +2309,11 @@ app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
   res.json({ month, weeks, summary });
 }));
 app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to generate the summary." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour générer le résumé.", "AI is paused — resume it in Settings to generate the summary.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   const monthStart = String(req.body?.monthStart || "");
-  if (!MONTH_RE.test(monthStart) && !DATE_RE.test(monthStart)) { res.status(400).json({ error: "Invalid date." }); return; }
+  if (!MONTH_RE.test(monthStart) && !DATE_RE.test(monthStart)) { res.status(400).json({ error: M(req, "Date invalide.", "Invalid date.") }); return; }
   const month = monthOf(monthStart);
   // Same cloud-reconcile as GET /api/tasks — see week-summary's identical comment for why.
   if (req.session.user && cloudEnabled()) {
@@ -2168,14 +2324,14 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
   }
   const list = req.session.tasks || [];
   const weekTasks = list.filter((x) => x.source === "studylog" && x.logDate?.startsWith("week:") && monthOf(x.logDate.slice(5)) === month && x.flashcards?.length);
-  if (!weekTasks.length) { res.status(400).json({ error: "No weekly summaries yet this month." }); return; }
+  if (!weekTasks.length) { res.status(400).json({ error: M(req, "Pas encore de résumés hebdomadaires ce mois-ci.", "No weekly summaries yet this month.") }); return; }
   const boxBreakdown = tasks.leitnerBoxBreakdown(weekTasks);
   try {
     const result = await generateMonthlyStudyDeck(
       weekTasks.map((wt) => ({ label: wt.logDate!.slice(5), cards: (wt.flashcards![0]?.cards || []).map((c) => ({ front: c.front, back: c.back })) })),
       boxBreakdown, req.session.profile,
     );
-    if (!result) { res.status(500).json({ error: "Couldn't build the month summary — try again." }); return; }
+    if (!result) { res.status(500).json({ error: M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); return; }
     addUsage(req.session.profile ||= emptyProfile(), result.tokens, "studylog");
     const deck = result.deck;
     const anchorKey = `studylog:month:${month}`;
@@ -2210,27 +2366,38 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
     } catch { /* best-effort — the deck above already succeeded regardless */ }
     await commit(req, { awaitCloud: true });
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't build the month summary — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); }
 }));
 
-// A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) is built
-// around a WebTask (chat/notes/artifacts all key off task.id server-side), so a session not tied to any
-// real to-do still needs a lightweight placeholder task to attach to. Client only calls this once, when
-// "Enter study mode" is actually clicked on the /study landing page (see StandaloneStudyEntry in App.tsx) —
-// never on every render — so this call IS the session boundary. A FRESH task is minted every time rather
-// than resuming the last one: any previous unhandled freestudy task is dismissed here, taking its chat
-// (task.chat lives on the task itself) with it, so one free session's conversation never bleeds into the
-// next. (StudyMode's own client-side environment/artifacts, in IndexedDB keyed by the old task's id, are
-// simply orphaned — same as any other completed task's leftover StudyDB entry, nothing new to clean up.)
-// No AI call, no refine pass, no quadrant weight — this is intentionally NOT a real to-do, just a peg for
-// StudyMode's own persistence for the DURATION of one session.
+// A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) and the /tutor
+// Tutor Session (client/tutor/TutorSession.tsx) are both built around a WebTask (chat/notes/artifacts all
+// key off task.id server-side), so a session not tied to any real to-do still needs a lightweight
+// placeholder task to attach to. No AI call, no refine pass, no quadrant weight — this is intentionally NOT
+// a real to-do, just a peg for persistence for the DURATION of one session.
+//
+// RESUME (default): find-or-create — if an active (not done/dismissed) freestudy task already exists,
+// return the list UNCHANGED. This is what Tutor Session's loadTask() calls on every mount, since a mount
+// isn't necessarily "the student wants a fresh session" — it's just as often a route remount, a background
+// re-render, or (in dev) React 18 StrictMode's deliberate double-invoke of effects. Before this, EVERY call
+// unconditionally dismissed the existing session and minted a new one — so simply navigating away from
+// /tutor and back (or a StrictMode double-mount) silently discarded whatever the student was mid-conversation
+// on, replacing it with a blank one; reported live as the tutor "losing" sessions and (when a stale client
+// closure kept sending to the now-dismissed task's id) a 404 from /api/tasks/:id/chat. Passing `fresh: true`
+// keeps the OLD unconditional behavior for a caller that explicitly wants a clean slate (StandaloneStudyEntry
+// in App.tsx, "Enter study mode" — a genuinely fresh workspace every time is the intended UX there).
 app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
   const list = req.session.tasks || [];
   const now = new Date().toISOString();
+  const fresh = req.body?.fresh === true;
+  if (!fresh) {
+    const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
+    if (active) { res.json(list); return; }
+  }
   for (const old of list) {
     if (old.source === "freestudy" && !isHandled(old.status)) { old.status = "dismissed"; old.updatedAt = now; }
   }
   const en = req.session.profile?.language === "en";
+  const subject = req.body?.subject as string | undefined;
   const e = tasks.eisenhower(0, 0);
   const id = randomUUID();
   const t: WebTask = {
@@ -2239,6 +2406,7 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
     source: "freestudy", risk: "low",
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
     createdAt: now, anchorKey: `freestudy:${id}`,
+    sourceSubject: subject,
   };
   list.push(t);
   req.session.tasks = list;
@@ -2273,7 +2441,7 @@ function stripHtmlToText(html: string): string {
 }
 app.post("/api/study/extract-text", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
   const url = String(req.body?.url || "").trim();
-  if (!/^https?:\/\//i.test(url)) { res.status(400).json({ error: "Invalid URL." }); return; }
+  if (!/^https?:\/\//i.test(url)) { res.status(400).json({ error: M(req, "URL invalide.", "Invalid URL.") }); return; }
   try {
     const gdoc = url.match(GDOC_URL_RE);
     if (gdoc) {
@@ -2357,10 +2525,10 @@ app.get("/api/ui/density-suggestion", requireAuth, ah(async (req, res) => {
 app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(async (req, res) => {
   // Beta-gated (defense in depth — the client button is already hidden when off, but the route itself
   // must not trust that alone). See Profile.betaFeatures' own doc comment.
-  if (!req.session.profile?.betaFeatures) { res.status(403).json({ error: "Beta features are off — turn them on in Settings to try this." }); return; }
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to personalize your theme." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't configured." }); return; }
+  if (!req.session.profile?.betaFeatures) { res.status(403).json({ error: M(req, "Les fonctionnalités bêta sont désactivées — active-les dans les Réglages pour essayer ça.", "Beta features are off — turn them on in Settings to try this.") }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour personnaliser ton thème.", "AI is paused — resume it in Settings to personalize your theme.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   try {
     const profile = req.session.profile ||= emptyProfile();
     // A short, factual summary — no free text from the student goes into this prompt, just already-computed
@@ -2376,12 +2544,12 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 60_000), ah(asyn
       ` Track: ${profile.track || "unknown"}.`;
     const result = await generateThemeTokens(summary, profile);
     addUsage(profile, result.tokensUsed, "other");
-    if (!Object.keys(result.tokens).length) { res.status(502).json({ error: "Couldn't come up with a theme just now — try again." }); return; }
+    if (!Object.keys(result.tokens).length) { res.status(502).json({ error: M(req, "Impossible de générer un thème pour l'instant — réessaie.", "Couldn't come up with a theme just now — try again.") }); return; }
     profile.customTheme = result.tokens;
     profile.preferencesUpdatedAt = new Date().toISOString();
     await commit(req);
     res.json({ customTheme: profile.customTheme });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't personalize your theme — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de personnaliser ton thème — réessaie.", "Couldn't personalize your theme — try again.") }); }
 }));
 app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
   const profile = req.session.profile ||= emptyProfile();
@@ -2393,7 +2561,7 @@ app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
 app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(async (req, res) => {
   try {
     const armId = String(req.body?.armId || "");
-    if (!POMODORO_ARMS.some((a) => a.id === armId)) { res.status(400).json({ error: "Unknown arm." }); return; }
+    if (!POMODORO_ARMS.some((a) => a.id === armId)) { res.status(400).json({ error: M(req, "Option inconnue.", "Unknown arm.") }); return; }
     const completedPlanned = !!req.body?.completedPlanned;
     const idleRatio = Number(req.body?.idleRatio);
     const netBoxDelta = req.body?.netBoxDelta !== undefined ? Number(req.body.netBoxDelta) : undefined;
@@ -2402,7 +2570,7 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
     const avgBlinkRate = req.body?.avgBlinkRate !== undefined ? Number(req.body.avgBlinkRate) : undefined;
     const restlessPct = req.body?.restlessPct !== undefined ? Number(req.body.restlessPct) : undefined;
     const headPoseStability = req.body?.headPoseStability !== undefined ? Number(req.body.headPoseStability) : undefined;
-    if (!Number.isFinite(idleRatio)) { res.status(400).json({ error: "Invalid idleRatio." }); return; }
+    if (!Number.isFinite(idleRatio)) { res.status(400).json({ error: M(req, "idleRatio invalide.", "Invalid idleRatio.") }); return; }
     const reward = computeReward({
       completedPlanned, idleRatio,
       netBoxDelta: Number.isFinite(netBoxDelta) ? netBoxDelta : undefined,
@@ -2436,7 +2604,7 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
       void recordSessionOutcome({ userEmail: email, decisionKey: "density", arm: densityArmId, context: key, reward, at: new Date().toISOString() });
     }
     res.json({ ok: true });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't record that — it won't affect your session." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer ça — ça n'affectera pas ta session.", "Couldn't record that — it won't affect your session.") }); }
 }));
 
 // Generic, flexible metrics ingestion ��� deliberately an open `name` string (not a fixed enum route per
@@ -2447,7 +2615,7 @@ app.post("/api/study/session-outcome", requireAuth, rateLimit(30, 60_000), ah(as
 app.post("/api/metrics", requireAuth, rateLimit(60, 60_000), ah(async (req, res) => {
   const name = String(req.body?.name || "").slice(0, 60);
   const value = Number(req.body?.value);
-  if (!name || !Number.isFinite(value)) { res.status(400).json({ error: "name and numeric value required." }); return; }
+  if (!name || !Number.isFinite(value)) { res.status(400).json({ error: M(req, "nom et valeur numérique requis.", "name and numeric value required.") }); return; }
   const bucket = req.body?.bucket ? String(req.body.bucket).slice(0, 60) : "n/a";
   const context = req.body?.context ? String(req.body.context).slice(0, 200) : "";
   void recordMetric(req.session.user!, name, value, bucket, context);
@@ -2457,14 +2625,14 @@ app.post("/api/metrics", requireAuth, rateLimit(60, 60_000), ah(async (req, res)
 // Break ONE step down into its own small checklist ("Détailler cette étape") — on demand, not automatic.
 // Costs one AI call, so it's gated the same as any other interactive AI action (paused/budget).
 app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to use this." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour utiliser ceci.", "AI is paused — resume it in Settings to use this.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas encore configurée sur ce serveur.", "AI isn't set up on this server yet.") }); return; }
   const id = String(req.params.id);
   const index = Number(req.params.index);
   const task = (req.session.tasks || []).find((t) => t.id === id);
   const step = task?.steps?.[index];
-  if (!task || !step) { res.status(404).json({ error: "not found" }); return; }
+  if (!task || !step) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   try {
     const substeps = await expandStep({ title: task.title, why: task.why, goal: task.goal, context: task.context, sourceDetail: task.sourceDetail, sourceSubject: task.sourceSubject, steps: task.steps }, { text: step.text }, req.session.profile, task.links);
     if (substeps.length) {
@@ -2473,7 +2641,7 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 60_000)
       await commit(req);
     }
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't break this step down — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de découper cette étape — réessaie.", "Couldn't break this step down — try again.") }); }
 });
 // Tick/untick one sub-step — independent of the parent step's own "done" (see the Profile.grades-style
 // comment on TaskStep.substeps: a working checklist, not a completion gate).
@@ -2487,36 +2655,36 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
   // Was a silent no-op on a bad id/index — still 200'd with the unchanged list, indistinguishable from
   // success. Every sibling route (confirm/dismiss/step-done) already 404s on a missing target; this one
   // was missed.
-  if (!task || !sub) { res.status(404).json({ error: "Sub-step not found — it may have already changed elsewhere." }); return; }
+  if (!task || !sub) { res.status(404).json({ error: M(req, "Sous-étape introuvable — elle a peut-être déjà changé ailleurs.", "Sub-step not found — it may have already changed elsewhere.") }); return; }
   try {
     sub.done = done;
     task.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save this sub-step — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer cette sous-étape — réessaie.", "Couldn't save this sub-step — try again.") }); }
 });
 // Let Otto just answer an automatable sub-action (see expandStep's `automatable` classification) instead
 // of the student having to look it up themselves — a read-only web search + synthesis, no permissioned
 // tools needed, so it runs inline here rather than through the job queue.
 app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLimit(20, 60_000), async (req, res) => {
-  if (isPaused(req)) { res.status(403).json({ error: "AI is paused — resume it in Settings to use this." }); return; }
-  if (overInteractive(req)) { res.status(402).json({ error: BUDGET_MSG }); return; }
-  if (!aiReady()) { res.status(503).json({ error: "AI isn't set up on this server yet." }); return; }
+  if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour utiliser ceci.", "AI is paused — resume it in Settings to use this.") }); return; }
+  if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
+  if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas encore configurée sur ce serveur.", "AI isn't set up on this server yet.") }); return; }
   const id = String(req.params.id);
   const index = Number(req.params.index);
   const subIndex = Number(req.params.subIndex);
   const task = (req.session.tasks || []).find((t) => t.id === id);
   const step = task?.steps?.[index];
   const sub = step?.substeps?.[subIndex];
-  if (!task || !step || !sub) { res.status(404).json({ error: "Sub-step not found — it may have already changed elsewhere." }); return; }
-  if (!sub.automatable) { res.status(400).json({ error: "This one isn't something Otto can do for you." }); return; }
+  if (!task || !step || !sub) { res.status(404).json({ error: M(req, "Sous-étape introuvable — elle a peut-être déjà changé ailleurs.", "Sub-step not found — it may have already changed elsewhere.") }); return; }
+  if (!sub.automatable) { res.status(400).json({ error: M(req, "Ce n'est pas quelque chose qu'Otto peut faire à ta place.", "This one isn't something Otto can do for you.") }); return; }
   try {
     sub.result = await runSubstep({ title: task.title, why: task.why }, { text: step.text }, { text: sub.text }, req.session.profile);
     sub.done = true;
     task.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Otto n'a pas réussi à répondre." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Otto n'a pas réussi à répondre.", "Otto couldn't come up with a reply.") }); }
 });
 // "Move to a lighter day" from the workload widget — a manual, reversible nudge (never AI-driven): the
 // student picks the day, Otto just relabels the task's own `when` and re-scores it, same deadline-urgency
@@ -2525,25 +2693,25 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLi
 app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async (req, res) => {
   const id = String(req.params.id);
   const when = String(req.body?.when || "").trim();
-  if (!when || Number.isNaN(Date.parse(when))) { res.status(400).json({ error: "a valid date is required" }); return; }
+  if (!when || Number.isNaN(Date.parse(when))) { res.status(400).json({ error: M(req, "une date valide est requise", "a valid date is required") }); return; }
   const task = (req.session.tasks || []).find((t) => t.id === id);
-  if (!task) { res.status(404).json({ error: "not found" }); return; }
+  if (!task) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   // The workload widget only ever offers this for a LIVE task (computeWorkload skips handled ones entirely)
   // — but re-check server-side rather than trusting the client: a done/dismissed task has nothing left to
   // move, and silently re-dating one would make it look active again.
-  if (isHandled(task.status)) { res.status(409).json({ error: "This task is already done or dismissed — nothing to move." }); return; }
+  if (isHandled(task.status)) { res.status(409).json({ error: M(req, "Cette tâche est déjà terminée ou ignorée — rien à déplacer.", "This task is already done or dismissed — nothing to move.") }); return; }
   // This route only exists for the workload widget's "move to a lighter day" nudge — which only ever
   // offers it for a task with NO stated deadline (see movable in server/workload.ts). Re-check here too:
   // a task that already states a real deadline must never have it silently overwritten by a "which day is
   // lighter" heuristic, whether the client is right or not.
-  if (task.when?.trim()) { res.status(409).json({ error: "This task already has a deadline — it can't be moved." }); return; }
+  if (task.when?.trim()) { res.status(409).json({ error: M(req, "Cette tâche a déjà une échéance — elle ne peut pas être déplacée.", "This task already has a deadline — it can't be moved.") }); return; }
   try {
     task.when = when;
     task.updatedAt = new Date().toISOString();
     tasks.applyDeadlineUrgency([task]);
     await commit(req);
     res.json(req.session.tasks || []);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't move that task — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de déplacer cette tâche — réessaie.", "Couldn't move that task — try again.") }); }
 });
 
 // One-click send: fire a reviewed Gmail draft / composed Slack message — USER-confirmed, the ONLY send path.
@@ -2553,7 +2721,7 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 60_000), async 
 app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async (req, res) => {
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   const s = t?.sendables?.[Number(req.params.index)];
-  if (!t || !s) { res.status(404).json({ error: "not found" }); return; }
+  if (!t || !s) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   try {
     if (!s.sent) {
       const r = await integrations.sendSendable(req.session.user!, s, req.session.profile?.primaryAccounts);
@@ -2564,7 +2732,7 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async
       void recordEvent(req.session.user!, "sent", { taskId: t.id, message: `${s.label}${s.to ? ` → ${s.to}` : ""}` });
     }
     res.json(t);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't send — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'envoyer — réessaie.", "Couldn't send — try again.") }); }
 });
 // Manual edit of an unsent draft — the user typing directly into the draft box, not an AI rewrite (that's
 // /revise). For Gmail this pushes the edit to the REAL draft (GMAIL_SEND_DRAFT sends whatever's live in
@@ -2572,8 +2740,8 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 60_000), async
 app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_000), async (req, res) => {
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   const s = t?.sendables?.[Number(req.params.index)];
-  if (!t || !s) { res.status(404).json({ error: "not found" }); return; }
-  if (s.sent) { res.status(400).json({ error: "already sent" }); return; }
+  if (!t || !s) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+  if (s.sent) { res.status(400).json({ error: M(req, "déjà envoyé", "already sent") }); return; }
   const subject = typeof req.body?.subject === "string" ? req.body.subject.slice(0, 300) : undefined;
   const body = typeof req.body?.body === "string" ? req.body.body.slice(0, 20_000) : undefined;
   try {
@@ -2582,17 +2750,17 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 60_00
       if (!r.ok) { res.status(500).json({ error: r.error || "couldn't save your edit to the draft" }); return; }
       if (subject !== undefined) s.subject = subject;
       if (body !== undefined) s.body = body;
-    } else { res.status(400).json({ error: "this draft can't be edited here" }); return; }
+    } else { res.status(400).json({ error: M(req, "ce brouillon ne peut pas être modifié ici", "this draft can't be edited here") }); return; }
     t.updatedAt = new Date().toISOString();
     await commit(req);
     res.json(t);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save your edit — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer ta modification — réessaie.", "Couldn't save your edit — try again.") }); }
 });
 
 // ── Jobs + timeline (the durable execution layer's public surface) ────────────
 app.get("/api/jobs/:id", requireAuth, ah(async (req, res) => {
   const job = await getJob(String(req.params.id), req.session.user!);
-  if (!job) { res.status(404).json({ error: "not found" }); return; }
+  if (!job) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   res.json({ id: job.id, type: job.type, status: job.status, taskId: job.task_id, attempts: job.attempt_count, error: job.last_error, createdAt: job.created_at, finishedAt: job.finished_at });
 }));
 app.get("/api/tasks/:id/events", requireAuth, ah(async (req, res) => {
@@ -2663,7 +2831,7 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
     }
     const [active, activeTaskIds] = await Promise.all([countActiveJobs(email), activeJobTaskIds(email)]);
     res.json({ processed: out.processed, failed: out.failed, active, activeTaskIds, tasks: responseTasks });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "kick failed" }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec du déclenchement", "kick failed") }); }
 });
 
 // Background drain — called by Vercel Cron (Authorization: Bearer $CRON_SECRET) once a day (vercel.json;
@@ -2676,8 +2844,8 @@ app.post("/api/jobs/kick", requireAuth, rateLimit(60, 60_000), async (req, res) 
 app.get("/api/cron/drain", async (req, res) => {
   const secret = process.env.CRON_SECRET;
   const auth = String(req.headers.authorization || "");
-  if (secret && auth !== `Bearer ${secret}`) { res.status(401).json({ error: "unauthorized" }); return; }
-  if (!secret && PROD) { res.status(503).json({ error: "CRON_SECRET not configured" }); return; }
+  if (secret && auth !== `Bearer ${secret}`) { res.status(401).json({ error: M(req, "non autorisé", "unauthorized") }); return; }
+  if (!secret && PROD) { res.status(503).json({ error: M(req, "CRON_SECRET non configuré", "CRON_SECRET not configured") }); return; }
   try {
     const out = await jobs.cronTick();
     console.log(`${new Date().toISOString()} [cron] drain: ${JSON.stringify(out)}`);
@@ -2688,7 +2856,7 @@ app.get("/api/cron/drain", async (req, res) => {
     // (jobs.ts's "cron-tick-skip"), but cronTick() ITSELF throwing (the whole drain never even starting)
     // was previously invisible outside Vercel's own logs.
     reportError("cron-drain", e);
-    res.status(500).json({ error: e?.message || "drain failed" });
+    res.status(500).json({ error: e?.message || M(req, "échec du traitement", "drain failed") });
   }
 });
 
@@ -2711,7 +2879,7 @@ app.get("/api/cron/status", requireAuth, async (req, res) => {
       queued: activeJobs,
       cronConfigured: !!process.env.CRON_SECRET,
     });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "status failed" }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la vérification du statut", "status failed") }); }
 });
 
 // AI token usage for the signed-in user — read from the CLOUD (not the session), so usage racked up by
@@ -2729,7 +2897,7 @@ app.get("/api/usage", requireAuth, async (req, res) => {
       // costing money" is an answerable question instead of one opaque total (see addUsage's own comment).
       byCategory: u?.monthByCategory || {},
     });
-  } catch (e: any) { res.status(500).json({ error: e?.message || "usage failed" }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "échec de la récupération de l'utilisation", "usage failed") }); }
 });
 
 // ── Profile (who the user is) — available once logged in ────────────��──────────
@@ -2744,12 +2912,12 @@ app.post("/api/profile", requireAuth, async (req, res) => {
     else if (category === "about") { p.about = value.slice(0, 400); }
     else {
       const k = listKey(category);
-      if (!k) { res.status(400).json({ error: `Unknown profile category "${category}".` }); return; }
+      if (!k) { res.status(400).json({ error: M(req, `Catégorie de profil inconnue : "${category}".`, `Unknown profile category "${category}".`) }); return; }
       if (value && !(p as any)[k].some((x: string) => x.toLowerCase() === value.toLowerCase())) (p as any)[k].push(value.slice(0, 160));
     }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 app.post("/api/profile/preference", requireAuth, async (req, res) => {
   try {
@@ -2794,18 +2962,22 @@ app.post("/api/profile/preference", requireAuth, async (req, res) => {
       p.languageSetAt = new Date().toISOString();
     } else if (key === "track" && ["ib", "bac", "other"].includes(value)) {
       p.track = value; p.preferencesUpdatedAt = new Date().toISOString();
+    } else if (key === "learningStyle" && ["visual", "auditory", "reading", "kinesthetic", "mixed"].includes(value)) {
+      // Fully wired for a while on the READ side (learningStyleLine, claude.ts) but had no write path at
+      // all until now — a student could never actually set it, so the field sat permanently empty.
+      p.learningStyle = value; p.preferencesUpdatedAt = new Date().toISOString();
     } else if (key === "yearLevel" && typeof value === "string" && value.trim()) {
       p.yearLevel = value.trim().slice(0, 40); p.preferencesUpdatedAt = new Date().toISOString();
     } else {
       // Every recognized key/value combo is handled above — anything else used to fall through to a
       // silent no-op 200 (profile committed unchanged, client reads back success). A typo'd key or an
       // out-of-range value should say so, not look like it saved.
-      res.status(400).json({ error: `Unrecognized preference "${key}" or invalid value.` });
+      res.status(400).json({ error: M(req, `Préférence non reconnue "${key}" ou valeur invalide.`, `Unrecognized preference "${key}" or invalid value.`) });
       return;
     }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer — réessaie.", "Couldn't save — try again.") }); }
 });
 // Per-subject grades — self-reported (Pronote's read API doesn't expose grades), so Otto can weigh which
 // subject actually needs attention, not just what's due soonest. Upsert by subject name (case-insensitive).
@@ -2817,7 +2989,7 @@ app.post("/api/profile/grade", requireAuth, ah(async (req, res) => {
   const subject = String(req.body?.subject || "").trim().slice(0, 60);
   const grade = Number(req.body?.grade);
   const scale = Number(req.body?.scale) > 0 ? Number(req.body.scale) : 20;
-  if (!subject || !Number.isFinite(grade)) { res.status(400).json({ error: "subject and grade are required" }); return; }
+  if (!subject || !Number.isFinite(grade)) { res.status(400).json({ error: M(req, "la matière et la note sont requises", "subject and grade are required") }); return; }
   const list = (p.grades ||= []);
   list.push({ id: randomUUID(), subject, grade: Math.max(0, Math.min(scale, grade)), scale, updatedAt: new Date().toISOString(), source: "manual" });
   await commit(req);
@@ -2826,6 +2998,34 @@ app.post("/api/profile/grade", requireAuth, ah(async (req, res) => {
 // Delete ONE grade entry by id (the normal path from the UI's per-row × ). Falls back to matching by
 // subject for anything still lacking an id (a pre-history-model entry that never got normalized) or for
 // a bulk "remove this whole subject" — same param, whichever matches.
+// Primer: Get dependence metrics for parent dashboard (Phase 1.5)
+app.get("/api/primer/dependence", requireAuth, (req, res) => {
+  const profile = req.session.profile;
+  const metrics = profile?.dependenceMetrics || {};
+  
+  // Calculate trends from the metrics
+  const domainMetrics = Object.entries(metrics).map(([domain, data]) => ({
+    domain,
+    helpRatio: data.helpRatio,
+    answerSeekRate: data.answerSeekRate,
+    unaidedRate: data.unaidedRate,
+    fadeIndex: data.fadeIndex,
+    trend: data.helpRatio > 0.5 ? "warning" : data.unaidedRate > 0.7 ? "good" : "neutral",
+  }));
+  
+  const hasWarning = domainMetrics.some(m => m.trend === "warning");
+  
+  res.json({
+    metrics: domainMetrics,
+    summary: {
+      totalDomains: domainMetrics.length,
+      warningCount: domainMetrics.filter(m => m.trend === "warning").length,
+      goodCount: domainMetrics.filter(m => m.trend === "good").length,
+      hasWarning,
+    },
+  });
+});
+
 app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());
@@ -2839,7 +3039,7 @@ app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't delete that grade — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cette note — réessaie.", "Couldn't delete that grade — try again.") }); }
 });
 // Manually-logged exams/deadlines — the Pronote-less equivalent of Pronote's test list (server/pronote.ts),
 // for a student whose school doesn't use it at all (most IB/international schools). Merged into the SAME
@@ -2849,7 +3049,7 @@ app.post("/api/profile/exam", requireAuth, ah(async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
   const subject = String(req.body?.subject || "").trim().slice(0, 60);
   const deadline = String(req.body?.deadline || "");
-  if (!subject || !/^\d{4}-\d{2}-\d{2}/.test(deadline)) { res.status(400).json({ error: "subject and a real deadline are required" }); return; }
+  if (!subject || !/^\d{4}-\d{2}-\d{2}/.test(deadline)) { res.status(400).json({ error: M(req, "la matière et une vraie échéance sont requises", "subject and a real deadline are required") }); return; }
   const list = (p.manualExams ||= []);
   list.push({ id: randomUUID(), subject, deadline });
   await commit(req);
@@ -2864,7 +3064,7 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     
     // Validate required fields
     if (!session.id || !session.startTime || !session.endTime || session.duration === undefined) {
-      res.status(400).json({ error: "Missing required session fields" });
+      res.status(400).json({ error: M(req, "Champs de session requis manquants", "Missing required session fields") });
       return;
     }
     
@@ -2884,7 +3084,7 @@ app.post("/api/focus/session", requireAuth, async (req, res) => {
     res.json({ success: true, stats: p.focusStats });
   } catch (e: any) {
     console.error("Failed to save focus session:", e);
-    res.status(500).json({ error: e?.message || "Couldn't save session — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer la session — réessaie.", "Couldn't save session — try again.") });
   }
 });
 
@@ -2899,7 +3099,7 @@ app.get("/api/focus/stats", requireAuth, async (req, res) => {
     recalculateFocusStats(p);
     res.json({ stats: p.focusStats });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Couldn't load stats — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les statistiques — réessaie.", "Couldn't load stats — try again.") });
   }
 });
 
@@ -2915,7 +3115,7 @@ app.get("/api/focus/sessions", requireAuth, async (req, res) => {
     const sessions = (p.focusSessions || []).slice(-limit).reverse();
     res.json({ sessions });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Couldn't load sessions — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de charger les sessions — réessaie.", "Couldn't load sessions — try again.") });
   }
 });
 
@@ -2928,7 +3128,7 @@ app.get("/api/focus/schedule-suggestion", requireAuth, async (req, res) => {
     const suggestion = generateSchedulingSuggestion({ sourceSubject: subject || undefined, difficulty: difficulty || undefined }, p);
     res.json({ suggestion });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Couldn't generate suggestion — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de générer une suggestion — réessaie.", "Couldn't generate suggestion — try again.") });
   }
 });
 
@@ -2940,7 +3140,7 @@ app.get("/api/focus/artifact-recommendation", requireAuth, async (req, res) => {
     const recommendation = recommendArtifactType(subject, p);
     res.json({ recommendation });
   } catch (e: any) {
-    res.status(500).json({ error: e?.message || "Couldn't generate recommendation — try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de générer une recommandation — réessaie.", "Couldn't generate recommendation — try again.") });
   }
 });
 
@@ -3104,7 +3304,7 @@ app.delete("/api/profile/exam/:id", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't remove that exam — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cet examen — réessaie.", "Couldn't remove that exam — try again.") }); }
 });
 // Error log — a student-maintained record of specific mistakes (question / what went wrong / what to do
 // next), grouped by subject client-side (see errorLogBySubject, shared/types.ts). Same accumulate-forever,
@@ -3115,7 +3315,7 @@ app.post("/api/profile/errorlog", requireAuth, ah(async (req, res) => {
   const question = String(req.body?.question || "").trim().slice(0, 500);
   const mistake = String(req.body?.mistake || "").trim().slice(0, 500);
   const fix = String(req.body?.fix || "").trim().slice(0, 500);
-  if (!subject || !question) { res.status(400).json({ error: "subject and question are required" }); return; }
+  if (!subject || !question) { res.status(400).json({ error: M(req, "la matière et la question sont requises", "subject and question are required") }); return; }
   const list = (p.errorLog ||= []);
   list.push({ id: randomUUID(), subject, question, mistake, fix, createdAt: new Date().toISOString() });
   await commit(req);
@@ -3129,7 +3329,7 @@ app.delete("/api/profile/errorlog/:id", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't remove that entry — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer cette entrée — réessaie.", "Couldn't remove that entry — try again.") }); }
 });
 // Reset Otto's synthesized "read" on this student (profile.studentModel) — same transparency posture as
 // errorLog/usage above: this is the most surveillance-adjacent field in the app (an AI-authored read of how
@@ -3144,7 +3344,7 @@ app.delete("/api/profile/student-model", requireAuth, async (req, res) => {
     if (req.session.user) { try { await saveState(req.session.user, { profile: p, tasks: req.session.tasks || [] }); } catch { /* commit() below still tries */ } }
     await commit(req);
     res.json(p);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't reset — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de réinitialiser — réessaie.", "Couldn't reset — try again.") }); }
 });
 // Wipe everything Otto has learned (restart from zero memory). The agent rebuilds it over time via `remember`.
 app.delete("/api/profile", requireAuth, async (req, res) => {
@@ -3152,7 +3352,7 @@ app.delete("/api/profile", requireAuth, async (req, res) => {
     req.session.profile = emptyProfile();
     await commit(req);
     res.json(tasks.stripProfileForResponse(req.session.profile));
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't reset your profile — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de réinitialiser ton profil — réessaie.", "Couldn't reset your profile — try again.") }); }
 });
 app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   const p = (req.session.profile ||= emptyProfile());
@@ -3161,13 +3361,13 @@ app.delete("/api/profile/:category/:index", requireAuth, async (req, res) => {
   // Was a silent no-op on a bad category/out-of-range index — still 200'd with the unchanged profile,
   // indistinguishable from success (same anti-pattern already fixed on the task routes).
   if (!k || !Array.isArray((p as any)[k]) || !(i >= 0 && i < (p as any)[k].length)) {
-    res.status(404).json({ error: "Nothing to delete there — it may have already changed elsewhere." }); return;
+    res.status(404).json({ error: M(req, "Rien à supprimer ici — ça a peut-être déjà changé ailleurs.", "Nothing to delete there — it may have already changed elsewhere.") }); return;
   }
   try {
     (p as any)[k].splice(i, 1);
     await commit(req);
     res.json(tasks.stripProfileForResponse(p));
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't delete that — try again." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer ça — réessaie.", "Couldn't delete that — try again.") }); }
 });
 
 // ── Study Mode ─────────────────────────────────────────────────────────────
@@ -3180,7 +3380,7 @@ app.get("/api/study/sessions", requireAuth, async (req, res) => {
     } else {
       res.json([]);
     }
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't load study sessions." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de charger les sessions d'étude.", "Couldn't load study sessions.") }); }
 });
 
 // Create/save a study session
@@ -3188,13 +3388,13 @@ app.post("/api/study/session", requireAuth, async (req, res) => {
   try {
     const sessionData = req.body as Partial<StudySession>;
     if (!sessionData.taskId || !sessionData.userId) {
-      res.status(400).json({ error: "taskId and userId are required" });
+      res.status(400).json({ error: M(req, "taskId et userId sont requis", "taskId and userId are required") });
       return;
     }
     
     const email = req.session.user;
     if (!email) {
-      res.status(401).json({ error: "Not authenticated" });
+      res.status(401).json({ error: M(req, "Non authentifié", "Not authenticated") });
       return;
     }
     
@@ -3230,7 +3430,7 @@ app.post("/api/study/session", requireAuth, async (req, res) => {
     
     await saveState(email, { profile: current.profile, tasks: current.tasks, studySessions: trimmedSessions }, { throwOnError: true });
     res.json(session);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save study session." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer la session d'étude.", "Couldn't save study session.") }); }
 });
 
 // Get study profile
@@ -3242,7 +3442,7 @@ app.get("/api/study/profile", requireAuth, async (req, res) => {
     } else {
       res.json({ userId: req.session.user, updatedAt: new Date().toISOString() });
     }
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't load study profile." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de charger le profil d'étude.", "Couldn't load study profile.") }); }
 });
 
 // Update study profile
@@ -3251,7 +3451,7 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
     const profileData = req.body as Partial<StudyProfile>;
     const email = req.session.user;
     if (!email) {
-      res.status(401).json({ error: "Not authenticated" });
+      res.status(401).json({ error: M(req, "Non authentifié", "Not authenticated") });
       return;
     }
     
@@ -3283,14 +3483,14 @@ app.post("/api/study/profile", requireAuth, async (req, res) => {
     
     await saveState(email, { profile: current.profile, tasks: current.tasks, studyProfile: updated }, { throwOnError: true });
     res.json(updated);
-  } catch (e: any) { res.status(500).json({ error: e?.message || "Couldn't save study profile." }); }
+  } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible d'enregistrer le profil d'étude.", "Couldn't save study profile.") }); }
 });
 
 // ── Text-to-speech via FreeTTS ──────────────────────────────────────────────
 app.post("/api/tts", requireAuth, async (req, res) => {
   const { text } = req.body;
-  if (!text || typeof text !== "string") { res.status(400).json({ error: "text is required" }); return; }
-  if (!process.env.FREETTS_API_KEY) { res.status(501).json({ error: "TTS not configured" }); return; }
+  if (!text || typeof text !== "string") { res.status(400).json({ error: M(req, "le texte est requis", "text is required") }); return; }
+  if (!process.env.FREETTS_API_KEY) { res.status(501).json({ error: M(req, "Synthèse vocale non configurée", "TTS not configured") }); return; }
 
   try {
     const response = await fetch("https://freetts.org/api/speech", {
@@ -3301,7 +3501,7 @@ app.post("/api/tts", requireAuth, async (req, res) => {
 
     if (!response.ok) {
       console.error(`[tts] FreeTTS error: ${response.status}`);
-      res.status(500).json({ error: "TTS generation failed" });
+      res.status(500).json({ error: M(req, "Échec de la génération vocale", "TTS generation failed") });
       return;
     }
 
@@ -3310,7 +3510,7 @@ app.post("/api/tts", requireAuth, async (req, res) => {
     res.send(Buffer.from(buffer));
   } catch (e: any) {
     console.error(`[tts] error: ${e?.message}`);
-    res.status(500).json({ error: "TTS request failed" });
+    res.status(500).json({ error: M(req, "Échec de la requête vocale", "TTS request failed") });
   }
 });
 
