@@ -44,7 +44,13 @@ export function TutorSession({ userId }: { userId: string | null }) {
   const loadTask = useCallback(() => {
     setLoadError(false);
     api.studyFreeSession(false, selectedSubject || undefined).then((list) => {
-      const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done") : undefined;
+      // Find active session for the selected subject, or any if no subject selected
+      const t = Array.isArray(list) ? list.find((x) => 
+        x.source === "freestudy" && 
+        x.status !== "dismissed" && 
+        x.status !== "done" &&
+        (selectedSubject ? x.sourceSubject === selectedSubject : true)
+      ) : undefined;
       if (t) {
         setTask(hydrateLocalThreads([t], userId)[0]);
         setSessionStart(new Date().toISOString());

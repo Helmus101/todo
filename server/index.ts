@@ -46,8 +46,8 @@ declare module "express-session" {
     // fixed for as long as that bucket does, only re-drawn when it actually changes (e.g. morning → afternoon).
     orderingArmCache?: { key: string; armId: string };
     blackbaudOAuthState?: string; // CSRF nonce for the Blackbaud OAuth authorization-code flow — see server/blackbaud.ts
-    primersessionStart?: number; // Timestamp for Primer session cap enforcement
-    primerlastActivity?: number; // Timestamp of last activity for resume window
+    primerSessionStarts?: Record<string, number>; // Per-subject session start timestamps
+    primerLastActivities?: Record<string, number>; // Per-subject last activity timestamps
   }
 }
 
@@ -1384,39 +1384,46 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   
-  // Primer session cap enforcement (Phase 1.5)
+  // Primer session cap enforcement (Phase 1.5) - per-subject
   const profile = req.session.profile;
   const sessionCap = profile?.primerSettings?.sessionCapMinutes || 60; // Default 60min for adults
   const RESUME_WINDOW_MINUTES = 60; // Allow resume within 1 hour
   const now = Date.now();
-  const sessionStart = req.session.primersessionStart || now;
+  const subject = t.sourceSubject || "general";
+  
+  // Initialize per-subject tracking
+  if (!req.session.primerSessionStarts) req.session.primerSessionStarts = {};
+  if (!req.session.primerLastActivities) req.session.primerLastActivities = {};
+  
+  const sessionStart = req.session.primerSessionStarts[subject] || now;
   const sessionMinutes = (now - sessionStart) / (60 * 1000);
-  const lastActivity = req.session.primerlastActivity || sessionStart;
+  const lastActivity = req.session.primerLastActivities[subject] || sessionStart;
   const minutesSinceLastActivity = (now - lastActivity) / (60 * 1000);
   
   // If within resume window, reset session start time to allow continuation
   if (minutesSinceLastActivity < RESUME_WINDOW_MINUTES && sessionMinutes >= sessionCap) {
-    req.session.primersessionStart = now;
-    req.session.primerlastActivity = now;
+    req.session.primerSessionStarts[subject] = now;
+    req.session.primerLastActivities[subject] = now;
   } else if (sessionMinutes >= sessionCap) {
     // Only block if outside resume window
     res.status(403).json({ 
       error: M(req, 
-        `Session limit reached (${sessionCap} minutes). Take a break!`,
-        `Session limit reached (${sessionCap} minutes). Take a break!`
+        `Session limit reached for ${subject} (${sessionCap} minutes). Take a break!`,
+        `Session limit reached for ${subject} (${sessionCap} minutes). Take a break!`
       ),
-      sessionCapReached: true 
+      sessionCapReached: true,
+      subject 
     });
     return;
   }
   
-  // Set session start time if not set
-  if (!req.session.primersessionStart) {
-    req.session.primersessionStart = now;
+  // Set session start time if not set for this subject
+  if (!req.session.primerSessionStarts[subject]) {
+    req.session.primerSessionStarts[subject] = now;
   }
   
-  // Update last activity time
-  req.session.primerlastActivity = now;
+  // Update last activity time for this subject
+  req.session.primerLastActivities[subject] = now;
   
   const message = String(req.body?.message || "").trim().slice(0, 2000);
   if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
@@ -2364,19 +2371,36 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   const list = req.session.tasks || [];
   const now = new Date().toISOString();
   const fresh = req.body?.fresh === true;
-  if (!fresh) {
-    const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
-    if (active) { res.json(list); return; }
-  }
-  for (const old of list) {
-    if (old.source === "freestudy" && !isHandled(old.status)) { old.status = "dismissed"; old.updatedAt = now; }
-  }
-  const en = req.session.profile?.language === "en";
   const subject = req.body?.subject as string | undefined;
+  const en = req.session.profile?.language === "en";
+  
+  if (!fresh) {
+    // If subject specified, look for active session for that subject
+    if (subject) {
+      const activeForSubject = list.find((t) => t.source === "freestudy" && !isHandled(t.status) && t.sourceSubject === subject);
+      if (activeForSubject) { res.json(list); return; }
+    } else {
+      // No subject specified, return all active sessions
+      const hasActive = list.some((t) => t.source === "freestudy" && !isHandled(t.status));
+      if (hasActive) { res.json(list); return; }
+    }
+  }
+  
+  // Fresh mode: only dismiss sessions for the specified subject, or all if no subject
+  for (const old of list) {
+    if (old.source === "freestudy" && !isHandled(old.status)) {
+      if (!subject || old.sourceSubject === subject) {
+        old.status = "dismissed";
+        old.updatedAt = now;
+      }
+    }
+  }
+  
   const e = tasks.eisenhower(0, 0);
   const id = randomUUID();
   const t: WebTask = {
-    id, title: en ? "Free study session" : "Séance de révision libre",
+    id, 
+    title: subject ? `${subject} session` : (en ? "Free study session" : "Séance de révision libre"),
     why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
     source: "freestudy", risk: "low",
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",
