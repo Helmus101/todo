@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
-import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProblems } from "../localChatBoard.ts";
+import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
 import { useLang } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
+import { buildSessionSummary, saveTutorSession, getTutorSessions, pastSessionsLine, type TutorSessionSummary } from "./tutorSessions.ts";
 
 /** Tutor Session (route /tutor) — the Primer-style one-to-one lesson: a chat with Otto on one side and
  *  Otto's board on the other. It reuses the free-study task as a private anchor for the thread (chat, board
  *  and problems persist locally, keyed by task id — see localChatBoard.ts), and talks to the SAME chat
- *  endpoint as everywhere else, with `primer: true` so the server swaps in the Primer persona. */
+ *  endpoint as everywhere else, with `primer: true` so the server swaps in the Primer persona.
+ *
+ *  Sessions: each session is backed by its own freestudy task. Ending a session generates a short summary
+ *  from the board + chat (see tutorSessions.ts), saves it locally, and dismisses the task so the next
+ *  "Start" creates a fresh one. Past session summaries are shown in a collapsible strip and fed into the
+ *  opening message so Otto can reference what was previously worked on. */
 export function TutorSession({ userId }: { userId: string | null }) {
   const L = useLang();
   const [task, setTask] = useState<WebTask | null>(null);
@@ -18,18 +24,32 @@ export function TutorSession({ userId }: { userId: string | null }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingMsg, setPendingMsg] = useState<string | null>(null);
+  const [sessionStart, setSessionStart] = useState<string | null>(null);
+  const [pastSessions, setPastSessions] = useState<TutorSessionSummary[]>([]);
+  const [endingSession, setEndingSession] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
-    let stop = false;
+    setPastSessions(getTutorSessions(userId));
+  }, [userId]);
+
+  const loadTask = useCallback(() => {
     setLoadError(false);
     api.studyFreeSession().then((list) => {
-      if (stop) return;
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done") : undefined;
-      if (t) setTask(hydrateLocalThreads([t], userId)[0]);
-      else setLoadError(true);
-    }).catch(() => { if (!stop) setLoadError(true); });
-    return () => { stop = true; };
+      if (t) {
+        setTask(hydrateLocalThreads([t], userId)[0]);
+        setSessionStart(new Date().toISOString());
+      } else {
+        setTask(null);
+        setSessionStart(null);
+      }
+    }).catch(() => setLoadError(true));
   }, [userId]);
+
+  useEffect(() => {
+    loadTask();
+  }, [loadTask]);
 
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
     const message = (override ?? input).trim();
@@ -49,25 +69,106 @@ export function TutorSession({ userId }: { userId: string | null }) {
     }
   }, [input, sending, task, userId, L]);
 
+  const endSession = useCallback(async () => {
+    if (!task || !sessionStart) return;
+    setEndingSession(true);
+    try {
+      const thread = getLocalThread(task.id, userId);
+      const summary = buildSessionSummary(task.board || [], task.chat || []);
+      const sessionSummary: TutorSessionSummary = {
+        id: task.id,
+        taskId: task.id,
+        startTime: sessionStart,
+        endTime: new Date().toISOString(),
+        messageCount: (task.chat || []).filter((m) => m.role === "user").length,
+        boardEntries: (task.board || []).map((b) => b.text.trim()).filter(Boolean),
+        summary,
+      };
+      saveTutorSession(sessionSummary, userId);
+      setPastSessions(getTutorSessions(userId));
+      // Dismiss the freestudy task so the next "Start" creates a fresh one.
+      try { await api.dismiss(task.id); } catch { /* best-effort */ }
+      setTask(null);
+      setSessionStart(null);
+      setShowHistory(true);
+    } finally {
+      setEndingSession(false);
+    }
+  }, [task, sessionStart, userId]);
+
+  const startNewSession = useCallback(() => {
+    loadTask();
+  }, [loadTask]);
+
   if (loadError) {
     return (
       <main className="list-wrap"><div className="empty-state">
         <h3>{L("Impossible de démarrer la séance", "Couldn't start the session")}</h3>
-        <button className="btn primary" onClick={() => { setLoadError(false); setTask(null); api.studyFreeSession().then((l) => { const t = l.find((x) => x.source === "freestudy"); if (t) setTask(hydrateLocalThreads([t], userId)[0]); else setLoadError(true); }).catch(() => setLoadError(true)); }}>{L("Réessayer", "Try again")}</button>
+        <button className="btn primary" onClick={loadTask}>{L("Réessayer", "Try again")}</button>
       </div></main>
     );
   }
-  if (!task) return <main className="list-wrap"><div className="spinner" /></main>;
+
+  // No active session — show start button + past sessions
+  if (!task) {
+    return (
+      <main className="list-wrap tutor-landing">
+        <div className="tutor-landing-inner">
+          <h2>{L("Séance de tutorat", "Tutoring session")}</h2>
+          <p className="tutor-landing-sub">{L("Travaille avec Otto sur ce que tu veux apprendre. Il te guide, te pose des questions, et retient ce que tu fais à chaque séance.", "Work with Otto on whatever you'd like to learn. He guides you, asks questions, and remembers what you accomplish each session.")}</p>
+          <button className="btn primary tutor-start-btn" onClick={startNewSession}>
+            {L("Commencer une séance", "Start a session")}
+          </button>
+
+          {pastSessions.length > 0 && (
+            <div className="tutor-past-sessions">
+              <button className="tutor-history-toggle" onClick={() => setShowHistory((v) => !v)}>
+                {showHistory ? "▼ " : "▶ "}{L("Séances précédentes", "Past sessions")} ({pastSessions.length})
+              </button>
+              {showHistory && (
+                <ul className="tutor-history-list">
+                  {pastSessions.map((s) => (
+                    <li key={s.id} className="tutor-history-item">
+                      <div className="tutor-history-date">
+                        {new Date(s.endTime).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                      <div className="tutor-history-summary">{s.summary}</div>
+                      {s.boardEntries.length > 0 && (
+                        <ul className="tutor-history-board">
+                          {s.boardEntries.slice(0, 5).map((b, i) => <li key={i}>{b}</li>)}
+                        </ul>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      </main>
+    );
+  }
 
   const noop = () => {};
   const fresh = !task.chat?.length && !pendingMsg;
   return (
     <main className="tutor-session">
       <section className="tutor-chat" aria-label={L("Discuter avec Otto", "Ask Otto")}>
-        <div className="tutor-pane-title">{L("Demande à Otto", "Ask Otto")}</div>
+        <div className="tutor-pane-title">
+          <span>{L("Demande à Otto", "Ask Otto")}</span>
+          <button className="btn ghost tutor-end-btn" disabled={endingSession} onClick={() => void endSession()}>
+            {endingSession ? L("Fin…", "Ending…") : L("Terminer la séance", "End session")}
+          </button>
+        </div>
         {fresh && (
           <div className="tutor-start">
             <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
+            {pastSessions.length > 0 && (
+              <p className="tutor-past-ref">
+                {L("Je me souviens de nos séances précédentes : ", "I remember our past sessions: ")}
+                {pastSessionsLine(pastSessions, L("fr", "en") as "fr" | "en")}
+              </p>
+            )}
             <button className="btn primary" disabled={sending} onClick={() => void send(L("Bonjour Otto !", "Hello Otto!"))}>{L("Commencer", "Let's begin")}</button>
           </div>
         )}

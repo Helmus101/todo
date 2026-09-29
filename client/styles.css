@@ -6344,3 +6344,29 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-start { padding: 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; border-bottom: 1px solid var(--line); }
 .tutor-start p { margin: 0; font-size: 1.1rem; }
 @media (max-width: 800px) { .tutor-session { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; height: auto; min-height: calc(100vh - 64px); } }
+
+/* Tutor landing (no active session) */
+.tutor-landing { display: flex; align-items: center; justify-content: center; }
+.tutor-landing-inner { max-width: 560px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.tutor-landing-inner h2 { margin: 0; font-size: 1.6rem; }
+.tutor-landing-sub { margin: 0; color: var(--ink-2); font-size: 1rem; line-height: 1.5; }
+.tutor-start-btn { font-size: 1.05rem; padding: 10px 28px; }
+
+/* End-session button in the chat pane title bar */
+.tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tutor-end-btn { font-size: 13px; padding: 4px 12px; font-weight: 500; }
+
+/* Past-session reference shown on a fresh session start */
+.tutor-past-ref { font-size: 0.9rem; color: var(--ink-2); font-style: italic; }
+
+/* Past sessions history (collapsible) */
+.tutor-past-sessions { width: 100%; text-align: left; margin-top: 8px; }
+.tutor-history-toggle { background: none; border: none; color: var(--ink-2); font-size: 0.9rem; cursor: pointer; padding: 4px 0; font-family: inherit; }
+.tutor-history-toggle:hover { color: var(--ink); }
+.tutor-history-list { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 10px; }
+.tutor-history-item { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px; text-align: left; background: var(--surface); }
+.tutor-history-date { font-size: 0.8rem; color: var(--ink-2); margin-bottom: 4px; }
+.tutor-history-summary { font-size: 0.95rem; font-weight: 500; }
+.tutor-history-board { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 2px; }
+.tutor-history-board li { font-size: 0.85rem; color: var(--ink-2); padding-left: 12px; position: relative; }
+.tutor-history-board li::before { content: "·"; position: absolute; left: 2px; }
