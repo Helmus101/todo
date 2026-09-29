@@ -1,0 +1,30 @@
+# Base44 dev environment — runs the app from the cloned source with live reload.
+# Single origin: Vite (5273) serves the client on host port 3000 and proxies /api, /auth,
+# /integrations to the Express backend (8788) inside the same container (see vite.config.ts).
+services:
+  dev:
+    image: node:24
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "3000:5273"
+    # Dev mode needs no credentials to boot (fail-closed checks only run with NODE_ENV=production —
+    # see AGENTS.md); real credentials, when supplied, arrive via the platform-managed env file.
+    env_file:
+      - /run/base44/app.env
+    environment:
+      - NODE_ENV=development
+      # npm run dev = concurrently "tsx watch server/index.ts" (hot server reload) + "vite" (HMR)
+      # (predev zip-extension.sh gracefully skips when `zip` is not installed in the image).
+      # npm install is a no-op when node_modules is already up to date with the lockfile.
+    command: ["sh", "-ec", "npm install --no-audit --no-fund && exec npm run dev"]
+    healthcheck:
+      # Both processes matter: the Vite dev server (port 5273) AND the Express API behind its
+      # /api proxy. Print which one failed when a leg breaks.
+      test: ["CMD", "node", "-e", "const u='http://127.0.0.1:5273';(async()=>{const a=await fetch(u+'/').then(r=>r.ok?1:(r.status+'')).catch(e=>'net');const b=await fetch(u+'/api/status').then(r=>r.ok?1:(r.status+'')).catch(e=>'net');if(a!==1||b!==1){console.error('healthcheck fail: client='+a+' api='+b);process.exit(1)}})()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 240s
+    restart: on-failure
