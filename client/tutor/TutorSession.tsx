@@ -67,7 +67,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
         <div className="tutor-pane-title">{L("Demande à Otto", "Ask Otto")}</div>
         {fresh && (
           <div className="tutor-start">
-            <p>{L("Salut ! Je suis Otto, ton tuteur. On lit, on écrit et on compte ensemble ?", "Hi! I'm Otto, your tutor. Ready to read, write and count together?")}</p>
+            <p>{L("Salut ! Je suis Otto, ton tuteur. On travaille ensemble sur ce que tu veux apprendre ?", "Hi! I'm Otto, your tutor. Ready to work on whatever you'd like to learn?")}</p>
             <button className="btn primary" disabled={sending} onClick={() => void send(L("Bonjour Otto !", "Hello Otto!"))}>{L("Commencer", "Let's begin")}</button>
           </div>
         )}
