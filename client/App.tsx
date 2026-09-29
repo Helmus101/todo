@@ -132,6 +132,11 @@ function fmtDay(iso: string, L?: (fr: string, en: string) => string): string {
 // themselves. Flip back to true to restore auto-do/Approve & Run/Send. Nothing execution-related is deleted.
 const EXECUTION_ENABLED = false;
 
+/** Temporary: Study Mode's entry points (the sidebar "Réviser"/"Study" item and the per-task Study Mode
+ *  buttons) are hidden while the tutor rework is underway. Nothing is deleted — the /study route still
+ *  works by URL, and flipping this back to true restores every button and the nav item. */
+const STUDY_MODE_ENABLED = false;
+
 
 
 /** The Otto mark — an "O" (for Otto) with a checkmark inside it, not a separate badge bolted onto a
@@ -974,14 +979,16 @@ export function App() {
             <BookOpen />
             {status?.language === "en" ? "Journal" : "Journal"}
           </a>
-          <a
-            className={`sidebar-item ${route === "study" ? "active" : ""}`}
-            href="/study"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <GraduationCap />
-            {status?.language === "en" ? "Study" : "Réviser"}
-          </a>
+          {STUDY_MODE_ENABLED && (
+            <a
+              className={`sidebar-item ${route === "study" ? "active" : ""}`}
+              href="/study"
+              onClick={() => setSidebarOpen(false)}
+            >
+              <GraduationCap />
+              {status?.language === "en" ? "Study" : "Réviser"}
+            </a>
+          )}
           <a
             className={`sidebar-item ${route === "errorlog" ? "active" : ""}`}
             href="/errorlog"
@@ -1182,7 +1189,7 @@ export function App() {
                             onChange={setTasks}
                             onTask={patchTask}
                             onConfirmed={flagJustDone}
-                            onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
+                            onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
                           />
                         ))}
                       </div>
@@ -1228,7 +1235,7 @@ export function App() {
                                     onChange={setTasks}
                                     onTask={patchTask}
                                     onConfirmed={flagJustDone}
-                                    onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
+                                    onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
                                   />
                                 ))}
                               </div>
@@ -1251,7 +1258,7 @@ export function App() {
                                     onChange={setTasks}
                                     onTask={patchTask}
                                     onConfirmed={flagJustDone}
-                                    onEnterStudyMode={() => { setStudyModeTask(t); navigate(`study/${t.id}`); }}
+                                    onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(t); navigate(`study/${t.id}`); } : undefined}
                                   />
                                 ))}
                               </div>
@@ -1301,7 +1308,7 @@ export function App() {
                   onTask={patchTask}
                   onConfirmed={flagJustDone}
                   onLeft={() => navigate("")}
-                  onEnterStudyMode={() => { setStudyModeTask(openTask); navigate(`study/${openTask.id}`); }}
+                  onEnterStudyMode={STUDY_MODE_ENABLED ? () => { setStudyModeTask(openTask); navigate(`study/${openTask.id}`); } : undefined}
                   userId={status?.user || null}
                 />
               </TaskModal>
