@@ -95,3 +95,43 @@ export function isDependenceWarning(metrics: DependenceMetric[]): boolean {
     current.unaidedRate < 0.3
   );
 }
+
+/**
+ * Calculate the maximum hint level allowed based on mastery
+ * Returns 0-4 (0 = no hints allowed, 4 = full hint ladder)
+ * As mastery increases, max hint level decreases
+ */
+export function getMaxHintLevel(mastery: number, domainLevel: string): number {
+  // Mastery is 0-1 (0 = no mastery, 1 = full mastery)
+  // Band C (6-8): starts at 4, decreases to 1 as mastery increases
+  // Band E-F (13-18): starts at 3, decreases to 0 as mastery increases
+  
+  if (domainLevel === "C" || domainLevel === "B") {
+    // Younger bands: more scaffolding
+    return Math.max(1, Math.floor(4 - mastery * 3));
+  } else {
+    // Older bands: fade faster
+    return Math.max(0, Math.floor(3 - mastery * 3));
+  }
+}
+
+/**
+ * Check if this is a "graduation moment" - child succeeded unaided
+ * Returns true if unaided success rate is high and increasing
+ */
+export function isGraduationMoment(metrics: DependenceMetric[]): boolean {
+  if (metrics.length < 2) return false;
+
+  const current = metrics[metrics.length - 1];
+  const previous = metrics[metrics.length - 2];
+
+  // Graduation if:
+  // 1. Unaided success is high (> 0.8)
+  // 2. Unaided success is increasing
+  // 3. Help-seeking is low (< 0.2)
+  return (
+    current.unaidedRate > 0.8 &&
+    current.unaidedRate > previous.unaidedRate &&
+    current.helpRatio < 0.2
+  );
+}

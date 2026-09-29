@@ -179,6 +179,27 @@ const DEFAULT_PROFILES: PolicyProfile[] = [
 const PROFILES_BY_ID = new Map(DEFAULT_PROFILES.map(p => [p.id, p]));
 
 /**
+ * Calculate age from birth year
+ */
+export function calculateAge(birthYear: number): number {
+  const currentYear = new Date().getFullYear();
+  return currentYear - birthYear;
+}
+
+/**
+ * Determine age band from age
+ * Returns the appropriate band (A-F) based on age ranges from Primer §4.2
+ */
+export function getAgeBand(age: number): "A" | "B" | "C" | "D" | "E" | "F" {
+  if (age < 3) return "A";  // 0-2
+  if (age < 6) return "B";  // 3-5
+  if (age < 9) return "C";  // 6-8
+  if (age < 13) return "D"; // 9-12
+  if (age < 16) return "E"; // 13-15
+  return "F";              // 16-18
+}
+
+/**
  * Get the appropriate policy profile for a given age and domain level
  * Falls back to Band C (6-8) as a safe default for unknown ages
  */
@@ -189,6 +210,14 @@ export function getPolicyProfile(age: number, domainLevel?: string): PolicyProfi
   }
   // Default to Band C (6-8) for ages 6-12 and as fallback
   return PROFILES_BY_ID.get("band_6_8_v1")!;
+}
+
+/**
+ * Get policy profile from birth year
+ */
+export function getPolicyProfileFromBirthYear(birthYear: number): PolicyProfile {
+  const age = calculateAge(birthYear);
+  return getPolicyProfile(age);
 }
 
 /**

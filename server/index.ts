@@ -25,6 +25,9 @@ import * as jobs from "./jobs.ts";
 import * as integrations from "./integrations.ts";
 import * as pronoteSvc from "./pronote.ts";
 import * as blackbaudSvc from "./blackbaud.ts";
+import { getAgeBand, getPolicyProfileFromBirthYear } from "./policyProfiles.ts";
+import { recordConsent } from "./consentService.ts";
+import { isDependenceWarning, shouldFadeScaffolding } from "./dependenceMetrics.ts";
 
 declare module "express-session" {
   interface SessionData {
@@ -43,6 +46,8 @@ declare module "express-session" {
     // fixed for as long as that bucket does, only re-drawn when it actually changes (e.g. morning → afternoon).
     orderingArmCache?: { key: string; armId: string };
     blackbaudOAuthState?: string; // CSRF nonce for the Blackbaud OAuth authorization-code flow — see server/blackbaud.ts
+    primersessionStart?: number; // Timestamp for Primer session cap enforcement
+    primerlastBreakReminder?: number; // Timestamp for last break reminder
   }
 }
 
@@ -456,11 +461,24 @@ function M(req: express.Request, fr: string, en: string): string { return reqLan
 app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
+  const birthYear = req.body?.birthYear ? parseInt(req.body.birthYear) : undefined;
+  const isChildAccount = req.body?.isChildAccount === true;
+  
   if (!validEmail(email) || password.length < 8 || password.length > 200) { res.status(400).json({ error: M(req, "Entre un email valide et un mot de passe entre 8 et 200 caractères.", "Enter a valid email and a password between 8 and 200 characters.") }); return; }
-  // The Privacy Policy states under-15s need a parent to set the account up (RGPD Art.8) — this was
-  // previously enforced by text alone. Not real age verification, but a required, recorded affirmative
-  // signal beats none.
-  if (req.body?.consent !== true) { res.status(400).json({ error: M(req, "Confirme que tu as 15 ans ou plus, ou qu'un parent a créé ce compte.", "Please confirm you're 15 or older, or that a parent set this account up for you.") }); return; }
+  
+  // For child accounts, require birth year and parental consent
+  if (isChildAccount) {
+    if (!birthYear || birthYear < 2000 || birthYear > new Date().getFullYear()) {
+      res.status(400).json({ error: M(req, "L'année de naissance est requise pour les comptes d'enfants.", "Birth year is required for child accounts.") }); return;
+    }
+    if (req.body?.parentalConsent !== true) {
+      res.status(400).json({ error: M(req, "Le consentement parental est requis pour les comptes d'enfants.", "Parental consent is required for child accounts.") }); return;
+    }
+  } else {
+    // Adult accounts: require 15+ consent
+    if (req.body?.consent !== true) { res.status(400).json({ error: M(req, "Confirme que tu as 15 ans ou plus, ou qu'un parent a créé ce compte.", "Please confirm you're 15 or older, or that a parent set this account up for you.") }); return; }
+  }
+  
   if (!cloudEnabled()) { res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configuré sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") }); return; }
   if (await getUser(email)) { res.status(409).json({ error: M(req, "Un compte existe déjà avec cet email — connecte-toi plutôt.", "An account with that email already exists — log in instead.") }); return; }
   if (!(await createUser(email, bcrypt.hashSync(password, 10)))) { res.status(500).json({ error: M(req, "Impossible de créer le compte.", "Couldn't create the account.") }); return; }
@@ -478,7 +496,31 @@ app.post("/api/auth/signup", rateLimit(6, 60 * 60_000), ah(async (req, res) => {
     // BRAND NEW one on the very next request (the safety-net middleware above only fills these in when
     // they're `undefined`, which they aren't in that case) — they'd even get merged into and saved onto the
     // new account's cloud row. A fresh signup always starts from empty state.
-    req.session.profile = { ...emptyProfile(), ageConsentAt: new Date().toISOString() };
+    req.session.profile = { 
+      ...emptyProfile(), 
+      ageConsentAt: new Date().toISOString(),
+      birthYear: birthYear,
+      ageBand: birthYear ? getAgeBand(birthYear) : undefined,
+      policyProfileId: birthYear ? getPolicyProfileFromBirthYear(birthYear).id : undefined,
+      primerSettings: {
+        sessionCapMinutes: birthYear ? getPolicyProfileFromBirthYear(birthYear).session.hardCapMinutes : 60,
+        dailyCapMinutes: birthYear ? getPolicyProfileFromBirthYear(birthYear).session.dailyCapMinutes : 120,
+        parentViewLevel: isChildAccount ? "full" : "none",
+      },
+      dataRetentionDays: birthYear ? getPolicyProfileFromBirthYear(birthYear).safety.dataRetentionDays : 90,
+    };
+    
+    // Record consent if this is a child account
+    if (isChildAccount && birthYear) {
+      const consent = recordConsent({
+        childId: email,
+        scope: ["account_access", "data_processing"],
+        grantedAt: new Date().toISOString(),
+        method: "clickwrap",
+      });
+      req.session.profile.consentRecords = [consent];
+    }
+    
     req.session.tasks = [];
     // Generated here (not left to /api/status's lazy path) so the VERY FIRST authenticated mutating call a
     // fresh signup makes (e.g. the onboarding flow's language preference save, which fires before the next
@@ -1341,6 +1383,46 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   if (isPaused(req)) { res.status(403).json({ error: M(req, "L'IA est en pause — réactive-la dans les Réglages pour discuter.", "AI is paused — resume it in Settings to chat.") }); return; }
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
+  
+  // Primer session cap enforcement (Phase 1.5)
+  const profile = req.session.profile;
+  const sessionCap = profile?.primerSettings?.sessionCapMinutes || 60; // Default 60min for adults
+  const now = Date.now();
+  const sessionStart = req.session.primersessionStart || now;
+  const sessionMinutes = (now - sessionStart) / (60 * 1000);
+  
+  if (sessionMinutes >= sessionCap) {
+    res.status(403).json({ 
+      error: M(req, 
+        `Session limit reached (${sessionCap} minutes). Take a break!`,
+        `Session limit reached (${sessionCap} minutes). Take a break!`
+      ),
+      sessionCapReached: true 
+    });
+    return;
+  }
+  
+  // Set session start time if not set
+  if (!req.session.primersessionStart) {
+    req.session.primersessionStart = now;
+  }
+  
+  // Primer break reminder (Phase 1.5)
+  const breakEveryMinutes = profile?.primerSettings?.sessionCapMinutes ? 
+    Math.floor(profile.primerSettings.sessionCapMinutes / 2) : 30; // Default: break at half the cap
+  const lastBreakReminder = req.session.primerlastBreakReminder || 0;
+  const timeSinceLastReminder = (now - lastBreakReminder) / (60 * 1000);
+  let breakReminder = "";
+  
+  if (timeSinceLastReminder >= breakEveryMinutes && sessionMinutes < sessionCap - 5) {
+    // Only remind if we're not at the cap yet
+    breakReminder = M(req, 
+      "🔔 Tu as fait du bon travail ! C'est le moment de faire une petite pause.",
+      "🔔 Great work! Time for a short break."
+    );
+    req.session.primerlastBreakReminder = now;
+  }
+  
   const message = String(req.body?.message || "").trim().slice(0, 2000);
   if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
   const t = await findTaskOrReload(req, String(req.params.id));
@@ -1462,6 +1544,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.error && !out.reply?.trim()) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") }); return; }
     if (out.error) void recordMetric(req.session.user!, "chat_fallback_reply", 1);
     if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
+    
+    // Add break reminder to response if triggered
+    if (breakReminder) {
+      out.reply = breakReminder + "\n\n" + out.reply;
+    }
     // Score the chat-style arm: the only IMMEDIATELY observable outcome of one turn is whether the guardrail
     // held (a genuinely unhelpful/off-boundary reply) — a richer "did they send a follow-up" reward would
     // need waiting on a future request, which this best-effort, fire-and-forget scoring deliberately avoids.
@@ -2896,6 +2983,34 @@ app.post("/api/profile/grade", requireAuth, ah(async (req, res) => {
 // Delete ONE grade entry by id (the normal path from the UI's per-row × ). Falls back to matching by
 // subject for anything still lacking an id (a pre-history-model entry that never got normalized) or for
 // a bulk "remove this whole subject" — same param, whichever matches.
+// Primer: Get dependence metrics for parent dashboard (Phase 1.5)
+app.get("/api/primer/dependence", requireAuth, (req, res) => {
+  const profile = req.session.profile;
+  const metrics = profile?.dependenceMetrics || {};
+  
+  // Calculate trends from the metrics
+  const domainMetrics = Object.entries(metrics).map(([domain, data]) => ({
+    domain,
+    helpRatio: data.helpRatio,
+    answerSeekRate: data.answerSeekRate,
+    unaidedRate: data.unaidedRate,
+    fadeIndex: data.fadeIndex,
+    trend: data.helpRatio > 0.5 ? "warning" : data.unaidedRate > 0.7 ? "good" : "neutral",
+  }));
+  
+  const hasWarning = domainMetrics.some(m => m.trend === "warning");
+  
+  res.json({
+    metrics: domainMetrics,
+    summary: {
+      totalDomains: domainMetrics.length,
+      warningCount: domainMetrics.filter(m => m.trend === "warning").length,
+      goodCount: domainMetrics.filter(m => m.trend === "good").length,
+      hasWarning,
+    },
+  });
+});
+
 app.delete("/api/profile/grade/:key", requireAuth, async (req, res) => {
   try {
     const p = (req.session.profile ||= emptyProfile());

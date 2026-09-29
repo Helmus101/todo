@@ -9,6 +9,8 @@ import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 import { hasAssignmentText } from "./discover.ts";
 import { getPolicyProfile } from "./policyProfiles.ts";
+import { getAgeAppropriateMoves, getNextThinkingMove, getThinkingMovePrompt, shouldUseThinkingMove } from "./thinkingMoves.ts";
+import { getMaxHintLevel, isGraduationMoment } from "./dependenceMetrics.ts";
 
 // Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
 // email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
@@ -5869,9 +5871,13 @@ export async function chatAboutTask(
     ? (() => {
       const age = profile.birthYear ? new Date().getFullYear() - profile.birthYear : 18;
       const policy = getPolicyProfile(age, profile.domainLevels?.["reading"]?.level);
+      const domainLevel = profile.domainLevels?.["reading"]?.level || "C";
+      const mastery = 0.5; // Placeholder - would be calculated from actual mastery data
+      const maxHintLevel = getMaxHintLevel(mastery, domainLevel);
+      
       return `\nPRIMER POLICY PROFILE (${policy.id}):\n` +
         `- Age band: ${policy.ageRange[0]}-${policy.ageRange[1]}\n` +
-        `- Hint ladder max: ${policy.pedagogy.hintLadderMax}\n` +
+        `- Hint ladder max: ${maxHintLevel} (faded from ${policy.pedagogy.hintLadderMax} based on mastery)\n` +
         `- Wait before hint: ${policy.pedagogy.waitBeforeHintMs}ms\n` +
         `- Thinking moves: ${policy.pedagogy.thinkingMoves.join(", ")}\n` +
         `- Direct explain allowed: ${policy.pedagogy.directExplainAllowed}\n` +
@@ -5931,7 +5937,19 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + policyBlock;
+  // Primer Thinking Move (Phase 1.5) - inject thinking-move prompts periodically
+  const thinkingMoveBlock = opts?.primer && profile?.ageBand
+    ? (() => {
+      const ageBand = profile.ageBand;
+      const availableMoves = getAgeAppropriateMoves(ageBand);
+      const currentStats = profile.thinkingStats || {};
+      const nextMove = getNextThinkingMove("", currentStats, availableMoves);
+      const prompt = getThinkingMovePrompt(nextMove);
+      return `\nTHINKING MOVE (use this naturally if it fits): ${prompt}\n`;
+    })()
+    : "";
+
+  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + policyBlock + thinkingMoveBlock;
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +

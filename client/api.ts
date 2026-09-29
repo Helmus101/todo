@@ -195,7 +195,8 @@ const authPost = (url: string, body: unknown): Promise<{ ok: boolean; error?: st
 
 export const api = {
   status: (): Promise<ConnectionStatus> => req("/api/status").then(j).then((s: ConnectionStatus) => { if (s.csrfToken) csrfToken = s.csrfToken; return s; }),
-  signup: (email: string, password: string, consent: boolean) => authPost("/api/auth/signup", { email, password, consent }),
+  signup: (email: string, password: string, consent: boolean, isChildAccount?: boolean, birthYear?: number, parentalConsent?: boolean) => 
+    authPost("/api/auth/signup", { email, password, consent, isChildAccount, birthYear, parentalConsent }),
   login: (email: string, password: string) => authPost("/api/auth/login", { email, password }),
   // Always resolves {ok:true} on a validly-formatted email — the server never reveals whether an account
   // actually exists (see server/index.ts's own comment on why), so the client can't and shouldn't try to
@@ -207,6 +208,9 @@ export const api = {
   integrationAccounts: (app: string): Promise<{ accounts: ConnectedAccount[] }> => req(`/api/integrations/${app}/accounts`).then(j),
   disconnectIntegration: (app: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect`),
   disconnectAccount: (app: string, accountId: string): Promise<{ ok: boolean }> => post(`/api/integrations/${app}/disconnect/${accountId}`),
+  // Primer: Get dependence metrics for parent dashboard
+  primerDependence: (): Promise<{ metrics: Array<{ domain: string; helpRatio: number; answerSeekRate: number; unaidedRate: number; fadeIndex: number; trend: string }>; summary: { totalDomains: number; warningCount: number; goodCount: number; hasWarning: boolean } }> =>
+    req("/api/primer/dependence").then(j),
   // Pronote — no OAuth, so this is a credential form rather than a redirect (see server/pronote.ts).
   pronoteStatus: (): Promise<{ connected: boolean; username?: string }> => req("/api/integrations/pronote/status").then(j),
   connectPronote: (url: string, username: string, password: string, kind?: number): Promise<{ ok: boolean; error?: string }> =>

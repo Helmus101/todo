@@ -145,3 +145,38 @@ export function getAgeAppropriateMoves(ageBand: string): string[] {
       return THINKING_MOVES as string[];
   }
 }
+
+/**
+ * Get a thinking-move prompt for the current turn
+ * Returns a prompt string for the tutor to use
+ */
+export function getThinkingMovePrompt(move: string): string {
+  const prompts: Record<string, string> = {
+    notice: "What do you notice about this?",
+    wonder: "What are you curious about here?",
+    predict: "What do you think will happen next? Why?",
+    explain: "Can you explain how you figured that out?",
+    compare: "How are these two things alike or different?",
+    give_evidence: "How do you know? What makes you say that?",
+    counterexample: "Can you think of a time this wouldn't work?",
+    alternative_strategy: "Is there another way to solve this?",
+    spot_error: "Something here might be off — can you find it?",
+    estimate: "About how big should the answer be?",
+    perspective_taking: "How might someone else see this?",
+    claim_evidence_reasoning: "What's your claim, and what evidence supports it?",
+    steel_manning: "What's the strongest case for the other side?",
+    uncertainty_calibration: "How sure are you? What would change your mind?",
+    transfer: "Where else would this idea work?",
+    reflect: "What was tricky? What will you do differently next time?",
+    show_me: "Show me what you mean.",
+  };
+  return prompts[move] || "What do you think?";
+}
+
+/**
+ * Should use a thinking move on this turn?
+ * Simple heuristic: use a move every 3-4 turns to avoid overloading
+ */
+export function shouldUseThinkingMove(turnCount: number): boolean {
+  return turnCount % 4 === 0; // Every 4th turn
+}

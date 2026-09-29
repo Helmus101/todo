@@ -3769,6 +3769,9 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [consent, setConsent] = useState(false);
+  const [isChildAccount, setIsChildAccount] = useState(false);
+  const [birthYear, setBirthYear] = useState("");
+  const [parentalConsent, setParentalConsent] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   // The reset link's token lives in the URL's query string, which the app's own client-side router
@@ -3804,9 +3807,12 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
       return;
     }
     if (!email.trim() || !pw || (mode === "signup" && !consent)) return;
+    if (mode === "signup" && isChildAccount && (!birthYear || !parentalConsent)) return;
     setBusy(true); setErr("");
     try {
-      const r = mode === "signup" ? await api.signup(email.trim(), pw, consent) : await api.login(email.trim(), pw);
+      const r = mode === "signup" 
+        ? await api.signup(email.trim(), pw, consent, isChildAccount, birthYear ? parseInt(birthYear) : undefined, parentalConsent) 
+        : await api.login(email.trim(), pw);
       if (r.ok) onDone(mode === "signup"); else setErr(r.error || L("Une erreur est survenue.", "Something went wrong."));
     } catch {
       setErr(L("Impossible de contacter le serveur. Vérifie ta connexion et réessaie.", "Couldn't reach the server. Check your connection and try again."));
@@ -3857,10 +3863,29 @@ function LoginPage({ status, lang, onLangChange, onDone, initialMode }: { status
               {/* RGPD Art.8: under-15s need a parent to set the account up (see Privacy Policy) — a required,
                   recorded checkbox instead of the previous text-only claim with no actual signal captured. */}
               {mode === "signup" && (
-                <label className="field-check">
-                  <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-                  <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
-                </label>
+                <>
+                  <label className="field-check">
+                    <input type="checkbox" checked={isChildAccount} onChange={(e) => setIsChildAccount(e.target.checked)} />
+                    <span>{L("C'est un compte pour un enfant (moins de 15 ans)", "This is a child account (under 15)")}</span>
+                  </label>
+                  {isChildAccount && (
+                    <>
+                      <label className="field"><span>{L("Année de naissance", "Birth year")}</span>
+                        <input className="addinput" type="number" placeholder="2010" value={birthYear} onChange={(e) => setBirthYear(e.target.value)} />
+                      </label>
+                      <label className="field-check">
+                        <input type="checkbox" checked={parentalConsent} onChange={(e) => setParentalConsent(e.target.checked)} />
+                        <span>{L("En tant que parent, je consens à la création de ce compte.", "As a parent, I consent to this account creation.")}</span>
+                      </label>
+                    </>
+                  )}
+                  {!isChildAccount && (
+                    <label className="field-check">
+                      <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                      <span>{L("J'ai 15 ans ou plus, ou un parent a créé ce compte pour moi.", "I'm 15 or older, or a parent set this account up for me.")}</span>
+                    </label>
+                  )}
+                </>
               )}
               {err && <div className="autherr">{err}</div>}
               <button className="btn primary big" disabled={busy || (mode === "forgot" ? !email.trim() : mode === "reset" ? !pw : !email.trim() || !pw || (mode === "signup" && !consent))} onClick={() => void submit()}>
