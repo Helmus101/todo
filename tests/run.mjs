@@ -1,7 +1,7 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1273,6 +1273,66 @@ section("Study Mode: chat + Board always present, board write reliability (sourc
   // happens to occur to the model.
   check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
 }
+
+section("Board renders each entry ONCE (the duplicated render block is gone) + pinned focus");
+{
+  const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  // Reported live: the board-entries JSX existed TWICE in this file (a merge accident) — every entry the
+  // tutor wrote rendered twice. The dedupe-by-id inside each copy couldn't catch it: both copies matched
+  // the same entries. This pin counts the actual render sites so a future merge can't reintroduce it.
+  check("the board entries render block appears exactly once", (boardSrc.match(/flowEntries\.map\(/g) || []).length === 1);
+  check("the old duplicated inline filter/render block is really gone", (boardSrc.match(/deduplicate by id to prevent duplicates/g) || []).length === 0);
+  // Problems never had the id-dedupe the entries block always had — a double-responded turn stacked the
+  // same problem twice in the board's unified problem list.
+  check("problems are deduped by id before rendering, same as entries", /dedupedProblems\.map\(/.test(boardSrc) && /arr\.findIndex\(x => x\.id === p\.id\) === i/.test(boardSrc));
+  // Dual coding / document structure: kind:"focus" is the lesson's heading — pinned at the top as a
+  // header strip, excluded from the flowing entries, latest wins if a session ever writes a second one.
+  check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-pin/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
+  check("the latest focus wins when more than one exists", /latestFocus/.test(boardSrc));
+}
+
+section("isDuplicateBoardEntry — content-level duplicate prevention for board writes (server/claude.ts)");
+{
+  // UUIDs make by-id dedupe useless for CONTENT duplicates: every write gets a fresh id, so a re-written
+  // formula sailed through and stacked a second visual copy. Comparison is on normalized text + kind.
+  const onBoard = makeBoardEntry({ text: "F = ma", kind: "formula" }).entry;
+  check("an identical re-write is caught", isDuplicateBoardEntry([onBoard], { text: "F = ma", kind: "formula" }));
+  check("markdown emphasis/fences are formatting, not content — still caught", isDuplicateBoardEntry([makeBoardEntry({ text: "goading = needling someone" }).entry], { text: "- **goading** = needling someone" }));
+  check("a code-fenced ASCII block matches its unfenced twin", isDuplicateBoardEntry([makeBoardEntry({ text: "1789 ──▶ 1792" }).entry], { text: "```\n1789 ──▶ 1792\n```" }));
+  check("whitespace/indentation differences are still caught", isDuplicateBoardEntry([onBoard], { text: "  F =   ma  " }));
+  check("case differences are still caught", isDuplicateBoardEntry([onBoard], { text: "f = MA" }));
+  check("a kindless re-write matches a kinded entry (kindless ≡ note — the model is inconsistent about kinds)", isDuplicateBoardEntry([onBoard], { text: "F = ma" }));
+  check("genuinely different text is NOT a duplicate (no fuzzy matching)", !isDuplicateBoardEntry([onBoard], { text: "a = F/m" }));
+  check("same text under a different kind is NOT a duplicate", !isDuplicateBoardEntry([onBoard], { text: "F = ma", kind: "insight" }));
+  check("an empty/whitespace write never counts as a duplicate", !isDuplicateBoardEntry([onBoard], { text: "   " }));
+
+  const claudeSrc3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // Exactly 2 call-syntax occurrences: the export signature + the single call site in WRITE_TO_BOARD's
+  // branch. DRAW_ON_BOARD is deliberately NOT gated — redrawing a whole figure with additions is the
+  // tool's documented contract. (A third site, or zero, means someone moved or duplicated the gate.)
+  const gateCount = (claudeSrc3.match(/isDuplicateBoardEntry\(/g) || []).length; // export + call site
+  check("the duplicate gate lives ONLY on WRITE_TO_BOARD (DRAW_ON_BOARD redraws are legitimate)", gateCount === 2);
+  check("WRITE_TO_BOARD checks BOTH the live board and this turn's earlier writes", /isDuplicateBoardEntry\(\[\.\.\.\(opts\?\.currentBoard \|\| \[\]\), \.\.\.result\.board\], input\)/.test(claudeSrc3));
+  check("a caught duplicate returns adaptive guidance, not an error", /DUPLICATE: that exact entry is already on the board/.test(claudeSrc3));
+  check("the prompt tells the model to look before writing", /BEFORE YOU WRITE, LOOK\./.test(claudeSrc3));
+  // Completion effect (Sweller): a worked example ending in a gap beats a fully worked one — the student
+  // does the last step, which is where the learning happens.
+  check("worked examples end in a completion gap, not a finished line", /completion effect/.test(claudeSrc3) && /= \?/.test(claudeSrc3));
+}
+
+section("Voice-mode board rules — gesture research, not dictation (prompt pins)");
+{
+  // Yeo/Alibali 2017: pointing at SYMBOLIC notation while talking hurt learning; figures didn't. The old
+  // rule demanded a formula write for EVERY spoken intermediate line — symbolic dictation, the exact
+  // anti-pattern. The rewrite keeps the real requirement (speech can't show notation) but writes once.
+  const claudeSrc4 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("voice mode: the working expression is written ONCE as the canonical reference", /write the expression the student is actively working with ONCE/.test(claudeSrc4));
+  check("voice mode: no transcribing every intermediate spoken line", /do NOT transcribe every intermediate spoken line/.test(claudeSrc4));
+  check("voice mode: diagrams/arrows/structure preferred over bare symbol strings", /eyes-on-figure \(not eyes-on-equation\)/.test(claudeSrc4));
+  check("the old transcribe-every-intermediate-line rule is gone", !/This applies to every intermediate line/.test(claudeSrc4));
+  check("the student-can't-see-notation requirement itself is preserved", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(claudeSrc4));
+}
+
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
   const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
@@ -1377,7 +1437,9 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   check("resumes (returns the list unchanged) when an active freestudy task already exists and fresh wasn't requested", /const active = list\.find\(\(t\) => t\.source === "freestudy" && !isHandled\(t\.status\)\);/.test(body) && /if \(active\) \{ res\.json\(list\); return; \}/.test(body));
   check("fresh:true still forces the old dismiss-and-mint-new behavior", /const fresh = req\.body\?\.fresh === true;/.test(body));
   const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
-  check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean\)/.test(apiSrc));
+  // (fresh?: boolean — optional, so a passive call sends no fresh flag; the route later grew a subject
+  // param alongside it, which this pin deliberately doesn't pin so it stays signature-shape-agnostic.)
+  check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean/.test(apiSrc));
   const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
@@ -1397,6 +1459,20 @@ section("Tutor Session — voice-first by default, and the board survives ending
   // diagram/equation structure; the real board is now saved too and reopenable.
   check("ending a session saves the FULL board (diagrams/equations intact), not just flattened text", /board: task\.board \|\| \[\]/.test(tutorSrc));
   check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
+  // One-tap hands-free: starting OR resuming a session is the tap — the mic turns on with the session and
+  // stays on (AskOttoPanel's ref-gate applies it once and never fights a deliberate toggle-off).
+  check("starting (or resuming) a session turns voice on — one tap, then hands-free", /setWantVoice\(true\)/.test(tutorSrc) && /startInVoiceMode=\{wantVoice\}/.test(tutorSrc));
+  // The voice state pill lives on the BOARD pane header: in a voice-first session the student's eyes are
+  // on the board, so "am I being heard?" has to be answerable where they're actually looking.
+  check("voice state is reported up and shown on the board pane", /onVoiceStateChange/.test(tutorSrc) && /tutor-voice-pill/.test(tutorSrc));
+  check("voice mode shifts the layout board-primary", /voice-primary/.test(tutorSrc));
+  const tutorStyles = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("voice-primary grid actually exists in CSS (not a dead class)", /\.tutor-session\.voice-primary \{ grid-template-columns/.test(tutorStyles));
+  // Barge-in: talking over Otto cancels the TTS mid-sentence, like interrupting a human tutor. Threshold
+  // is 2+ words so speaker echo / a throat-clear doesn't cut him off.
+  const askOttoSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("barge-in: ≥2-word utterance while Otto speaks cancels the speech", /bargeIn && speakingRef\.current && text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2/.test(askOttoSrc));
+  check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));
 }
 
 section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote connect URL");

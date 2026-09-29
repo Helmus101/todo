@@ -2337,15 +2337,12 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   const en = req.session.profile?.language === "en";
   
   if (!fresh) {
-    // If subject specified, look for active session for that subject
-    if (subject) {
-      const activeForSubject = list.find((t) => t.source === "freestudy" && !isHandled(t.status) && t.sourceSubject === subject);
-      if (activeForSubject) { res.json(list); return; }
-    } else {
-      // No subject specified, return all active sessions
-      const hasActive = list.some((t) => t.source === "freestudy" && !isHandled(t.status));
-      if (hasActive) { res.json(list); return; }
-    }
+    // Resume-first: ANY active freestudy session resumes, regardless of subject — the subject stamp is a
+    // label on the session, never a reason to hide an active one from a passive mount (see the route's
+    // header comment; a remount is just as often a route re-render or a StrictMode double-invoke as an
+    // explicit "new session" request).
+    const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
+    if (active) { res.json(list); return; }
   }
   
   // Fresh mode: only dismiss sessions for the specified subject, or all if no subject

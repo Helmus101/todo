@@ -94,6 +94,15 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
   const problems = task.problems || [];
+  // Content-level dedupe on RENDER (by id): sync merges (tasks.ts's unionStudyArtifacts) and a
+  // double-responded turn can hand back an array containing the same entry/problem twice. Entries ALSO
+  // drop kind:"focus" (pinned above as the board's header strip — a lesson page leads with its goal, not
+  // burying it at the bottom of the flow) and kind:"problem" (problems render in their own blocks below).
+  const dedupedProblems = problems.filter((p, i, arr) => arr.findIndex(x => x.id === p.id) === i);
+  const latestFocus = [...entries].reverse().find((e) => e.kind === "focus");
+  const flowEntries = entries
+    .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
+    .filter(e => e.kind !== "focus");
   const [showHint, setShowHint] = useState<{ [key: string]: boolean }>({});
   const [problemState, setProblemState] = useState<{ [key: string]: { picked: number | null; textAnswer: string; submitted: boolean } }>({});
   const [singleQuestionMode, setSingleQuestionMode] = useState(false);
@@ -295,11 +304,18 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
         </div>
       )}
 
-      {/* Show board entries - deduplicate by id to prevent duplicates, and filter out problems */}
-      {entries
-        .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-        .filter(e => e.kind !== "problem")
-        .map((e) => (
+      {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
+          a lesson page: the day's arc stays visible no matter how long the entry flow below grows. The
+          latest focus wins if a session ever writes a second one. */}
+      {latestFocus ? (
+        <div className="sm-board-focus-pin">
+          <span className="sm-board-entry-kind">{L(...KIND_LABEL.focus)}</span>
+          <div className="sm-board-focus-text">{renderChatText(latestFocus.text)}</div>
+        </div>
+      ) : null}
+
+      {/* Board entries — deduped, focus pinned above, problems in their own blocks below */}
+      {flowEntries.map((e) => (
         <div key={e.id} className={`sm-board-entry sm-board-entry-${e.kind || "note"}`}>
           {e.kind && KIND_LABEL[e.kind] ? (
             <span className="sm-board-entry-kind">{L(...KIND_LABEL[e.kind])}</span>
@@ -323,7 +339,7 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
       ))}
 
       {/* Show all problems when not in single-question mode */}
-      {!singleQuestionMode && problems.length > 0 && problems.map((problem) => {
+      {!singleQuestionMode && problems.length > 0 && dedupedProblems.map((problem) => {
         const state = getProblemState(problem.id);
         const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
         const isCorrect = problemIsMCQ ? state.picked === problem.correct : state.submitted ? checkFreeResponse(problem.id) : false;
@@ -406,32 +422,6 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
         );
       })}
 
-      {/* Show board entries - deduplicate by id to prevent duplicates, and filter out problems */}
-      {entries
-        .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
-        .filter(e => e.kind !== "problem")
-        .map((e) => (
-        <div key={e.id} className={`sm-board-entry sm-board-entry-${e.kind || "note"}`}>
-          {e.kind && KIND_LABEL[e.kind] ? (
-            <span className="sm-board-entry-kind">{L(...KIND_LABEL[e.kind])}</span>
-          ) : null}
-          {e.kind === "diagram" && e.diagram?.length ? (
-            <>
-              <div className="sm-board-entry-text sm-board-diagram-caption">{stripStrayMarkdown(e.text)}</div>
-              <svg viewBox="0 0 800 600" className="sm-board-diagram" preserveAspectRatio="xMidYMid meet">
-                <defs>
-                  <marker id="sm-diagram-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-                    <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
-                  </marker>
-                </defs>
-                {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} />)}
-              </svg>
-            </>
-          ) : (
-            <div className="sm-board-entry-text">{renderChatText(e.text)}</div>
-          )}
-        </div>
-      ))}
       <div ref={endRef} />
     </div>
   );

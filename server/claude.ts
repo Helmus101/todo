@@ -1927,6 +1927,32 @@ export function makeBoardEntry(input: any): { entry: BoardEntry } | { error: str
   return { entry: { id: randomUUID(), text, ...(kind ? { kind } : {}), at: new Date().toISOString() } };
 }
 
+/** True when an incoming board write is content-identical to an entry ALREADY on the board — the visual
+ *  duplicate problem. UUIDs make the client's by-id dedupe useless here (every write gets a fresh id, so a
+ *  re-written formula sails through and stacks a second visual copy), so comparison has to be on CONTENT:
+ *  normalized text (trim, collapse whitespace, lowercase, strip the code fences/markdown emphasis/bullets
+ *  the prompt says entries are built from — those are formatting, not content) plus a kind guard. Normalized
+ *  comparison is deliberately EXACT — no fuzzy/prefix matching, which would eat genuinely different entries
+ *  ("F = ma" vs "a = F/m" share a word set but are different board content). A TYPED incoming kind must
+ *  match the existing entry's kind, so quoting "F = ma" as a deliberate kind:"insight" beside the formula
+ *  still works; an UNTYPED incoming write matches any kind — the model is inconsistent about kinds, and a
+ *  duplicate is a duplicate regardless of its label. Diagrams are handled by their caller (DRAW_ON_BOARD
+ *  explicitly redraws whole figures with additions, so a same-caption redraw is legitimate, not a
+ *  duplicate). Pure; unit-tested in tests/run.mjs. */
+export function isDuplicateBoardEntry(existing: BoardEntry[], incoming: { text?: unknown; kind?: unknown }): boolean {
+  const norm = (s: string) =>
+    s.toLowerCase()
+      .replace(/```[a-z]*|[`*]{1,3}|^\s*[-•]\s+/gm, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const kindOf = (k: unknown) => (typeof k === "string" && BOARD_KINDS.has(k) ? k : "note");
+  const raw = typeof incoming?.text === "string" ? incoming.text : "";
+  if (!norm(raw)) return false; // empty/whitespace never counts as a duplicate
+  const inKind = typeof incoming?.kind === "string" && BOARD_KINDS.has(incoming.kind) ? incoming.kind : undefined;
+  const inText = norm(raw);
+  return existing.some((e) => (inKind === undefined || kindOf(e.kind) === inKind) && norm(e.text) === inText);
+}
+
 const MAX_DIAGRAM_OPS = 15;
 const clampCoord = (n: unknown, lo: number, hi: number): number => Math.max(lo, Math.min(hi, Number.isFinite(Number(n)) ? Number(n) : 0));
 const clampX = (n: unknown) => clampCoord(n, 0, 800);
@@ -6002,10 +6028,14 @@ export async function chatAboutTask(
         `THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION. Speech has no way to show "2/(x-1)" — ` +
         `it comes out as "two over x minus one", and that spoken form is ALL the student gets unless you also ` +
         `write it. So the moment you say a real expression, equation, or formula out loud (not just a plain ` +
-        `number), call WRITE_TO_BOARD with kind:"formula" for the exact symbolic form THAT SAME TURN — never ` +
-        `describe notation in speech and leave it unwritten. This applies to every intermediate line, not ` +
-        `just the final result: if you talk through combining 2/(x-1) and 3/(x+2) into one fraction, the board ` +
-        `should show that step too, not just the answer.\n\n`
+        `number), the student needs its symbolic form on the board THAT SAME TURN — never describe notation ` +
+        `in speech and leave it unwritten. BUT in voice mode the board follows gesture research, not ` +
+        `dictation: write the expression the student is actively working with ONCE, as the canonical ` +
+        `reference they can glance at — do NOT transcribe every intermediate spoken line (each re-write of ` +
+        `the same work in symbolic form measurably hurts learning — the split-attention effect); add another ` +
+        `line only when the student asks to see that step. Prefer DRAW_ON_BOARD for anything spatial or ` +
+        `geometric — in voice mode especially, favor diagrams, arrows and structure over bare symbol strings, ` +
+        `because eyes-on-figure (not eyes-on-equation) is what helps while listening.\n\n`
       : "") +
     (opts?.canvasMode
       ? `CANVAS MODE — ONE PROBLEM AT A TIME: the student turned on a focused problem-solving canvas instead ` +
@@ -6321,6 +6351,10 @@ export async function chatAboutTask(
     `entries to the board; you MUST NEVER remove, clear, or wipe out existing items or artifacts from the ` +
     `student's board or canvas. Don't narrate that you're writing it ("let me note that down") — just call the tool; ` +
     `the board itself is the visible part.\n` +
+    `BEFORE YOU WRITE, LOOK. The board below already shows you what's on it — if the thing you're about to ` +
+    `write is already there (same formula, same definition, same summary), refer to it in chat and write ` +
+    `NOTHING. A re-write doesn't refresh the board, it stacks a second copy of the same entry and the ` +
+    `board stops being scannable. New information gets its own entry; existing information gets talked about.\n` +
     `WHAT GOES ON IT — ONE TEST. Would they otherwise have to hold this in their head, or scroll back through ` +
     `chat to find it? The given values and the goal, the formula in play, the cases you just split the problem ` +
     `into, a diagram, the sub-goal they're on, a key term's gloss, their own insight. Anything that fails that ` +
@@ -6373,8 +6407,11 @@ export async function chatAboutTask(
     `PUT THE EXERCISE UP, NOT JUST ITS ANSWER. Walking a parallel worked example: the problem as posed (setup ` +
     `+ given values) goes on the board FIRST, then chat handles the back-and-forth about it — so they look at ` +
     `it instead of scrolling for it. Worked structure like this helps most while a skill is new; as they get ` +
-    `it, fade it and let the board carry only what they still need. A problem for THEM to answer inline goes ` +
-    `through CREATE_PROBLEM (it has the answer-checking), not here.\n\n` +
+    `it, fade it and let the board carry only what they still need. When you write a worked example, leave ` +
+    `the FINAL step as a gap ("= ?") for them to complete themselves — a worked line ending in a blank beats ` +
+    `a fully finished one (the completion effect: doing the last step is where the learning happens), and ` +
+    `they'll answer it in chat anyway. A problem for THEM to answer inline goes through CREATE_PROBLEM (it ` +
+    `has the answer-checking), not here.\n\n` +
 
     `KEEP GETTING SMARTER ABOUT THEM: use "remember" whenever they mention something durable, worth knowing ` +
     `next time — a recurring struggle with a specific topic, a professor's grading quirk or class pattern ` +
@@ -6695,6 +6732,12 @@ export async function chatAboutTask(
           // anytime". A generous per-turn cap of its own still applies, just to stop a genuinely broken
           // response from spamming dozens of entries in one turn.
           if (result.board.length >= 5) content = "LIMIT: you've already written several entries this message — that's enough for one turn.";
+          // Content-level duplicate check — the client can only dedupe by id,
+          // and every write gets a fresh UUID, so a re-written formula previously stacked a second visual
+          // copy. Checked against BOTH what the student already sees (opts.currentBoard, delivered live
+          // every turn) and what this same turn already wrote (result.board) — returning the guidance as
+          // the tool result lets the model adapt mid-turn instead of burning the write.
+          else if (isDuplicateBoardEntry([...(opts?.currentBoard || []), ...result.board], input)) content = "DUPLICATE: that exact entry is already on the board — refer to it in your reply instead of writing it again.";
           else { const r = makeBoardEntry(input); if ("error" in r) content = r.error; else { result.board.push(r.entry); content = JSON.stringify({ ok: true, id: r.entry.id }); logAudit("artifact", fr ? `Écrit au tableau : « ${r.entry.text.slice(0, 60)} »` : `Written to board: "${r.entry.text.slice(0, 60)}"`); } }
         } else if (name === "DRAW_ON_BOARD") {
           // Its own smaller cap, separate from WRITE_TO_BOARD's — a figure is heavier to render (SVG, not

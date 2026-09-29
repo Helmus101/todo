@@ -6345,6 +6345,28 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .tutor-start p { margin: 0; font-size: 1.1rem; }
 @media (max-width: 800px) { .tutor-session { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; height: auto; min-height: calc(100vh - 64px); } }
 
+/* ── Tutor Session: voice-first additions ─────────────────────────────────────
+   Research (gesture + dual-coding): in a spoken lesson the student's eyes belong on the visual surface —
+   figures and structure help while listening; nobody re-reads a chat transcript mid-sentence. So voice
+   mode shifts the pane balance toward the board, highlights it, and reports mic state where they look. */
+.tutor-session.voice-primary { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+.tutor-session.voice-primary .tutor-board { border-color: var(--accent); }
+.tutor-session .tutor-pane-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tutor-voice-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.tutor-voice-pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ink-2); opacity: .5; }
+.tutor-voice-pill.listening { color: var(--accent); }
+.tutor-voice-pill.listening::before { background: var(--accent); opacity: 1; animation: tutor-voice-pulse 1.4s ease-in-out infinite; }
+.tutor-voice-pill.speaking { color: var(--accent); }
+.tutor-voice-pill.speaking::before { background: var(--accent); opacity: .5; }
+@keyframes tutor-voice-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+.tutor-voice-interim { font-weight: 400; font-style: italic; color: var(--ink-2); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* BoardArtifact: the pinned day's focus (kind:"focus") — the board reads as a lesson page with a heading,
+   not a scroll of fragments; the goal stays visible no matter how long the entry flow below grows. */
+.sm-board-focus-pin { margin: 4px 4px 10px; padding: 10px 12px; border: 1px solid var(--accent); border-left-width: 3px; border-radius: var(--radius); background: var(--accent-soft); }
+.sm-board-focus-pin .sm-board-entry-kind { color: var(--accent); }
+.sm-board-focus-text { margin-top: 2px; }
+
 /* Tutor landing (no active session): calm, evidence-informed entry point. */
 .tutor-landing { display: flex; align-items: center; justify-content: center; padding: 32px 20px; }
 .tutor-landing-inner { max-width: 680px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 18px; }

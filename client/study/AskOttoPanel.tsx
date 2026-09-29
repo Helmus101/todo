@@ -25,8 +25,20 @@ interface AskOttoPanelProps {
   /** Tutor Session only — a spoken lesson is the whole premise of that surface (unlike a normal per-task
    *  chat, which is text-first with voice as an opt-in extra), so it starts the session already listening
    *  instead of making the student find and tap the mic toggle themselves. Applied once, on mount, via the
-   *  SAME toggle a manual tap would use — never forces it back on if the student explicitly turns it off. */
+   *  SAME toggle a manual tap would use — never forces it back on if the student explicitly turns it off.
+   *  Requested, not guaranteed: browsers with no SpeechRecognition (Firefox) stay text-first — voiceModeOn
+   *  is never force-enabled where there's no microphone support at all. */
   startInVoiceMode?: boolean;
+  /** Tutor Session only — reports the voice loop's state upward ({@link TutorSession}) so the BOARD pane
+   *  (not just the chat's mic button) can show Listening…/Speaking…/Voice on. In a voice-first session the
+   *  student's eyes are on the board, not the chat input — the state indicator has to live where they look. */
+  onVoiceStateChange?: (state: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => void;
+  /** Tutor Session only — barge-in: while Otto is speaking, an interim recognition transcript of at least
+   *  this many words cancels the speech immediately so the student can interrupt mid-sentence, exactly like
+   *  talking over a human tutor. Two words, not one: a single word ("okay", "yes") is too easy to
+   *  false-trigger from speaker echo or a throat-clear; two real words is intent. Kept local to Tutor
+   *  Session — the per-task chat in TaskCard.tsx keeps its pause-and-resume behavior. */
+  bargeIn?: boolean;
 }
 
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
@@ -37,7 +49,7 @@ interface AskOttoPanelProps {
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, startInVoiceMode,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, startInVoiceMode, onVoiceStateChange, bargeIn,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -51,8 +63,12 @@ export function AskOttoPanel({
   // Applied once — a ref (not state) so it can never re-fire and fight a student who deliberately turns
   // voice mode back off mid-session.
   const autoVoiceAppliedRef = useRef(false);
+  const recogSupportedRef = useRef(false);
   useEffect(() => {
-    if (startInVoiceMode && !voiceModeOn && !autoVoiceAppliedRef.current) {
+    // Only flip the pref when SpeechRecognition actually exists here — force-enabling voice mode on
+    // Firefox (no recognition support; VoiceControls hides itself) would leave the student in a state
+    // where Otto speaks but can never hear them, with no mic button to turn it off with.
+    if (startInVoiceMode && !voiceModeOn && !autoVoiceAppliedRef.current && recogSupportedRef.current) {
       autoVoiceAppliedRef.current = true;
       toggleVoiceMode();
     }
@@ -63,7 +79,29 @@ export function AskOttoPanel({
   // previous message is still in flight rather than firing a second send on top of it.
   const sendingRef = useRef(sending);
   sendingRef.current = sending;
-  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => { if (!sendingRef.current) onSend(text, true); } });
+  // Barge-in ref — recognition's onResult needs the CURRENT speaking state, and useSpeechRecognition's
+  // options object is captured at hook-setup time, so a plain closure over synth.speaking would go stale.
+  const speakingRef = useRef(false);
+  speakingRef.current = synth.speaking;
+  const recog = useSpeechRecognition({
+    lang: speechLang,
+    onResult: (text) => {
+      if (sendingRef.current) return;
+      // Barge-in (Tutor Session): a real utterance ≥2 words while Otto is talking cancels the TTS
+      // immediately instead of waiting for the utterance to finish and send — talking over the tutor
+      // should stop the tutor. The send itself still waits for the final result, as usual.
+      if (bargeIn && speakingRef.current && text.trim().split(/\s+/).length >= 2) synth.cancel();
+      onSend(text, true);
+    },
+  });
+  // Assigned only AFTER recog exists — the mount-time autoVoice effect above reads this ref (it must never
+  // touch recog directly: recog is declared below that effect, so a direct use would be a TDZ crash).
+  recogSupportedRef.current = recog.supported;
+  // Report voice-loop state upward (board-pane pill in Tutor Session) on every change. Fired from an
+  // effect, not inline in render, so a parent setState during this child's render never happens.
+  useEffect(() => {
+    onVoiceStateChange?.({ listening: recog.listening, speaking: synth.speaking, voiceModeOn, interim: recog.interimTranscript });
+  }, [recog.listening, synth.speaking, voiceModeOn, recog.interimTranscript, onVoiceStateChange]);
   // The problem currently active — the most recently created one (CREATE_PROBLEM appends to
   // task.problems in order, so the last entry is always the active/most-recent problem; Otto's own prompt
   // instructions keep working THIS one until it's actually solved before making a new one, so "most recent" 

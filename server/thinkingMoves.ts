@@ -142,7 +142,7 @@ export function getAgeAppropriateMoves(ageBand: string): string[] {
         "reflect",
       ];
     default:
-      return THINKING_MOVES as string[];
+      return [...THINKING_MOVES];
   }
 }
 
