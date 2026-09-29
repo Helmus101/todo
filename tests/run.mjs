@@ -1362,6 +1362,43 @@ section("Locale-aware date formatting — fmtDate/relTime/fmtWhen/fmtDay take th
   check("fmtDay takes an optional L and never calls toLocaleDateString(undefined, ...)", /function fmtDay\(iso: string, L\?/.test(appSrc) && !/toLocaleDateString\(undefined/.test(appSrc));
 }
 
+section("/api/study/free — resumes an active freestudy session by default, only 'fresh' forces a new one (source pin)");
+{
+  // Reported live: navigating away from /tutor and back (or React 18 StrictMode's deliberate double-invoke
+  // of mount effects in dev) silently discarded whatever the student was mid-conversation on, because this
+  // route used to UNCONDITIONALLY dismiss any existing freestudy task and mint a fresh one on every single
+  // call — a passive remount looked identical to "the student wants a clean slate." Also the likely source
+  // of a live 404: a stale client closure sending a chat message to a task id that had just been silently
+  // dismissed out from under it. Fixed to find-or-resume by default; `fresh: true` (StandaloneStudyEntry's
+  // explicit "Enter study mode" click, which SHOULD always start clean) keeps the old unconditional behavior.
+  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const start = src.indexOf('app.post("/api/study/free"');
+  const body = src.slice(start, src.indexOf("}));", start) + 4);
+  check("resumes (returns the list unchanged) when an active freestudy task already exists and fresh wasn't requested", /const active = list\.find\(\(t\) => t\.source === "freestudy" && !isHandled\(t\.status\)\);/.test(body) && /if \(active\) \{ res\.json\(list\); return; \}/.test(body));
+  check("fresh:true still forces the old dismiss-and-mint-new behavior", /const fresh = req\.body\?\.fresh === true;/.test(body));
+  const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
+  check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean\)/.test(apiSrc));
+  const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  check("Tutor Session's passive loadTask() does NOT force fresh (so a remount resumes, never discards)", /api\.studyFreeSession\(\)\.then/.test(tutorSrc) && !/api\.studyFreeSession\(true\)/.test(tutorSrc));
+}
+
+section("Tutor Session — voice-first by default, and the board survives ending a session (source pins)");
+{
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  // Direct request: "make chat really for oral usage" — the Tutor's whole premise is a spoken lesson
+  // (unlike a per-task chat, where voice is an opt-in extra), so it starts already listening.
+  check("Tutor Session starts in voice mode automatically", /startInVoiceMode/.test(tutorSrc));
+  const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("startInVoiceMode is applied exactly once (a ref-gated effect, never fights a deliberate manual toggle-off)", /autoVoiceAppliedRef/.test(askOtto));
+  // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
+  // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
+  // diagram/equation structure; the real board is now saved too and reopenable.
+  check("ending a session saves the FULL board (diagrams/equations intact), not just flattened text", /board: task\.board \|\| \[\]/.test(tutorSrc));
+  check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
+}
+
 section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote connect URL");
 {
   // A student can type ANY url as their school's Pronote address, and connectPronote makes a real outbound

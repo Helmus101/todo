@@ -2267,20 +2267,30 @@ app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 60_000), ah(a
   } catch (e: any) { res.status(500).json({ error: e?.message || M(req, "Impossible de créer le résumé du mois — réessaie.", "Couldn't build the month summary — try again.") }); }
 }));
 
-// A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) is built
-// around a WebTask (chat/notes/artifacts all key off task.id server-side), so a session not tied to any
-// real to-do still needs a lightweight placeholder task to attach to. Client only calls this once, when
-// "Enter study mode" is actually clicked on the /study landing page (see StandaloneStudyEntry in App.tsx) —
-// never on every render — so this call IS the session boundary. A FRESH task is minted every time rather
-// than resuming the last one: any previous unhandled freestudy task is dismissed here, taking its chat
-// (task.chat lives on the task itself) with it, so one free session's conversation never bleeds into the
-// next. (StudyMode's own client-side environment/artifacts, in IndexedDB keyed by the old task's id, are
-// simply orphaned — same as any other completed task's leftover StudyDB entry, nothing new to clean up.)
-// No AI call, no refine pass, no quadrant weight — this is intentionally NOT a real to-do, just a peg for
-// StudyMode's own persistence for the DURATION of one session.
+// A "just let me start studying" entry point — the full StudyMode workspace (StudyMode.tsx) and the /tutor
+// Tutor Session (client/tutor/TutorSession.tsx) are both built around a WebTask (chat/notes/artifacts all
+// key off task.id server-side), so a session not tied to any real to-do still needs a lightweight
+// placeholder task to attach to. No AI call, no refine pass, no quadrant weight — this is intentionally NOT
+// a real to-do, just a peg for persistence for the DURATION of one session.
+//
+// RESUME (default): find-or-create — if an active (not done/dismissed) freestudy task already exists,
+// return the list UNCHANGED. This is what Tutor Session's loadTask() calls on every mount, since a mount
+// isn't necessarily "the student wants a fresh session" — it's just as often a route remount, a background
+// re-render, or (in dev) React 18 StrictMode's deliberate double-invoke of effects. Before this, EVERY call
+// unconditionally dismissed the existing session and minted a new one — so simply navigating away from
+// /tutor and back (or a StrictMode double-mount) silently discarded whatever the student was mid-conversation
+// on, replacing it with a blank one; reported live as the tutor "losing" sessions and (when a stale client
+// closure kept sending to the now-dismissed task's id) a 404 from /api/tasks/:id/chat. Passing `fresh: true`
+// keeps the OLD unconditional behavior for a caller that explicitly wants a clean slate (StandaloneStudyEntry
+// in App.tsx, "Enter study mode" — a genuinely fresh workspace every time is the intended UX there).
 app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, res) => {
   const list = req.session.tasks || [];
   const now = new Date().toISOString();
+  const fresh = req.body?.fresh === true;
+  if (!fresh) {
+    const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
+    if (active) { res.json(list); return; }
+  }
   for (const old of list) {
     if (old.source === "freestudy" && !isHandled(old.status)) { old.status = "dismissed"; old.updatedAt = now; }
   }

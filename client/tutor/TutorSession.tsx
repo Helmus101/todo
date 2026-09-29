@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
 import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
-import { useLang } from "../ui.tsx";
+import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, pastSessionsLine, type TutorSessionSummary } from "./tutorSessions.ts";
@@ -28,6 +28,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
   const [pastSessions, setPastSessions] = useState<TutorSessionSummary[]>([]);
   const [endingSession, setEndingSession] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [openBoardSession, setOpenBoardSession] = useState<TutorSessionSummary | null>(null);
 
   useEffect(() => {
     setPastSessions(getTutorSessions(userId));
@@ -82,6 +83,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
         endTime: new Date().toISOString(),
         messageCount: (task.chat || []).filter((m) => m.role === "user").length,
         boardEntries: (task.board || []).map((b) => b.text.trim()).filter(Boolean),
+        board: task.board || [],
         summary,
       };
       saveTutorSession(sessionSummary, userId);
@@ -130,13 +132,21 @@ export function TutorSession({ userId }: { userId: string | null }) {
                   {pastSessions.map((s) => (
                     <li key={s.id} className="tutor-history-item">
                       <div className="tutor-history-date">
-                        {new Date(s.endTime).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        {new Date(s.endTime).toLocaleDateString(L("fr-FR", "en-US"), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                       </div>
                       <div className="tutor-history-summary">{s.summary}</div>
                       {s.boardEntries.length > 0 && (
                         <ul className="tutor-history-board">
                           {s.boardEntries.slice(0, 5).map((b, i) => <li key={i}>{b}</li>)}
                         </ul>
+                      )}
+                      {/* Full board (diagrams/equations, not just the flattened text preview above) — only
+                          present for a session ended after this was added; an older saved session has no
+                          `board` field to reopen. */}
+                      {!!s.board?.length && (
+                        <button type="button" className="btn ghost xs tutor-history-view-board" onClick={() => setOpenBoardSession(s)}>
+                          {L("Voir le tableau", "View board")}
+                        </button>
                       )}
                     </li>
                   ))}
@@ -145,6 +155,11 @@ export function TutorSession({ userId }: { userId: string | null }) {
             </div>
           )}
         </div>
+        {openBoardSession && (
+          <TaskModal onClose={() => setOpenBoardSession(null)} title={L("Le tableau", "Board")}>
+            <BoardArtifact task={{ board: openBoardSession.board } as unknown as WebTask} />
+          </TaskModal>
+        )}
       </main>
     );
   }
@@ -178,6 +193,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
             error={error} pendingMsg={pendingMsg} onSend={(o, v) => void send(o, v)}
             onOpenNote={noop} onOpenDeck={noop} onOpenQuiz={noop}
             emptyText="" placeholder={L("Écris ici…", "Type here…")}
+            startInVoiceMode
           />
         </div>
       </section>

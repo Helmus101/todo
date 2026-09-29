@@ -22,6 +22,11 @@ interface AskOttoPanelProps {
   /** Optional overrides (Tutor Session) for the empty-state line and input placeholder. */
   emptyText?: string;
   placeholder?: string;
+  /** Tutor Session only — a spoken lesson is the whole premise of that surface (unlike a normal per-task
+   *  chat, which is text-first with voice as an opt-in extra), so it starts the session already listening
+   *  instead of making the student find and tap the mic toggle themselves. Applied once, on mount, via the
+   *  SAME toggle a manual tap would use — never forces it back on if the student explicitly turns it off. */
+  startInVoiceMode?: boolean;
 }
 
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
@@ -32,7 +37,7 @@ interface AskOttoPanelProps {
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, startInVoiceMode,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -43,6 +48,16 @@ export function AskOttoPanel({
   const speechLang = en ? "en-US" : "fr-FR";
   const synth = useSpeechSynthesis(speechLang);
   const [voiceModeOn, toggleVoiceMode] = useVoiceModePref();
+  // Applied once — a ref (not state) so it can never re-fire and fight a student who deliberately turns
+  // voice mode back off mid-session.
+  const autoVoiceAppliedRef = useRef(false);
+  useEffect(() => {
+    if (startInVoiceMode && !voiceModeOn && !autoVoiceAppliedRef.current) {
+      autoVoiceAppliedRef.current = true;
+      toggleVoiceMode();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startInVoiceMode]);
   const L = useLang();
   // Fires per detected utterance while listening — ignore a stray recognition result that lands while a
   // previous message is still in flight rather than firing a second send on top of it.
@@ -194,7 +209,7 @@ export function AskOttoPanel({
           en={en}
         />
         <button className="sm-btn sm-btn-primary" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending || !input.trim()}>
-          Send
+          {L("Envoyer", "Send")}
         </button>
       </div>
     </div>

@@ -10,7 +10,13 @@ export interface TutorSessionSummary {
   startTime: string;   // ISO
   endTime: string;      // ISO
   messageCount: number;
-  boardEntries: string[];   // the text of each board entry (the running document of the session)
+  boardEntries: string[];   // flat text of each board entry — the compact recap line (pastSessionsLine)
+  // The FULL board (kind labels, diagrams, equations — everything BoardArtifact needs to actually re-render
+  // it), not just the flattened text above. Added so ending a session doesn't reduce a worked-through
+  // diagram or written-out equation down to a caption in a bullet list — the student can reopen the real
+  // board exactly as it looked when the session ended. Optional or absent for a session saved before this
+  // field existed (older localStorage entries) — history views must degrade to the text-only boardEntries.
+  board?: BoardEntry[];
   summary: string;          // a short auto-generated recap
 }
 

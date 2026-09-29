@@ -2036,7 +2036,7 @@ function StandaloneStudyEntry({ tasks, setTasks, status, notify, navigate }: {
   const studyTaskRef = useRef<WebTask | null>(null);
   const start = () => {
     setStarting(true);
-    void api.studyFreeSession().then((list) => {
+    void api.studyFreeSession(true).then((list) => {
       setTasks(list);
       const t = list.find((x) => x.source === "freestudy" && !isHandled(x.status));
       if (t) { studyTaskRef.current = t; setTaskId(t.id); }
