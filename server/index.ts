@@ -47,6 +47,7 @@ declare module "express-session" {
     orderingArmCache?: { key: string; armId: string };
     blackbaudOAuthState?: string; // CSRF nonce for the Blackbaud OAuth authorization-code flow — see server/blackbaud.ts
     primersessionStart?: number; // Timestamp for Primer session cap enforcement
+    primerlastActivity?: number; // Timestamp of last activity for resume window
   }
 }
 
@@ -1386,11 +1387,19 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   // Primer session cap enforcement (Phase 1.5)
   const profile = req.session.profile;
   const sessionCap = profile?.primerSettings?.sessionCapMinutes || 60; // Default 60min for adults
+  const RESUME_WINDOW_MINUTES = 60; // Allow resume within 1 hour
   const now = Date.now();
   const sessionStart = req.session.primersessionStart || now;
   const sessionMinutes = (now - sessionStart) / (60 * 1000);
+  const lastActivity = req.session.primerlastActivity || sessionStart;
+  const minutesSinceLastActivity = (now - lastActivity) / (60 * 1000);
   
-  if (sessionMinutes >= sessionCap) {
+  // If within resume window, reset session start time to allow continuation
+  if (minutesSinceLastActivity < RESUME_WINDOW_MINUTES && sessionMinutes >= sessionCap) {
+    req.session.primersessionStart = now;
+    req.session.primerlastActivity = now;
+  } else if (sessionMinutes >= sessionCap) {
+    // Only block if outside resume window
     res.status(403).json({ 
       error: M(req, 
         `Session limit reached (${sessionCap} minutes). Take a break!`,
@@ -1405,6 +1414,9 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   if (!req.session.primersessionStart) {
     req.session.primersessionStart = now;
   }
+  
+  // Update last activity time
+  req.session.primerlastActivity = now;
   
   const message = String(req.body?.message || "").trim().slice(0, 2000);
   if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }

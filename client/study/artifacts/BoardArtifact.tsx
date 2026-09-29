@@ -295,8 +295,11 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
         </div>
       )}
 
-      {/* Show board entries - deduplicate by id to prevent duplicates */}
-      {entries.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i).map((e) => (
+      {/* Show board entries - deduplicate by id to prevent duplicates, and filter out problems */}
+      {entries
+        .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
+        .filter(e => e.kind !== "problem")
+        .map((e) => (
         <div key={e.id} className={`sm-board-entry sm-board-entry-${e.kind || "note"}`}>
           {e.kind && KIND_LABEL[e.kind] ? (
             <span className="sm-board-entry-kind">{L(...KIND_LABEL[e.kind])}</span>
@@ -403,8 +406,11 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
         );
       })}
 
-      {/* Show board entries - deduplicate by id to prevent duplicates */}
-      {entries.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i).map((e) => (
+      {/* Show board entries - deduplicate by id to prevent duplicates, and filter out problems */}
+      {entries
+        .filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i)
+        .filter(e => e.kind !== "problem")
+        .map((e) => (
         <div key={e.id} className={`sm-board-entry sm-board-entry-${e.kind || "note"}`}>
           {e.kind && KIND_LABEL[e.kind] ? (
             <span className="sm-board-entry-kind">{L(...KIND_LABEL[e.kind])}</span>
