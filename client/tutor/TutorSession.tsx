@@ -64,9 +64,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
     }
   }, [userId, selectedSubject]);
 
-  // Check if there's an existing session for the selected subject
-  const [hasExistingSession, setHasExistingSession] = useState(false);
-
+  // Auto-resume if there's an existing session for the selected subject
   useEffect(() => {
     if (selectedSubject) {
       api.studyFreeSession(false, selectedSubject).then((list) => {
@@ -76,12 +74,32 @@ export function TutorSession({ userId }: { userId: string | null }) {
           x.status !== "done" &&
           x.sourceSubject === selectedSubject
         ) : undefined;
-        setHasExistingSession(!!existing);
-      }).catch(() => setHasExistingSession(false));
-    } else {
-      setHasExistingSession(false);
+        // Auto-resume if there's an existing session
+        if (existing && !task) {
+          setTask(hydrateLocalThreads([existing], userId)[0]);
+          setSessionStart(new Date().toISOString());
+        }
+      }).catch(() => {});
     }
-  }, [selectedSubject]);
+  }, [selectedSubject, task, userId]); // Re-check when task changes (session ended/started)
+
+  // Auto-end session after 1 hour
+  useEffect(() => {
+    if (!sessionStart || !task) return;
+
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - new Date(sessionStart).getTime();
+      if (elapsed >= 60 * 60 * 1000) { // 1 hour
+        // Directly dismiss and clear state without calling endSession to avoid circular dependency
+        try { api.dismiss(task.id); } catch { /* best-effort */ }
+        setTask(null);
+        setSessionStart(null);
+        setShowHistory(true);
+      }
+    }, 60 * 1000); // Check every minute
+
+    return () => clearInterval(timer);
+  }, [sessionStart, task]);
 
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
     const message = (override ?? input).trim();
@@ -124,7 +142,6 @@ export function TutorSession({ userId }: { userId: string | null }) {
       try { await api.dismiss(task.id); } catch { /* best-effort */ }
       setTask(null);
       setSessionStart(null);
-      setHasExistingSession(false);
       setShowHistory(true);
     } finally {
       setEndingSession(false);
@@ -133,36 +150,16 @@ export function TutorSession({ userId }: { userId: string | null }) {
 
   const startNewSession = useCallback(async () => {
     // Always create a fresh session - never auto-resume
+    setHasExistingSession(false); // Clear immediately to prevent race condition
     try {
       const list = await api.studyFreeSession(true, selectedSubject || undefined);
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy") : undefined;
       if (t) {
         setTask(hydrateLocalThreads([t], userId)[0]);
         setSessionStart(new Date().toISOString());
-        setHasExistingSession(false); // No longer an existing session, it's now active
       }
     } catch (e) {
       setError(L("Impossible de démarrer la séance", "Couldn't start the session"));
-    }
-  }, [selectedSubject, userId, L]);
-
-  const resumeSession = useCallback(async () => {
-    // Resume existing session
-    try {
-      const list = await api.studyFreeSession(false, selectedSubject || undefined);
-      const t = Array.isArray(list) ? list.find((x) => 
-        x.source === "freestudy" && 
-        x.status !== "dismissed" && 
-        x.status !== "done" &&
-        x.sourceSubject === selectedSubject
-      ) : undefined;
-      if (t) {
-        setTask(hydrateLocalThreads([t], userId)[0]);
-        setSessionStart(new Date().toISOString());
-        setHasExistingSession(false); // No longer an existing session, it's now active
-      }
-    } catch (e) {
-      setError(L("Impossible de reprendre la séance", "Couldn't resume the session"));
     }
   }, [selectedSubject, userId, L]);
 
@@ -199,16 +196,12 @@ export function TutorSession({ userId }: { userId: string | null }) {
             </select>
           </div>
           
-          {/* Show session or start/resume button based on state */}
+          {/* Show session or start button based on state */}
           {selectedSubject && (
             task ? (
               <div className="tutor-active-session-note">
                 {L("Séance en cours", "Session in progress")}
               </div>
-            ) : hasExistingSession ? (
-              <button className="btn primary tutor-start-btn" onClick={resumeSession}>
-                {L("Reprendre la séance", "Resume session")}
-              </button>
             ) : (
               <button className="btn primary tutor-start-btn" onClick={startNewSession}>
                 {L("Commencer une séance", "Start a session")}
