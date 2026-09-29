@@ -131,7 +131,10 @@ const CSP = [
   // re-doing the isolation the sandbox already provides. 'self'/blob: kept for the student's own uploaded
   // PDFs/images (same-page blob: URLs) and same-origin needs.
   "frame-src 'self' blob: https:",
-  "font-src 'self'",
+  // data: — PDF.js (pdfjs-dist) embeds subsetted fonts as data: URIs when rendering PDFs in Study Mode;
+  // without this, every rendered PDF page silently drops its text glyphs (CSP blocks the data: font before
+  // it ever loads, no console error a student would notice — just "the PDF text looks wrong").
+  "font-src 'self' data:",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
