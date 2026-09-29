@@ -4,7 +4,7 @@
 // outage) are kept, and the temp project's tasks accumulated during the outage are unioned in on top,
 // using the EXACT SAME merge logic the app itself uses for cross-device sync (mergeTaskLists/
 // mergeProfileStates, server/tasks.ts) so this can't silently diverge from how the app would have merged
-// them itself. Never touches weave_web_users, google/pronote/plaid connections, or any other table — those
+// them itself. Never touches weave_web_users, google/pronote connections, or any other table — those
 // belong to whichever project you're actually keeping, not the throwaway temp one.
 //
 // Usage:
@@ -51,7 +51,7 @@ async function main() {
   console.log(`  found ${srcTasks.length} task(s) in the temp account.`);
 
   console.log(`Reading "${email}" from TARGET (real) project…`);
-  const { data: tgtRow, error: tgtErr } = await target.from(TABLE).select("profile,tasks,google,pronote,plaid").eq("email", email).maybeSingle();
+  const { data: tgtRow, error: tgtErr } = await target.from(TABLE).select("profile,tasks,google,pronote").eq("email", email).maybeSingle();
   if (tgtErr) { console.error("Target read failed:", tgtErr.message); process.exit(1); }
   const tgtTasks: WebTask[] = tgtRow && Array.isArray(tgtRow.tasks) ? tgtRow.tasks : [];
   const tgtProfile: Profile = tgtRow ? normalizeProfile(tgtRow.profile) : emptyProfile();
@@ -71,7 +71,7 @@ async function main() {
     return;
   }
 
-  // google/pronote/plaid are DELIBERATELY omitted from this write — the target row already has whatever
+  // google/pronote are DELIBERATELY omitted from this write — the target row already has whatever
   // connections it had before the outage (or none), and this migration has no business touching them. See
   // server/store.ts's saveState: omitting a key from the upsert payload leaves that column untouched.
   const row: Record<string, unknown> = { email, profile: mergedProfile, tasks: mergedTasks, updated_at: new Date().toISOString() };

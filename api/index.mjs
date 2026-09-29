@@ -36,18 +36,6 @@ function reportError(scope, err, extra) {
   } catch {
   }
 }
-function addBreadcrumb2(category, message, level = "info", data) {
-  if (!DSN || !initialized) return;
-  try {
-    Sentry.addBreadcrumb({
-      category,
-      message,
-      level,
-      data
-    });
-  } catch {
-  }
-}
 var DSN, initialized;
 var init_sentry = __esm({
   "server/sentry.ts"() {
@@ -939,10 +927,10 @@ async function loadState(email, opts) {
   if (!client || !email) return { profile: emptyProfile(), tasks: [] };
   const cached = opts?.bypassCache ? void 0 : stateCache.get(email);
   if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) return cached.state;
-  let { data, error } = await withRetry("load", async () => client.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud,studySessions,studyProfile").eq("email", email).maybeSingle());
+  let { data, error } = await withRetry("load", async () => client.from(TABLE).select("profile,tasks,google,pronote,blackbaud,studySessions,studyProfile").eq("email", email).maybeSingle());
   if (error && /column .*(studySessions|studyProfile).* does not exist/i.test(error.message || "")) {
     console.warn("[store] studySessions/studyProfile column missing \u2014 falling back to a narrower select. Run supabase.sql against this database to fix properly.");
-    const retry = await withRetry("load-narrow", async () => client.from(TABLE).select("profile,tasks,google,pronote,plaid,blackbaud").eq("email", email).maybeSingle());
+    const retry = await withRetry("load-narrow", async () => client.from(TABLE).select("profile,tasks,google,pronote,blackbaud").eq("email", email).maybeSingle());
     data = retry.data;
     error = retry.error;
   }
@@ -954,9 +942,8 @@ async function loadState(email, opts) {
   const d = data;
   const google = d?.google && d.google.tokens ? d.google : void 0;
   const pronote2 = d?.pronote && d.pronote.token ? { ...d.pronote, token: decryptSecret(d.pronote.token), ...d.pronote.password ? { password: decryptSecret(d.pronote.password) } : {} } : void 0;
-  const plaid = d?.plaid && d.plaid.accessToken ? { ...d.plaid, accessToken: decryptSecret(d.plaid.accessToken) } : void 0;
   const blackbaud = d?.blackbaud && d.blackbaud.accessToken ? { ...d.blackbaud, accessToken: decryptSecret(d.blackbaud.accessToken) } : void 0;
-  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote: pronote2, plaid, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
+  const result = { profile: normalizeProfile(d?.profile), tasks: Array.isArray(d?.tasks) ? d.tasks : [], google, pronote: pronote2, blackbaud, studySessions: d?.studySessions, studyProfile: d?.studyProfile };
   cacheSetState(email, result);
   return result;
 }
@@ -965,9 +952,6 @@ function connectionColumnUpdates(state) {
   if (state.google !== void 0) out.google = state.google === null ? null : state.google;
   if (state.pronote !== void 0) {
     out.pronote = state.pronote === null ? null : { ...state.pronote, token: encryptSecret(state.pronote.token), ...state.pronote.password ? { password: encryptSecret(state.pronote.password) } : {} };
-  }
-  if (state.plaid !== void 0) {
-    out.plaid = state.plaid === null ? null : { ...state.plaid, accessToken: encryptSecret(state.plaid.accessToken) };
   }
   if (state.blackbaud !== void 0) {
     out.blackbaud = state.blackbaud === null ? null : { ...state.blackbaud, accessToken: encryptSecret(state.blackbaud.accessToken) };
@@ -1662,129 +1646,6 @@ var init_bandit = __esm({
   }
 });
 
-// server/circuit-breaker.ts
-function getAllCircuitBreakerStates() {
-  return {
-    ai: circuitBreakers.ai.getState(),
-    composio: circuitBreakers.composio.getState(),
-    supabase: circuitBreakers.supabase.getState()
-  };
-}
-var CircuitBreaker, circuitBreakers;
-var init_circuit_breaker = __esm({
-  "server/circuit-breaker.ts"() {
-    "use strict";
-    CircuitBreaker = class {
-      constructor(config, name) {
-        this.config = config;
-        this.name = name;
-      }
-      config;
-      name;
-      state = {
-        state: "CLOSED",
-        failureCount: 0,
-        lastFailureTime: null,
-        lastSuccessTime: null,
-        nextAttemptTime: null
-      };
-      shouldAllowRequest() {
-        const now = Date.now();
-        switch (this.state.state) {
-          case "CLOSED":
-            return true;
-          case "OPEN":
-            if (this.state.nextAttemptTime && now >= this.state.nextAttemptTime) {
-              this.state.state = "HALF_OPEN";
-              this.state.nextAttemptTime = null;
-              console.log(`[circuit-breaker] ${this.name}: OPEN \u2192 HALF_OPEN`);
-              return true;
-            }
-            return false;
-          case "HALF_OPEN":
-            return true;
-        }
-      }
-      recordSuccess() {
-        this.state.failureCount = 0;
-        this.state.lastSuccessTime = Date.now();
-        if (this.state.state === "HALF_OPEN") {
-          this.state.state = "CLOSED";
-          console.log(`[circuit-breaker] ${this.name}: HALF_OPEN \u2192 CLOSED`);
-        }
-      }
-      recordFailure() {
-        this.state.failureCount++;
-        this.state.lastFailureTime = Date.now();
-        if (this.state.failureCount >= this.config.failureThreshold) {
-          this.state.state = "OPEN";
-          this.state.nextAttemptTime = Date.now() + this.config.timeoutMs;
-          console.error(`[circuit-breaker] ${this.name}: CLOSED/HALF_OPEN \u2192 OPEN (failures: ${this.state.failureCount})`);
-        }
-      }
-      /**
-       * Execute a function through the circuit breaker
-       * Returns CircuitBreakerResult with success/failure status
-       */
-      async execute(fn) {
-        if (!this.shouldAllowRequest()) {
-          return {
-            success: false,
-            error: new Error(`Circuit breaker OPEN for ${this.name}`),
-            reason: "circuit-open"
-          };
-        }
-        try {
-          const data = await fn();
-          this.recordSuccess();
-          return { success: true, data };
-        } catch (error) {
-          this.recordFailure();
-          return {
-            success: false,
-            error: error instanceof Error ? error : new Error(String(error)),
-            reason: "call-failed"
-          };
-        }
-      }
-      /**
-       * Get current circuit breaker state for monitoring
-       */
-      getState() {
-        return { ...this.state };
-      }
-      /**
-       * Manually reset the circuit breaker to CLOSED state
-       * Useful for testing or manual recovery
-       */
-      reset() {
-        this.state = {
-          state: "CLOSED",
-          failureCount: 0,
-          lastFailureTime: null,
-          lastSuccessTime: null,
-          nextAttemptTime: null
-        };
-        console.log(`[circuit-breaker] ${this.name}: manually reset to CLOSED`);
-      }
-    };
-    circuitBreakers = {
-      ai: new CircuitBreaker(
-        { failureThreshold: 5, timeoutMs: 6e4, resetTimeoutMs: 3e4 },
-        "ai-provider"
-      ),
-      composio: new CircuitBreaker(
-        { failureThreshold: 8, timeoutMs: 12e4, resetTimeoutMs: 6e4 },
-        "composio"
-      ),
-      supabase: new CircuitBreaker(
-        { failureThreshold: 10, timeoutMs: 3e4, resetTimeoutMs: 15e3 },
-        "supabase"
-      )
-    };
-  }
-});
-
 // server/integrations.ts
 import { Composio } from "@composio/core";
 function integrationsReady() {
@@ -1860,20 +1721,13 @@ async function initiateConnection(app2, userId, callbackUrl) {
 }
 async function getAllConnectionStatuses(userId, apps, connIdByApp = {}) {
   try {
-    const result = await circuitBreakers.composio.execute(async () => {
-      const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
-      const items = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
-      const toolkits = new Set(items.map(acctToolkit));
-      const ids = new Set(items.map(acctId));
-      const out = {};
-      for (const app2 of apps) out[app2] = toolkits.has(norm(TOOLKIT_OF(app2))) || !!connIdByApp[app2] && ids.has(connIdByApp[app2]);
-      return out;
-    });
-    if (!result.success) {
-      console.warn("[integrations] getAllConnectionStatuses circuit breaker blocked:", result.error.message);
-      return Object.fromEntries(apps.map((a) => [a, false]));
-    }
-    return result.data;
+    const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
+    const items = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+    const toolkits = new Set(items.map(acctToolkit));
+    const ids = new Set(items.map(acctId));
+    const out = {};
+    for (const app2 of apps) out[app2] = toolkits.has(norm(TOOLKIT_OF(app2))) || !!connIdByApp[app2] && ids.has(connIdByApp[app2]);
+    return out;
   } catch (e) {
     console.warn("[integrations] getAllConnectionStatuses error:", e?.message ?? e);
     return Object.fromEntries(apps.map((a) => [a, false]));
@@ -1895,17 +1749,10 @@ async function resolveAccountEmail(userId, app2, accountId) {
 async function rawConnectedAccounts(userId) {
   const hit = acctListCache.get(userId);
   if (hit && Date.now() - hit.at < 3e4) return hit.items;
-  const result = await circuitBreakers.composio.execute(async () => {
-    const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
-    const items = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
-    return items;
-  });
-  if (!result.success) {
-    console.warn("[integrations] rawConnectedAccounts circuit breaker blocked:", result.error.message);
-    return [];
-  }
-  acctListCache.set(userId, { at: Date.now(), items: result.data });
-  return result.data;
+  const list = await sdk().connectedAccounts.list({ userIds: [userId], limit: 200 });
+  const items = (list?.items ?? (Array.isArray(list) ? list : [])).filter(isActive);
+  acctListCache.set(userId, { at: Date.now(), items });
+  return items;
 }
 async function getConnectedAccounts(userId, app2, resolveEmails = false) {
   try {
@@ -2474,7 +2321,6 @@ var CATALOG, TOOLKIT_OF, norm, MULTI_APPS, SOURCE_TOOLKIT, MULTI_ACCOUNT_APPS, l
 var init_integrations = __esm({
   "server/integrations.ts"() {
     "use strict";
-    init_circuit_breaker();
     CATALOG = [
       // Google — connected through Composio (read + write), one tile per service.
       { key: "gmail", name: "Gmail", toolkit: "GMAIL", category: "Google", blurb: "Read mail; draft replies. (sending stays your call)" },
@@ -2596,6 +2442,8 @@ var init_integrations = __esm({
 
 // server/pronote.ts
 import { randomUUID } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import * as pronote from "@blockshub/pawnote-lts";
 function withPronoteTimeout(label, p) {
   return Promise.race([
@@ -2632,6 +2480,44 @@ function normalizePronoteUrl(url2, kind) {
   const page = kind === pronote.AccountKind.PARENT ? "parent.html" : "eleve.html";
   return /\/pronote$/i.test(trimmed) ? `${trimmed}/${page}` : `${trimmed}/pronote/${page}`;
 }
+function ipv4ToInt(ip) {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return (parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3]) >>> 0;
+}
+function isPrivateOrReservedIp(ip) {
+  if (isIP(ip) === 4) {
+    const n = ipv4ToInt(ip);
+    return n === null || PRIVATE_IPV4_RANGES.some(([lo, hi]) => n >= lo && n <= hi);
+  }
+  if (isIP(ip) === 6) {
+    const lower = ip.toLowerCase();
+    return lower === "::1" || lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("::ffff:") && isPrivateOrReservedIp(lower.slice(7));
+  }
+  return true;
+}
+async function assertSafeExternalUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("URL invalide.");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("URL invalide \u2014 seuls http(s) sont accept\xE9s.");
+  const host = parsed.hostname;
+  if (host === "localhost" || host.endsWith(".localhost")) throw new Error("Cette adresse n'est pas autoris\xE9e.");
+  if (isIP(host)) {
+    if (isPrivateOrReservedIp(host)) throw new Error("Cette adresse n'est pas autoris\xE9e.");
+    return;
+  }
+  let addresses;
+  try {
+    addresses = await dnsLookup(host, { all: true });
+  } catch {
+    throw new Error("Impossible de r\xE9soudre cette adresse.");
+  }
+  if (!addresses.length || addresses.some((a) => isPrivateOrReservedIp(a.address))) throw new Error("Cette adresse n'est pas autoris\xE9e.");
+}
 async function connectPronote(email, opts) {
   if (!credentialEncryptionConfigured()) {
     return { ok: false, error: "Pronote n'est pas disponible pour le moment \u2014 ce serveur n'est pas encore configur\xE9 pour stocker les identifiants scolaires en toute s\xE9curit\xE9. R\xE9essaie plus tard ou contacte le support." };
@@ -2640,6 +2526,11 @@ async function connectPronote(email, opts) {
   if (!rawUrl || !username || !opts.password) return { ok: false, error: "L'URL, l'identifiant et le mot de passe sont requis." };
   const kind = opts.kind === pronote.AccountKind.PARENT ? pronote.AccountKind.PARENT : pronote.AccountKind.STUDENT;
   const url2 = normalizePronoteUrl(rawUrl, kind);
+  try {
+    await assertSafeExternalUrl(url2);
+  } catch (e) {
+    return { ok: false, error: e?.message || "URL invalide." };
+  }
   const deviceUUID = randomUUID();
   return withPronoteLock(email, async () => {
     try {
@@ -2854,7 +2745,7 @@ async function pronoteGrades(email) {
   });
   return out || [];
 }
-var PRONOTE_TIMEOUT_MS, LEGACY_MOCK_URL, pronoteLocks, TOUCH_MIN_GAP_MS, TEST_DAYS_AHEAD;
+var PRONOTE_TIMEOUT_MS, LEGACY_MOCK_URL, pronoteLocks, PRIVATE_IPV4_RANGES, TOUCH_MIN_GAP_MS, TEST_DAYS_AHEAD;
 var init_pronote = __esm({
   "server/pronote.ts"() {
     "use strict";
@@ -2865,158 +2756,24 @@ var init_pronote = __esm({
     PRONOTE_TIMEOUT_MS = 2e4;
     LEGACY_MOCK_URL = "mock://demo";
     pronoteLocks = /* @__PURE__ */ new Map();
+    PRIVATE_IPV4_RANGES = [
+      [0, 16777215],
+      // 0.0.0.0/8
+      [167772160, 184549375],
+      // 10.0.0.0/8
+      [2130706432, 2147483647],
+      // 127.0.0.0/8 (loopback)
+      [2851995648, 2852061183],
+      // 169.254.0.0/16 (link-local, incl. cloud metadata 169.254.169.254)
+      [2886729728, 2887778303],
+      // 172.16.0.0/12
+      [3232235520, 3232301055],
+      // 192.168.0.0/16
+      [3221225472, 3221225727]
+      // 192.0.0.0/24 (IETF protocol assignments, incl. some cloud metadata setups)
+    ];
     TOUCH_MIN_GAP_MS = 2 * 60 * 60 * 1e3;
     TEST_DAYS_AHEAD = 28;
-  }
-});
-
-// server/plaid.ts
-import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
-import { createHash as createHash2 } from "node:crypto";
-function plaidUserId(email) {
-  return createHash2("sha256").update(email.toLowerCase()).digest("hex");
-}
-function plaidConfigured() {
-  return !!(PLAID_CLIENT_ID && PLAID_SECRET) || MOCK_ENABLED;
-}
-function mockSnapshot() {
-  const daysAgo = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
-  return {
-    accounts: [{ id: "mock-checking", name: "Compte courant (d\xE9mo)", type: "checking", balance: 412.5 }],
-    transactions: [
-      { id: "mock-tx-1", name: "Netflix", amount: 13.49, date: daysAgo(32), pending: false },
-      { id: "mock-tx-2", name: "Netflix", amount: 13.49, date: daysAgo(2), pending: false },
-      { id: "mock-tx-3", name: "Spotify", amount: 10.99, date: daysAgo(29), pending: false },
-      { id: "mock-tx-4", name: "Spotify", amount: 10.99, date: daysAgo(1), pending: false },
-      { id: "mock-tx-5", name: "Librairie Gibert", amount: 24.9, date: daysAgo(6), pending: false }
-      // one-off, no pattern
-    ]
-  };
-}
-async function connectMock(email) {
-  if (!MOCK_ENABLED) return { ok: false, error: "Demo mode isn't enabled on this server." };
-  const state = await loadState(email);
-  const plaid = { accessToken: MOCK_ACCESS_TOKEN, itemId: "mock-item", institutionName: "Banque D\xE9mo", connectedAt: (/* @__PURE__ */ new Date()).toISOString() };
-  await saveState(email, { ...state, plaid });
-  return { ok: true };
-}
-function client2() {
-  if (cachedClient) return cachedClient;
-  if (!plaidConfigured()) throw new Error("Set PLAID_CLIENT_ID and PLAID_SECRET in web/.env.");
-  const configuration = new Configuration({
-    basePath: PlaidEnvironments[PLAID_ENV],
-    baseOptions: { headers: { "PLAID-CLIENT-ID": PLAID_CLIENT_ID, "PLAID-SECRET": PLAID_SECRET } }
-  });
-  cachedClient = new PlaidApi(configuration);
-  return cachedClient;
-}
-async function plaidConnected(email) {
-  const { plaid } = await loadState(email);
-  return plaid ? { connected: true, institutionName: plaid.institutionName } : { connected: false };
-}
-async function createLinkToken(email) {
-  try {
-    const res = await client2().linkTokenCreate({
-      user: { client_user_id: plaidUserId(email) },
-      client_name: "Otto",
-      products: [Products.Transactions],
-      // US only — a fresh Plaid developer account (sandbox included) only has US enabled by default; FR/EU
-      // country access has to be explicitly requested from Plaid and isn't granted automatically just by
-      // being in sandbox mode. Requesting a country the account isn't approved for is exactly what Plaid's
-      // API rejects with a plain 400 (INVALID_REQUEST / COUNTRY_NOT_SUPPORTED) — which surfaced client-side
-      // as an unhelpful generic "Request failed with status code 400" before this was caught and unwrapped
-      // below. Sandbox's fake test institutions (e.g. "Platypus Bank") are US-based anyway, so this doesn't
-      // lose anything for testing — see the file-level comment on why FR/EU isn't targeted yet regardless.
-      country_codes: [CountryCode.Us],
-      language: "en"
-    });
-    return { linkToken: res.data.link_token };
-  } catch (e) {
-    const detail = e?.response?.data?.error_message || e?.response?.data?.error_code;
-    throw new Error(detail || e?.message || "Couldn't start the Plaid connection.");
-  }
-}
-async function exchangePublicToken(email, publicToken) {
-  if (!credentialEncryptionConfigured()) {
-    return { ok: false, error: "Bank connections aren't available right now \u2014 this server isn't yet configured to store financial credentials securely. Try again later or contact support." };
-  }
-  try {
-    const exch = await client2().itemPublicTokenExchange({ public_token: publicToken });
-    const accessToken = exch.data.access_token;
-    const itemId = exch.data.item_id;
-    let institutionName;
-    try {
-      const item = await client2().itemGet({ access_token: accessToken });
-      if (item.data.item.institution_id) {
-        const inst = await client2().institutionsGetById({ institution_id: item.data.item.institution_id, country_codes: [CountryCode.Us] });
-        institutionName = inst.data.institution.name;
-      }
-    } catch {
-    }
-    const state = await loadState(email);
-    const plaid = { accessToken, itemId, institutionName, connectedAt: (/* @__PURE__ */ new Date()).toISOString() };
-    await saveState(email, { ...state, plaid });
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e?.response?.data?.error_message || e?.message || "Couldn't connect that account." };
-  }
-}
-async function disconnectPlaid(email) {
-  const state = await loadState(email);
-  if (state.plaid && state.plaid.accessToken !== MOCK_ACCESS_TOKEN) {
-    try {
-      await client2().itemRemove({ access_token: state.plaid.accessToken });
-    } catch {
-    }
-  }
-  await saveState(email, { ...state, plaid: null });
-}
-async function plaidSnapshot(email) {
-  const { plaid } = await loadState(email);
-  if (!plaid) return { accounts: [], transactions: [] };
-  if (plaid.accessToken === MOCK_ACCESS_TOKEN) return mockSnapshot();
-  try {
-    const accountsRes = await client2().accountsGet({ access_token: plaid.accessToken });
-    const accounts = accountsRes.data.accounts.map((a) => ({
-      id: a.account_id,
-      name: a.name,
-      type: a.subtype || a.type,
-      balance: a.balances.current ?? null
-    }));
-    const end = /* @__PURE__ */ new Date(), start = new Date(end.getTime() - 30 * 864e5);
-    const txRes = await client2().transactionsGet({
-      access_token: plaid.accessToken,
-      start_date: start.toISOString().slice(0, 10),
-      end_date: end.toISOString().slice(0, 10),
-      options: { count: 50 }
-    });
-    const transactions = txRes.data.transactions.map((t) => ({
-      id: t.transaction_id,
-      name: t.name,
-      amount: t.amount,
-      date: t.date,
-      pending: t.pending
-    }));
-    return { accounts, transactions };
-  } catch (e) {
-    console.warn("[plaid] snapshot failed:", e?.response?.data?.error_message || e?.message);
-    reportError("plaid-snapshot", e);
-    return { accounts: [], transactions: [] };
-  }
-}
-var PLAID_CLIENT_ID, PLAID_SECRET, PLAID_ENV, MOCK_ENABLED, MOCK_ACCESS_TOKEN, cachedClient;
-var init_plaid = __esm({
-  "server/plaid.ts"() {
-    "use strict";
-    init_store();
-    init_sentry();
-    init_crypto();
-    PLAID_CLIENT_ID = process.env.PLAID_CLIENT_ID;
-    PLAID_SECRET = process.env.PLAID_SECRET;
-    PLAID_ENV = "sandbox";
-    MOCK_ENABLED = process.env.PLAID_MOCK === "1";
-    MOCK_ACCESS_TOKEN = "mock-access-token";
-    cachedClient = null;
   }
 });
 
@@ -3025,7 +2782,7 @@ function realCredentialsConfigured() {
   return !!(SUBSCRIPTION_KEY && CLIENT_ID && CLIENT_SECRET);
 }
 function blackbaudConfigured() {
-  return MOCK_ENABLED2 || realCredentialsConfigured();
+  return MOCK_ENABLED || realCredentialsConfigured();
 }
 function blackbaudRealAuthAvailable() {
   return realCredentialsConfigured();
@@ -3070,7 +2827,7 @@ async function exchangeCode(email, code) {
 }
 async function ensureFreshToken(email) {
   const { blackbaud } = await loadState(email);
-  if (!blackbaud || blackbaud.accessToken === MOCK_ACCESS_TOKEN2) return null;
+  if (!blackbaud || blackbaud.accessToken === MOCK_ACCESS_TOKEN) return null;
   const SAFETY_MARGIN_MS = 6e4;
   if (blackbaud.expiresAt && blackbaud.expiresAt - SAFETY_MARGIN_MS > Date.now()) return blackbaud.accessToken;
   if (!blackbaud.refreshToken) return null;
@@ -3090,10 +2847,10 @@ async function ensureFreshToken(email) {
     return null;
   }
 }
-async function connectMock2(email) {
-  if (!MOCK_ENABLED2) return { ok: false, error: "Demo mode isn't enabled on this server." };
+async function connectMock(email) {
+  if (!MOCK_ENABLED) return { ok: false, error: "Demo mode isn't enabled on this server." };
   const state = await loadState(email);
-  const blackbaud = { accessToken: MOCK_ACCESS_TOKEN2, schoolName: "Lyc\xE9e D\xE9mo", connectedAt: (/* @__PURE__ */ new Date()).toISOString() };
+  const blackbaud = { accessToken: MOCK_ACCESS_TOKEN, schoolName: "Lyc\xE9e D\xE9mo", connectedAt: (/* @__PURE__ */ new Date()).toISOString() };
   await saveState(email, { ...state, blackbaud });
   return { ok: true };
 }
@@ -3111,7 +2868,7 @@ function mockAssignments() {
 async function blackbaudAssignments(email) {
   const { blackbaud } = await loadState(email);
   if (!blackbaud) return [];
-  if (blackbaud.accessToken === MOCK_ACCESS_TOKEN2) return mockAssignments();
+  if (blackbaud.accessToken === MOCK_ACCESS_TOKEN) return mockAssignments();
   const token = await ensureFreshToken(email);
   if (!token) return [];
   try {
@@ -3136,13 +2893,13 @@ async function blackbaudAssignments(email) {
     return [];
   }
 }
-var MOCK_ENABLED2, MOCK_ACCESS_TOKEN2, SUBSCRIPTION_KEY, CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, AUTHORIZE_URL, TOKEN_URL, API_BASE;
+var MOCK_ENABLED, MOCK_ACCESS_TOKEN, SUBSCRIPTION_KEY, CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, AUTHORIZE_URL, TOKEN_URL, API_BASE;
 var init_blackbaud = __esm({
   "server/blackbaud.ts"() {
     "use strict";
     init_store();
-    MOCK_ENABLED2 = process.env.BLACKBAUD_MOCK === "1";
-    MOCK_ACCESS_TOKEN2 = "mock-access-token";
+    MOCK_ENABLED = process.env.BLACKBAUD_MOCK === "1";
+    MOCK_ACCESS_TOKEN = "mock-access-token";
     SUBSCRIPTION_KEY = process.env.BLACKBAUD_SUBSCRIPTION_KEY;
     CLIENT_ID = process.env.BLACKBAUD_CLIENT_ID;
     CLIENT_SECRET = process.env.BLACKBAUD_CLIENT_SECRET;
@@ -3256,92 +3013,6 @@ function blackbaudToItems(items) {
     subject: a.subject
   }));
 }
-function normalizeMerchant(name) {
-  return name.toLowerCase().replace(/[0-9]/g, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
-}
-function plaidToItems(transactions) {
-  const byMerchant = /* @__PURE__ */ new Map();
-  for (const t of transactions) {
-    if (t.pending || t.amount <= 0) continue;
-    const key2 = normalizeMerchant(t.name);
-    if (!key2) continue;
-    const g = byMerchant.get(key2) || { name: t.name, amount: t.amount, dates: [] };
-    g.dates.push(t.date);
-    byMerchant.set(key2, g);
-  }
-  const now = Date.now();
-  const items = [];
-  for (const [key2, g] of byMerchant) {
-    if (g.dates.length < 2) continue;
-    const sorted = [...g.dates].sort();
-    const gaps = [];
-    for (let i = 1; i < sorted.length; i++) gaps.push((Date.parse(sorted[i]) - Date.parse(sorted[i - 1])) / 864e5);
-    const avgGapDays = gaps.reduce((s, x) => s + x, 0) / gaps.length;
-    const lastSeen = Date.parse(sorted[sorted.length - 1]);
-    const nextDue = new Date(lastSeen + avgGapDays * 864e5);
-    const daysUntilDue = (nextDue.getTime() - now) / 864e5;
-    if (daysUntilDue < -1 || daysUntilDue > 7) continue;
-    items.push({
-      sourceApp: "plaid",
-      externalId: key2,
-      anchorKey: `plaid:${key2}`,
-      title: `Review recurring payment: ${g.name}`.slice(0, 140),
-      snippet: `Recurring charge of ~${g.amount.toFixed(2)} seen ${g.dates.length} times, roughly every ${Math.round(avgGapDays)} days \u2014 review it before the next expected charge around ${nextDue.toISOString().slice(0, 10)}. Otto never initiates payments.`,
-      timestamp: nextDue.toISOString(),
-      labels: ["bill"]
-    });
-  }
-  return items;
-}
-function plaidSuspiciousToItems(transactions) {
-  const real = transactions.filter((t) => !t.pending && t.amount > 0);
-  if (!real.length) return [];
-  const amounts = [...real.map((t) => t.amount)].sort((a, b) => a - b);
-  const median = amounts[Math.floor(amounts.length / 2)];
-  const largeThreshold = Math.max(SUSPICIOUS_MIN_AMOUNT, median * 4);
-  const items = [];
-  const seenLarge = /* @__PURE__ */ new Set();
-  for (const t of real) {
-    if (t.amount < largeThreshold) continue;
-    seenLarge.add(t.id);
-    items.push({
-      sourceApp: "plaid",
-      externalId: t.id,
-      anchorKey: `plaid-alert:${t.id}`,
-      title: `Review bank charge: ${t.name}`.slice(0, 140),
-      snippet: `Unusually large charge \u2014 ${t.amount.toFixed(2)}, well above your typical ${median.toFixed(2)} \u2014 review whether this was expected. Otto never disputes or reverses charges.`,
-      timestamp: t.date,
-      labels: ["suspicious"]
-    });
-  }
-  const byPair = /* @__PURE__ */ new Map();
-  for (const t of real) {
-    const key2 = `${normalizeMerchant(t.name)}::${t.amount.toFixed(2)}`;
-    const g = byPair.get(key2) || { name: t.name, amount: t.amount, entries: [] };
-    g.entries.push({ id: t.id, date: t.date });
-    byPair.set(key2, g);
-  }
-  for (const [, g] of byPair) {
-    if (g.entries.length < 2) continue;
-    const sorted = [...g.entries].sort((a, b) => a.date.localeCompare(b.date));
-    for (let i = 1; i < sorted.length; i++) {
-      const gapDays = (Date.parse(sorted[i].date) - Date.parse(sorted[i - 1].date)) / 864e5;
-      if (gapDays > 3) continue;
-      const dupeId = sorted[i].id;
-      if (seenLarge.has(dupeId)) continue;
-      items.push({
-        sourceApp: "plaid",
-        externalId: dupeId,
-        anchorKey: `plaid-alert:${dupeId}`,
-        title: `Check ${g.name}`.slice(0, 140),
-        snippet: `Possible duplicate charge \u2014 ${g.amount.toFixed(2)} charged twice within ${Math.round(gapDays)} day${Math.round(gapDays) === 1 ? "" : "s"} \u2014 worth confirming it wasn't billed twice by mistake.`,
-        timestamp: sorted[i].date,
-        labels: ["suspicious"]
-      });
-    }
-  }
-  return items;
-}
 function hasAssignmentText(snippet) {
   const s = String(snippet || "").trim();
   if (s.length < 12) return false;
@@ -3376,7 +3047,7 @@ async function discoverSourceItems(userEmail) {
       return [{}];
     }
   };
-  const [gmailAccounts, calAccounts, pronoteOn, plaidOn, blackbaudOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), FINANCE_ENABLED ? plaidConnected(userEmail) : Promise.resolve({ connected: false }), blackbaudConnected(userEmail)]);
+  const [gmailAccounts, calAccounts, pronoteOn, blackbaudOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), blackbaudConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social",
@@ -3422,21 +3093,9 @@ async function discoverSourceItems(userEmail) {
         return mergePronoteHomeworkAndTests(pronoteToItems(homework), pronoteTestsToItems(tests));
       })
     ] : [],
-    // Plaid (/finance, if connected) — the "additional proactive source" ask: recurring bills detected from
-    // real transaction history become the SAME kind of candidate a Pronote assignment or a calendar event
-    // is, running through the identical classify/quality-bar/dedupe pipeline below.
-    ...plaidOn.connected ? [
-      // One snapshot fetch, fed to both detectors — recurring bills AND suspicious/duplicate charges are
-      // both read off the exact same transaction list, no reason to hit Plaid twice for it.
-      grab(async () => {
-        const { transactions } = await plaidSnapshot(userEmail);
-        return [...plaidToItems(transactions), ...plaidSuspiciousToItems(transactions)];
-      })
-    ] : [],
     // Blackbaud (school assignments) — MOCK-ONLY right now, see server/blackbaud.ts's file-level comment.
     // `connected` can only ever be true for a demo/mock connection today, so this is effectively a no-op
-    // for every real account until real SKY API access exists — left ungated here (unlike Plaid's
-    // FINANCE_ENABLED) since blackbaudConnected() itself already can't return true outside mock mode.
+    // for every real account until real SKY API access exists.
     ...blackbaudOn.connected ? [
       grab(async () => blackbaudToItems(await blackbaudAssignments(userEmail)))
     ] : []
@@ -3463,21 +3122,18 @@ function filterCandidates(items, knownAnchors) {
   const known = new Set(knownAnchors.map(normKey).filter(Boolean));
   return items.filter((it) => !isNoise(it) && !known.has(normKey(it.anchorKey)));
 }
-var NOISE_SENDER, NOISE_SUBJECT, ACTIONABLE_AUTOMATED, OTTO_SELF_EMAIL_SUBJECT, normKey, SUSPICIOUS_MIN_AMOUNT, FINANCE_ENABLED;
+var NOISE_SENDER, NOISE_SUBJECT, ACTIONABLE_AUTOMATED, OTTO_SELF_EMAIL_SUBJECT, normKey;
 var init_discover = __esm({
   "server/discover.ts"() {
     "use strict";
     init_integrations();
     init_pronote();
-    init_plaid();
     init_blackbaud();
     NOISE_SENDER = /no-?reply|donotreply|newsletter|marketing|updates?@|news@|mailer@|bounce/i;
     NOISE_SUBJECT = /unsubscribe|newsletter|weekly digest|daily digest|security alert|verify(ing)? your (email|account|identity)|verif(y|ication) code|confirm(ing)? your (email|account)|email confirmation|one-?time (code|password|pin)|\botp\b|sign-?in code|login code|\b2fa\b|two-factor|authentication code/i;
     ACTIONABLE_AUTOMATED = /renew(s|al|ing|ed)?\b|price (increase|change|goes up|rises|will (jump|rise))|trial (ends|ending|expires)|about to (charge|renew)|return (by|window|deadline|policy)|exchange (by|window)|final (day|days|chance) to return|check-?in (opens|available|window)|boarding pass|subscription/i;
     OTTO_SELF_EMAIL_SUBJECT = /^otto\s*[—-]\s*(nouvelle t[âa]che|\d+\s*nouvelles t[âa]ches)/i;
     normKey = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "_");
-    SUSPICIOUS_MIN_AMOUNT = 50;
-    FINANCE_ENABLED = false;
   }
 });
 
@@ -4564,11 +4220,11 @@ Sweep across all of them for everything genuinely awaiting me that is NOT alread
   let lazyRejected = false;
   try {
     for (let i = 0; i < MAX; i++) {
-      const client3 = deepseekClient();
+      const client2 = deepseekClient();
       const lastRoundHint = i === MAX - 1 ? "You must call submit_tasks now with the full actionable list. Do not answer with prose." : "";
       const base = trimOldToolResults(messages);
       const apiMessages = lastRoundHint ? [...base, { role: "user", content: lastRoundHint }] : base;
-      const res = await retryRequest(() => client3.chat.completions.create({
+      const res = await retryRequest(() => client2.chat.completions.create({
         model: actualModel,
         max_tokens: OUT.generate,
         messages: [
@@ -4629,8 +4285,8 @@ Sweep across all of them for everything genuinely awaiting me that is NOT alread
       }
     }
     try {
-      const client3 = deepseekClient();
-      const res = await retryRequest(() => client3.chat.completions.create({
+      const client2 = deepseekClient();
+      const res = await retryRequest(() => client2.chat.completions.create({
         model: actualModel,
         max_tokens: OUT.generate,
         messages: [
@@ -4687,12 +4343,12 @@ ALSO CLASSIFY EACH TASK FOR THE 26-STAGE PIPELINE:
 - goal: concrete definition of done (1-2 sentences, measurable completion condition)
 - infoRequirement: "none"|"useful"|"required" \u2014 can this task proceed without external research?
 Answer with STRICT JSON only: {"tasks":[{"i":<candidate #>,"title":"specific imperative naming who+what, \u226411 words","why":"one clause naming the concrete trigger, \u226412 words","when":"the REAL deadline stated in or directly implied by the item \u2014 NEVER an invented one; '' if none","urgency":0..1,"importance":0..1,"risk":"low"|"high","taskType":"...","goal":"...","infoRequirement":"..."}],"profileUpdates":[{"category":"preference"|"person"|"project"|"course"|"name"|"about","fact":"one short sentence"}]} \u2014 profileUpdates: 0-3 DURABLE facts about who this person is that these items reveal (a key relationship, an ongoing project) \u2014 only lasting identity facts, not task content. Use "course" for a class-specific pattern worth compounding over the term (a professor's grading style, how far ahead of THIS course's deadlines they actually start work) \u2014 this is what makes Otto visibly smarter about a student's classes over a degree, not just their tone. Empty arrays are fine.`;
-  const client3 = deepseekClient();
+  const client2 = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   let tokIn = 0, tokOut = 0, tokCached = 0, calls = 0;
   const ask = async (extra) => {
     calls++;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model: actualModel,
       max_tokens: OUT.classify,
       // Determinism guards: JSON mode + near-zero temperature. Without them the same candidate list
@@ -4802,10 +4458,10 @@ Pick the SINGLE most useful thing this person could do TODAY from the candidates
 The title MUST be specific \u2014 name the actual person/company AND subject ("Wish Sonya a happy birthday", "Reply to Chloe at BOND about the demo"), NEVER vague ("Follow up on email", "Handle message").
 ALSO CLASSIFY: taskType (learn_understand|review|practice|homework_problem_set|write|research|create|prepare_assessment|project|administrative|analyze|decide|logistics|maintain|problem_solve \u2014 use "logistics" for coordinating/booking a trip or event, "decide" for picking between concrete options, never "learn_understand" for those), goal (measurable definition of done), infoRequirement (none|useful|required).
 Answer with STRICT JSON only: {"i":<candidate #>,"title":"specific imperative naming who+what, \u226411 words","why":"one clause naming the concrete trigger, \u226412 words","when":"the REAL deadline if any, else ''","urgency":0..1,"importance":0..1,"risk":"low"|"high","taskType":"...","goal":"...","infoRequirement":"..."}`;
-  const client3 = deepseekClient();
+  const client2 = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   try {
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model: actualModel,
       max_tokens: OUT.pick,
       temperature: 0.2,
@@ -4983,11 +4639,11 @@ async function regenerateStepsWithScaffolding(task, context, failurePatterns, cu
   try {
     const failedConcepts = Object.entries(failurePatterns).filter(([_, count]) => count >= 2).map(([concept]) => concept);
     if (!failedConcepts.length) return { steps: currentSteps, artifacts: [] };
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const failureHint = failedConcepts.length ? `
 The student struggled with these concepts: ${failedConcepts.join(", ")}. Regenerate the remaining steps with EXTRA scaffolding (more worked examples, simpler progression, more intermediate checkpoints) for these specific areas.` : "";
     const definitionOfDone = task.goal || task.why;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
       temperature: 0.3,
@@ -5145,9 +4801,9 @@ async function enrichTaskIntentAndGoal(task, profile) {
         subject: task.subject || task.sourceSubject
       };
     }
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: OUT.refine,
       temperature: 0.2,
@@ -5199,9 +4855,9 @@ async function refineManualTask(text, profile) {
   const raw = String(text || "").trim();
   if (!raw) return null;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: OUT.refine,
       temperature: 0.2,
@@ -5327,9 +4983,9 @@ async function synthesizeStudentModel(profile, list, banditStates) {
   const inputs = buildStudentModelInputs(profile, list, banditStates);
   if (!inputs) return void 0;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: OUT.studentModel,
       temperature: 0.3,
@@ -5366,9 +5022,9 @@ async function generateDailyStudyCards(logText, profile, styleArm, weakCards) {
 
 A FEW THINGS THEY GOT WRONG ON A PREVIOUS DAY (weak spots, for light reinforcement only \u2014 do NOT let this outweigh today's own content): ${weakCards.slice(0, 6).join("; ")}. If 1-2 of these genuinely connect to today's material, fold a card for them in naturally; otherwise add at most 1-2 short standalone review cards for the ones most worth re-testing. Never more than 2 cards total from this list.` : "";
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const makeReq = (maxTokens, concise) => retryRequest(() => client3.chat.completions.create({
+    const makeReq = (maxTokens, concise) => retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: maxTokens,
       temperature: 0.3,
@@ -5414,9 +5070,9 @@ async function generateDailyPracticeProblem(logText, profile) {
   const raw = String(logText || "").trim();
   if (!raw || !looksLikeStem(raw)) return null;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: 1200,
       temperature: 0.3,
@@ -5446,9 +5102,9 @@ async function checkFeynmanGap(logText, profile) {
   const raw = String(logText || "").trim();
   if (raw.length < 40) return null;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: 300,
       temperature: 0.3,
@@ -5477,9 +5133,9 @@ async function extractJournalMemory(logText, profile) {
   const raw = String(logText || "").trim();
   if (raw.length < 40) return null;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: 400,
       temperature: 0.3,
@@ -5512,14 +5168,14 @@ async function generateWeeklyStudyDeck(entries, boxBreakdown, profile) {
   const days = entries.filter((e) => e.logText?.trim());
   if (!days.length) return null;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const spacedBlock = spacedRepetitionBlock(boxBreakdown, "THIS WEEK'S DAILY DECKS");
     const entriesBlock = days.map((d) => `\u2014 ${d.date}:
 """
 ${d.logText.slice(0, 2e3)}
 """`).join("\n\n");
-    const makeReq = (maxTokens, concise) => retryRequest(() => client3.chat.completions.create({
+    const makeReq = (maxTokens, concise) => retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: maxTokens,
       temperature: 0.3,
@@ -5546,7 +5202,7 @@ Return JSON: {"title": short label for the week's deck (\u22648 words), "cards":
       if (!("deck" in result)) {
         console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] generateWeeklyStudyDeck: second attempt also unparseable \u2014 ${"error" in result ? result.error : "unknown"}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
         const lastResortBlock = days.map((d) => `\u2014 ${d.date}: ${d.logText.slice(0, 500)}`).join("\n");
-        const res3 = await retryRequest(() => client3.chat.completions.create({
+        const res3 = await retryRequest(() => client2.chat.completions.create({
           model,
           max_tokens: 3e3,
           temperature: 0.2,
@@ -5580,13 +5236,13 @@ async function generateWeeklyQuiz(entries, profile) {
   const empty = { tokens: { in: 0, out: 0, cachedIn: 0 } };
   if (!days.length) return empty;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const entriesBlock = days.map((d) => `\u2014 ${d.date}:
 """
 ${d.logText.slice(0, 1500)}
 """`).join("\n\n");
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: 4e3,
       temperature: 0.3,
@@ -5613,13 +5269,13 @@ async function generateMonthlyStudyDeck(weeks, boxBreakdown, profile) {
   const nonEmpty = weeks.filter((w) => w.cards.length);
   if (!nonEmpty.length) return null;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const spacedBlock = spacedRepetitionBlock(boxBreakdown, "THIS MONTH'S WEEKLY DECKS");
     const weeksBlock = nonEmpty.map((w) => `\u2014 ${w.label}:
 ${w.cards.map((c) => `  Q: ${c.front}
   A: ${c.back}`).join("\n")}`).join("\n\n");
-    const makeReq = (maxTokens, concise) => retryRequest(() => client3.chat.completions.create({
+    const makeReq = (maxTokens, concise) => retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: maxTokens,
       temperature: 0.3,
@@ -5646,7 +5302,7 @@ Return JSON: {"title": short label for the month's deck (\u22648 words), "cards"
       if (!("deck" in result)) {
         console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] generateMonthlyStudyDeck: second attempt also unparseable \u2014 ${"error" in result ? result.error : "unknown"}. Raw tail: ${String(res2.choices[0]?.message?.content || "").slice(-300)}`);
         const lastResortBlock = nonEmpty.map((w) => `\u2014 ${w.label}: ${w.cards.slice(0, 8).map((c) => c.front).join("; ").slice(0, 500)}`).join("\n");
-        const res3 = await retryRequest(() => client3.chat.completions.create({
+        const res3 = await retryRequest(() => client2.chat.completions.create({
           model,
           max_tokens: 3e3,
           temperature: 0.2,
@@ -5680,12 +5336,12 @@ async function generateMonthlyQuiz(weeks, profile) {
   const empty = { tokens: { in: 0, out: 0, cachedIn: 0 } };
   if (!nonEmpty.length) return empty;
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
     const weeksBlock = nonEmpty.map((w) => `\u2014 ${w.label}:
 ${w.cards.map((c) => `  Q: ${c.front}
   A: ${c.back}`).join("\n")}`).join("\n\n");
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: 4e3,
       temperature: 0.3,
@@ -5711,9 +5367,9 @@ Return JSON: {"quiz": {"title": "...", "questions": [{"q": "...", "options": [".
 async function generateThemeTokens(summary, profile) {
   const empty = { tokens: {}, tokensUsed: { in: 0, out: 0, cachedIn: 0 } };
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model,
       max_tokens: OUT.theme,
       temperature: 0.5,
@@ -5755,7 +5411,7 @@ function applyRememberFact(profile, category, fact) {
 async function runTask(task, profile, focus, extras, academic, siblingTasks, personalization) {
   const fr = profile?.language === "fr";
   const definitionOfDone = task.goal || task.why;
-  const client3 = deepseekClient();
+  const client2 = deepseekClient();
   const model = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   let tokIn = 0;
   let tokOut = 0;
@@ -5778,20 +5434,13 @@ ${focus.trim().slice(0, 1500)}
   async function ask(prompt, maxTokens) {
     askCalls++;
     const attempt = async (tokens, extraInstruction) => {
-      const result = await circuitBreakers.ai.execute(async () => {
-        return await retryRequest(() => client3.chat.completions.create({
-          model,
-          max_tokens: tokens,
-          temperature: 0.2,
-          response_format: { type: "json_object" },
-          messages: [{ role: "user", content: prompt + baseCtx + extraInstruction + langLine + nowLine }]
-        }));
-      });
-      if (!result.success) {
-        console.error(`${(/* @__PURE__ */ new Date()).toISOString()} [ai] circuit breaker blocked AI call: ${result.error.message}`);
-        throw result.error;
-      }
-      const res = result.data;
+      const res = await retryRequest(() => client2.chat.completions.create({
+        model,
+        max_tokens: tokens,
+        temperature: 0.2,
+        response_format: { type: "json_object" },
+        messages: [{ role: "user", content: prompt + baseCtx + extraInstruction + langLine + nowLine }]
+      }));
       tokIn += res.usage?.prompt_tokens || 0;
       tokOut += res.usage?.completion_tokens || 0;
       const content = String(res.choices?.[0]?.message?.content || "");
@@ -6332,7 +5981,7 @@ async function writeStepsFromContext(task, context, links, fallbackSteps, siblin
   const keywordHit = modelJudgedBigProject === true || isBigIbProject(profile, task.title, task.why);
   if (!context.trim() && !keywordHit) return { steps: fallbackSteps, artifacts: [] };
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const linksBlock = links.length ? `
 
 RESOURCES ALREADY FOUND/CREATED:
@@ -6347,7 +5996,7 @@ TASK TYPE: ${task.taskType}` : "";
 GOAL / DEFINITION OF DONE: ${task.goal}` : "";
     const unknownsLine = task.unknowns?.length ? `
 UNKNOWNS: ${task.unknowns.join("; ")}` : "";
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
       temperature: 0.2,
@@ -6523,7 +6172,7 @@ IMPORTANT: All steps must have automatable=false \u2014 these are USER steps onl
 }
 async function expandStep(task, step, profile, links = []) {
   try {
-    const client3 = deepseekClient();
+    const client2 = deepseekClient();
     const linksBlock = links.length ? `
 
 RESOURCES ALREADY ON THIS TASK:
@@ -6544,7 +6193,7 @@ ${task.sourceDetail.trim().slice(0, 800)}
 OTHER STEPS IN THIS TASK (do not duplicate these \u2014 your substeps are for the ONE step above only):
 ${siblingSteps}
 ` : "";
-    const res = await retryRequest(() => client3.chat.completions.create({
+    const res = await retryRequest(() => client2.chat.completions.create({
       model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
       max_tokens: OUT.steps,
       temperature: 0.2,
@@ -6587,9 +6236,9 @@ Return ONLY this JSON: {"substeps": [{"text": "...", "url": "..." (optional), "a
 async function runSubstep(task, step, substep, profile) {
   const results = await webSearch(`${substep.text} ${task.title}`);
   if (!results.length) throw new Error("Otto n'a rien trouv\xE9 pour cette recherche \u2014 essaie manuellement.");
-  const client3 = deepseekClient();
+  const client2 = deepseekClient();
   const context = results.slice(0, 5).map((r) => `- ${r.title}: ${r.snippet} (${r.url})`).join("\n");
-  const res = await retryRequest(() => client3.chat.completions.create({
+  const res = await retryRequest(() => client2.chat.completions.create({
     model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
     max_tokens: 200,
     temperature: 0.2,
@@ -6615,7 +6264,7 @@ function revealsAnswer(reply, answer) {
   return reply.toLowerCase().includes(needle);
 }
 async function studyHelp(card, history, message, profile) {
-  const client3 = deepseekClient();
+  const client2 = deepseekClient();
   const answer = card.kind === "flashcard" ? card.back : card.options[card.correct];
   const cardBlock = card.kind === "flashcard" ? `FLASHCARD FRONT (what the student sees): "${card.front}"
 FLASHCARD BACK / ANSWER (NEVER reveal this, not even paraphrased): "${answer}"` : `QUIZ QUESTION: "${card.question}"
@@ -6648,7 +6297,7 @@ RULES:
 3. If they seem to genuinely understand it now, encourage them to flip the card / pick an option themselves rather than telling them they're right.
 4. Stay on this one card. If they ask something unrelated to it, answer briefly but steer back.
 5. ALWAYS write something \u2014 even a one-sentence nudge is required. An empty or near-empty reply is a worse failure than being slightly too generous with a hint; never leave the message blank.`;
-  const res = await retryRequest(() => client3.chat.completions.create({
+  const res = await retryRequest(() => client2.chat.completions.create({
     model: DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL,
     // DeepSeek v4 is a REASONING model — its hidden reasoning tokens count against max_tokens (same trap
     // documented on OUT above/chatAboutTask's CHAT_DEADLINE_MS history). 300 was sized for the visible
@@ -6974,7 +6623,7 @@ CONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardB
     ...history.slice(-10).map((h) => ({ role: h.role, content: h.text })),
     { role: "user", content: message }
   ];
-  const client3 = deepseekClient();
+  const client2 = deepseekClient();
   const actualModel = DEEPSEEK_MODEL === "deepseek-v4-pro" ? "deepseek-v4-flash" : DEEPSEEK_MODEL;
   const readOnlyExtras = opts?.extras;
   const tools = opts?.canvasMode ? [CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...readOnlyExtras?.tools || []] : [CREATE_NOTE_TOOL, CREATE_FLASHCARDS_TOOL, CREATE_QUIZ_TOOL, CREATE_PROBLEM_TOOL, WRITE_TO_BOARD_TOOL, DRAW_ON_BOARD_TOOL, WEB_SEARCH_TOOL, REMEMBER_TOOL, ...readOnlyExtras?.tools || []];
@@ -7013,7 +6662,7 @@ CONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardB
       const apiMessages = lastRound ? [...messages, { role: "user", content: "Out of tool calls for this turn \u2014 reply in plain words now, no more tool use." }] : messages;
       let res;
       try {
-        res = await retryRequest(() => client3.chat.completions.create({
+        res = await retryRequest(() => client2.chat.completions.create({
           model: actualModel,
           max_tokens: OUT.chat,
           temperature: 0.6,
@@ -7037,7 +6686,7 @@ CONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardB
       if (!toolCalls.length && !textContent.trim()) {
         console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [chat] round ${round}: empty completion, retrying once with tools stripped`);
         try {
-          const retryRes = await retryRequest(() => client3.chat.completions.create({
+          const retryRes = await retryRequest(() => client2.chat.completions.create({
             model: actualModel,
             max_tokens: OUT.chat,
             temperature: 0.6,
@@ -7050,7 +6699,7 @@ CONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardB
           textContent = retryRes.choices?.[0]?.message?.content || "";
           if (!textContent.trim()) {
             console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [chat] round ${round}: second empty completion, retrying once more asking for ONE short sentence`);
-            const shortRes = await retryRequest(() => client3.chat.completions.create({
+            const shortRes = await retryRequest(() => client2.chat.completions.create({
               model: actualModel,
               max_tokens: OUT.chat,
               temperature: 0.6,
@@ -7081,7 +6730,7 @@ CONTEXT: ${task.context}` : ""}${stepsBlock}${stepHint}${artifactsBlock}${boardB
           truncationRetried = true;
           console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [chat] round ${round}: reply hit finish_reason 'length' \u2014 retrying once for a complete, concise reply`);
           try {
-            const contRes = await retryRequest(() => client3.chat.completions.create({
+            const contRes = await retryRequest(() => client2.chat.completions.create({
               model: actualModel,
               max_tokens: OUT.chat,
               temperature: 0.6,
@@ -7225,7 +6874,6 @@ var init_claude = __esm({
     init_patterns();
     init_bandit();
     init_discover();
-    init_circuit_breaker();
     init_websearch();
     EXECUTION_ENABLED = false;
     SEARCH_INSTRUCTION = /^(look\s?up|search(?:\s+for)?|google|find out|research|check\s+(?:the\s+)?(?:opening hours|prices?|times?|schedules?|weather)|see if|figure out)\b|^(cherch(?:e|er|ons)?|recherch(?:e|er|ons)?|renseigne[- ]?(?:toi|nous)|regarde\s+(?:si|les?\s+(?:horaires|prix|tarifs))|v[ée]rifie[rz]?\s+(?:les?\s+)?(?:horaires|prix|tarifs)|trouve[rz]?)\b/i;
@@ -7631,12 +7279,11 @@ init_sentry();
 init_types();
 import express from "express";
 import compression from "compression";
-import cors from "cors";
 import session2 from "express-session";
 import bcrypt from "bcryptjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID as randomUUID4, randomBytes as randomBytes2, createHash as createHash3 } from "node:crypto";
+import { randomUUID as randomUUID4, randomBytes as randomBytes2, createHash as createHash2 } from "node:crypto";
 
 // server/workload.ts
 init_types();
@@ -8271,39 +7918,6 @@ function applyQualityBar(genTasks, items, vips = []) {
     return g.importance >= 0.35 || g.urgency >= 0.35;
   });
 }
-function plaidBillsToTasks(candidates, coveredAnchors, en = false) {
-  const covered = new Set(coveredAnchors.filter((a) => !!a).map(normKey2));
-  const out = [];
-  for (const c of candidates) {
-    if (c.sourceApp !== "plaid" || covered.has(normKey2(c.anchorKey))) continue;
-    const isAlert = c.labels?.includes("suspicious");
-    out.push({
-      title: c.title.slice(0, 120),
-      why: c.snippet.slice(0, 300),
-      when: c.timestamp,
-      source: "plaid",
-      risk: "low",
-      // Fixed, not model-scored (there's no model involved). A suspicious charge reads slightly more
-      // urgent than a routine bill — matched to Pronote's own forceWeekCoverage safety-net scoring either way.
-      urgency: isAlert ? 0.7 : 0.6,
-      importance: isAlert ? 0.65 : 0.6,
-      anchorKey: c.anchorKey,
-      sourceDetail: c.snippet.slice(0, 300),
-      // "needs_review" (never "ready") is the OTHER half of keeping this data away from AI — "ready" tasks
-      // are what the cron catch-all (tasksToEnqueue, jobs.ts) auto-runs through the agent; this status skips
-      // that pipeline entirely, permanently, not just at creation. The step below is pre-written and
-      // complete (not "prepared" by a run) so the card is immediately actionable with nothing left pending —
-      // Otto genuinely never needs to "do" anything with this beyond having noticed it.
-      status: "needs_review",
-      steps: [{
-        text: isAlert ? en ? "Check your bank's app or statement to confirm this charge is really yours." : "V\xE9rifie dans l'appli de ta banque que cette charge est bien la tienne." : en ? "Pay via your bank's app or the merchant's own site." : "Payer via l'appli de ta banque ou le site du marchand.",
-        done: false,
-        automatable: false
-      }]
-    });
-  }
-  return out;
-}
 var WEEK_COVERAGE_DAYS = 7;
 function nothingToPrepare(t) {
   return t.source === "pronote" && !t.sourceDetail?.trim();
@@ -8405,9 +8019,7 @@ async function generate(existing, profile, extras, userEmail) {
       const { items, attempted } = await discoverSourceItems(userEmail);
       if (attempted) {
         const knownAnchors = existing.map((t) => t.anchorKey);
-        const allCandidates = filterCandidates(items, knownAnchors);
-        const candidates = allCandidates.filter((c) => c.sourceApp !== "plaid");
-        const plaidCandidates = allCandidates.filter((c) => c.sourceApp === "plaid");
+        const candidates = filterCandidates(items, knownAnchors);
         const classified = candidates.length ? await classifyCandidates(candidates, profile, active.map((a) => a.title), handled.map((h) => h.title)) : { tasks: [], profileUpdates: [] };
         addUsage(profile, classified.tokens, "sweep");
         for (const u of classified.profileUpdates) applyProfileUpdate(profile, u);
@@ -8417,8 +8029,7 @@ async function generate(existing, profile, extras, userEmail) {
           [...existing.map((t) => t.anchorKey), ...kept.map((k) => k.anchorKey)],
           { en: profile.language === "en", daysAhead: TEST_DAYS_AHEAD }
         );
-        const plaidBills = plaidBillsToTasks(plaidCandidates, existing.map((t) => t.anchorKey), profile.language === "en");
-        const folded = foldGenerated(existing, [...kept, ...weekCovered, ...plaidBills], profile.highPriorityPeople || []);
+        const folded = foldGenerated(existing, [...kept, ...weekCovered], profile.highPriorityPeople || []);
         const newCards = folded.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
         console.log(`${(/* @__PURE__ */ new Date()).toISOString()} [tasks] sweep pipeline: ${items.length} items \u2192 ${candidates.length} candidates \u2192 ${classified.tasks.length} classified \u2192 ${kept.length} passed bar \u2192 ${newCards} new card${newCards === 1 ? "" : "s"}`);
         let result2 = folded;
@@ -8479,7 +8090,7 @@ function foldGenerated(existing, genTasks, highPriorityPeople = [], now_ = /* @_
   const resemblesDismissed = (g) => dismissed.some((d) => {
     if (g.anchorKey && d.anchorKey && normKey2(g.anchorKey) === normKey2(d.anchorKey)) return true;
     if (g.link && linkOf(d) === g.link) return true;
-    if (g.source === "pronote" || g.source === "plaid") return false;
+    if (g.source === "pronote") return false;
     return looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) || g.source === d.source && looseDup(g.why, d.why);
   });
   genTasks = genTasks.filter((g) => !resemblesDismissed(g));
@@ -8658,7 +8269,6 @@ var GRANULAR_STEPS_HINT = "Break the work into MORE, SMALLER steps than you norm
 async function runById(list, id, profile, extras, revision, academic, granularityArm) {
   const task = list.find((t) => t.id === id);
   if (!task) return void 0;
-  if (task.source === "plaid") return task;
   if (canonStatus(task.status) === "executing") return task;
   task.status = "executing";
   task.autoRan = true;
@@ -9409,288 +9019,14 @@ async function sendTransactionalEmail(to, subject, html) {
 // server/index.ts
 init_bandit();
 init_patterns();
-init_circuit_breaker();
-
-// server/health-check.ts
-init_claude();
-init_integrations();
-init_store();
-init_circuit_breaker();
-async function shallowHealthCheck() {
-  const checks = {};
-  const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-  checks.ai = aiReady() ? { status: "pass" } : { status: "fail", message: "AI provider not configured" };
-  checks.composio = integrationsReady() ? { status: "pass" } : { status: "fail", message: "Composio not configured" };
-  checks.supabase = cloudEnabled() ? { status: "pass" } : { status: "fail", message: "Supabase not configured" };
-  const circuitStates = getAllCircuitBreakerStates();
-  let anyCircuitOpen = false;
-  for (const [name, state] of Object.entries(circuitStates)) {
-    if (state.state === "OPEN") {
-      anyCircuitOpen = true;
-      checks[`circuit-${name}`] = {
-        status: "warn",
-        message: `Circuit breaker OPEN for ${name}`
-      };
-    }
-  }
-  const overallStatus = Object.values(checks).some((c) => c.status === "fail") ? "unhealthy" : anyCircuitOpen ? "degraded" : "healthy";
-  return { status: overallStatus, checks, timestamp };
-}
-async function deepHealthCheck() {
-  const checks = {};
-  const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-  const aiStart = Date.now();
-  try {
-    const aiOk = aiReady();
-    checks.ai = aiOk ? { status: "pass", latencyMs: Date.now() - aiStart } : { status: "fail", message: "AI provider not configured", latencyMs: Date.now() - aiStart };
-  } catch (e) {
-    checks.ai = {
-      status: "fail",
-      message: e?.message || "AI provider check failed",
-      latencyMs: Date.now() - aiStart
-    };
-  }
-  const composioStart = Date.now();
-  try {
-    const composioOk = integrationsReady();
-    checks.composio = composioOk ? { status: "pass", latencyMs: Date.now() - composioStart } : { status: "fail", message: "Composio not configured", latencyMs: Date.now() - composioStart };
-  } catch (e) {
-    checks.composio = {
-      status: "fail",
-      message: e?.message || "Composio check failed",
-      latencyMs: Date.now() - composioStart
-    };
-  }
-  const supabaseStart = Date.now();
-  try {
-    const supabaseOk = cloudEnabled();
-    checks.supabase = supabaseOk ? { status: "pass", latencyMs: Date.now() - supabaseStart } : { status: "fail", message: "Supabase not configured", latencyMs: Date.now() - supabaseStart };
-  } catch (e) {
-    checks.supabase = {
-      status: "fail",
-      message: e?.message || "Supabase check failed",
-      latencyMs: Date.now() - supabaseStart
-    };
-  }
-  const circuitStates = getAllCircuitBreakerStates();
-  let anyCircuitOpen = false;
-  for (const [name, state] of Object.entries(circuitStates)) {
-    if (state.state === "OPEN") {
-      anyCircuitOpen = true;
-      checks[`circuit-${name}`] = {
-        status: "warn",
-        message: `Circuit breaker OPEN (failures: ${state.failureCount})`
-      };
-    } else if (state.state === "HALF_OPEN") {
-      checks[`circuit-${name}`] = {
-        status: "warn",
-        message: `Circuit breaker HALF_OPEN (testing recovery)`
-      };
-    } else {
-      checks[`circuit-${name}`] = {
-        status: "pass",
-        message: `Circuit breaker CLOSED (failures: ${state.failureCount})`
-      };
-    }
-  }
-  const overallStatus = Object.values(checks).some((c) => c.status === "fail") ? "unhealthy" : anyCircuitOpen || Object.values(checks).some((c) => c.status === "warn") ? "degraded" : "healthy";
-  return { status: overallStatus, checks, timestamp };
-}
-
-// server/env-validation.ts
-var ENV_DEFINITIONS = [
-  // Core server configuration
-  {
-    name: "PORT",
-    required: false,
-    description: "Server port (default: 8788)",
-    defaultValue: "8788"
-  },
-  {
-    name: "NODE_ENV",
-    required: false,
-    description: "Environment (development/production)",
-    defaultValue: "development"
-  },
-  // Security
-  {
-    name: "SESSION_SECRET",
-    required: true,
-    description: "Secret for session signing (required in production)",
-    validator: (v) => v.length >= 32
-  },
-  {
-    name: "CREDENTIAL_ENCRYPTION_KEY",
-    required: true,
-    description: "Key for encrypting sensitive credentials (e.g., Pronote tokens)",
-    validator: (v) => v.length >= 32
-  },
-  // AI configuration
-  {
-    name: "DEEPSEEK_API_KEY",
-    required: false,
-    description: "DeepSeek API key for AI generation (unless AI_PROVIDER=nvidia)"
-  },
-  {
-    name: "NVIDIA_API_KEY",
-    required: false,
-    description: "NVIDIA API key (when AI_PROVIDER=nvidia)"
-  },
-  {
-    name: "AI_PROVIDER",
-    required: false,
-    description: "AI provider: 'deepseek' or 'nvidia' (default: deepseek)",
-    defaultValue: "deepseek"
-  },
-  {
-    name: "DEEPSEEK_MODEL",
-    required: false,
-    description: "DeepSeek model to use (default: deepseek-v4-flash)"
-  },
-  {
-    name: "NVIDIA_MODEL",
-    required: false,
-    description: "NVIDIA model to use (default: mistralai/mistral-nemotron)"
-  },
-  // Composio integration
-  {
-    name: "COMPOSIO_API_KEY",
-    required: true,
-    description: "Composio API key for app integrations"
-  },
-  // Supabase configuration
-  {
-    name: "SUPABASE_URL",
-    required: true,
-    description: "Supabase project URL",
-    validator: (v) => v.startsWith("https://")
-  },
-  {
-    name: "SUPABASE_SERVICE_KEY",
-    required: true,
-    description: "Supabase service role key"
-  },
-  {
-    name: "SUPABASE_ANON_KEY",
-    required: false,
-    description: "Supabase anonymous key (for development)"
-  },
-  // Public URLs
-  {
-    name: "PUBLIC_URL",
-    required: true,
-    description: "Public URL of the app (for OAuth callbacks)",
-    validator: (v) => v.startsWith("http://") || v.startsWith("https://")
-  },
-  // Email/mailer configuration
-  {
-    name: "SMTP_HOST",
-    required: false,
-    description: "SMTP server host for transactional emails"
-  },
-  {
-    name: "SMTP_PORT",
-    required: false,
-    description: "SMTP server port"
-  },
-  {
-    name: "SMTP_USER",
-    required: false,
-    description: "SMTP username"
-  },
-  {
-    name: "SMTP_PASSWORD",
-    required: false,
-    description: "SMTP password"
-  },
-  {
-    name: "SMTP_FROM",
-    required: false,
-    description: "From address for transactional emails"
-  },
-  // Sentry error tracking
-  {
-    name: "SENTRY_DSN",
-    required: false,
-    description: "Sentry DSN for error tracking"
-  },
-  {
-    name: "VITE_SENTRY_DSN",
-    required: false,
-    description: "Sentry DSN for client-side error tracking"
-  },
-  // Vercel analytics
-  {
-    name: "VERCEL",
-    required: false,
-    description: "Set to '1' when running on Vercel"
-  }
-];
-function validateEnvironment() {
-  const errors = [];
-  const warnings = [];
-  const isProduction = process.env.NODE_ENV === "production";
-  for (const def of ENV_DEFINITIONS) {
-    const value = process.env[def.name];
-    const isMissing = value === void 0 || value === "";
-    if (def.required && isProduction && isMissing) {
-      errors.push(`${def.name} is required in production: ${def.description}`);
-      continue;
-    }
-    if (def.required && !isProduction && isMissing) {
-      warnings.push(`${def.name} is missing: ${def.description} (required in production)`);
-      continue;
-    }
-    if (isMissing) continue;
-    if (def.validator && !def.validator(value)) {
-      errors.push(`${def.name} has invalid value: ${def.description}`);
-    }
-  }
-  const aiProvider = (process.env.AI_PROVIDER || "deepseek").toLowerCase();
-  if (aiProvider === "nvidia") {
-    if (!process.env.NVIDIA_API_KEY) {
-      errors.push("NVIDIA_API_KEY is required when AI_PROVIDER=nvidia");
-    }
-  } else {
-    if (!process.env.DEEPSEEK_API_KEY) {
-      warnings.push("DEEPSEEK_API_KEY is missing (AI generation will not work)");
-    }
-  }
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings
-  };
-}
-function validateEnvironmentOrThrow() {
-  const result = validateEnvironment();
-  if (result.warnings.length > 0) {
-    console.warn("[env-validation] Warnings:");
-    for (const warning of result.warnings) {
-      console.warn(`  - ${warning}`);
-    }
-  }
-  if (!result.valid) {
-    console.error("[env-validation] Errors:");
-    for (const error of result.errors) {
-      console.error(`  - ${error}`);
-    }
-    throw new Error("Environment validation failed. See errors above.");
-  }
-  console.log("[env-validation] Environment is valid.");
-}
-
-// server/index.ts
 init_integrations();
 init_pronote();
-init_plaid();
 init_blackbaud();
 initSentry();
 var DUMMY_PASS_HASH = bcrypt.hashSync("otto-dummy-password-for-timing-safety", 10);
 var __dirname = path.dirname(fileURLToPath(import.meta.url));
 var PORT = Number(process.env.PORT || 8788);
 var PROD = process.env.NODE_ENV === "production";
-validateEnvironmentOrThrow();
 if (PROD) {
   if (!process.env.SESSION_SECRET) {
     throw new Error("SESSION_SECRET must be set in production \u2014 it signs the session cookie that gates account access.");
@@ -9709,33 +9045,14 @@ if (PROD) {
 var app = express();
 app.set("trust proxy", 1);
 app.use(compression());
-var allowedOrigins = [
-  process.env.PUBLIC_URL || "https://hiotto.vercel.app",
-  "http://localhost:5273",
-  // local dev
-  "http://localhost:8788"
-  // local dev
-];
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  // allow cookies/session auth
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"]
-}));
 app.get("/healthz", (_req, res) => res.type("text/plain").send("ok"));
 var CSP = [
   "default-src 'self'",
-  // https://cdn.plaid.com: Plaid Link's own hosted JS (client/App.tsx's FinancePage loads it directly).
   // https://cdn.jsdelivr.net: MediaPipe's tasks-vision wasm loader (client-side face/presence tracking for
   // Study Mode's opt-in focus check) — connect-src below already allowed jsdelivr for the wasm binary fetch,
   // but the loader's own <script> tag was still being blocked since script-src didn't independently list it.
-  "script-src 'self' 'wasm-unsafe-eval' https://cdn.plaid.com https://cdn.jsdelivr.net",
-  "script-src-elem 'self' https://cdn.plaid.com https://cdn.jsdelivr.net",
+  "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
+  "script-src-elem 'self' https://cdn.jsdelivr.net",
   "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   // blob:: a student's uploaded image material (ImageArtifact.tsx) renders straight from a same-page
@@ -9746,23 +9063,21 @@ var CSP = [
   // Study Mode's in-app dictionary artifact fetches these directly from the browser (client/study/artifacts/
   // DictionaryArtifact.tsx) — a strict 'self' here silently blocked every lookup with "Failed to fetch"
   // (CSP violations don't reach the app's own try/catch as an HTTP error; the browser just refuses the fetch).
-  // https://*.plaid.com: Link's own network calls during the bank-login flow (sandbox.plaid.com etc) — the
-  // student's bank credentials go straight to Plaid over this, never through Otto's own server at all.
   // https://*.ingest.*.sentry.io: client-side Sentry (main.tsx) reports errors straight from the browser —
   // this was missing here while vercel.json's copy of this CSP (the one actually served on Vercel) already
   // had it, so client error reporting was silently CSP-blocked on the self-hosted/Docker path only.
-  "connect-src 'self' https://freedictionaryapi.com https://*.plaid.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://cdn.jsdelivr.net https://storage.googleapis.com",
+  "connect-src 'self' https://freedictionaryapi.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://cdn.jsdelivr.net https://storage.googleapis.com",
   // Study Mode embeds several things in iframes: a Spotify playlist/album/track widget (client/study/
   // spotify.ts, no OAuth needed), a Google Doc, a YouTube video, and — critically — the student's own
   // uploaded PDFs, which load from a same-page blob: URL (StudySetup's upload flow). Once frame-src is set
   // AT ALL it replaces the default-src 'self' fallback entirely rather than adding to it — setting it to
   // just the Spotify origin (as this first did) silently broke every other embed, including the student's
   // own files, with Chrome's generic "This content is blocked" — so 'self' and blob: must be listed here
-  // explicitly, not assumed to still apply. https://cdn.plaid.com: Link's own modal renders in an iframe.
+  // explicitly, not assumed to still apply.
   // https://drive.google.com: a Drive FILE preview (e.g. a PDF/image uploaded to Drive rather than a
   // native Doc/Sheet/Slide) — DocumentArtifact.tsx converts a normal .../view share link to .../preview,
   // but the CSP still has to list the origin itself or the frame never even attempts to load.
-  // Broadened to any https: origin (was a fixed allowlist: Spotify/Docs/Drive/YouTube/Desmos/Padlet/Plaid
+  // Broadened to any https: origin (was a fixed allowlist: Spotify/Docs/Drive/YouTube/Desmos/Padlet
   // only) — DocumentArtifact.tsx now deliberately attempts to embed ANY http(s) URL a student pastes as a
   // study material, and the allowlist was silently defeating that: CSP blocks the iframe before it even
   // loads, no console error a student would notice, on every host not in the list (confirmed live: a
@@ -9786,9 +9101,6 @@ app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
   if (PROD) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();
 });
@@ -9827,7 +9139,7 @@ var commit = async (req, opts) => {
   const email = req.session.user;
   const localTasks = req.session.tasks || [];
   const localProfile = req.session.profile || emptyProfile();
-  const currentHash = createHash3("sha1").update(JSON.stringify(localTasks) + JSON.stringify(localProfile)).digest("hex");
+  const currentHash = createHash2("sha1").update(JSON.stringify(localTasks) + JSON.stringify(localProfile)).digest("hex");
   const sessionId = req.sessionID;
   const lastHash = sessionDirtyCache.get(sessionId);
   const isDirty = lastHash !== currentHash;
@@ -9952,52 +9264,49 @@ var rateLimit = (max, windowMs) => async (req, res, next) => {
   next();
 };
 var toolsFor = (req) => getAgentTools(req.session.user, { primaryAccounts: req.session.profile?.primaryAccounts }).catch(() => void 0);
-app.get("/api/health/shallow", ah(async (_req, res) => {
-  const result = await shallowHealthCheck();
-  res.status(result.status === "unhealthy" ? 503 : 200).json(result);
-}));
-app.get("/api/health/deep", requireAuth, ah(async (_req, res) => {
-  const result = await deepHealthCheck();
-  res.status(result.status === "unhealthy" ? 503 : 200).json(result);
-}));
 var normEmail = (s) => String(s || "").trim().toLowerCase();
 var validEmail = (e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
+function reqLang(req) {
+  if (req.session?.profile?.language === "en") return "en";
+  if (req.session?.profile?.language === "fr") return "fr";
+  return req.body?.lang === "en" ? "en" : "fr";
+}
+function M(req, fr, en) {
+  return reqLang(req) === "en" ? en : fr;
+}
 app.post("/api/auth/signup", rateLimit(6, 60 * 6e4), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   if (!validEmail(email) || password.length < 8 || password.length > 200) {
-    res.status(400).json({ error: "Enter a valid email and a password between 8 and 200 characters." });
+    res.status(400).json({ error: M(req, "Entre un email valide et un mot de passe entre 8 et 200 caract\xE8res.", "Enter a valid email and a password between 8 and 200 characters.") });
     return;
   }
   if (req.body?.consent !== true) {
-    res.status(400).json({ error: "Please confirm you're 15 or older, or that a parent set this account up for you." });
+    res.status(400).json({ error: M(req, "Confirme que tu as 15 ans ou plus, ou qu'un parent a cr\xE9\xE9 ce compte.", "Please confirm you're 15 or older, or that a parent set this account up for you.") });
     return;
   }
   if (!cloudEnabled()) {
-    res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." });
+    res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configur\xE9 sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") });
     return;
   }
   if (await getUser(email)) {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    void recordEvent(email, "signup_exists", { message: `IP: ${ip}` });
-    res.status(409).json({ error: "An account with that email already exists \u2014 log in instead." });
+    res.status(409).json({ error: M(req, "Un compte existe d\xE9j\xE0 avec cet email \u2014 connecte-toi plut\xF4t.", "An account with that email already exists \u2014 log in instead.") });
     return;
   }
   if (!await createUser(email, bcrypt.hashSync(password, 10))) {
-    res.status(500).json({ error: "Couldn't create the account." });
+    res.status(500).json({ error: M(req, "Impossible de cr\xE9er le compte.", "Couldn't create the account.") });
     return;
   }
   void mirrorAuthUser(email, password);
   req.session.regenerate((err) => {
     if (err) {
-      res.status(500).json({ error: "Couldn't create the account \u2014 try again." });
+      res.status(500).json({ error: M(req, "Impossible de cr\xE9er le compte \u2014 r\xE9essaie.", "Couldn't create the account \u2014 try again.") });
       return;
     }
     req.session.user = email;
     req.session.profile = { ...emptyProfile(), ageConsentAt: (/* @__PURE__ */ new Date()).toISOString() };
     req.session.tasks = [];
     req.session.csrfToken = randomBytes2(24).toString("hex");
-    addBreadcrumb2("auth", "User signed up", "info", { email });
     void recordEvent(email, "signup", {});
     saveSession(req).then(() => res.json({ ok: true, csrfToken: req.session.csrfToken }));
   });
@@ -10006,21 +9315,19 @@ app.post("/api/auth/login", rateLimit(10, 15 * 6e4), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
   const password = String(req.body?.password || "");
   if (!cloudEnabled()) {
-    res.status(500).json({ error: "Account storage isn't configured on the server (Supabase) \u2014 sign-in can't work until that's set." });
+    res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configur\xE9 sur le serveur (Supabase) \u2014 la connexion ne peut pas fonctionner tant que ce n'est pas r\xE9gl\xE9.", "Account storage isn't configured on the server (Supabase) \u2014 sign-in can't work until that's set.") });
     return;
   }
   const u = await getUser(email);
   const validPassword = bcrypt.compareSync(password, u?.pass_hash || DUMMY_PASS_HASH);
   if (!u || !validPassword) {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    addBreadcrumb2("auth", "Failed login attempt", "warning", { email, hasAccount: !!u, ip });
-    void recordEvent(email, "login_failed", { message: `IP: ${ip}` });
-    res.status(401).json({ error: "Wrong email or password." });
+    void recordEvent(email, "login_failed", {});
+    res.status(401).json({ error: M(req, "Email ou mot de passe incorrect.", "Wrong email or password.") });
     return;
   }
   req.session.regenerate(async (err) => {
     if (err) {
-      res.status(500).json({ error: "Couldn't log you in \u2014 try again." });
+      res.status(500).json({ error: M(req, "Impossible de te connecter \u2014 r\xE9essaie.", "Couldn't log you in \u2014 try again.") });
       return;
     }
     req.session.user = email;
@@ -10028,7 +9335,6 @@ app.post("/api/auth/login", rateLimit(10, 15 * 6e4), ah(async (req, res) => {
     req.session.profile = restored.profile;
     req.session.tasks = restored.tasks;
     req.session.csrfToken = randomBytes2(24).toString("hex");
-    addBreadcrumb2("auth", "User logged in", "info", { email });
     void recordEvent(email, "login", {});
     await saveSession(req);
     res.json({ ok: true, csrfToken: req.session.csrfToken });
@@ -10037,11 +9343,11 @@ app.post("/api/auth/login", rateLimit(10, 15 * 6e4), ah(async (req, res) => {
 app.post("/api/auth/forgot-password", rateLimit(5, 60 * 6e4), ah(async (req, res) => {
   const email = normEmail(req.body?.email);
   if (!validEmail(email)) {
-    res.status(400).json({ error: "Enter a valid email." });
+    res.status(400).json({ error: M(req, "Entre un email valide.", "Enter a valid email.") });
     return;
   }
   if (!cloudEnabled()) {
-    res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." });
+    res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configur\xE9 sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") });
     return;
   }
   try {
@@ -10054,8 +9360,7 @@ app.post("/api/auth/forgot-password", rateLimit(5, 60 * 6e4), ah(async (req, res
         const en = req.body?.lang !== "fr";
         const html = en ? `<p>Someone (hopefully you) asked to reset your Otto password. This link works once and expires in 30 minutes.</p><p><a href="${link}">Reset your password \u2192</a></p><p>If this wasn't you, you can safely ignore this email \u2014 your password hasn't changed.</p>` : `<p>Quelqu'un (toi, on esp\xE8re) a demand\xE9 \xE0 r\xE9initialiser ton mot de passe Otto. Ce lien fonctionne une seule fois et expire dans 30 minutes.</p><p><a href="${link}">R\xE9initialiser ton mot de passe \u2192</a></p><p>Si ce n'\xE9tait pas toi, tu peux ignorer cet e-mail \u2014 ton mot de passe n'a pas chang\xE9.</p>`;
         void sendTransactionalEmail(email, en ? "Reset your Otto password" : "R\xE9initialise ton mot de passe Otto", html);
-        const ip = req.ip || req.socket.remoteAddress || "unknown";
-        void recordEvent(email, "password_reset_requested", { message: `IP: ${ip}` });
+        void recordEvent(email, "password_reset_requested", {});
       }
     }
   } catch (e) {
@@ -10067,30 +9372,30 @@ app.post("/api/auth/reset-password", rateLimit(10, 60 * 6e4), ah(async (req, res
   const token = String(req.body?.token || "");
   const password = String(req.body?.password || "");
   if (!token) {
-    res.status(400).json({ error: "Missing or invalid reset link." });
+    res.status(400).json({ error: M(req, "Lien de r\xE9initialisation manquant ou invalide.", "Missing or invalid reset link.") });
     return;
   }
   if (password.length < 8 || password.length > 200) {
-    res.status(400).json({ error: "Password must be between 8 and 200 characters." });
+    res.status(400).json({ error: M(req, "Le mot de passe doit contenir entre 8 et 200 caract\xE8res.", "Password must be between 8 and 200 characters.") });
     return;
   }
   if (!cloudEnabled()) {
-    res.status(500).json({ error: "Account storage isn't configured on the server (Supabase)." });
+    res.status(500).json({ error: M(req, "Le stockage des comptes n'est pas configur\xE9 sur le serveur (Supabase).", "Account storage isn't configured on the server (Supabase).") });
     return;
   }
   const u = await getUserByResetToken(token);
   if (!u) {
-    res.status(400).json({ error: "This reset link is invalid or has expired \u2014 request a new one." });
+    res.status(400).json({ error: M(req, "Ce lien de r\xE9initialisation est invalide ou a expir\xE9 \u2014 refais-en la demande.", "This reset link is invalid or has expired \u2014 request a new one.") });
     return;
   }
   if (!await setPassHash(u.email, bcrypt.hashSync(password, 10))) {
-    res.status(500).json({ error: "Couldn't reset the password \u2014 try again." });
+    res.status(500).json({ error: M(req, "Impossible de r\xE9initialiser le mot de passe \u2014 r\xE9essaie.", "Couldn't reset the password \u2014 try again.") });
     return;
   }
   void recordEvent(u.email, "password_reset", {});
   req.session.regenerate(async (err) => {
     if (err) {
-      res.status(500).json({ error: "Password reset \u2014 but couldn't log you in automatically. Log in with your new password." });
+      res.status(500).json({ error: M(req, "Mot de passe r\xE9initialis\xE9 \u2014 mais impossible de te reconnecter automatiquement. Connecte-toi avec ton nouveau mot de passe.", "Password reset \u2014 but couldn't log you in automatically. Log in with your new password.") });
       return;
     }
     req.session.user = u.email;
@@ -10102,7 +9407,7 @@ app.post("/api/auth/reset-password", rateLimit(10, 60 * 6e4), ah(async (req, res
     res.json({ ok: true, csrfToken: req.session.csrfToken });
   });
 }));
-app.post("/api/auth/logout", rateLimit(20, 6e4), (req, res) => {
+app.post("/api/auth/logout", (req, res) => {
   const email = req.session.user;
   req.session.destroy(() => {
     res.clearCookie("connect.sid", { httpOnly: true, sameSite: "lax", secure: PROD });
@@ -10117,7 +9422,7 @@ app.post("/api/account/delete", requireAuth, rateLimit(5, 6e4), async (req, res)
     const result = await deleteAccount(email);
     req.session.destroy(() => res.json(result));
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't delete the account \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible de supprimer le compte \u2014 r\xE9essaie.", "Couldn't delete the account \u2014 try again.") });
   }
 });
 app.get("/api/account/export", requireAuth, rateLimit(5, 6e4), async (req, res) => {
@@ -10133,14 +9438,14 @@ app.get("/api/account/export", requireAuth, rateLimit(5, 6e4), async (req, res) 
     res.setHeader("Content-Disposition", `attachment; filename="otto-data-${email}.json"`);
     res.json({ email, exportedAt: (/* @__PURE__ */ new Date()).toISOString(), profile: state.profile, tasks: state.tasks, connections, jobs, events });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't export your data \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'exporter tes donn\xE9es \u2014 r\xE9essaie.", "Couldn't export your data \u2014 try again.") });
   }
 });
 app.post("/api/account/import", requireAuth, rateLimit(5, 6e4), express.json({ limit: "20mb" }), async (req, res) => {
   const email = req.session.user;
   const body = req.body;
   if (!body || typeof body !== "object" || !body.profile && !Array.isArray(body.tasks)) {
-    res.status(400).json({ error: "That doesn't look like an Otto export file." });
+    res.status(400).json({ error: M(req, "Ce fichier ne ressemble pas \xE0 un export Otto.", "That doesn't look like an Otto export file.") });
     return;
   }
   try {
@@ -10158,7 +9463,7 @@ app.post("/api/account/import", requireAuth, rateLimit(5, 6e4), express.json({ l
     void recordEvent(email, "account_imported", { message: `Imported ${incomingTasks.length} tasks` });
     res.json({ ok: true, tasksAfter: mergedTasks.length, errorLogAfter: mergedProfile.errorLog?.length || 0 });
   } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't import that file \u2014 try again." });
+    res.status(500).json({ error: e?.message || M(req, "Impossible d'importer ce fichier \u2014 r\xE9essaie.", "Couldn't import that file \u2014 try again.") });
   }
 });
 app.get("/api/integrations", requireAuth, ah(async (req, res) => {
@@ -10212,11 +9517,8 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 6e4
   }
   try {
     const result = await connectPronote(req.session.user, { url: url2, username, password, kind: Number(kind) || void 0 });
-    if (result.ok) {
-      addBreadcrumb2("integrations", "Pronote connected", "info", { user: req.session.user });
-      invalidatePronoteStatus(req.session.user);
-      void recordMetric(req.session.user, "pronote_sync", 1);
-    }
+    if (result.ok) invalidatePronoteStatus(req.session.user);
+    if (result.ok) void recordMetric(req.session.user, "pronote_sync", 1);
     if (result.ok) {
       try {
         const p = req.session.profile ||= emptyProfile();
@@ -10227,7 +9529,6 @@ app.post("/api/integrations/pronote/connect", requireAuth, rateLimit(8, 15 * 6e4
     }
     res.status(result.ok ? 200 : 400).json(result);
   } catch (e) {
-    addBreadcrumb2("integrations", "Pronote connection failed", "error", { user: req.session.user, error: e?.message });
     res.status(500).json({ error: e?.message || "Couldn't connect to Pronote \u2014 try again." });
   }
 });
@@ -10250,7 +9551,7 @@ app.get("/api/pronote/touch", requireAuth, rateLimit(10, 6e4), async (req, res) 
   });
   res.json({ ok: true });
 });
-app.post("/api/integrations/pronote/disconnect", requireAuth, rateLimit(10, 6e4), async (req, res) => {
+app.post("/api/integrations/pronote/disconnect", requireAuth, async (req, res) => {
   try {
     await disconnectPronote(req.session.user);
     invalidatePronoteStatus(req.session.user);
@@ -10293,52 +9594,6 @@ app.get("/api/pronote/grades", requireAuth, async (req, res) => {
     res.json({ grades: cached });
   }
 });
-app.get("/api/integrations/plaid/status", requireAuth, ah(async (req, res) => {
-  res.json({ ...await plaidConnected(req.session.user), configured: plaidConfigured() });
-}));
-app.post("/api/integrations/plaid/link-token", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
-  if (!plaidConfigured()) {
-    res.status(503).json({ error: "Plaid isn't configured on this server." });
-    return;
-  }
-  try {
-    res.json(await createLinkToken(req.session.user));
-  } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't start the connection." });
-  }
-}));
-app.post("/api/integrations/plaid/exchange", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
-  const publicToken = String(req.body?.publicToken || "");
-  if (!publicToken) {
-    res.status(400).json({ error: "Missing token." });
-    return;
-  }
-  const result = await exchangePublicToken(req.session.user, publicToken);
-  if (!result.ok) {
-    res.status(400).json(result);
-    return;
-  }
-  res.json(result);
-}));
-app.post("/api/integrations/plaid/connect-mock", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
-  const result = await connectMock(req.session.user);
-  if (!result.ok) {
-    res.status(400).json(result);
-    return;
-  }
-  res.json(result);
-}));
-app.post("/api/integrations/plaid/disconnect", requireAuth, rateLimit(10, 6e4), async (req, res) => {
-  try {
-    await disconnectPlaid(req.session.user);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e?.message || "Couldn't disconnect \u2014 try again." });
-  }
-});
-app.get("/api/finance/snapshot", requireAuth, ah(async (req, res) => {
-  res.json(await plaidSnapshot(req.session.user));
-}));
 app.get("/api/integrations/blackbaud/status", requireAuth, ah(async (req, res) => {
   res.json({
     ...await blackbaudConnected(req.session.user),
@@ -10374,14 +9629,14 @@ app.get("/api/integrations/blackbaud/callback", requireAuth, ah(async (req, res)
   res.redirect(result.ok ? "/settings" : "/settings?blackbaud_error=1");
 }));
 app.post("/api/integrations/blackbaud/connect-mock", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
-  const result = await connectMock2(req.session.user);
+  const result = await connectMock(req.session.user);
   if (!result.ok) {
     res.status(400).json(result);
     return;
   }
   res.json(result);
 }));
-app.post("/api/integrations/blackbaud/disconnect", requireAuth, rateLimit(10, 6e4), async (req, res) => {
+app.post("/api/integrations/blackbaud/disconnect", requireAuth, async (req, res) => {
   try {
     await disconnectBlackbaud(req.session.user);
     res.json({ ok: true });
@@ -10404,7 +9659,7 @@ app.get("/api/workload", requireAuth, async (req, res) => {
   const { days } = computeWorkload({ homework, tests: allTests, tasks, grades: req.session.profile?.grades, timezone: tzOf(req.session.profile) });
   res.json({ days });
 });
-app.post("/api/integrations/:app/disconnect", requireAuth, rateLimit(10, 6e4), async (req, res) => {
+app.post("/api/integrations/:app/disconnect", requireAuth, async (req, res) => {
   const app2 = String(req.params.app);
   try {
     const result = integrationsReady() ? await disconnect(app2, req.session.user) : { ok: true };
@@ -10417,7 +9672,7 @@ app.post("/api/integrations/:app/disconnect", requireAuth, rateLimit(10, 6e4), a
     res.status(500).json({ error: e?.message || "Couldn't disconnect \u2014 try again." });
   }
 });
-app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, rateLimit(10, 6e4), async (req, res) => {
+app.post("/api/integrations/:app/disconnect/:accountId", requireAuth, async (req, res) => {
   const app2 = String(req.params.app);
   const accountId = String(req.params.accountId);
   try {
@@ -10462,16 +9717,14 @@ app.get("/api/status", ah(async (req, res) => {
     unlimited: !!req.session.profile?.unlimited,
     language: req.session.profile?.language === "en" ? "en" : "fr",
     customTheme: req.session.profile?.customTheme,
-    betaFeatures: !!req.session.profile?.betaFeatures,
-    onboardingCompletedAt: req.session.profile?.onboardingCompletedAt,
-    circuitBreakers: getAllCircuitBreakerStates()
+    betaFeatures: !!req.session.profile?.betaFeatures
   };
   if (req.session.user) {
     if (!req.session.csrfToken) req.session.csrfToken = randomBytes2(24).toString("hex");
     s.csrfToken = req.session.csrfToken;
   }
   const statusJson = JSON.stringify(s);
-  const etag = `"${createHash3("sha1").update(statusJson).digest("hex").slice(0, 16)}"`;
+  const etag = `"${createHash2("sha1").update(statusJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);
   if (req.headers["if-none-match"] === etag) {
     res.status(304).end();
@@ -10482,8 +9735,12 @@ app.get("/api/status", ah(async (req, res) => {
 var isPaused = (req) => !!req.session.profile?.paused;
 var overBudget = (req) => overMonthlyBudget(req.session.profile);
 var overInteractive = (req) => overInteractiveBudget(req.session.profile);
-var BUDGET_MSG = "Otto's reached its monthly AI budget (including the interactive reserve) \u2014 it resets on the 1st. Raise MONTHLY_AI_BUDGET_USD to lift it.";
-app.post("/api/settings/unlimited", requireAuth, rateLimit(5, 6e4), async (req, res) => {
+var budgetMsg = (req) => M(
+  req,
+  "Otto a atteint son plafond mensuel d'IA \u2014 \xE7a se renouvelle le 1er du mois.",
+  "Otto's reached its monthly AI budget \u2014 it resets on the 1st."
+);
+app.post("/api/settings/unlimited", requireAuth, async (req, res) => {
   try {
     const p = req.session.profile ||= emptyProfile();
     p.unlimited = true;
@@ -10494,7 +9751,7 @@ app.post("/api/settings/unlimited", requireAuth, rateLimit(5, 6e4), async (req, 
     res.status(500).json({ error: e?.message || "Couldn't save \u2014 try again." });
   }
 });
-app.post("/api/settings/pause", requireAuth, rateLimit(10, 6e4), async (req, res) => {
+app.post("/api/settings/pause", requireAuth, async (req, res) => {
   try {
     const p = req.session.profile ||= emptyProfile();
     p.paused = req.body?.paused === true;
@@ -10557,7 +9814,7 @@ app.get("/api/tasks", requireAuth, async (req, res) => {
   }
   const withNudge = (req.session.tasks || []).map((t) => !isHandled(t.status) ? { ...t, nudgeLine: stallNudgeLine(t, req.session.profile) || void 0 } : t);
   const tasksJson = JSON.stringify(withNudge);
-  const etag = `"${createHash3("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
+  const etag = `"${createHash2("sha1").update(tasksJson).digest("hex").slice(0, 16)}"`;
   res.setHeader("ETag", etag);
   if (req.headers["if-none-match"] === etag) {
     res.status(304).end();
@@ -10608,7 +9865,7 @@ app.get("/api/patterns/summary", requireAuth, ah(async (req, res) => {
 var CONTINUOUS_MONITOR_INTERVAL_MS = 30 * 60 * 1e3;
 app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to sweep for new tasks." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour chercher de nouvelles t\xE2ches.", "AI is paused \u2014 resume it in Settings to sweep for new tasks.") });
     return;
   }
   if (overBudget(req)) {
@@ -10625,19 +9882,12 @@ app.post("/api/tasks/generate", requireAuth, rateLimit(10, 6e4), async (req, res
     }
     const extras = await toolsFor(req);
     const pronoteOn = (await pronoteConnected(user)).connected;
-    const bankingOn = (await plaidConnected(user)).connected;
-    if (!extras?.tools?.length && !pronoteOn && !bankingOn) {
-      res.status(400).json({ error: "Connecte Gmail, Google Calendar, Pronote ou ta banque dans les R\xE9glages pour qu'Otto ait quelque chose \xE0 lire." });
+    if (!extras?.tools?.length && !pronoteOn) {
+      res.status(400).json({ error: M(req, "Connecte Gmail, Google Calendar ou Pronote dans les R\xE9glages pour qu'Otto ait quelque chose \xE0 lire.", "Connect Gmail, Google Calendar, or Pronote in Settings so Otto has something to read.") });
       return;
     }
     const job = await enqueueAndDrain(user, "sweep");
-    addBreadcrumb2("tasks", "Task generation started", "info", { user, force, hasTools: !!extras?.tools?.length, pronoteOn, bankingOn });
-    if (job.status === "succeeded") {
-      addBreadcrumb2("tasks", "Task generation succeeded", "info", { user, taskCount: (req.session.tasks || []).length });
-      req.session.lastGenTime = (/* @__PURE__ */ new Date()).toISOString();
-    } else if (job.status.startsWith("failed")) {
-      addBreadcrumb2("tasks", "Task generation failed", "error", { user, status: job.status });
-    }
+    if (job.status === "succeeded") req.session.lastGenTime = (/* @__PURE__ */ new Date()).toISOString();
     const cloud = await loadState(user, { bypassCache: true });
     req.session.tasks = mergeTasks(cloud.tasks || [], req.session.tasks || []);
     req.session.profile = mergeProfiles(cloud.profile || emptyProfile(), req.session.profile || emptyProfile());
@@ -10697,20 +9947,20 @@ app.post("/api/tasks", requireAuth, rateLimit(20, 6e4), async (req, res) => {
 });
 app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to refine." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour affiner.", "AI is paused \u2014 resume it in Settings to refine.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't configured." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
   }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) {
-    res.status(404).json({ error: "not found" });
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
   try {
@@ -10725,20 +9975,20 @@ app.post("/api/tasks/:id/refine", requireAuth, rateLimit(10, 6e4), async (req, r
 });
 app.post("/api/tasks/:id/regenerate", requireAuth, rateLimit(5, 6e4), async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to regenerate." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour r\xE9g\xE9n\xE9rer.", "AI is paused \u2014 resume it in Settings to regenerate.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't configured." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
   }
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   if (!t) {
-    res.status(404).json({ error: "not found" });
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
   try {
@@ -10805,15 +10055,15 @@ app.post("/api/tasks/cleanup-artifact-steps", requireAuth, rateLimit(2, 6e4), as
 var CHAT_CAP = 60;
 app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to chat." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour discuter.", "AI is paused \u2014 resume it in Settings to chat.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't configured." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
   }
   const message = String(req.body?.message || "").trim().slice(0, 2e3);
@@ -10823,11 +10073,7 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), async (req, res
   }
   const t = await findTaskOrReload(req, String(req.params.id));
   if (!t) {
-    res.status(404).json({ error: "not found" });
-    return;
-  }
-  if (t.source === "plaid") {
-    res.status(403).json({ error: "Otto doesn't use AI on your bank data \u2014 this is a plain reminder, not a chat topic." });
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
   const stepIndexRaw = req.body?.stepIndex;
@@ -10941,15 +10187,15 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 6e4), async (req, res
 });
 app.post("/api/tasks/:id/study-help", requireAuth, rateLimit(40, 6e4), ah(async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to chat." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour discuter.", "AI is paused \u2014 resume it in Settings to chat.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't configured." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
   }
   const message = String(req.body?.message || "").trim().slice(0, 1e3);
@@ -11007,7 +10253,7 @@ var runViaJob = async (req, res, type, input) => {
     await saveSession(req);
     const t = (req.session.tasks || []).find((x) => x.id === id);
     if (!t) {
-      res.status(404).json({ error: "not found" });
+      res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
       return;
     }
     if (job.status === "failed_terminal") {
@@ -11016,7 +10262,7 @@ var runViaJob = async (req, res, type, input) => {
     }
     const skipNote = typeof job.output?.note === "string" && job.output.note.startsWith("skipped:") ? job.output.note : null;
     if (skipNote) {
-      res.status(403).json({ error: skipNote.includes("budget") ? BUDGET_MSG : "AI is paused \u2014 resume it in Settings to run this." });
+      res.status(403).json({ error: skipNote.includes("budget") ? budgetMsg(req) : M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour lancer ceci.", "AI is paused \u2014 resume it in Settings to run this.") });
       return;
     }
     res.json(t);
@@ -11028,11 +10274,11 @@ var runViaJob = async (req, res, type, input) => {
 };
 app.post("/api/tasks/:id/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to run tasks." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour lancer des t\xE2ches.", "AI is paused \u2014 resume it in Settings to run tasks.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   await runViaJob(req, res, "execute_task", { manual: true, ...req.body?.reset === true ? { reset: true } : {} });
@@ -11044,11 +10290,11 @@ app.post("/api/tasks/:id/revise", requireAuth, rateLimit(20, 6e4), async (req, r
     return;
   }
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to revise tasks." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour r\xE9viser des t\xE2ches.", "AI is paused \u2014 resume it in Settings to revise tasks.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (req.session.user) void recordMetric(req.session.user, "task_revision_requested", 1);
@@ -11117,11 +10363,11 @@ app.post("/api/tasks/:id/dismiss", requireAuth, rateLimit(60, 6e4), async (req, 
 });
 app.post("/api/tasks/:id/step/:index/run", requireAuth, rateLimit(40, 6e4), async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to run steps." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour lancer des \xE9tapes.", "AI is paused \u2014 resume it in Settings to run steps.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   const id = String(req.params.id);
@@ -11348,15 +10594,15 @@ app.post("/api/studylog/day", requireAuth, rateLimit(20, 6e4), ah(async (req, re
     return;
   }
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to generate flashcards." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour g\xE9n\xE9rer des cartes.", "AI is paused \u2014 resume it in Settings to generate flashcards.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't configured." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
   }
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -11492,15 +10738,15 @@ app.get("/api/studylog/week", requireAuth, ah(async (req, res) => {
 }));
 app.post("/api/studylog/week-summary", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to generate the summary." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour g\xE9n\xE9rer le r\xE9sum\xE9.", "AI is paused \u2014 resume it in Settings to generate the summary.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't configured." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
   }
   const weekStart = String(req.body?.weekStart || "");
@@ -11608,15 +10854,15 @@ app.get("/api/studylog/month", requireAuth, ah(async (req, res) => {
 }));
 app.post("/api/studylog/month-summary", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to generate the summary." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour g\xE9n\xE9rer le r\xE9sum\xE9.", "AI is paused \u2014 resume it in Settings to generate the summary.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't configured." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
   }
   const monthStart = String(req.body?.monthStart || "");
@@ -11823,15 +11069,15 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 6e4), ah(async (
     return;
   }
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to personalize your theme." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour personnaliser ton th\xE8me.", "AI is paused \u2014 resume it in Settings to personalize your theme.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't configured." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas configur\xE9e.", "AI isn't configured.") });
     return;
   }
   try {
@@ -11855,7 +11101,7 @@ app.post("/api/ui/theme-personalize", requireAuth, rateLimit(5, 6e4), ah(async (
     res.status(500).json({ error: e?.message || "Couldn't personalize your theme \u2014 try again." });
   }
 }));
-app.post("/api/ui/theme-reset", requireAuth, rateLimit(10, 6e4), ah(async (req, res) => {
+app.post("/api/ui/theme-reset", requireAuth, ah(async (req, res) => {
   const profile = req.session.profile ||= emptyProfile();
   profile.customTheme = void 0;
   profile.preferencesUpdatedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -11928,15 +11174,15 @@ app.post("/api/metrics", requireAuth, rateLimit(60, 6e4), ah(async (req, res) =>
 }));
 app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 6e4), async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to use this." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour utiliser ceci.", "AI is paused \u2014 resume it in Settings to use this.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't set up on this server yet." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas encore configur\xE9e sur ce serveur.", "AI isn't set up on this server yet.") });
     return;
   }
   const id = String(req.params.id);
@@ -11944,7 +11190,7 @@ app.post("/api/tasks/:id/step/:index/expand", requireAuth, rateLimit(20, 6e4), a
   const task = (req.session.tasks || []).find((t) => t.id === id);
   const step = task?.steps?.[index];
   if (!task || !step) {
-    res.status(404).json({ error: "not found" });
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
   try {
@@ -11981,15 +11227,15 @@ app.post("/api/tasks/:id/step/:index/substep/:subIndex/done", requireAuth, rateL
 });
 app.post("/api/tasks/:id/step/:index/substep/:subIndex/run", requireAuth, rateLimit(20, 6e4), async (req, res) => {
   if (isPaused(req)) {
-    res.status(403).json({ error: "AI is paused \u2014 resume it in Settings to use this." });
+    res.status(403).json({ error: M(req, "L'IA est en pause \u2014 r\xE9active-la dans les R\xE9glages pour utiliser ceci.", "AI is paused \u2014 resume it in Settings to use this.") });
     return;
   }
   if (overInteractive(req)) {
-    res.status(402).json({ error: BUDGET_MSG });
+    res.status(402).json({ error: budgetMsg(req) });
     return;
   }
   if (!aiReady()) {
-    res.status(503).json({ error: "AI isn't set up on this server yet." });
+    res.status(503).json({ error: M(req, "L'IA n'est pas encore configur\xE9e sur ce serveur.", "AI isn't set up on this server yet.") });
     return;
   }
   const id = String(req.params.id);
@@ -12025,7 +11271,7 @@ app.post("/api/tasks/:id/reschedule", requireAuth, rateLimit(60, 6e4), async (re
   }
   const task = (req.session.tasks || []).find((t) => t.id === id);
   if (!task) {
-    res.status(404).json({ error: "not found" });
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
   if (isHandled(task.status)) {
@@ -12050,7 +11296,7 @@ app.post("/api/tasks/:id/send/:index", requireAuth, rateLimit(10, 6e4), async (r
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   const s = t?.sendables?.[Number(req.params.index)];
   if (!t || !s) {
-    res.status(404).json({ error: "not found" });
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
   try {
@@ -12074,7 +11320,7 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 6e4),
   const t = (req.session.tasks || []).find((x) => x.id === String(req.params.id));
   const s = t?.sendables?.[Number(req.params.index)];
   if (!t || !s) {
-    res.status(404).json({ error: "not found" });
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
   if (s.sent) {
@@ -12106,7 +11352,7 @@ app.post("/api/tasks/:id/sendable/:index/edit", requireAuth, rateLimit(30, 6e4),
 app.get("/api/jobs/:id", requireAuth, ah(async (req, res) => {
   const job = await getJob(String(req.params.id), req.session.user);
   if (!job) {
-    res.status(404).json({ error: "not found" });
+    res.status(404).json({ error: M(req, "Introuvable.", "Not found.") });
     return;
   }
   res.json({ id: job.id, type: job.type, status: job.status, taskId: job.task_id, attempts: job.attempt_count, error: job.last_error, createdAt: job.created_at, finishedAt: job.finished_at });

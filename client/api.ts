@@ -216,14 +216,6 @@ export const api = {
   // server/pronote.ts's touchPronoteSession for why: the daily cron alone leaves the token idle too long).
   // Fire-and-forget from every caller's point of view; the server itself is what rate-gates the real work.
   pronoteTouch: (): Promise<{ ok: boolean }> => req("/api/pronote/touch").then(j).catch(() => ({ ok: false })),
-  // /finance (Plaid) — sandbox-only for now, see server/plaid.ts's own comment.
-  plaidStatus: (): Promise<{ connected: boolean; institutionName?: string; configured: boolean }> => req("/api/integrations/plaid/status").then(j),
-  plaidLinkToken: (): Promise<{ linkToken: string }> => post("/api/integrations/plaid/link-token"),
-  plaidExchange: (publicToken: string): Promise<{ ok: boolean }> => post("/api/integrations/plaid/exchange", { publicToken }),
-  plaidConnectMock: (): Promise<{ ok: boolean }> => post("/api/integrations/plaid/connect-mock"),
-  plaidDisconnect: (): Promise<{ ok: boolean }> => post("/api/integrations/plaid/disconnect"),
-  financeSnapshot: (): Promise<{ accounts: { id: string; name: string; type: string; balance: number | null }[]; transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[] }> =>
-    req("/api/finance/snapshot").then(j),
   // Blackbaud (school Education Management) — MOCK ONLY for now, see server/blackbaud.ts's own comment:
   // no real SKY API credential path exists yet, only a demo connection.
   blackbaudStatus: (): Promise<{ connected: boolean; schoolName?: string; configured: boolean; realAuthAvailable: boolean }> => req("/api/integrations/blackbaud/status").then(j),

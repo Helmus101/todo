@@ -117,7 +117,7 @@ export function AskOttoPanel({
 
   return (
     <div className="sm-ai-embed">
-      <div className="sm-ai-chat" role="log" aria-live="polite" aria-label="Conversation with Otto" ref={chatContainerRef} onScroll={handleScroll}>
+      <div className="sm-ai-chat" role="log" aria-live="polite" aria-label={L("Conversation avec Otto", "Conversation with Otto")} ref={chatContainerRef} onScroll={handleScroll}>
         {!task.chat?.length && !pendingMsg ? (
           <p className="sm-ai-empty">
             {`Ask anything about ${currentStep ? `"${currentStep.text}"` : task.title}.`}
@@ -149,7 +149,7 @@ export function AskOttoPanel({
         ))}
         {pendingMsg ? <div className="sm-ai-msg sm-ai-msg-user sm-ai-msg-pending">{pendingMsg}</div> : null}
         {sending ? (
-          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label="Otto is thinking">
+          <div className="sm-ai-msg sm-ai-msg-assistant sm-ai-typing" role="status" aria-label={L("Otto réfléchit", "Otto is thinking")}>
             <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
             {/* The cycling word itself already reads as "still actively working" (it keeps changing), so it
                 replaces the old static "still thinking…"/"might be putting something together…" text
@@ -173,8 +173,8 @@ export function AskOttoPanel({
           ref={inputRef}
           className="sm-ai-input"
           rows={1}
-          aria-label="Your message to Otto"
-          placeholder="What do you need help with?"
+          aria-label={L("Ton message à Otto", "Your message to Otto")}
+          placeholder={L("De quoi as-tu besoin ?", "What do you need help with?")}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(undefined, voiceModeOn); } }}

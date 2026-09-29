@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, Eye, Activity, Move, EyeOff, Loader2, X } from "lucide-react";
 import type { FocusCamera } from "../useFocusCamera.ts";
+import { useLang } from "../../ui.tsx";
 
 interface CameraArtifactProps {
   camera: FocusCamera;
@@ -16,6 +17,7 @@ const EYE_LANDMARK_IDX = [33, 133, 159, 145, 362, 263, 386, 374];
  *  and reopened by the student without affecting the underlying camera stream or ML tracking, which live
  *  at the StudyMode session level and keep running regardless of whether this panel is on screen. */
 export function CameraArtifact({ camera }: CameraArtifactProps) {
+  const L = useLang();
   const { enabled, error, tracking, stream, startCamera, stopCamera } = camera;
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -109,7 +111,7 @@ export function CameraArtifact({ camera }: CameraArtifactProps) {
               autoPlay
               playsInline
               onLoadedMetadata={() => setVideoReady(true)}
-              aria-label="Live camera preview"
+              aria-label={L("Aperçu caméra en direct", "Live camera preview")}
             />
             {!videoReady && (
               <div className="sm-camera-video-loading" role="status">

@@ -892,57 +892,6 @@ export function applyQualityBar<T extends { anchorKey?: string; when?: string; u
   });
 }
 
-// ── Data-leakage prevention for /finance (Plaid) candidates ────────────────────────────────────────────
-// Plaid-sourced candidates (recurring-bill reminders — see discover.ts's plaidToItems) NEVER pass through
-// classifyCandidates or any other AI call, full stop — bank transaction merchant names/amounts are
-// meaningfully more sensitive than an email subject line, and there is no reason a bill reminder needs an
-// AI's judgment anyway: plaidToItems already deterministically decided it's real, recurring, and due soon.
-// This is the direct fix for "don't want an AI having random access to bank statements" — not a policy
-// promise, an actual code path that structurally cannot send this data to DeepSeek. The resulting task also
-// lands at "needs_review" (never "ready"), which keeps it OUT of the auto-run/agent-execution pipeline too
-// (tasksToEnqueue in jobs.ts only ever picks up "ready" tasks) — so the merchant/amount data never enters an
-// AI prompt at ANY later point either, not just at creation. The task is fully actionable on its own (a
-// plain "go pay this" reminder) and needs no agent run to be useful.
-export function plaidBillsToTasks(
-  candidates: { sourceApp: string; anchorKey: string; title: string; snippet: string; timestamp?: string; labels?: string[] }[],
-  coveredAnchors: (string | undefined)[],
-  en = false,
-): { title: string; why: string; when?: string; source: string; risk: "low" | "high"; urgency: number; importance: number; anchorKey?: string; sourceDetail?: string; status: "needs_review"; steps: TaskStep[] }[] {
-  const covered = new Set(coveredAnchors.filter((a): a is string => !!a).map(normKey));
-  const out: ReturnType<typeof plaidBillsToTasks> = [];
-  for (const c of candidates) {
-    if (c.sourceApp !== "plaid" || covered.has(normKey(c.anchorKey))) continue;
-    // "suspicious" (discover.ts's plaidSuspiciousToItems — an unusually large charge or a possible duplicate)
-    // is a DIFFERENT kind of card from a routine bill reminder: nothing to "pay", something to go verify.
-    // Same AI-free/needs_review guarantee either way — only the framing/urgency/step text differ.
-    const isAlert = c.labels?.includes("suspicious");
-    out.push({
-      title: c.title.slice(0, 120),
-      why: c.snippet.slice(0, 300),
-      when: c.timestamp,
-      source: "plaid", risk: "low",
-      // Fixed, not model-scored (there's no model involved). A suspicious charge reads slightly more
-      // urgent than a routine bill — matched to Pronote's own forceWeekCoverage safety-net scoring either way.
-      urgency: isAlert ? 0.7 : 0.6, importance: isAlert ? 0.65 : 0.6,
-      anchorKey: c.anchorKey,
-      sourceDetail: c.snippet.slice(0, 300),
-      // "needs_review" (never "ready") is the OTHER half of keeping this data away from AI — "ready" tasks
-      // are what the cron catch-all (tasksToEnqueue, jobs.ts) auto-runs through the agent; this status skips
-      // that pipeline entirely, permanently, not just at creation. The step below is pre-written and
-      // complete (not "prepared" by a run) so the card is immediately actionable with nothing left pending —
-      // Otto genuinely never needs to "do" anything with this beyond having noticed it.
-      status: "needs_review",
-      steps: [{
-        text: isAlert
-          ? (en ? "Check your bank's app or statement to confirm this charge is really yours." : "Vérifie dans l'appli de ta banque que cette charge est bien la tienne.")
-          : (en ? "Pay via your bank's app or the merchant's own site." : "Payer via l'appli de ta banque ou le site du marchand."),
-        done: false, automatable: false,
-      }],
-    });
-  }
-  return out;
-}
-
 /** Days-ahead window used for "this week" everywhere — must match workload.ts's own DAYS_AHEAD (7) so the
  *  WeekLoad widget and the guarantee below mean the same 7 days. Duplicated rather than imported to avoid
  *  tasks.ts ↔ workload.ts pulling into each other over one constant. */
@@ -1115,12 +1064,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
       const { items, attempted } = await discoverSourceItems(userEmail);
       if (attempted) {
         const knownAnchors = existing.map((t) => t.anchorKey);
-        const allCandidates = filterCandidates(items, knownAnchors);
-        // Plaid (/finance) candidates are carved out HERE, before anything else touches `candidates` —
-        // see plaidBillsToTasks's own comment for why this data must structurally never reach an AI prompt.
-        // classifyCandidates below only ever sees `candidates` (the non-Plaid remainder).
-        const candidates = allCandidates.filter((c) => c.sourceApp !== "plaid");
-        const plaidCandidates = allCandidates.filter((c) => c.sourceApp === "plaid");
+        const candidates = filterCandidates(items, knownAnchors);
         const classified = candidates.length
           ? await classifyCandidates(candidates, profile, active.map((a) => a.title), handled.map((h) => h.title))
           : { tasks: [], profileUpdates: [] as ProfileUpdate[] };
@@ -1143,8 +1087,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
           candidates, [...existing.map((t) => t.anchorKey), ...kept.map((k) => k.anchorKey)],
           { en: profile.language === "en", daysAhead: TEST_DAYS_AHEAD },
         );
-        const plaidBills = plaidBillsToTasks(plaidCandidates, existing.map((t) => t.anchorKey), profile.language === "en");
-        const folded = foldGenerated(existing, [...kept, ...weekCovered, ...plaidBills], profile.highPriorityPeople || []);
+        const folded = foldGenerated(existing, [...kept, ...weekCovered], profile.highPriorityPeople || []);
         // Pipeline visibility: where do candidates go? A sudden "0 new" is now diagnosable at a glance —
         // was it the classifier (classified 0), the quality bar (kept 0), or dedupe (folded == existing).
         const newCards = folded.filter((t) => t.status === "ready" && !existing.some((e) => e.id === t.id)).length;
@@ -1165,7 +1108,7 @@ export async function generate(existing: WebTask[], profile: Profile, extras?: A
           }
         }
         // SUPPLEMENTARY SWEEP — discoverSourceItems only makes FIXED read calls against Gmail/Calendar (plus
-        // Pronote/Plaid, handled separately). Once that "attempted" succeeds (true for any Gmail-connected
+        // Pronote, handled separately). Once that "attempted" succeeds (true for any Gmail-connected
         // account), this whole function returns above — so a connected app OUTSIDE that fixed set (Notion)
         // was NEVER checked, ever, not even once. That's a silent, permanent recall gap: a student who
         // connects Notion would never get a task generated from it. Run a small scoped open-ended sweep over
@@ -1218,7 +1161,7 @@ export function foldGenerated(existing: WebTask[], genTasks: {
   anchorKey?: string; link?: string; accountId?: string; sourceDetail?: string; sourceSubject?: string; sourceDue?: string;
   // Both optional, both default to the normal AI-run path (undefined status → "ready", undefined steps →
   // none, filled in by the eventual run) — only a caller that needs to structurally SKIP the AI pipeline
-  // (see plaidBillsToTasks's own comment on why /finance data must never reach an AI prompt) sets these.
+  // sets these.
   status?: "ready" | "needs_review"; steps?: TaskStep[];
 }[], highPriorityPeople: string[] = [], now_: Date = new Date()): WebTask[] {
   const now = now_.toISOString();
@@ -1242,20 +1185,19 @@ export function foldGenerated(existing: WebTask[], genTasks: {
   // (Done tasks keep the stricter matching — a NEW similar task after a finished one is often legit,
   // e.g. this week's edition of a recurring report.)
   //
-  // BUT: Pronote/Plaid titles are GENERIC BY CONSTRUCTION — pronoteToItems makes every assignment in a
-  // subject "{subject} homework" (e.g. always "Physique-Chimie homework"), and plaidBillsToTasks makes
-  // every occurrence of a bill "Pay {merchant}" (e.g. always "Pay Netflix"). The loose title match below
-  // can't tell "this month's Netflix bill" from "last month's, which I dismissed" — it only sees identical
-  // text. Real, live bug: dismiss ONE homework for a subject (or one month's bill) and every FUTURE
-  // different assignment/charge for it silently stops surfacing forever, even though it has its own unique
-  // anchorKey. These two sources already have a reliable per-item identity (assignment id / transaction
-  // id) — the anchor-exact-match check above is the correct dedupe for them; the fuzzy fallback is not.
+  // BUT: Pronote titles are GENERIC BY CONSTRUCTION — pronoteToItems makes every assignment in a
+  // subject "{subject} homework" (e.g. always "Physique-Chimie homework"). The loose title match below
+  // can't tell "this month's homework" from "last month's, which I dismissed" — it only sees identical
+  // text. Real, live bug: dismiss ONE homework for a subject and every FUTURE different assignment for it
+  // silently stops surfacing forever, even though it has its own unique anchorKey. Pronote already has a
+  // reliable per-item identity (assignment id) — the anchor-exact-match check above is the correct dedupe
+  // for it; the fuzzy fallback is not.
   const dismissed = existing.filter((t) => t.status === "dismissed");
   const resemblesDismissed = (g: { title: string; why: string; source: string; anchorKey?: string; link?: string }) =>
     dismissed.some((d) => {
       if (g.anchorKey && d.anchorKey && normKey(g.anchorKey) === normKey(d.anchorKey)) return true;
       if (g.link && linkOf(d) === g.link) return true;
-      if (g.source === "pronote" || g.source === "plaid") return false; // anchor-exact-match only, see above
+      if (g.source === "pronote") return false; // anchor-exact-match only, see above
       return looseDup(g.title, d.title) || looseDup(g.title, d.why) || looseDup(g.why, d.title) ||
         (g.source === d.source && looseDup(g.why, d.why));
     });
@@ -1442,12 +1384,6 @@ const GRANULAR_STEPS_HINT = "Break the work into MORE, SMALLER steps than you no
 export async function runById(list: WebTask[], id: string, profile: Profile, extras?: AgentTools, revision?: string, academic?: AcademicContext, granularityArm?: string): Promise<WebTask | undefined> {
   const task = list.find((t) => t.id === id);
   if (!task) return undefined;
-  // Third and final guard against /finance (Plaid) data ever reaching an AI call — this is the actual
-  // function that calls the agent (aiRun below), so this is the one place that, if it held, would make the
-  // other two guards (tasks.ts's plaidBillsToTasks generation-time carve-out, index.ts's chat-route refusal)
-  // moot anyway. A Plaid task should never even reach "ready"/get a revision request, but refuse outright
-  // regardless of how it got here — never trust upstream state alone for something this sensitive.
-  if (task.source === "plaid") return task;
   if (canonStatus(task.status) === "executing") return task; // already in flight — never double-run
   task.status = "executing";
   task.autoRan = true; // set before the await so concurrent auto-runs skip it (pendingAutoRun checks !autoRan)

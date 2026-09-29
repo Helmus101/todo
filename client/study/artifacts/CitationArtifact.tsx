@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ArtifactState } from "../StudyTypes.ts";
+import { useLang } from "../../ui.tsx";
 
 interface CitationArtifactProps {
   artifact: ArtifactState;
@@ -63,6 +64,7 @@ function buildCitation(style: Style, f: { author: string; title: string; site: s
 }
 
 export function CitationArtifact({ artifact, onChange }: CitationArtifactProps) {
+  const L = useLang();
   const cs = artifact.contentState || {};
   const style = (cs.style as Style) || "apa";
   const author = (cs.author as string) || "";
@@ -96,17 +98,17 @@ export function CitationArtifact({ artifact, onChange }: CitationArtifactProps) 
       </div>
 
       <div className="sm-citation-fields">
-        <input value={author} onChange={(e) => set({ author: e.target.value })} placeholder="Author (First Last)" />
-        <input value={title} onChange={(e) => set({ title: e.target.value })} placeholder="Page/article title" />
-        <input value={site} onChange={(e) => set({ site: e.target.value })} placeholder="Site or publisher name" />
-        <input value={url} onChange={(e) => set({ url: e.target.value })} placeholder="URL" />
+        <input value={author} onChange={(e) => set({ author: e.target.value })} placeholder={L("Auteur (Prénom Nom)", "Author (First Last)")} />
+        <input value={title} onChange={(e) => set({ title: e.target.value })} placeholder={L("Titre de la page/article", "Page/article title")} />
+        <input value={site} onChange={(e) => set({ site: e.target.value })} placeholder={L("Nom du site ou de l'éditeur", "Site or publisher name")} />
+        <input value={url} onChange={(e) => set({ url: e.target.value })} placeholder={L("URL", "URL")} />
         <label>
           Published
           <input type="date" value={published} onChange={(e) => set({ published: e.target.value })} />
         </label>
         <label>
           Accessed
-          <input type="date" value={accessed} onChange={(e) => set({ accessed: e.target.value })} placeholder="Today" />
+          <input type="date" value={accessed} onChange={(e) => set({ accessed: e.target.value })} placeholder={L("Aujourd'hui", "Today")} />
         </label>
       </div>
 

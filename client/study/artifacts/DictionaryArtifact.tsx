@@ -62,6 +62,7 @@ async function lookupWord(q: string, lang: string): Promise<DictionaryEntry | nu
 }
 
 export function DictionaryArtifact({ artifact, onChange, language = "en" }: DictionaryArtifactProps) {
+  const uiEn = language === "en";
   const savedWord = (artifact.contentState?.word as string) || "";
   // Persisted per-artifact so switching desks/reopening keeps the language a student was actually working
   // in (e.g. mid-way through Spanish vocab) — falls back to the app's UI language only as a first guess.
@@ -117,12 +118,12 @@ export function DictionaryArtifact({ artifact, onChange, language = "en" }: Dict
           value={word}
           onChange={(e) => setWord(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && lookup()}
-          placeholder="Search a word"
+          placeholder={uiEn ? "Search a word" : "Cherche un mot"}
           autoCapitalize="none"
           spellCheck={false}
         />
         <button className="sm-btn sm-btn-primary" onClick={() => void lookup()} disabled={!word.trim() || status === "loading"}>
-          {status === "loading" ? "..." : "Look up"}
+          {status === "loading" ? "..." : (uiEn ? "Look up" : "Chercher")}
         </button>
       </div>
 

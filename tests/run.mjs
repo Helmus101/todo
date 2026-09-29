@@ -1,14 +1,14 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
-import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, plaidBillsToTasks, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
+import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
-import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, plaidToItems, plaidSuspiciousToItems, mergePronoteHomeworkAndTests } from "../server/discover.ts";
+import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
 import { dedupeFacts, emptyProfile, canonStatus, isHandled, isInFlight, sortWithinQuadrant, deadlineEpoch, normalizeWhen, addUsage, monthKeyOf, monthCostUsd, overMonthlyBudget, overInteractiveBudget, usageCostUsd, callCostUsd, USD_PER_1M_IN, USD_PER_1M_CACHED_IN, USD_PER_1M_OUT, tzOf, isValidTz, isPeakHourUtc, isLowGrade, gradesBySubject, nextLeitnerReview, practiceAnswerMatches, bumpActivityHour, learnedProductiveHour, learnedProductiveHourForSubject, validateThemeTokens, normalizeProfile, milestonesBySubject } from "../shared/types.ts";
 import { sweepDueForDay, localDay, sweepDue, shouldRefreshStudentModel, tasksToEnqueue, escapeHtml } from "../server/jobs.ts";
 import { computeWorkload, isPileUp } from "../server/workload.ts";
-import { stripHtml, applyPronoteGrades } from "../server/pronote.ts";
+import { stripHtml, applyPronoteGrades, isPrivateOrReservedIp } from "../server/pronote.ts";
 import { connectionColumnUpdates } from "../server/store.ts";
 import { POMODORO_ARMS, FLASHCARD_ARMS, GRANULARITY_ARMS, AUDIO_ARMS, DENSITY_ARMS, ORDERING_ARMS, CHAT_STYLE_ARMS, contextKey, chooseArm, computeReward, computeCardReward, computeLatencyReward, updatePosterior, leadingArm } from "../server/bandit.ts";
 import { predictNextEngagement, predictWeakSubjects, aggregateSubjectSignals, weakSubjectBoost, subjectFrequency, orderingBoost, twoMinuteRuleBoost } from "../server/patterns.ts";
@@ -33,18 +33,14 @@ const dismissed = { ...base, id: "d1", title: "Reply to Vendor Corp pricing surv
 const reworded = { title: "Respond to the Vendor Corp survey on pricing", why: "Vendor Corp wants pricing input", source: "gmail", risk: "low", urgency: 0.6, importance: 0.6, anchorKey: "gmail:bbb" };
 const out1 = foldGenerated([dismissed], [reworded]);
 check("dismissed lookalike suppressed", out1.length === 1 && out1[0].status === "dismissed");
-// Regression: pronoteToItems/plaidBillsToTasks generate the SAME title for every different item in a
-// subject/merchant ("Physique-Chimie homework", "Pay Netflix") — the loose dismissed-lookalike match above
-// used to treat every later, genuinely different assignment/charge as "the one I already dismissed" and
-// silently swallow it forever. These two sources must dedupe by anchor ONLY.
+// Regression: pronoteToItems generates the SAME title for every different item in a subject
+// ("Physique-Chimie homework") — the loose dismissed-lookalike match above used to treat every later,
+// genuinely different assignment as "the one I already dismissed" and silently swallow it forever. This
+// source must dedupe by anchor ONLY.
 const dismissedHw = { ...base, id: "hw-old", title: "Physique-Chimie homework", why: "Vu sur Pronote — pas encore marqué comme fait.", source: "pronote", status: "dismissed", anchorKey: "pronote:old-assignment" };
 const newHw = { title: "Physique-Chimie homework", why: "Vu sur Pronote — pas encore marqué comme fait.", source: "pronote", risk: "low", urgency: 0.5, importance: 0.55, anchorKey: "pronote:brand-new-assignment" };
 const outHw = foldGenerated([dismissedHw], [newHw]);
 check("a genuinely NEW Pronote assignment with an identical generic title is NOT swallowed by an old dismissed one (different anchor)", outHw.some((t) => t.anchorKey === "pronote:brand-new-assignment" && t.status === "ready"));
-const dismissedBill = { ...base, id: "bill-old", title: "Pay Netflix", why: "Recurring charge...", source: "plaid", status: "dismissed", anchorKey: "plaid:netflix-jan" };
-const newBill = { title: "Pay Netflix", why: "Recurring charge...", source: "plaid", risk: "low", urgency: 0.6, importance: 0.6, anchorKey: "plaid:netflix-feb" };
-const outBill = foldGenerated([dismissedBill], [newBill]);
-check("a genuinely NEW month's Plaid bill with an identical title is NOT swallowed by last month's dismissed one", outBill.some((t) => t.anchorKey === "plaid:netflix-feb" && t.status === "ready"));
 // The exact SAME anchor (a genuine re-dismiss-then-regenerate case) must still be suppressed for both.
 check("the SAME Pronote anchor as a dismissed one IS still suppressed", foldGenerated([dismissedHw], [{ ...newHw, anchorKey: "pronote:old-assignment" }]).every((t) => t.anchorKey !== "pronote:old-assignment" || t.status === "dismissed"));
 const doneA = { ...base, id: "a", title: "Book dentist for Thursday", why: "postcard from Dr Wu", source: "gmail", status: "done", anchorKey: "gmail:x1" };
@@ -1288,6 +1284,62 @@ section("loadState survives a missing-column schema-drift error (source pins)");
   check("supabase.sql adds studyProfile double-quoted (not silently lowercased)", /add column if not exists "studyProfile"/.test(supabaseSql));
   check("loadState retries with a narrower select on a missing-column error, instead of returning empty immediately", /does not exist.*\n[\s\S]{0,400}load-narrow/.test(storeSrc));
 }
+section("server/index.ts error responses — French/English aware, no leaked operator-only detail (source pins)");
+{
+  // Reported live via audit: server/index.ts's res.status().json({error:...}) calls were hardcoded English
+  // across virtually the whole file, so a French account saw raw English text in toasts whenever one of
+  // these paths fired (client/api.ts's error handling always prefers a server-sent message over its own
+  // bilingual fallback, by design — so the fix has to be at the SOURCE, not the client). `M(req, fr, en)`
+  // is the fix; this pins that the highest-traffic clusters (auth flow, the AI-paused/budget/not-configured
+  // checks hit by every AI-calling route, and generic 404s) were actually converted, not just that the
+  // helper exists unused somewhere.
+  const src = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  check("reqLang/M bilingual-error helper exists", /function reqLang\(req: express\.Request\)/.test(src) && /function M\(req: express\.Request, fr: string, en: string\)/.test(src));
+  check("signup's validation errors are bilingual, not hardcoded English", /M\(req, "Entre un email valide et un mot de passe/.test(src));
+  check("login's wrong-password error is bilingual", /M\(req, "Email ou mot de passe incorrect\."/.test(src));
+  check("every AI-paused 403 now goes through M(), not a hardcoded English string", !/error: "AI is paused/.test(src));
+  check("every generic 404 now goes through M(), not a hardcoded \"not found\"", !/error: "not found"/.test(src));
+  check("every 'AI isn't configured' 503 now goes through M()", !/error: "AI isn't configured\."/.test(src) && !/error: "AI isn't set up on this server yet\."/.test(src));
+  // The budget message used to be a single hardcoded English string that leaked an OPERATOR-ONLY instruction
+  // ("Raise MONTHLY_AI_BUDGET_USD to lift it") straight into a student's toast — meaningless to them, and
+  // never translated even though the rest of the app is French-first. Now a real bilingual, student-facing
+  // message via budgetMsg(req), with no internal env-var detail.
+  const budgetMsgIdx = src.indexOf("const budgetMsg = (req: express.Request)");
+  const budgetMsgBody = src.slice(budgetMsgIdx, src.indexOf(";", budgetMsgIdx) + 1);
+  check("budgetMsg() is bilingual and never mentions the internal env var to a student", budgetMsgIdx > 0 && !/MONTHLY_AI_BUDGET_USD/.test(budgetMsgBody));
+  check("every over-budget 402 call site uses budgetMsg(req), not a raw hardcoded constant", !/error: BUDGET_MSG/.test(src));
+}
+
+section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote connect URL");
+{
+  // A student can type ANY url as their school's Pronote address, and connectPronote makes a real outbound
+  // request to it server-side — this is what stops that from being pointed at an internal address (cloud
+  // metadata, an internal service) instead of a real school's Pronote server.
+  check("blocks loopback", isPrivateOrReservedIp("127.0.0.1"));
+  check("blocks the cloud metadata address (169.254.169.254)", isPrivateOrReservedIp("169.254.169.254"));
+  check("blocks RFC1918 10.x", isPrivateOrReservedIp("10.0.0.5"));
+  check("blocks RFC1918 172.16-31.x", isPrivateOrReservedIp("172.20.1.1"));
+  check("blocks RFC1918 192.168.x", isPrivateOrReservedIp("192.168.1.1"));
+  check("blocks 0.0.0.0/8", isPrivateOrReservedIp("0.0.0.0"));
+  check("allows a real public IP", !isPrivateOrReservedIp("8.8.8.8"));
+  check("allows another real public IP (a school's own server)", !isPrivateOrReservedIp("203.0.113.42"));
+  check("blocks IPv6 loopback", isPrivateOrReservedIp("::1"));
+  check("blocks IPv6 link-local", isPrivateOrReservedIp("fe80::1"));
+  check("blocks IPv6 unique-local", isPrivateOrReservedIp("fd12:3456:789a::1"));
+  check("blocks an IPv4-mapped private address", isPrivateOrReservedIp("::ffff:10.0.0.1"));
+  check("rejects garbage input rather than treating it as safe", isPrivateOrReservedIp("not-an-ip"));
+}
+section("connectPronote — SSRF guard is wired in before the outbound login request (source pin)");
+{
+  const src = readFileSync(new URL("../server/pronote.ts", import.meta.url), "utf8");
+  const start = src.indexOf("export async function connectPronote(");
+  const body = src.slice(start, src.indexOf("\n}", src.indexOf("return withPronoteLock", start)) + 2);
+  const urlIdx = body.indexOf("const url = normalizePronoteUrl(");
+  const guardIdx = body.indexOf("assertSafeExternalUrl(url)");
+  const loginIdx = body.indexOf("pronote.loginCredentials(");
+  check("connectPronote calls the SSRF guard on the normalized url", guardIdx > urlIdx && urlIdx >= 0);
+  check("the guard runs BEFORE the real outbound login request, not after", guardIdx > 0 && loginIdx > guardIdx);
+}
 section("Pronote connection durability — connection columns + uncached reads (source pins)");
 {
   const jobsSrc = readFileSync(new URL("../server/jobs.ts", import.meta.url), "utf8");
@@ -1326,15 +1378,15 @@ section("Pronote connection durability — connection columns + uncached reads (
   // The real protection, tested behaviourally rather than by grep: a save that means to update ONE
   // connection must never quietly clear the others. `{ ...loadedState, blackbaud }` is the shape that did
   // this — a loaded state carries every connection key, as undefined when unset.
-  const loadedWithPronoteOnly = { profile: {}, tasks: [], pronote: { url: "u", username: "n", kind: 6, token: "t", deviceUUID: "d" }, google: undefined, plaid: undefined, blackbaud: undefined };
+  const loadedWithPronoteOnly = { profile: {}, tasks: [], pronote: { url: "u", username: "n", kind: 6, token: "t", deviceUUID: "d" }, google: undefined, blackbaud: undefined };
   const hourlyBlackbaudRefresh = connectionColumnUpdates({ ...loadedWithPronoteOnly, blackbaud: { accessToken: "a", connectedAt: "now" } });
-  check("updating one connection does not clear an unrelated one (the hourly-wipe bug)", !("google" in hourlyBlackbaudRefresh) && !("plaid" in hourlyBlackbaudRefresh));
+  check("updating one connection does not clear an unrelated one (the hourly-wipe bug)", !("google" in hourlyBlackbaudRefresh));
   check("...and still writes the connection it actually meant to update", hourlyBlackbaudRefresh.blackbaud?.accessToken === "a");
   check("...while leaving the live Pronote connection intact, not nulled", hourlyBlackbaudRefresh.pronote !== null && hourlyBlackbaudRefresh.pronote?.username === "n");
   // The exact reported failure: the cached read predates a connect that landed on another instance, so
   // `pronote` comes back undefined. The hourly Blackbaud token refresh then spreads that stale state and,
   // under the old rule, wrote pronote: null — permanently disconnecting a connection that was actually live.
-  const staleRead = { profile: {}, tasks: [], pronote: undefined, google: undefined, plaid: undefined, blackbaud: { accessToken: "old", connectedAt: "then" } };
+  const staleRead = { profile: {}, tasks: [], pronote: undefined, google: undefined, blackbaud: { accessToken: "old", connectedAt: "then" } };
   const refreshOnStaleRead = connectionColumnUpdates({ ...staleRead, blackbaud: { accessToken: "new", connectedAt: "then" } });
   check("a stale read's undefined pronote is never written as null (the reported hourly disconnect)", !("pronote" in refreshOnStaleRead));
   // A plain profile/tasks save (commit()'s shape, ~20 call sites) must touch no connection column at all.
@@ -2498,79 +2550,6 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   const again = leadingArm(POMODORO_ARMS, state, key);
   check("deterministic — the same state always yields the same leading arm (no resampling)", again?.arm.id === leading?.arm.id && again?.confidence === leading?.confidence);
   check("a never-touched context key is its own independent cold start", leadingArm(POMODORO_ARMS, state, "afternoon|weekday|other") === null);
-}
-
-section("/finance (Plaid) — plaidToItems + plaidBillsToTasks, and that NONE of it needs an AI call");
-{
-  const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
-  const daysFromNow = (n) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
-  // A genuinely recurring monthly charge, last seen ~2 days ago (so the NEXT one is due imminently) —
-  // exactly the "detected from real history, deterministic, no model involved" case.
-  const recurring = [
-    { id: "1", name: "NETFLIX.COM 12345", amount: 13.49, date: daysAgo(60), pending: false },
-    { id: "2", name: "NETFLIX.COM 67890", amount: 13.49, date: daysAgo(30), pending: false }, // ~30-day gap → next due ~today
-  ];
-  const items = plaidToItems(recurring);
-  check("detects a recurring charge seen 2+ times, due soon, as a candidate", items.length === 1 && items[0].sourceApp === "plaid");
-  check("normalizes merchant names (strips the trailing store/reference numbers)", items[0].anchorKey === "plaid:netflix com");
-  check("candidate title is a plain, real reminder, not a generic placeholder", /netflix/i.test(items[0].title));
-
-  check("a single one-off purchase produces NO candidate — one data point isn't a pattern", plaidToItems([{ id: "3", name: "Librairie Gibert", amount: 24.9, date: daysAgo(3), pending: false }]).length === 0);
-  check("a pending transaction is ignored (not a settled charge yet)", plaidToItems([
-    { id: "4", name: "Spotify", amount: 10.99, date: daysAgo(30), pending: false },
-    { id: "5", name: "Spotify", amount: 10.99, date: daysAgo(1), pending: true },
-  ]).length === 0);
-  check("a deposit/refund (amount <= 0, Plaid's credit convention) is never treated as a bill", plaidToItems([
-    { id: "6", name: "Payroll", amount: -500, date: daysAgo(30), pending: false },
-    { id: "7", name: "Payroll", amount: -500, date: daysAgo(1), pending: false },
-  ]).length === 0);
-  check("a recurring charge not due for weeks yet produces no candidate (not relevant TODAY)", plaidToItems([
-    { id: "8", name: "Insurance", amount: 40, date: daysAgo(45), pending: false },
-    { id: "9", name: "Insurance", amount: 40, date: daysAgo(15), pending: false }, // 30-day gap, last seen 15 days ago → next due ~15 days from now
-  ]).length === 0);
-
-  // plaidBillsToTasks — the AI-free conversion into an actual task. Must land at "needs_review" (never
-  // "ready") so it can NEVER be auto-run through the agent pipeline, and must come with its own step
-  // pre-written (no AI-authored steps at all).
-  const plaidCandidate = { sourceApp: "plaid", anchorKey: "plaid:netflix", title: "Pay Netflix", snippet: "Recurring charge...", timestamp: daysFromNow(1) };
-  const billTasks = plaidBillsToTasks([plaidCandidate], []);
-  check("produces exactly one task from one candidate", billTasks.length === 1);
-  check("status is needs_review, NEVER ready — structurally cannot be auto-run by the agent pipeline", billTasks[0].status === "needs_review");
-  check("comes with its own pre-written step — never needs an AI run to be actionable", billTasks[0].steps.length === 1 && !!billTasks[0].steps[0].text);
-  check("respects an already-covered anchor (no duplicate for an existing task)", plaidBillsToTasks([plaidCandidate], ["plaid:netflix"]).length === 0);
-  check("ignores a non-Plaid candidate entirely, even if handed one by mistake", plaidBillsToTasks([{ ...plaidCandidate, sourceApp: "gmail" }], []).length === 0);
-
-  // plaidSuspiciousToItems — the deterministic "worth a second look" detector: unusually large charges
-  // (relative to the account's OWN median, never a fixed dollar figure) and possible duplicate charges
-  // (same merchant+amount, days apart, not months — the opposite pattern from a recurring bill).
-  const typicalSpend = Array.from({ length: 6 }, (_, i) => ({ id: `t${i}`, name: "Boulangerie", amount: 8 + i, date: daysAgo(10 + i), pending: false }));
-  const bigCharge = { id: "big1", name: "Electronics Store", amount: 900, date: daysAgo(1), pending: false };
-  const alerts = plaidSuspiciousToItems([...typicalSpend, bigCharge]);
-  check("flags a charge well above the account's own median as suspicious", alerts.some((a) => a.externalId === "big1" && a.labels.includes("suspicious")));
-  check("does NOT flag ordinary small purchases that make up the account's normal spending", !alerts.some((a) => a.externalId.startsWith("t")));
-  check("a low-spend account isn't flagged over a proportionally-large-but-tiny charge (floored at $50)", plaidSuspiciousToItems([
-    { id: "s1", name: "Snack", amount: 4, date: daysAgo(10), pending: false },
-    { id: "s2", name: "Bakery", amount: 5, date: daysAgo(4), pending: false }, // different merchant/amount — no duplicate match
-    { id: "s3", name: "Coffee", amount: 22, date: daysAgo(1), pending: false }, // ~5x median but under the $50 floor
-  ]).length === 0);
-
-  const dupeCharges = [
-    { id: "d1", name: "SHOP #4471", amount: 45, date: daysAgo(2), pending: false },
-    { id: "d2", name: "SHOP #4471", amount: 45, date: daysAgo(1), pending: false }, // same merchant+amount, 1 day apart
-  ];
-  const dupeAlerts = plaidSuspiciousToItems(dupeCharges);
-  check("flags the same merchant+amount charged twice within a few days as a possible duplicate", dupeAlerts.length === 1 && dupeAlerts[0].externalId === "d2");
-  check("a genuinely monthly-recurring charge (the plaidToItems case) is NOT flagged as a duplicate", plaidSuspiciousToItems(recurring).length === 0);
-  check("the same pair charged months apart is NOT a duplicate (that's normal recurring billing, plaidToItems' job)", plaidSuspiciousToItems([
-    { id: "m1", name: "Insurance", amount: 40, date: daysAgo(60), pending: false },
-    { id: "m2", name: "Insurance", amount: 40, date: daysAgo(30), pending: false },
-  ]).length === 0);
-
-  // plaidBillsToTasks on a "suspicious" candidate — same AI-free/needs_review guarantee, different framing.
-  const alertCandidate = { sourceApp: "plaid", anchorKey: "plaid-alert:big1", title: "Check Electronics Store", snippet: "Unusually large charge...", timestamp: daysAgo(1), labels: ["suspicious"] };
-  const alertTasks = plaidBillsToTasks([alertCandidate], []);
-  check("a suspicious-charge candidate also lands at needs_review, never auto-run", alertTasks.length === 1 && alertTasks[0].status === "needs_review");
-  check("a suspicious-charge task's step is 'go verify', not 'go pay'", /confirm|check|v[ée]rifie/i.test(alertTasks[0].steps[0].text));
 }
 
 // ── Step-generation repair pass: artifact dedupe, extras carry-over, and the runTask wiring ────────

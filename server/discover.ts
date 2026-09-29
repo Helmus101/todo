@@ -11,11 +11,10 @@
  */
 import { readAction, getConnectedAccounts } from "./integrations.ts";
 import { pronoteConnected, pronoteHomework, pronoteTests } from "./pronote.ts";
-import { plaidConnected, plaidSnapshot } from "./plaid.ts";
 import { blackbaudConnected, blackbaudAssignments } from "./blackbaud.ts";
 
 export interface SourceItem {
-  sourceApp: "gmail" | "calendar" | "drive" | "pronote" | "plaid" | "blackbaud";
+  sourceApp: "gmail" | "calendar" | "drive" | "pronote" | "blackbaud";
   externalId: string;
   anchorKey: string;      // "gmail:<threadId>" / "calendar:<eventId>" / "drive:<fileId>" — the dedupe identity
   url?: string;
@@ -195,128 +194,6 @@ export function blackbaudToItems(items: { id: string; title: string; subject?: s
   }));
 }
 
-// Group name normalization for recurring-charge detection — Plaid transaction names carry noise (a store
-// number, a date fragment, "POS " prefixes) that would otherwise make the SAME recurring charge look like a
-// new merchant every month. Coarse and deliberately over-eager (strips trailing digits/punctuation) since a
-// false MERGE (two different one-off purchases treated as "recurring") is harmless — it just fails the
-// "seen 2+ times" bar below — while a false SPLIT (the same bill never recognized as recurring) is the
-// actual failure mode this exists to avoid.
-function normalizeMerchant(name: string): string {
-  return name.toLowerCase().replace(/[0-9]/g, "").replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
-}
-/** Recurring-charge detection from real Plaid transaction history — NOT bill PAYMENT (Otto never initiates
- *  a transfer/payment on a student's behalf; that's a real-money action with a liability profile completely
- *  unlike drafting an email, and deliberately out of scope here). This only turns "this charge has recurred
- *  before, and is due again around now" into a REMINDER task — the same proactive-surfacing role Pronote/
- *  Gmail candidates already play, just for finance instead of school. A merchant seen only once produces no
- *  candidate at all (one data point isn't a pattern); seen 2+, the NEXT occurrence is estimated at the last
- *  seen date + the average gap between the seen occurrences (usually ~30 days for a monthly subscription/bill). */
-export function plaidToItems(transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[]): SourceItem[] {
-  const byMerchant = new Map<string, { name: string; amount: number; dates: string[] }>();
-  for (const t of transactions) {
-    if (t.pending || t.amount <= 0) continue; // amount>0 = money OUT (Plaid convention) — a bill/charge, not a deposit/refund
-    const key = normalizeMerchant(t.name);
-    if (!key) continue;
-    const g = byMerchant.get(key) || { name: t.name, amount: t.amount, dates: [] };
-    g.dates.push(t.date);
-    byMerchant.set(key, g);
-  }
-  const now = Date.now();
-  const items: SourceItem[] = [];
-  for (const [key, g] of byMerchant) {
-    if (g.dates.length < 2) continue; // one occurrence isn't a recurring pattern yet
-    const sorted = [...g.dates].sort();
-    const gaps: number[] = [];
-    for (let i = 1; i < sorted.length; i++) gaps.push((Date.parse(sorted[i]) - Date.parse(sorted[i - 1])) / 86_400_000);
-    const avgGapDays = gaps.reduce((s, x) => s + x, 0) / gaps.length;
-    const lastSeen = Date.parse(sorted[sorted.length - 1]);
-    const nextDue = new Date(lastSeen + avgGapDays * 86_400_000);
-    // Only worth a task once it's actually coming up (within a week) or already just passed (a day's grace,
-    // same "small grace window" idiom forceWeekCoverage uses for Pronote deadlines) — a bill due in 3 weeks
-    // isn't a today-relevant reminder yet, and re-surfacing it every single sweep in the meantime would be
-    // noise, not proactiveness.
-    const daysUntilDue = (nextDue.getTime() - now) / 86_400_000;
-    if (daysUntilDue < -1 || daysUntilDue > 7) continue;
-    items.push({
-      sourceApp: "plaid",
-      externalId: key,
-      anchorKey: `plaid:${key}`,
-    title: `Review recurring payment: ${g.name}`.slice(0, 140),
-    snippet: `Recurring charge of ~${g.amount.toFixed(2)} seen ${g.dates.length} times, roughly every ${Math.round(avgGapDays)} days — review it before the next expected charge around ${nextDue.toISOString().slice(0, 10)}. Otto never initiates payments.`,
-      timestamp: nextDue.toISOString(),
-      labels: ["bill"],
-    });
-  }
-  return items;
-}
-
-// Anything below this is too small for a false-positive "unusually large charge" flag to be worth the
-// noise, even for an account whose entire recent history is tiny purchases (a student with a $20/week
-// spending pattern shouldn't get flagged over a $22 charge just because it's "4x the median").
-const SUSPICIOUS_MIN_AMOUNT = 50;
-/** Deterministic, AI-free "worth a second look" detection from real Plaid transaction history — same
- *  architectural guarantee as plaidToItems above (never touches an AI call, never becomes a "ready"/
- *  auto-run task — see plaidBillsToTasks's own comment in tasks.ts). Two independent signals, both cheap
- *  statistics over amounts already in hand, no external fraud-detection service:
- *   1. UNUSUALLY LARGE — a charge well above what this account's OWN recent spending looks like (relative
- *      to its own median, not a fixed dollar amount — a $40/month account and a $4,000/month account have
- *      very different "normal"), floored at SUSPICIOUS_MIN_AMOUNT so a low-spend account doesn't get noise.
- *   2. POSSIBLE DUPLICATE — the exact same merchant + amount charged twice within a few days, which is
- *      either a bank/merchant processing glitch or a genuine unauthorized re-charge — and is explicitly
- *      NOT what plaidToItems' recurring-bill detector catches (that needs a ~monthly gap; this needs a
- *      SHORT one, the opposite pattern). */
-export function plaidSuspiciousToItems(transactions: { id: string; name: string; amount: number; date: string; pending: boolean }[]): SourceItem[] {
-  const real = transactions.filter((t) => !t.pending && t.amount > 0); // amount>0 = money OUT (Plaid convention)
-  if (!real.length) return [];
-  const amounts = [...real.map((t) => t.amount)].sort((a, b) => a - b);
-  const median = amounts[Math.floor(amounts.length / 2)];
-  const largeThreshold = Math.max(SUSPICIOUS_MIN_AMOUNT, median * 4);
-  const items: SourceItem[] = [];
-  const seenLarge = new Set<string>(); // one flag per transaction id, never duplicated across sweeps' worth of the same data
-  for (const t of real) {
-    if (t.amount < largeThreshold) continue;
-    seenLarge.add(t.id);
-    items.push({
-      sourceApp: "plaid",
-      externalId: t.id,
-      anchorKey: `plaid-alert:${t.id}`,
-    title: `Review bank charge: ${t.name}`.slice(0, 140),
-    snippet: `Unusually large charge — ${t.amount.toFixed(2)}, well above your typical ${median.toFixed(2)} — review whether this was expected. Otto never disputes or reverses charges.`,
-      timestamp: t.date,
-      labels: ["suspicious"],
-    });
-  }
-  // Duplicate-charge pass — grouped by merchant+amount (not just merchant, since plaidToItems already
-  // handles "same merchant, different amount over time" as ordinary recurring billing).
-  const byPair = new Map<string, { name: string; amount: number; entries: { id: string; date: string }[] }>();
-  for (const t of real) {
-    const key = `${normalizeMerchant(t.name)}::${t.amount.toFixed(2)}`;
-    const g = byPair.get(key) || { name: t.name, amount: t.amount, entries: [] };
-    g.entries.push({ id: t.id, date: t.date });
-    byPair.set(key, g);
-  }
-  for (const [, g] of byPair) {
-    if (g.entries.length < 2) continue;
-    const sorted = [...g.entries].sort((a, b) => a.date.localeCompare(b.date));
-    for (let i = 1; i < sorted.length; i++) {
-      const gapDays = (Date.parse(sorted[i].date) - Date.parse(sorted[i - 1].date)) / 86_400_000;
-      if (gapDays > 3) continue; // > 3 days apart reads as two separate real charges, not a duplicate
-      const dupeId = sorted[i].id;
-      if (seenLarge.has(dupeId)) continue; // already flagged as unusually large — one card, not two
-      items.push({
-        sourceApp: "plaid",
-        externalId: dupeId,
-        anchorKey: `plaid-alert:${dupeId}`,
-        title: `Check ${g.name}`.slice(0, 140),
-        snippet: `Possible duplicate charge — ${g.amount.toFixed(2)} charged twice within ${Math.round(gapDays)} day${Math.round(gapDays) === 1 ? "" : "s"} — worth confirming it wasn't billed twice by mistake.`,
-        timestamp: sorted[i].date,
-        labels: ["suspicious"],
-      });
-    }
-  }
-  return items;
-}
-
 /** Is this snippet the source's REAL words, or just a synthesized placeholder ("Due 2026-09-02",
  *  "Test on …")? Only real text is worth carrying onto the task as `sourceDetail` — a placeholder
  *  would give the run a confident-looking énoncé block containing nothing but a date it already has. */
@@ -347,16 +224,6 @@ export function mergePronoteHomeworkAndTests(homework: SourceItem[], tests: Sour
   return [...survivingHomework, ...mergedTests];
 }
 
-// Temporary: Finance/Plaid is pulled from the product for now — client/App.tsx's FinancePage (the only
-// place a student could ever connect a bank or manage the connection) has been removed, Plaid is hardcoded
-// to sandbox with no production approval or confirmed EU bank coverage (see server/plaid.ts), and it's a
-// second, unrelated product surface (personal finance) bolted onto a study app. Gating it here (rather than
-// deleting plaidToItems/plaidSuspiciousToItems/plaidBillsToTasks) means a stale already-connected sandbox
-// account from before this flag can't keep generating bill/duplicate-charge tasks with no page left to
-// manage them from, while the whole mechanism stays intact and cheap to re-enable — flip back to true once
-// Finance is ready to ship for real. Nothing finance-related is deleted.
-const FINANCE_ENABLED = false;
-
 /**
  * Pull candidates from the fixed Google sources. Per-source failures are tolerated (one bad call must
  * not kill the sweep); `attempted` reports whether ANY source responded, so the caller can fall back
@@ -373,7 +240,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   const accountsFor = async (app: string): Promise<{ id?: string; email?: string }[]> => {
     try { const a = await getConnectedAccounts(userEmail, app); return a.length > 1 ? a.map((x) => ({ id: x.id, email: x.email })) : [{}]; } catch { return [{}]; }
   };
-  const [gmailAccounts, calAccounts, pronoteOn, plaidOn, blackbaudOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), FINANCE_ENABLED ? plaidConnected(userEmail) : Promise.resolve({ connected: false }), blackbaudConnected(userEmail)]);
+  const [gmailAccounts, calAccounts, pronoteOn, blackbaudOn] = await Promise.all([accountsFor("gmail"), accountsFor("googlecalendar"), pronoteConnected(userEmail), blackbaudConnected(userEmail)]);
   const gmailGrabs = gmailAccounts.flatMap((acc) => [
     grab(async () => gmailToItems(await readAction(userEmail, "GMAIL_FETCH_EMAILS", {
       query: "in:inbox newer_than:7d -category:promotions -category:social", max_results: 20,
@@ -403,7 +270,7 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
   // Google Drive/Docs/Sheets/Slides are deliberately NOT a detection source — no xToItems converter, no
   // grab() call here. Drive activity (someone shared/edited a file) used to become its own task candidate
   // here, which is exactly the "context, not detection" line this app draws for Drive specifically (per
-  // explicit product decision — Gmail/Calendar/Pronote/Plaid genuinely signal "something needs doing";
+  // explicit product decision — Gmail/Calendar/Pronote genuinely signal "something needs doing";
   // a modified Drive file is much weaker/noisier evidence of that, and duplicates work Gmail/Calendar
   // already surface when a doc is actually relevant to something due). Drive/Docs/Sheets/Slides read tools
   // are still fully available to the agent during an actual run/chat (getAgentTools, server/integrations.ts)
@@ -425,18 +292,9 @@ export async function discoverSourceItems(userEmail: string): Promise<{ items: S
         return mergePronoteHomeworkAndTests(pronoteToItems(homework), pronoteTestsToItems(tests));
       }),
     ] : []),
-    // Plaid (/finance, if connected) — the "additional proactive source" ask: recurring bills detected from
-    // real transaction history become the SAME kind of candidate a Pronote assignment or a calendar event
-    // is, running through the identical classify/quality-bar/dedupe pipeline below.
-    ...(plaidOn.connected ? [
-      // One snapshot fetch, fed to both detectors — recurring bills AND suspicious/duplicate charges are
-      // both read off the exact same transaction list, no reason to hit Plaid twice for it.
-      grab(async () => { const { transactions } = await plaidSnapshot(userEmail); return [...plaidToItems(transactions), ...plaidSuspiciousToItems(transactions)]; }),
-    ] : []),
     // Blackbaud (school assignments) — MOCK-ONLY right now, see server/blackbaud.ts's file-level comment.
     // `connected` can only ever be true for a demo/mock connection today, so this is effectively a no-op
-    // for every real account until real SKY API access exists — left ungated here (unlike Plaid's
-    // FINANCE_ENABLED) since blackbaudConnected() itself already can't return true outside mock mode.
+    // for every real account until real SKY API access exists.
     ...(blackbaudOn.connected ? [
       grab(async () => blackbaudToItems(await blackbaudAssignments(userEmail))),
     ] : []),

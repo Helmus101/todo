@@ -661,11 +661,8 @@ export function TaskFocus({ task: taskProp, onChange, onTask, retrying, onConfir
         </div>
       ) : null}
 
-      {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away.
-          Hidden entirely for a /finance (Plaid) task — the server refuses this call anyway (no AI ever
-          touches bank data, see the /api/tasks/:id/chat route's own comment), so don't even offer the
-          input for something that can only ever come back as an error. */}
-      {!isDone && task.source !== "plaid" ? (
+      {/* (E) the tutor — never behind a disclosure; it's the core feature and it has to be one glance away. */}
+      {!isDone ? (
         <button type="button" className="btn ghost" onClick={() => setOpenChat(true)}>{L("Demander à Otto", "Ask Otto")}</button>
       ) : null}
 
