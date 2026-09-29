@@ -166,11 +166,25 @@ export function TutorSession({ userId }: { userId: string | null }) {
                         {new Date(s.endTime).toLocaleDateString(L("fr-FR", "en-US"), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         {s.subject && <span className="tutor-history-subject"> · {s.subject}</span>}
                       </div>
-                      <div className="tutor-history-summary">{s.summary}</div>
+                      <div className="tutor-history-summary">
+                        <div className="tutor-history-summary-heading">
+                          <span>{L("Ce qu'on a travaillé", "What we worked on")}</span>
+                          <span className="tutor-history-message-count">{s.messageCount} {L("messages", "messages")}</span>
+                        </div>
+                        <div className="tutor-history-topic">
+                          {s.subject && <span className="tutor-history-subject-pill">{s.subject}</span>}
+                          <span>{s.summary.split(" — ")[0]}</span>
+                        </div>
+                      </div>
                       {s.boardEntries.length > 0 && (
-                        <ul className="tutor-history-board">
-                          {s.boardEntries.slice(0, 5).map((b, i) => <li key={i}>{b}</li>)}
-                        </ul>
+                        <div className="tutor-history-takeaways">
+                          <div className="tutor-history-section-label">{L("À retenir", "Key takeaways")}</div>
+                          <ul className="tutor-history-board">
+                            {s.boardEntries.slice(0, 5).map((b, i) => (
+                              <li key={i}>{b.split(" — ")[0]}</li>
+                            ))}
+                          </ul>
+                        </div>
                       )}
                       {/* Full board (diagrams/equations, not just the flattened text preview above) — only
                           present for a session ended after this was added; an older saved session has no
