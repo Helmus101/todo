@@ -61,7 +61,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
     }
   }, [userId, selectedSubject]);
 
-  // Check if there's ANY active session (regardless of subject)
+  // Check if there's ANY active session (regardless of subject) - only if chat history exists
   const [activeSession, setActiveSession] = useState<WebTask | null>(null);
 
   useEffect(() => {
@@ -69,7 +69,8 @@ export function TutorSession({ userId }: { userId: string | null }) {
       const existing = Array.isArray(list) ? list.find((x) => 
         x.source === "freestudy" && 
         x.status !== "dismissed" && 
-        x.status !== "done"
+        x.status !== "done" &&
+        (x.chat?.length || 0) > 0 // Only consider active if messages have been sent
       ) : undefined;
       setActiveSession(existing || null);
     }).catch(() => setActiveSession(null));
@@ -80,9 +81,9 @@ export function TutorSession({ userId }: { userId: string | null }) {
     setPastSessions(getTutorSessions(userId));
   }, [activeSession, userId]);
 
-  // Auto-end session after 30 minutes of inactivity
+  // Auto-end session after 30 minutes of inactivity (only starts after first message)
   useEffect(() => {
-    if (!sessionStart || !task) return;
+    if (!sessionStart || !task || (task.chat?.length || 0) === 0) return;
 
     let inactivityTimer: NodeJS.Timeout;
     let lastActivity = Date.now();
