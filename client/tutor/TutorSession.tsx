@@ -41,9 +41,10 @@ export function TutorSession({ userId }: { userId: string | null }) {
     setPastSessions(getTutorSessions(userId));
   }, [userId]);
 
-  const loadTask = useCallback(() => {
+  const loadTask = useCallback(async (fresh = false) => {
     setLoadError(false);
-    api.studyFreeSession(false, selectedSubject || undefined).then((list) => {
+    try {
+      const list = await api.studyFreeSession(fresh, selectedSubject || undefined);
       // Find active session for the selected subject, or any if no subject selected
       const t = Array.isArray(list) ? list.find((x) => 
         x.source === "freestudy" && 
@@ -58,7 +59,9 @@ export function TutorSession({ userId }: { userId: string | null }) {
         setTask(null);
         setSessionStart(null);
       }
-    }).catch(() => setLoadError(true));
+    } catch {
+      setLoadError(true);
+    }
   }, [userId, selectedSubject]);
 
   const send = useCallback(async (override?: string, voiceMode?: boolean) => {
@@ -108,10 +111,19 @@ export function TutorSession({ userId }: { userId: string | null }) {
     }
   }, [task, sessionStart, userId]);
 
-  const startNewSession = useCallback(() => {
-    loadTask();
-    setSelectedSubject(""); // Reset subject for next session
-  }, [loadTask]);
+  const startNewSession = useCallback(async () => {
+    // Always create a fresh session - never auto-resume
+    try {
+      const list = await api.studyFreeSession(true, selectedSubject || undefined);
+      const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy") : undefined;
+      if (t) {
+        setTask(hydrateLocalThreads([t], userId)[0]);
+        setSessionStart(new Date().toISOString());
+      }
+    } catch (e) {
+      setError(L("Impossible de démarrer la séance", "Couldn't start the session"));
+    }
+  }, [selectedSubject, userId, L]);
 
   if (loadError) {
     return (
@@ -136,11 +148,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
             <select
               id="subject-select"
               value={selectedSubject}
-              onChange={(e) => {
-                setSelectedSubject(e.target.value);
-                // Load the session for this subject if it exists
-                loadTask();
-              }}
+              onChange={(e) => setSelectedSubject(e.target.value)}
               className="btn ghost"
             >
               <option value="">{L("Choisir une matière", "Choose a subject")}</option>
