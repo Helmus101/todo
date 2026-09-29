@@ -1384,6 +1384,11 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   
+  const message = String(req.body?.message || "").trim().slice(0, 2000);
+  if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
+  const t = await findTaskOrReload(req, String(req.params.id));
+  if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+  
   // Primer session cap enforcement (Phase 1.5) - per-subject
   const profile = req.session.profile;
   const sessionCap = profile?.primerSettings?.sessionCapMinutes || 60; // Default 60min for adults
@@ -1425,10 +1430,6 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   // Update last activity time for this subject
   req.session.primerLastActivities[subject] = now;
   
-  const message = String(req.body?.message || "").trim().slice(0, 2000);
-  if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
-  const t = await findTaskOrReload(req, String(req.params.id));
-  if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
   // The "Aide" button on a step (see F) sends its own index — validate the range server-side, never trust
   // it blindly (steps get regenerated on every rerun, so a stale index from an old page load could point
   // anywhere or nowhere).
