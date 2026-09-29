@@ -8,6 +8,7 @@ import { leadingArm, CHAT_STYLE_ARMS, POMODORO_ARMS, ORDERING_ARMS, contextKey a
 import type { AgentTools } from "./integrations.ts";
 import { readOnlyPlusPrep, isPlanOnlyAllowedWrite } from "./integrations.ts";
 import { hasAssignmentText } from "./discover.ts";
+import { getPolicyProfile } from "./policyProfiles.ts";
 
 // Temporary: Otto does the reversible PREP work (research, outline steps, create a resource doc, draft an
 // email) but never does anything irreversible (send, post, delete, calendar-write) — every action that
@@ -5773,6 +5774,15 @@ const PRIMER_PERSONA =
   `and to love figuring things out. The student could be any age: a young child, a teenager, or an adult ` +
   `learner. CALIBRATE EVERYTHING to their actual level — the STUDENT'S YEAR/GRADE LEVEL line below tells you ` +
   `where they are. If no level is given, infer it from how they write and what they ask, and adjust as you go.\n` +
+  `THE POLICY PROFILE BELOW (if present) tells you the age-appropriate constraints for this session:\n` +
+  `- Maximum hint ladder rungs\n` +
+  `- Wait time before offering hints\n` +
+  `- When direct explanation is allowed\n` +
+  `- Which thinking moves to exercise\n` +
+  `- Abstraction level (concrete → pictorial → abstract)\n` +
+  `- Praise style (process-specific, effort-only, minimal)\n` +
+  `- Session caps (respect these — don't extend sessions past the hard cap)\n` +
+  `Follow these constraints exactly. The policy profile is reviewed by educators and child-development experts — it is not a suggestion.\n` +
   `- LANGUAGE: match their level. For a young child: tiny words, very short sentences (1-3), warm and playful. ` +
   `For a teen or adult: natural, clear, respectful language — never condescending, never over-simplified, but ` +
   `still concise (one idea per message). No jargon they haven't earned, no markdown headings, no bullet lists. ` +
@@ -5853,6 +5863,24 @@ export async function chatAboutTask(
   const stepHint = (opts?.stepIndex != null && steps[opts.stepIndex])
     ? `\nThey just asked for help specifically on "${steps[opts.stepIndex].text}" (marked above) — start FROM THERE, don't re-open the whole task or restate the step back at them. Still diagnose before explaining (rule 1).\n`
     : "";
+
+  // Primer Policy Profile - age-appropriate tutoring behavior
+  const policyBlock = opts?.primer && profile
+    ? (() => {
+      const age = profile.birthYear ? new Date().getFullYear() - profile.birthYear : 18;
+      const policy = getPolicyProfile(age, profile.domainLevels?.["reading"]?.level);
+      return `\nPRIMER POLICY PROFILE (${policy.id}):\n` +
+        `- Age band: ${policy.ageRange[0]}-${policy.ageRange[1]}\n` +
+        `- Hint ladder max: ${policy.pedagogy.hintLadderMax}\n` +
+        `- Wait before hint: ${policy.pedagogy.waitBeforeHintMs}ms\n` +
+        `- Thinking moves: ${policy.pedagogy.thinkingMoves.join(", ")}\n` +
+        `- Direct explain allowed: ${policy.pedagogy.directExplainAllowed}\n` +
+        `- Abstraction level: ${policy.pedagogy.abstractionLevel}\n` +
+        `- Praise style: ${policy.pedagogy.praiseStyle}\n` +
+        `- Session caps: target ${policy.session.targetMinutes}min, hard ${policy.session.hardCapMinutes}min, daily ${policy.session.dailyCapMinutes}min\n` +
+        `- Data retention: ${policy.safety.dataRetentionDays} days\n`;
+    })()
+    : "";
   // Flashcard/quiz results already recorded on this task (flashcard review counts written by FlashcardDeck's
   // per-card review, quiz attempts written by /quiz/:quizId/attempt) — lets the tutor actually reference how
   // the drilling went ("you missed 3 of these last time") instead of only ever seeing the artifact exists.
@@ -5903,7 +5931,7 @@ export async function chatAboutTask(
   // student, every task, every turn — so it belongs FIRST, where it can actually be cached; the volatile
   // per-request context goes last, right next to the equally-volatile TASK block it keeps company with
   // anyway.
-  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine;
+  const dynamicContext = nowBlock() + dueLine(task.sourceDue) + languageLine(profile) + CHAT_LANGUAGE_OVERRIDE + trackLine(profile) + learningStyleLine(profile) + personalContextLine(profile) + studentModelLine(profile) + growthLine + errorLogLine(profile, task.sourceSubject, opts?.subjectSignal) + milestoneLine(profile, task.sourceSubject) + recentJournalLine(opts?.recentJournal, task.sourceSubject) + weakCardLine(task) + notNeededLine(opts?.notNeeded) + styleLine + policyBlock;
   const sys =
     (opts?.primer ? PRIMER_PERSONA : "") +
     `\n\nYou are Otto, tutoring this student one-to-one about ONE specific task. Think of yourself as the ` +

@@ -35,6 +35,48 @@ export interface Profile {
   preferences: string[];  // e.g. "concise emails", "no meetings before 10am"
   people: string[];       // key people + relationship ("Sarah — my manager")
   projects: string[];     // ongoing projects / goals
+
+  // === Primer-specific fields (Phase 1 foundation) ===
+  // Developmental position - per-domain level, not a single "grade"
+  domainLevels?: Record<string, { level: string; phase: string; updatedAt: string }>; // reading, math, reasoning, etc.
+  // Age band for policy selection (if different from birth year calculation)
+  ageBand?: "A" | "B" | "C" | "D" | "E" | "F";
+  // Birth year (not full DOB to minimize PII)
+  birthYear?: number;
+  // Home languages (for dual-language support)
+  homeLanguages?: string[];
+  // Thinking-skills profile - per thinking-move frequency and quality
+  thinkingStats?: Record<string, { nUsed: number; qualityAvg: number; lastUsed: string }>;
+  // Calibration accuracy (confidence vs correctness)
+  calibration?: Record<string, { bucket: string; n: number; accuracy: number }>;
+  // Policy profile ID currently in effect
+  policyProfileId?: string;
+  // Guardrails & permissions
+  primerSettings?: {
+    blockedTopics?: string[];
+    sessionCapMinutes?: number;
+    dailyCapMinutes?: number;
+    quietHours?: { start: string; end: string };
+    parentViewLevel?: "full" | "summary" | "none";
+  };
+  // Dependence metrics (anti-dependence system from Primer §6.9)
+  dependenceMetrics?: Record<string, {
+    week: string;
+    helpRatio: number;  // hint requests / attempts
+    answerSeekRate: number;  // "just tell me" requests
+    unaidedRate: number;  // success without hints
+    fadeIndex: number;  // are hint levels trending down?
+  }>;
+  // Consent records (parental/guardian consent for under-13s)
+  consentRecords?: {
+    guardianId?: string;
+    scope: string[];
+    grantedAt: string;
+    revokedAt?: string;
+    method: "clickwrap" | "signature" | "other";
+  }[];
+  // Data retention settings
+  dataRetentionDays?: number;
   // Per-course/class behavioral patterns — the "gets smarter every semester" memory: a professor's grading
   // quirks or communication style, how far ahead of a deadline the student ACTUALLY starts (not what they
   // say), which subtask types they stall on. Kept as its own bucket (not lumped into `projects`) so a
@@ -1405,6 +1447,44 @@ function contrastRatio(hex1: string, hex2: string): number {
 }
 const THEME_INK_FIXED = "#101317"; // matches :root's --ink in client/styles.css — never itself overridable
 const THEME_HEX_RE = /^#[0-9a-f]{6}$/i;
+
+// ── Primer-specific types (Phase 1 foundation) ─────────────────────────────────────────────────────
+
+/** Dependence metrics for anti-dependence system (Primer §6.9) */
+export interface DependenceMetric {
+  week: string;  // ISO week identifier
+  domain: string;  // e.g., "reading", "math"
+  helpRatio: number;  // hint requests / attempts (rising is a warning)
+  answerSeekRate: number;  // "just tell me" style requests
+  unaidedRate: number;  // success rate on fresh problems without hints
+  fadeIndex: number;  // are hint levels needed trending down per skill?
+}
+
+/** Thinking-move statistics (Primer §6.1) */
+export interface ThinkingStat {
+  move: string;  // e.g., "notice", "wonder", "predict", "explain"
+  nUsed: number;
+  qualityAvg: number;  // 0-2 scale
+  lastUsed: string;  // ISO timestamp
+}
+
+/** Calibration accuracy for metacognition (Primer §6.6) */
+export interface CalibrationMetric {
+  domain: string;
+  bucket: string;  // confidence bucket: "a_little", "pretty", "very"
+  n: number;
+  accuracy: number;  // proportion of times confidence matched actual correctness
+}
+
+/** Consent record for parental/guardian consent (Primer §10.3) */
+export interface ConsentRecord {
+  childId: string;
+  guardianId?: string;
+  scope: string[];  // what data/features consent covers
+  grantedAt: string;
+  revokedAt?: string;
+  method: "clickwrap" | "signature" | "other";
+}
 export function validateThemeTokens(raw: unknown): ThemeTokens {
   const out: ThemeTokens = {};
   if (!raw || typeof raw !== "object") return out;
