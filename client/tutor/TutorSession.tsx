@@ -215,10 +215,12 @@ export function TutorSession({ userId }: { userId: string | null }) {
       // for a NEW lesson on a specific subject: fresh:true (a blank session, never a resume of an old
       // thread — the route's fresh mode also clears any leftover empty shell). Resuming an in-progress
       // session is only ever the landing's explicit "Reprendre" click (resumeActiveSession).
+      // For a fresh session, use the task as-is from the server WITHOUT hydrating local cache to ensure
+      // a truly blank session (no old chat/board from localStorage).
       const list = await api.studyFreeSession(true, selectedSubject);
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.sourceSubject === selectedSubject) : undefined;
       if (t) {
-        setTask(hydrateLocalThreads([t], userId)[0]);
+        setTask({ ...t, chat: [], board: [], problems: [] }); // Fresh session: empty chat, board, problems
         setSessionStart(new Date().toISOString());
       }
       setPendingActiveSession(null);
