@@ -2799,7 +2799,17 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             {betaFeatures ? (
               <button type="button" className="btn xs ghost" disabled={themeBusy} onClick={async () => {
                 setThemeBusy(true);
-                try { await api.personalizeTheme(); onChanged(); }
+                try {
+                  const result = await api.personalizeTheme();
+                  // Apply the theme immediately from the response
+                  const root = document.documentElement;
+                  const keys = ["--bg", "--surface", "--bg-2", "--line", "--radius", "--radius-sm", "--radius-xs"] as const;
+                  for (const k of keys) {
+                    const v = result.customTheme?.[k];
+                    if (v) root.style.setProperty(k, v); else root.style.removeProperty(k);
+                  }
+                  onChanged(); // Reload status to sync across tabs
+                }
                 catch (e: any) { notify(e?.message || L("Impossible de personnaliser le thème pour l'instant.", "Couldn't personalize the theme right now."), "error"); }
                 finally { setThemeBusy(false); }
               }}>
@@ -2809,7 +2819,19 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
               <span className="settings-hint">{L("Active les fonctionnalités bêta ci-dessus pour essayer ça.", "Turn on beta features above to try this.")}</span>
             )}
             {status.customTheme ? (
-              <button type="button" className="btn xs ghost" onClick={() => void api.resetTheme().then(onChanged)}>
+              <button type="button" className="btn xs ghost" onClick={async () => {
+                try {
+                  await api.resetTheme();
+                  // Remove theme immediately
+                  const root = document.documentElement;
+                  const keys = ["--bg", "--surface", "--bg-2", "--line", "--radius", "--radius-sm", "--radius-xs"] as const;
+                  for (const k of keys) {
+                    root.style.removeProperty(k);
+                  }
+                  onChanged();
+                }
+                catch (e: any) { notify(e?.message || L("Impossible de réinitialiser le thème.", "Couldn't reset the theme."), "error"); }
+              }}>
                 {L("Réinitialiser", "Reset")}
               </button>
             ) : null}
@@ -2862,7 +2884,10 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
             <span className="switch"><input type="checkbox" checked={betaFeatures} onChange={(e) => {
               const v = e.target.checked;
               setBetaFeaturesLocal(v); // optimistic — revert below on failure
-              void api.setProfilePreference("betaFeatures", v).then(() => onChanged()).catch((err: any) => {
+              void api.setProfilePreference("betaFeatures", v).then((p) => {
+                setProfile(p);
+                onChanged();
+              }).catch((err: any) => {
                 setBetaFeaturesLocal(!v);
                 notify(err?.message || L("Ce réglage n'a pas été enregistré — réessaie.", "That setting didn't save — give it another try."), "error");
               });

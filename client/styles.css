@@ -1955,7 +1955,7 @@ input:focus, textarea:focus {
 .settings { display: flex; flex-direction: column; }
 
 .settings-sec {
-  padding: 22px 24px;
+  padding: 28px 32px;
   margin-bottom: var(--space-5);
   background: var(--surface-glass);
   border: none;
@@ -2022,14 +2022,21 @@ input:focus, textarea:focus {
   width: 100%;
   background: none;
   border: none;
-  padding: 0;
+  padding: 8px 0;
   cursor: pointer;
   text-align: left;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base) var(--ease-spring);
 }
+.sec-toggle:hover { background: var(--bg-2); }
 .sec-toggle h3 { margin: 0; }
-.sec-toggle .caret { color: var(--ink-3); font-size: 18px; line-height: 1; /* Apple Design §4 — spring transition for caret rotation */ transition: transform var(--duration-base) var(--ease-spring); }
+.sec-toggle .caret { color: var(--ink-3); font-size: 20px; line-height: 1; /* Apple Design §4 — spring transition for caret rotation */ transition: transform var(--duration-base) var(--ease-spring); }
 .sec-toggle .caret.open { transform: rotate(90deg); }
-.settings-reveal { /* Apple Design §4 — spring animation for reveal */ animation: appleRise var(--duration-base) var(--ease-spring); }
+.settings-reveal {
+  padding-top: 16px;
+  /* Apple Design §4 — spring animation for reveal */
+  animation: appleRise var(--duration-base) var(--ease-spring);
+}
 
 .modal-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 12px 0; }
 .modal-row + .modal-row { border-top: 1px solid var(--line-soft); }
@@ -2049,7 +2056,7 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .more-settings-btn { margin-top: 10px; align-self: flex-start; }
 
 /* Apple iOS-Style Physical Switch */
-.switch { position: relative; flex: none; width: 46px; height: 28px; }
+.switch { position: relative; flex: none; width: 51px; height: 31px; }
 .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
 .switch-track {
   position: absolute; inset: 0;
@@ -2059,15 +2066,17 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
   transition: background var(--duration-base) var(--ease-spring);
 }
 .switch-track::after {
-  content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px;
+  content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px;
   border-radius: 50%; background: #FFFFFF;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2), 0 0 1px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15), 0 0 1px rgba(0, 0, 0, 0.08);
   /* Apple Design §4 — spring transition for switch thumb */
   transition: transform var(--duration-base) var(--ease-spring);
 }
 .switch input:checked + .switch-track { background: var(--ok); }
-.switch input:checked + .switch-track::after { transform: translateX(18px); }
+.switch input:checked + .switch-track::after { transform: translateX(20px); }
 .switch input:focus-visible + .switch-track { box-shadow: 0 0 0 3px var(--accent-soft); }
+.switch:hover .switch-track { background: var(--bg-2); }
+.switch input:checked:hover + .switch-track { background: #16a34a; }
 
 /* Apple Segmented Pill Selector */
 .seg {
