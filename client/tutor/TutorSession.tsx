@@ -12,11 +12,14 @@ import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSess
  *  and problems persist locally, keyed by task id — see localChatBoard.ts), and talks to the SAME chat
  *  endpoint as everywhere else, with `primer: true` so the server swaps in the Primer persona.
  *
- *  Sessions: each session is backed by its own freestudy task. Mounting this component RESUMES an active
- *  freestudy session if one exists (a read-only peek at GET /api/tasks) — but it NEVER CREATES one just
- *  because the page was opened: no active session shows the landing screen, where the student picks a
- *  SUBJECT (always asked — the subject stamps the session and gives the tutor its context) and then Start
- *  creates a BLANK session (fresh:true — never a resume of an old thread, a new lesson starts clean). A
+ *  Sessions: each session is backed by its own freestudy task. OPENING this page never starts or reopens
+ *  one (reported: "tutor shouldn't auto open session") — the landing screen always shows first. A
+ *  detect-only peek at GET /api/tasks merely NOTICES whether a session is still in progress, so the
+ *  landing can offer an explicit "Reprendre" button next to Start; a student's click is the only thing
+ *  that opens a session. Start asks for a SUBJECT (always — the subject stamps the session and gives the
+ *  tutor its context) and creates a BLANK session (fresh:true — never a resume of an old thread, a new
+ *  lesson starts clean); with a session already in progress, "Nouvelle séance" supersedes the old one
+ *  (saved to history if it had substance, then dismissed). A
  *  session only earns a place in history when it actually has substance: at least one real user message or
  *  something written on the board (a session where Otto never said a word and the board stayed empty gets
  *  dismissed silently, not memorialized). Ending a session generates a short summary from the board + chat
@@ -45,6 +48,12 @@ export function TutorSession({ userId }: { userId: string | null }) {
   ];
   const [selectedSubject, setSelectedSubject] = useState("");
   const [startingSession, setStartingSession] = useState(false);
+  // What the mount peek found: a freestudy session still in progress (or null). Held SEPARATELY from
+  // `task` — the peek must never open the session, only let the landing offer it back.
+  const [pendingActiveSession, setPendingActiveSession] = useState<WebTask | null>(null);
+  // The in-progress session as the landing should see it: null while it's actually open on screen (so the
+  // landing never offers to "resume" the session the student is already in, nor one they just ended).
+  const activeSession = pendingActiveSession && task && pendingActiveSession.id === task.id ? null : pendingActiveSession;
   // Voice is MANUAL here — the mic toggle in the chat panel is the student's choice, never forced on by
   // starting a session (reported: "voice should not be auto on"). The board-pane pill, barge-in and the
   // voice-primary layout below all still activate the moment the student turns voice on themselves.
@@ -57,23 +66,22 @@ export function TutorSession({ userId }: { userId: string | null }) {
   // the guard also keeps the read strictly once-per-mount). Runs once per component lifetime.
   const mountFetchStartedRef = useRef(false);
 
-  // Passive mount load — READ-ONLY peek: resume an active freestudy session if one exists, otherwise stay
-  // on the landing screen. Deliberately does NOT call /api/study/free here: that route mints a session
-  // when none is active, which made simply OPENING the tutor page start one (reported as "session should
-  // not auto start"). Creating a session is only ever the Start button's job.
+  // Passive mount load — DETECT-ONLY peek at GET /api/tasks: notice whether a freestudy session is still
+  // in progress, so the landing can offer an explicit "Reprendre" — but NEVER open it (no setTask) and
+  // NEVER create one. Opening /tutor always lands on the landing screen; what happens next is the
+  // student's click (reported: "tutor shouldn't auto open session"). Deliberately does NOT call
+  // /api/study/free here: that route both resumes AND mints sessions, neither of which a passive load
+  // has any business doing.
   const peekForActiveSession = useCallback(() => {
     setLoadError(false);
     api.tasks().then((list) => {
       const t = Array.isArray(list)
         ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
-      if (t) {
-        setTask(hydrateLocalThreads([t], userId)[0]);
-        setSessionStart(new Date().toISOString());
-      }
-      // No active session → stay on the landing screen; Start is what creates one.
+      setPendingActiveSession(t || null);
+      // Either way we stay on the landing: "Reprendre" (resume) or Start (new) is what opens a session.
     }).catch(() => setLoadError(true));
-  }, [userId]);
+  }, []);
 
   useEffect(() => {
     if (mountFetchStartedRef.current) return;
@@ -129,6 +137,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
         try { api.dismiss(task.id); } catch { /* best-effort */ }
         setTask(null);
         setSessionStart(null);
+        setPendingActiveSession(null);
         setShowHistory(true);
       }, INACTIVITY_MS);
     };
@@ -169,33 +178,55 @@ export function TutorSession({ userId }: { userId: string | null }) {
       try { await api.dismiss(task.id); } catch { /* best-effort */ }
       setTask(null);
       setSessionStart(null);
+      // The ended session must not come back as a "Reprendre" offer on the landing below.
+      setPendingActiveSession(null);
       setShowHistory(true);
     } finally {
       setEndingSession(false);
     }
   }, [task, sessionStart, saveAndClose]);
 
+  // Resume (explicit): the only way an existing session reopens — the student clicks "Reprendre" on the
+  // landing. Opening /tutor by itself never puts them back into a session; the landing always comes
+  // first, and what happens next is their choice.
+  const resumeActiveSession = useCallback(() => {
+    if (!activeSession) return;
+    setTask(hydrateLocalThreads([activeSession], userId)[0]);
+    setSessionStart(new Date().toISOString());
+  }, [activeSession, userId]);
+
   const startNewSession = useCallback(async () => {
     if (!selectedSubject || startingSession) return; // Start only exists once a subject is picked
     setError(null);
     setStartingSession(true);
     try {
+      // Starting a NEW lesson while one is in progress supersedes it: saved to history (only if it had
+      // substance — same gate as ending; an orphan from a closed tab still has its chat/board locally, so
+      // date it from when it was opened here, falling back to the task's own creation time) and dismissed,
+      // so exactly ONE active freestudy session exists. Dismissing BEFORE the create matters: fresh:true
+      // below unconditionally mints a new task.
+      if (activeSession) {
+        saveAndClose(activeSession, sessionStart || activeSession.createdAt);
+        try { await api.dismiss(activeSession.id); } catch { /* best-effort */ }
+        setPendingActiveSession(null);
+      }
       // The EXPLICIT create path — the only caller of /api/study/free in this component. The student asked
       // for a NEW lesson on a specific subject: fresh:true (a blank session, never a resume of an old
-      // thread — the route's fresh mode also clears any leftover empty shell). The mount's read-only peek
-      // remains the only resume path.
+      // thread — the route's fresh mode also clears any leftover empty shell). Resuming an in-progress
+      // session is only ever the landing's explicit "Reprendre" click (resumeActiveSession).
       const list = await api.studyFreeSession(true, selectedSubject);
       const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.sourceSubject === selectedSubject) : undefined;
       if (t) {
         setTask(hydrateLocalThreads([t], userId)[0]);
         setSessionStart(new Date().toISOString());
       }
+      setPendingActiveSession(null);
     } catch {
       setError(L("Impossible de démarrer la séance", "Couldn't start the session"));
     } finally {
       setStartingSession(false);
     }
-  }, [selectedSubject, startingSession, userId, L]);
+  }, [selectedSubject, startingSession, activeSession, sessionStart, saveAndClose, userId, L]);
 
   if (loadError) {
     return (
@@ -230,14 +261,32 @@ export function TutorSession({ userId }: { userId: string | null }) {
             </select>
           </div>
 
-          {/* Start appears only once a subject is picked — a session without a subject has no context for
-              the tutor and no label in history. */}
-          {selectedSubject ? (
-            <button className="btn primary tutor-start-btn" onClick={startNewSession} disabled={startingSession}>
-              {startingSession
-                ? L("Démarrage…", "Starting…")
-                : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+          {/* An in-progress session comes back ONLY through this explicit button — the landing is always
+              the first screen on /tutor, never a resumed session (reported: "tutor shouldn't auto open
+              session"). Resuming needs no subject; it reopens the session where it was left. */}
+          {activeSession && (
+            <button className="btn primary tutor-start-btn" onClick={resumeActiveSession}>
+              {L("Reprendre la séance en cours", "Resume the session in progress")}
             </button>
+          )}
+
+          {/* Start appears only once a subject is picked — a session without a subject has no context for
+              the tutor and no label in history. When a session is already in progress it becomes the
+              secondary option: it supersedes the current session (saved if substantial, then dismissed). */}
+          {selectedSubject ? (
+            <div className="tutor-start-actions">
+              <button
+                className={`btn ${activeSession ? "ghost" : "primary"} tutor-start-btn`}
+                onClick={() => void startNewSession()}
+                disabled={startingSession}
+              >
+                {startingSession
+                  ? L("Démarrage…", "Starting…")
+                  : activeSession
+                    ? L("Nouvelle séance de ", "New ") + selectedSubject + L("", " session")
+                    : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+              </button>
+            </div>
           ) : (
             <p className="tutor-landing-sub" style={{ marginTop: 8 }}>{L("Choisis une matière pour commencer.", "Pick a subject to begin.")}</p>
           )}

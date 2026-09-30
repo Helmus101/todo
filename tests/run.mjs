@@ -1428,10 +1428,17 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
 section("Tutor Session — sessions never auto-start, and past boards read at a glance (source pins)");
 {
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  // Direct request: "sessions should not auto start" — /api/study/free MINTS a session when none is
-  // active, so the mount now does a READ-ONLY peek (GET /api/tasks): an active session resumes, none
-  // stays on the landing screen. Creating a session is only ever the Start button's job.
-  check("the mount peek is read-only (api.tasks), never the session-minting route", /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(tutorSrc) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc));
+  // Direct request: "tutor shouldn't auto open session" — even the READ-ONLY peek was auto-RESUMING an
+  // active session on mount (setTask), so opening /tutor dropped the student straight into a session.
+  // Now the peek is DETECT-ONLY (GET /api/tasks, no setTask): it merely notices an in-progress session so
+  // the landing can offer an explicit "Reprendre" button. Opening /tutor ALWAYS shows the landing; a
+  // click (Reprendre or Start) is the only thing that opens a session.
+  check("the mount peek is detect-only (api.tasks, never setTask, never the session-minting route)", (() => {
+    const peekStart = tutorSrc.indexOf("const peekForActiveSession");
+    const peekBody = tutorSrc.slice(peekStart, tutorSrc.indexOf("}, []);", peekStart) + 6);
+    return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
+  })());
+  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /Reprendre la séance en cours/.test(tutorSrc));
   check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc));
   check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
   // Direct request: "refine ui for past boards" — each history item shows the board AT A GLANCE (first
@@ -1566,14 +1573,15 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
   // Reported live: "session should not auto start" — the mount used to call /api/study/free, whose
-  // resume-first route MINTS a session when none is active, so merely OPENING /tutor started one. The
-  // passive mount is now a read-only peek at GET /api/tasks (resume-only), and the ONE studyFreeSession
-  // call left in the file is the Start button's explicit create.
-  check("opening /tutor does NOT create a session (mount is a read-only api.tasks peek; Start is the only creator)", /api\.tasks\(\)\.then/.test(tutorSrc) && (tutorSrc.match(/api\.studyFreeSession\(/g) || []).length === 1);
+  // resume-first route MINTS a session when none is active, so merely OPENING /tutor started one. Then a
+  // follow-up: "tutor shouldn't auto open session" — even the read-only peek auto-RESUMED. The passive
+  // mount is now a detect-only peek at GET /api/tasks (offers "Reprendre" on the landing, opens nothing),
+  // and the ONE studyFreeSession call left in the file is the Start button's explicit create.
+  check("opening /tutor does NOT create or open a session (mount is a detect-only api.tasks peek; Start is the only creator)", /api\.tasks\(\)\.then/.test(tutorSrc) && (tutorSrc.match(/api\.studyFreeSession\(/g) || []).length === 1);
   // Reported live: Start resumed an old "forces" thread instead of starting blank, and never asked what
   // subject. Start must require a picked subject and pass fresh:true (plus that subject) — a NEW lesson is
-  // always a BLANK session, never a resume of an old one; resuming an in-progress session remains the
-  // mount peek's job.
+  // always a BLANK session, never a resume of an old one; resuming an in-progress session is only the
+  // landing's explicit "Reprendre" click (resumeActiveSession).
   check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc) && /if \(!selectedSubject( \|\| \w+)?\) return;/.test(tutorSrc));
 }
 
