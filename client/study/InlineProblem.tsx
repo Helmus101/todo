@@ -31,6 +31,7 @@ export function InlineProblem({ problem }: InlineProblemProps) {
 
   return (
     <div className="sm-inline-problem">
+      <div className="sm-inline-problem-label">{L("Problème d'entraînement", "Practice problem")}</div>
       <div className="sm-inline-problem-q">{stripStrayMarkdown(problem.question)}</div>
 
       {problem.format && !answered ? (
