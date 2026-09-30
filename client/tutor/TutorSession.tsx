@@ -8,6 +8,17 @@ import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
 import { TutorDesmos } from "./TutorDesmos.tsx";
 import { buildSessionSummary, saveTutorSession, getTutorSessions, type TutorSessionSummary } from "./tutorSessions.ts";
 
+// A dismiss that silently fails (a network blip, a momentary 429) used to just be swallowed — the session
+// then never actually ends server-side and comes back as a "Reprendre?" ghost on every future visit
+// (reported live). One retry after a short pause turns a transient blip into a real dismiss without making
+// ending a session feel slow; a genuine, repeated failure still degrades gracefully (the ghost-cleanup in
+// peekForActiveSession above is the backstop for whatever still slips through).
+async function dismissWithRetry(taskId: string): Promise<void> {
+  try { await api.dismiss(taskId); return; } catch { /* fall through to one retry */ }
+  await new Promise((r) => setTimeout(r, 800));
+  try { await api.dismiss(taskId); } catch { /* best-effort — ghost-cleanup covers the rest */ }
+}
+
 /** Tutor Session (route /tutor) — the Primer-style one-to-one lesson: a chat with Otto on one side and
  *  Otto's board on the other. It reuses the free-study task as a private anchor for the thread (chat, board
  *  and problems persist locally, keyed by task id — see localChatBoard.ts), and talks to the SAME chat
@@ -80,6 +91,22 @@ export function TutorSession({ userId }: { userId: string | null }) {
       const t = Array.isArray(list)
         ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
+      // A freestudy task with ZERO chat and ZERO board content, more than a few minutes old, isn't a real
+      // session to resume — it's a ghost: opened once (a subject tap, then the tab closed or the browser
+      // crashed before a first message ever went out) or the leftover of a dismiss call that failed
+      // silently (best-effort — see endSession/the inactivity-timeout effect) and never actually reached
+      // the server. Reported live: "constantly thinks a session is in progress even though there isn't" —
+      // a truly-empty task otherwise nags forever, since nothing ever marks it dismissed. 3 minutes is
+      // comfortably past "just started, hasn't typed anything yet" (that student is still ON this page) —
+      // this only ever fires on a FRESH mount finding an old, untouched husk. Dismiss it for real (not just
+      // hide it client-side) so it stops coming back on every future visit too, and treat this load as if
+      // there were no active session at all.
+      const isGhost = t && !(t.chat?.length) && !(t.board?.length) && (Date.now() - (Date.parse(t.createdAt || "") || 0)) > 3 * 60_000;
+      if (isGhost) {
+        void api.dismiss(t!.id).catch(() => { /* best-effort; worst case it resurfaces once more next visit */ });
+        setPendingActiveSession(null);
+        return;
+      }
       setPendingActiveSession(t || null);
     }).catch(() => setLoadError(true))
       .finally(() => setCheckingSession(false));
@@ -144,7 +171,11 @@ export function TutorSession({ userId }: { userId: string | null }) {
       clearTimeout(timer);
       timer = setTimeout(() => {
         saveAndClose(task, sessionStart);
-        try { api.dismiss(task.id); } catch { /* best-effort */ }
+        // NOT `try { api.dismiss(...) } catch {}` — dismiss is async, so a plain try/catch around the call
+        // (no await) never actually catches a rejection; it silently becomes an unhandled promise rejection
+        // instead, meaning a failed dismiss here was never retried, ever — a real contributor to the "ghost
+        // session that never goes away" bug (see peekForActiveSession's ghost-cleanup and dismissWithRetry).
+        void dismissWithRetry(task.id);
         setTask(null);
         setSessionStart(null);
         setPendingActiveSession(null);
@@ -217,7 +248,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
     try {
       saveAndClose(task, sessionStart);
       // Dismiss the freestudy task so the next start creates a fresh one.
-      try { await api.dismiss(task.id); } catch { /* best-effort */ }
+      await dismissWithRetry(task.id);
       setTask(null);
       setSessionStart(null);
       // The ended session must not come back as a "Reprendre" offer on the landing below.
@@ -270,7 +301,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
       // Dismiss any existing session before creating a new one
       if (pendingActiveSession) {
         saveAndClose(pendingActiveSession, sessionStart || pendingActiveSession.createdAt);
-        try { await api.dismiss(pendingActiveSession.id); } catch { /* best-effort */ }
+        await dismissWithRetry(pendingActiveSession.id);
         setPendingActiveSession(null);
       }
       // Create a fresh session for the selected subject. The server APPENDS the new task to the end of
