@@ -46,8 +46,8 @@ declare module "express-session" {
     // fixed for as long as that bucket does, only re-drawn when it actually changes (e.g. morning → afternoon).
     orderingArmCache?: { key: string; armId: string };
     blackbaudOAuthState?: string; // CSRF nonce for the Blackbaud OAuth authorization-code flow — see server/blackbaud.ts
-    primersessionStart?: number; // Timestamp for Primer session cap enforcement
-    primerlastBreakReminder?: number; // Timestamp for last break reminder
+    primerSessionStarts?: Record<string, number>; // Per-subject session start timestamps
+    primerLastActivities?: Record<string, number>; // Per-subject last activity timestamps
   }
 }
 
@@ -1384,49 +1384,13 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
   if (overInteractive(req)) { res.status(402).json({ error: budgetMsg(req) }); return; }
   if (!aiReady()) { res.status(503).json({ error: M(req, "L'IA n'est pas configurée.", "AI isn't configured.") }); return; }
   
-  // Primer session cap enforcement (Phase 1.5)
-  const profile = req.session.profile;
-  const sessionCap = profile?.primerSettings?.sessionCapMinutes || 60; // Default 60min for adults
-  const now = Date.now();
-  const sessionStart = req.session.primersessionStart || now;
-  const sessionMinutes = (now - sessionStart) / (60 * 1000);
-  
-  if (sessionMinutes >= sessionCap) {
-    res.status(403).json({ 
-      error: M(req, 
-        `Session limit reached (${sessionCap} minutes). Take a break!`,
-        `Session limit reached (${sessionCap} minutes). Take a break!`
-      ),
-      sessionCapReached: true 
-    });
-    return;
-  }
-  
-  // Set session start time if not set
-  if (!req.session.primersessionStart) {
-    req.session.primersessionStart = now;
-  }
-  
-  // Primer break reminder (Phase 1.5)
-  const breakEveryMinutes = profile?.primerSettings?.sessionCapMinutes ? 
-    Math.floor(profile.primerSettings.sessionCapMinutes / 2) : 30; // Default: break at half the cap
-  const lastBreakReminder = req.session.primerlastBreakReminder || 0;
-  const timeSinceLastReminder = (now - lastBreakReminder) / (60 * 1000);
-  let breakReminder = "";
-  
-  if (timeSinceLastReminder >= breakEveryMinutes && sessionMinutes < sessionCap - 5) {
-    // Only remind if we're not at the cap yet
-    breakReminder = M(req, 
-      "🔔 Tu as fait du bon travail ! C'est le moment de faire une petite pause.",
-      "🔔 Great work! Time for a short break."
-    );
-    req.session.primerlastBreakReminder = now;
-  }
-  
   const message = String(req.body?.message || "").trim().slice(0, 2000);
   if (!message) { res.status(400).json({ error: M(req, "Écris quelque chose d'abord.", "Say something first.") }); return; }
   const t = await findTaskOrReload(req, String(req.params.id));
   if (!t) { res.status(404).json({ error: M(req, "Introuvable.", "Not found.") }); return; }
+  
+
+  
   // The "Aide" button on a step (see F) sends its own index — validate the range server-side, never trust
   // it blindly (steps get regenerated on every rerun, so a stale index from an old page load could point
   // anywhere or nowhere).
@@ -1544,11 +1508,6 @@ app.post("/api/tasks/:id/chat", requireAuth, rateLimit(10, 60_000), async (req, 
     if (out.error && !out.reply?.trim()) { void recordMetric(req.session.user!, "chat_error", 1); res.status(500).json({ error: M(req, "Otto n'a pas pu répondre — réessaie dans un instant.", "Otto couldn't reply just now — try again in a moment.") }); return; }
     if (out.error) void recordMetric(req.session.user!, "chat_fallback_reply", 1);
     if (out.guardrailTripped) void recordMetric(req.session.user!, "chat_guardrail_tripped", 1, t.source || "n/a");
-    
-    // Add break reminder to response if triggered
-    if (breakReminder) {
-      out.reply = breakReminder + "\n\n" + out.reply;
-    }
     // Score the chat-style arm: the only IMMEDIATELY observable outcome of one turn is whether the guardrail
     // held (a genuinely unhelpful/off-boundary reply) — a richer "did they send a follow-up" reward would
     // need waiting on a future request, which this best-effort, fire-and-forget scoring deliberately avoids.
@@ -2374,19 +2333,33 @@ app.post("/api/study/free", requireAuth, rateLimit(20, 60_000), ah(async (req, r
   const list = req.session.tasks || [];
   const now = new Date().toISOString();
   const fresh = req.body?.fresh === true;
+  const subject = req.body?.subject as string | undefined;
+  const en = req.session.profile?.language === "en";
+  
   if (!fresh) {
+    // Resume-first: ANY active freestudy session resumes, regardless of subject — the subject stamp is a
+    // label on the session, never a reason to hide an active one from a passive mount (see the route's
+    // header comment; a remount is just as often a route re-render or a StrictMode double-invoke as an
+    // explicit "new session" request).
     const active = list.find((t) => t.source === "freestudy" && !isHandled(t.status));
     if (active) { res.json(list); return; }
   }
+  
+  // Fresh mode: only dismiss sessions for the specified subject, or all if no subject
   for (const old of list) {
-    if (old.source === "freestudy" && !isHandled(old.status)) { old.status = "dismissed"; old.updatedAt = now; }
+    if (old.source === "freestudy" && !isHandled(old.status)) {
+      if (!subject || old.sourceSubject === subject) {
+        old.status = "dismissed";
+        old.updatedAt = now;
+      }
+    }
   }
-  const en = req.session.profile?.language === "en";
-  const subject = req.body?.subject as string | undefined;
+  
   const e = tasks.eisenhower(0, 0);
   const id = randomUUID();
   const t: WebTask = {
-    id, title: en ? "Free study session" : "Séance de révision libre",
+    id, 
+    title: subject ? `${subject} session` : (en ? "Free study session" : "Séance de révision libre"),
     why: en ? "Started on demand, not tied to a task." : "Lancée à la demande, sans tâche associée.",
     source: "freestudy", risk: "low",
     urgency: 0, importance: 0, quadrant: e.quadrant, score: e.score, status: "needs_review",

@@ -1,7 +1,10 @@
 // Repo test suite — run with `npm test` (tsx). Pure-function tests: no network, no AI calls.
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
-import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
+import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine, runCalcTool, CHAT_ASSERTS_FACT, countWords } from "../server/claude.ts";
+import { evaluateArithmetic, parseNumber, findArithmeticClaims, hasArithmetic } from "../server/arithmetic.ts";
+import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
+import { speechErrorMessage } from "../client/voice/speechErrors.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1273,6 +1276,241 @@ section("Study Mode: chat + Board always present, board write reliability (sourc
   // happens to occur to the model.
   check("chatAboutTask's prompt requires a summary board write whenever the student actually resolves something", /THE ONE WRITE THAT ISN'T OPTIONAL[\s\S]{0,400}kind:"summary"/.test(claudeSrc2));
 }
+
+section("Board renders each entry ONCE (the duplicated render block is gone) + pinned focus");
+{
+  const boardSrc = readFileSync(new URL("../client/study/artifacts/BoardArtifact.tsx", import.meta.url), "utf8");
+  // Extracted component so entries and problems share ONE rendering of a problem (state lives in
+  // BoardArtifact, keyed by id — survives the flow re-sorting and re-renders).
+  check("a single ProblemBlock renders every problem in the flow (no duplicated inline problem JSX)", /function ProblemBlock\(/.test(boardSrc) && (boardSrc.match(/sm-board-problem-label/g) || []).length === 1);
+  // Reported live: the board-entries JSX existed TWICE in this file (a merge accident) — every entry the
+  // tutor wrote rendered twice. The dedupe-by-id inside each copy couldn't catch it: both copies matched
+  // the same entries. This pin counts the actual render sites so a future merge can't reintroduce it.
+  // `flowItems.filter(...).map(` (not bare `flowItems.map(`) since the pinned active-problem card excludes
+  // itself from the flow before mapping, so it's never rendered twice — see BoardArtifact's `activeProblem`.
+  check("board items render through the ONE merged flow, never a separate problem section", (boardSrc.match(/flowItems\.filter\(/g) || []).length === 1 && (boardSrc.match(/\)\.map\(\(item/g) || []).length === 1 && !/flowEntries\.map\(/.test(boardSrc) && !/dedupedProblems\.map\(/.test(boardSrc));
+  check("the old duplicated inline filter/render block is really gone", (boardSrc.match(/deduplicate by id to prevent duplicates/g) || []).length === 0);
+  // Problems never had the id-dedupe the entries block always had — a double-responded turn stacked the
+  // same problem twice. Dedupe happens BEFORE the merge, and the merged flow is the only render path.
+  check("problems are deduped by id before the flow merge, same as entries", /dedupedProblems = problems\.filter\(\(p, i, arr\) => arr\.findIndex\(x => x\.id === p\.id\) === i\)/.test(boardSrc));
+  // Reported live: "problems on board show twice" — the "Problème actuel / Current problem" block always
+  // rendered the LATEST problem, and the show-all list below rendered ALL of them again, so the newest
+  // problem appeared twice (and a one-problem board showed its only problem twice, period). "Current
+  // problem" is a single-question-mode concept: gated to that mode now.
+  // (The old single-question-mode pin retired with the mode itself: problems are flow items now, and the
+  // 'current problem' duplicate-render trap the pin guarded against no longer exists in the file.)
+  // Dual coding / document structure: kind:"focus" is the lesson's heading — pinned at the top as a
+  // header strip, excluded from the flowing entries, latest wins if a session ever writes a second one.
+  check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-pin/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
+  // The board as a drafted WORKSHEET (research: gradual release + completion effect + ICAP — the visible
+  // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
+  check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
+  check("board entries carry worksheet section numbers", /sm-board-section-num/.test(boardSrc));
+  check("kind:\"summary\" renders as a reasoning trace (how the student got there)", /ReasoningTrace/.test(boardSrc) && /sm-board-trace/.test(boardSrc));
+  check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
+  check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
+  check("the board shows a live 'Otto écrit…' drafting indicator while the tutor composes", /writing\?/.test(boardSrc) && /sm-board-drafting/.test(boardSrc));
+  check("TutorSession wires the drafting indicator to the chat's sending state", /writing=\{sending\}/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8")));
+  check("the latest focus wins when more than one exists", /latestFocus/.test(boardSrc));
+  // Direct request: problems should sit IN the board's flow (between the entries around them), not pinned
+  // at the top — the board is one document telling the lesson's story in the order it happened.
+  check("problems are flow items, not a pinned section (no 'Current problem' block, no mode toggle)", !/Problème actuel/.test(boardSrc) && !/singleQuestionMode/.test(boardSrc) && /createdAt \|\| ""\) \|\| Number\.MAX_SAFE_INTEGER/.test(boardSrc));
+}
+
+section("isDuplicateBoardEntry — content-level duplicate prevention for board writes (server/claude.ts)");
+{
+  // UUIDs make by-id dedupe useless for CONTENT duplicates: every write gets a fresh id, so a re-written
+  // formula sailed through and stacked a second visual copy. Comparison is on normalized text + kind.
+  const onBoard = makeBoardEntry({ text: "F = ma", kind: "formula" }).entry;
+  check("an identical re-write is caught", isDuplicateBoardEntry([onBoard], { text: "F = ma", kind: "formula" }));
+  check("markdown emphasis/fences are formatting, not content — still caught", isDuplicateBoardEntry([makeBoardEntry({ text: "goading = needling someone" }).entry], { text: "- **goading** = needling someone" }));
+  check("a code-fenced ASCII block matches its unfenced twin", isDuplicateBoardEntry([makeBoardEntry({ text: "1789 ──▶ 1792" }).entry], { text: "```\n1789 ──▶ 1792\n```" }));
+  check("whitespace/indentation differences are still caught", isDuplicateBoardEntry([onBoard], { text: "  F =   ma  " }));
+  check("case differences are still caught", isDuplicateBoardEntry([onBoard], { text: "f = MA" }));
+  check("a kindless re-write matches a kinded entry (kindless ≡ note — the model is inconsistent about kinds)", isDuplicateBoardEntry([onBoard], { text: "F = ma" }));
+  check("genuinely different text is NOT a duplicate (no fuzzy matching)", !isDuplicateBoardEntry([onBoard], { text: "a = F/m" }));
+  check("same text under a different kind is NOT a duplicate", !isDuplicateBoardEntry([onBoard], { text: "F = ma", kind: "insight" }));
+  check("an empty/whitespace write never counts as a duplicate", !isDuplicateBoardEntry([onBoard], { text: "   " }));
+
+  const claudeSrc3 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // Exactly 2 call-syntax occurrences: the export signature + the single call site in WRITE_TO_BOARD's
+  // branch. DRAW_ON_BOARD is deliberately NOT gated — redrawing a whole figure with additions is the
+  // tool's documented contract. (A third site, or zero, means someone moved or duplicated the gate.)
+  const gateCount = (claudeSrc3.match(/isDuplicateBoardEntry\(/g) || []).length; // export + call site
+  check("the duplicate gate lives ONLY on WRITE_TO_BOARD (DRAW_ON_BOARD redraws are legitimate)", gateCount === 2);
+  check("WRITE_TO_BOARD checks BOTH the live board and this turn's earlier writes", /isDuplicateBoardEntry\(\[\.\.\.\(opts\?\.currentBoard \|\| \[\]\), \.\.\.result\.board\], input\)/.test(claudeSrc3));
+  check("a caught duplicate returns adaptive guidance, not an error", /DUPLICATE: that exact entry is already on the board/.test(claudeSrc3));
+  check("the prompt tells the model to look before writing", /BEFORE YOU WRITE, LOOK\./.test(claudeSrc3));
+  // Completion effect (Sweller): a worked example ending in a gap beats a fully worked one — the student
+  // does the last step, which is where the learning happens.
+  check("worked examples end in a completion gap, not a finished line", /completion effect/.test(claudeSrc3) && /= \?/.test(claudeSrc3));
+}
+
+section("shouldNudgeBoardWrite — a confirmed student math step must land on the board (server/claude.ts)");
+{
+  // The live-reported miss, verbatim: Otto confirmed the student's own trig step in chat and wrote nothing
+  // to the board — the session document never showed THEIR reasoning or the formula the step established.
+  const liveReply = "Yes — exactly that. 1 − cos²θ is sin²θ, straight from sin²θ + cos²θ = 1.\n\nSo the whole fraction is now sin²θ over sinθ·cosθ. What does that cancel down to?";
+  check("the exact live miss (confirmation + worked math + no write) triggers the nudge", shouldNudgeBoardWrite(liveReply, "so 1 - cos^2 theta = sin^2 theta right?", false));
+  check("a French confirmation with math triggers it too", shouldNudgeBoardWrite("Parfait — donc tout devient sin²θ sur sinθ·cosθ. Tu simplifies comment ?", "1 − cos²θ = sin²θ ?", false));
+  check("already wrote to the board this turn → never nudged", !shouldNudgeBoardWrite(liveReply, "1 − cos²θ = sin²θ ?", true));
+  check("confirmation without math in play → no nudge (an essay insight isn't board content)", !shouldNudgeBoardWrite("Yes — exactly that, well put.", "so the author is being ironic?", false));
+  check("math but no confirmation → no nudge (normal coaching loop, not a miss)", !shouldNudgeBoardWrite("Let's start with sin²θ + cos²θ = 1 — what does that give you for 1 − cos²θ?", "i don't know where to start", false));
+  check("a question-only reply with math from the student → no nudge", !shouldNudgeBoardWrite("What do you get when you cancel sinθ?", "sin²θ / (sinθ·cosθ) = ?", false));
+  check("lowercase/casual confirmations count (yeah, oui, c'est ça)", shouldNudgeBoardWrite("yeah — that's the identity. x = 2.", "x = 2?", false) && shouldNudgeBoardWrite("oui c'est ça ! donc 2x = 4", "2x = 4 ?", false));
+  // The live-reported miss: a whole physics session confirming correct answers turn after turn, but the
+  // nudge's affirmation list didn't include "spot on" (or "got it", "nailed it", "absolutely") — so the one
+  // mechanism meant to catch "confirmed correct math and wrote nothing" silently missed every single one.
+  check("'spot on' (the exact live miss) triggers the nudge", shouldNudgeBoardWrite("Spot on. The thruster gave it a boost, and once it cut off F_net = 0.", "so it keeps moving at constant velocity?", false));
+  check("other everyday affirmations trigger it too (nailed it, got it, absolutely)",
+    shouldNudgeBoardWrite("Nailed it — F = ma gives 10 N.", "so F = 2 * 5?", false) &&
+    shouldNudgeBoardWrite("You got it right — x = 4.", "is x = 4?", false) &&
+    shouldNudgeBoardWrite("Absolutely — v = 20 m/s.", "so v = d/t = 20?", false));
+
+  const claudeSrc5 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // Enforcement in code, not just the prompt — same posture as the empty-board-claim fix: one corrective
+  // round, latched, feeding the model back its own reply so the write actually happens mid-turn.
+  check("the nudge is a ONE-SHOT corrective round inside the tool loop", /boardNudgeDone = false;/.test(claudeSrc5) && /!boardNudgeDone && !lastRound && shouldNudgeBoardWrite\(textContent, message, result\.board\.length > 0\)/.test(claudeSrc5) && /boardNudgeDone = true;/.test(claudeSrc5));
+  check("the prompt names the confirmation moment as a board moment", /"YES — EXACTLY THAT" IS A BOARD MOMENT TOO/.test(claudeSrc5));
+}
+
+section("Arithmetic ground truth — evaluator, claim extractor, CREATE_CALC (server/arithmetic.ts + claude.ts)");
+{
+  // Phase 1 of the tutor-truth plan: the model's mental arithmetic is the most common factual error a
+  // tutor makes. The fix is a code-level oracle (the CoVe/CRITIC posture — verification must be an
+  // INDEPENDENT recomputation, never the model re-reading its own draft) shared by THREE callers: the
+  // CREATE_CALC tool (mid-turn), the post-reply verifier (claude.ts, later pass), and the client's
+  // double-check affordance (Phase 4). The evaluator/extractor checks below run the REAL code —
+  // behavioral, not grep pins.
+  check("evaluator: precedence and parens", evaluateArithmetic("2+3*4") === 14 && evaluateArithmetic("(2+3)*4") === 20);
+  check("evaluator: the tutor's unicode operators (× ÷ − and letter-x) all work", evaluateArithmetic("3 × 47") === 141 && evaluateArithmetic("10 ÷ 4") === 2.5 && evaluateArithmetic("10 − 4") === 6 && evaluateArithmetic("3 x 4") === 12);
+  check("evaluator: FR decimal + EN/FR grouping", evaluateArithmetic("2,5 + 1") === 3.5 && evaluateArithmetic("1,234 + 1") === 1235 && evaluateArithmetic("1 234 + 1") === 1235);
+  check("evaluator: unary minus folds (start, after op, after paren)", evaluateArithmetic("-3 + 5") === 2 && evaluateArithmetic("2 * -3") === -6 && evaluateArithmetic("(-3 + 5) * 2") === 4);
+  check("evaluator REFUSES what it can't verify (no best-effort guesses)", evaluateArithmetic("2^10") === null && evaluateArithmetic("2 + a") === null && evaluateArithmetic("(2+3") === null && evaluateArithmetic("1/0") === null && evaluateArithmetic("3 + * 4") === null);
+  check("parseNumber: FR decimal, thin-space/nbsp grouping, EN comma grouping", parseNumber("3,5") === 3.5 && parseNumber("1 234") === 1234 && parseNumber("1\u00A0234") === 1234 && parseNumber("1,234") === 1234);
+  check("parseNumber: mixed separators resolve by the LAST-separator rule", parseNumber("1 234,5") === 1234.5 && parseNumber("1,234.5") === 1234.5);
+  check("parseNumber: unit suffixes strip (€, %, kg)", parseNumber("12 €") === 12 && parseNumber("25%") === 25 && parseNumber("3 kg") === 3);
+  check("parseNumber: malformed spacing is null, never guessed", parseNumber("12 34") === null);
+  check("claims: a correct equality is not flagged", findArithmeticClaims("Donc 3 × 47 = 141.")[0]?.mismatch === false);
+  check("claims: a wrong equality IS flagged", findArithmeticClaims("3 × 47 = 151")[0]?.mismatch === true);
+  check("claims: FR donne separator + FR decimals verify", findArithmeticClaims("2,5 + 1 = 3,5 donc c'est bon")[0]?.mismatch === false && findArithmeticClaims("3 + 3 donne 6.")[0]?.mismatch === false);
+  check("claims: percent form forms NO claim (never misread as +)", findArithmeticClaims("50% de 80 = 45").length === 0);
+  check("claims: an algebra tail is skipped, not misverified", findArithmeticClaims("x = 34 + 1, donc...").length === 0);
+  check("claims: duplicates collapse; multi-claim order kept", findArithmeticClaims("12 × 3 = 36 ... again 12 × 3 = 36").length === 1 && (() => { const c = findArithmeticClaims("5 + 5 = 10 and 6 × 7 = 48"); return c.length === 2 && c[0].mismatch === false && c[1].mismatch === true; })());
+  check("hasArithmetic is a cheap EN/FR pre-filter", hasArithmetic("2,5 + 1") === true && hasArithmetic("aucun calcul ici") === false);
+  // CREATE_CALC — exercised through the REAL handler the tool loop dispatches to.
+  check("CREATE_CALC returns the exact result", JSON.parse(runCalcTool({ expression: "3 × 47" })).result === 141);
+  check("CREATE_CALC supports FR decimals and parens", JSON.parse(runCalcTool({ expression: "2,5 + 1" })).result === 3.5 && JSON.parse(runCalcTool({ expression: "(12+8)/4" })).result === 5);
+  check("CREATE_CALC refuses out-of-subset input with guidance, never a guess", /^ERROR:/.test(runCalcTool({ expression: "2x + 1" })) && /^ERROR: no expression/.test(runCalcTool({})));
+  // Wiring pins — the tool must actually be reachable from BOTH tutor tool arrays and dispatched by name.
+  const claudeSrcCalc = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const arithSrc = readFileSync(new URL("../server/arithmetic.ts", import.meta.url), "utf8");
+  const calcCount = (claudeSrcCalc.match(/CREATE_CALC_TOOL/g) || []).length; // const + 2 array entries
+  check("CREATE_CALC is in BOTH tutor tool arrays (normal + canvas mode)", calcCount === 3);
+  check("CREATE_CALC has a dispatch branch in the tool loop", /name === "CREATE_CALC"/.test(claudeSrcCalc) && /runCalcTool\(input\)/.test(claudeSrcCalc));
+  check("claude.ts imports the shared arithmetic oracle", /import \{ evaluateArithmetic, findArithmeticClaims, hasArithmetic \} from "\.\/arithmetic\.ts"/.test(claudeSrcCalc));
+  check("the arithmetic module is pure (no imports, no eval — client-importable)", !/^\s*import /m.test(arithSrc) && !/[^.a-zA-Z]eval\(/.test(arithSrc));
+}
+
+section("isLikelyEcho — textual echo discrimination for real barge-in (client/voice/echoGuard.ts)");
+{
+  // Barge-in keeps the mic OPEN while Otto speaks — so the mic hears Otto through the speakers too. The
+  // only reliable discriminator the Web Speech API allows is textual: Otto can only echo words he is
+  // currently saying, so heard text contained in the spoken reply is echo; anything else is the student.
+  const spoken = "Yes — exactly that. 1 − cos²θ is sin²θ, straight from sin²θ + cos²θ = 1. So the whole fraction is now sin²θ over sinθ·cosθ. What does that cancel down to?";
+  check("Otto's own words coming back are classified as echo", isLikelyEcho(spoken, "exactly that is sin"));
+  check("the student talking over him is NOT echo (even mid-reply)", !isLikelyEcho(spoken, "wait can you explain the fraction again"));
+  check("a one-word interjection is never echo (a student's 'stop' must always get through)", !isLikelyEcho(spoken, "stop"));
+  check("a partial prefix of the spoken text is echo (recognizer landing mid-utterance)", isLikelyEcho("The derivative gives the rate of change", "the derivative gives"));
+  check("normalizeForEcho keeps French accents but drops punctuation", normalizeForEcho("Oui — c'est ça !") === "oui c est ça");
+  check("empty spoken text or empty heard text is never echo", !isLikelyEcho("", "hello there") && !isLikelyEcho(spoken, "  "));
+
+  // The stateful filter — the recurring-loop fix. The pure matcher alone couldn't close the loop because
+  // the echo's final result lands AFTER synth.speaking flips false (recognition pipeline lag).
+  const reply = "So the whole fraction is now sin²θ over sinθ·cosθ. What does that cancel down to?";
+  const f = createEchoFilter();
+  f.speechStarted(reply);
+  check("during speech, Otto's own words are dropped", f.isEcho("what does that cancel down to"));
+  check("during speech, the student's own words are NOT dropped", !f.isEcho("but why does the identity apply here"));
+  f.speechEnded();
+  check("AFTER the speech flag flips false (recognition lag), the echo is STILL dropped within the tail", f.isEcho("what does that cancel down to"));
+  check("outside the tail window, the same text would be allowed (the window is bounded)", new Promise((done) => setTimeout(() => done(!f.isEcho("what does that cancel down to")), 2100)));
+  const f2 = createEchoFilter();
+  f2.speechStarted(reply);
+  f2.speechEnded();
+  check("a VERBATIM repeat of the just-spoken reply is dropped with NO time bound (the loop-killer)", f2.isEcho(reply));
+  const f3 = createEchoFilter();
+  check("with no speech at all, nothing is classified as echo", !f3.isEcho("anything at all"));
+  f3.speechStarted(reply);
+  f3.speechEnded();
+  f3.speechStarted("a different reply entirely — re-armed");
+  check("speechStarted re-arms the filter to the NEW reply (back-to-back utterances)", !f3.isEcho("what does that cancel down to") && f3.isEcho("a different reply entirely"));
+
+  // Real error messages — the raw Web Speech codes used to vanish silently.
+  const [frDenied, enDenied] = speechErrorMessage("not-allowed");
+  const [frNoMic] = speechErrorMessage("audio-capture");
+  const [frNet, enNet] = speechErrorMessage("network");
+  const [frFallback, enFallback] = speechErrorMessage("some-future-code");
+  check("permission-denied and no-mic get distinct bilingual student messages", frDenied.includes("autorise") && enDenied.includes("allow mic") && frNoMic.includes("Aucun micro"));
+  check("network and unknown codes get messages too (never empty, never a raw code)", frNet.length > 10 && enNet.length > 10 && frFallback.length > 10 && enFallback.length > 10);
+
+  const taskCardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
+  // The per-task chat got the same treatment: interruptible everywhere, not just in Tutor Session.
+  check("TaskChat is interruptible too (stateful echo filter, mic never paused during TTS)", /echoFilterRef\.current\.isEcho\(text\)/.test(taskCardSrc) && !/wasSpeakingRef/.test(taskCardSrc));
+
+  // THE RECURRING LOOP FIX — the old guard checked echo only WHILE synth.speaking was true, but
+  // recognition lag means Otto's echo often FINALIZES after that flag flipped false: the check was
+  // skipped exactly when the echo arrived, his own reply went out as a student message, Otto replied
+  // to it, it was spoken, re-echoed… createEchoFilter closes both holes: a post-speech TAIL window
+  // (recognition lag) and a timing-independent verbatim-repeat kill (the loop's own signature).
+  check("all three voice surfaces run the stateful echo filter", [readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8"), taskCardSrc, readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8")].filter((s) => /echoFilterRef\.current\.isEcho\(text\)/.test(s)).length === 3);
+  check("the filter is driven by TTS transitions (speechStarted/speechEnded) on the chat surfaces", /speechStarted\(/.test(taskCardSrc) && /speechEnded\(\)/.test(taskCardSrc));
+  check("mic failures surface as a real bilingual message (no longer silent)", /onError: \(msg\) => setMicError\(msg\)/.test(taskCardSrc) && /micError \? </.test(taskCardSrc) && /micError \? </.test(readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8")));
+
+  const speechErrorsSrc = readFileSync(new URL("../client/voice/speechErrors.ts", import.meta.url), "utf8");
+  const recogHookSrc = readFileSync(new URL("../client/voice/useSpeechRecognition.ts", import.meta.url), "utf8");
+  check("the hook maps real error codes to student-presentable messages", /onErrorRef\.current\?\.\(speechErrorMessage\(e\.error\)\)/.test(recogHookSrc));
+  check("no-speech/aborted never surface (normal always-on events, not failures)", /e\.error === "no-speech" \|\| e\.error === "aborted"\) return;/.test(recogHookSrc));
+  check("the error mapper covers permission, no-mic, network, language, and a fallback", ["not-allowed", "audio-capture", "network", "language-not-supported"].every((c) => speechErrorsSrc.includes(`case "${c}"`)) && /default:/.test(speechErrorsSrc));
+}
+
+section("Tutor Session — sessions never auto-start, and past boards read at a glance (source pins)");
+{
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  // Direct request: "tutor shouldn't auto open session" — even the READ-ONLY peek was auto-RESUMING an
+  // active session on mount (setTask), so opening /tutor dropped the student straight into a session.
+  // Now the peek is DETECT-ONLY (GET /api/tasks, no setTask): it merely notices an in-progress session so
+  // the landing can offer an explicit "Reprendre" button. Opening /tutor ALWAYS shows the landing; a
+  // click (Reprendre or Start) is the only thing that opens a session.
+  check("the mount peek is detect-only (api.tasks, never setTask, never the session-minting route)", (() => {
+    const peekStart = tutorSrc.indexOf("const peekForActiveSession");
+    const peekBody = tutorSrc.slice(peekStart, tutorSrc.indexOf("}, []);", peekStart) + 6);
+    return /peekForActiveSession/.test(tutorSrc) && /api\.tasks\(\)\.then/.test(peekBody) && !/setTask\(/.test(peekBody) && /setPendingActiveSession\(t \|\| null\)/.test(peekBody) && !/api\.studyFreeSession\(\)\.then/.test(tutorSrc);
+  })());
+  check("an in-progress session is offered back ONLY via an explicit Resume button (no auto-open on mount)", /resumeActiveSession/.test(tutorSrc) && /onClick=\{resumeActiveSession\}/.test(tutorSrc) && /L\("Reprendre", "Resume"\)/.test(tutorSrc));
+  check("Start is the only create path and always passes fresh (a new lesson starts clean)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc));
+  check("voice stays manual (no startInVoiceMode on the panel — the mic toggle is the student's)", !/startInVoiceMode=/.test(tutorSrc));
+  // Direct request: "refine ui for past boards" — each history item shows the board AT A GLANCE (first
+  // few entries as compact lines) before the full reopenable board behind the View button.
+  check("past sessions show the board at a glance (capped 3-line preview)", /tutor-history-takeaways/.test(tutorSrc) && /tutor-history-board/.test(tutorSrc) && /slice\(0, 3\)/.test(tutorSrc));
+  check("history modals are subject-titled (which lesson's board/chat am I reopening?)", /openBoardSession\.subject \? ` · \$\{openBoardSession\.subject\}`/.test(tutorSrc));
+  const stylesSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the at-a-glance history styles actually exist", /\.tutor-history-takeaways/.test(stylesSrc) && /\.tutor-history-board li::before/.test(stylesSrc));
+}
+
+section("Voice-mode board rules — gesture research, not dictation (prompt pins)");
+{
+  // Yeo/Alibali 2017: pointing at SYMBOLIC notation while talking hurt learning; figures didn't. The old
+  // rule demanded a formula write for EVERY spoken intermediate line — symbolic dictation, the exact
+  // anti-pattern. The rewrite keeps the real requirement (speech can't show notation) but writes once.
+  const claudeSrc4 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  check("voice mode: the working expression is written ONCE as the canonical reference", /write the expression the student is actively working with ONCE/.test(claudeSrc4));
+  check("voice mode: no transcribing every intermediate spoken line", /do NOT transcribe every intermediate spoken line/.test(claudeSrc4));
+  check("voice mode: diagrams/arrows/structure preferred over bare symbol strings", /eyes-on-figure \(not eyes-on-equation\)/.test(claudeSrc4));
+  check("the old transcribe-every-intermediate-line rule is gone", !/This applies to every intermediate line/.test(claudeSrc4));
+  check("the student-can't-see-notation requirement itself is preserved", /THE BOARD IS THE ONLY PLACE THEY EVER SEE THE ACTUAL NOTATION/.test(claudeSrc4));
+}
+
 section("loadState survives a missing-column schema-drift error (source pins)");
 {
   const storeSrc = readFileSync(new URL("../server/store.ts", import.meta.url), "utf8");
@@ -1377,26 +1615,59 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   check("resumes (returns the list unchanged) when an active freestudy task already exists and fresh wasn't requested", /const active = list\.find\(\(t\) => t\.source === "freestudy" && !isHandled\(t\.status\)\);/.test(body) && /if \(active\) \{ res\.json\(list\); return; \}/.test(body));
   check("fresh:true still forces the old dismiss-and-mint-new behavior", /const fresh = req\.body\?\.fresh === true;/.test(body));
   const apiSrc = readFileSync(new URL("../client/api.ts", import.meta.url), "utf8");
-  check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean\)/.test(apiSrc));
+  // (fresh?: boolean — optional, so a passive call sends no fresh flag; the route later grew a subject
+  // param alongside it, which this pin deliberately doesn't pin so it stays signature-shape-agnostic.)
+  check("client's studyFreeSession defaults to resume (no fresh flag sent) unless explicitly asked", /studyFreeSession: \(fresh\?: boolean/.test(apiSrc));
   const appSrc = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
   check("StandaloneStudyEntry's explicit 'Enter study mode' click still requests a fresh session", /api\.studyFreeSession\(true\)/.test(appSrc));
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  check("Tutor Session's passive loadTask() does NOT force fresh (so a remount resumes, never discards)", /api\.studyFreeSession\(\)\.then/.test(tutorSrc) && !/api\.studyFreeSession\(true\)/.test(tutorSrc));
+  // Reported live: "session should not auto start" — the mount used to call /api/study/free, whose
+  // resume-first route MINTS a session when none is active, so merely OPENING /tutor started one. Then a
+  // follow-up: "tutor shouldn't auto open session" — even the read-only peek auto-RESUMED. The passive
+  // mount is now a detect-only peek at GET /api/tasks (offers "Reprendre" on the landing, opens nothing),
+  // and the ONE studyFreeSession call left in the file is the Start button's explicit create.
+  check("opening /tutor does NOT create or open a session (mount is a detect-only api.tasks peek; Start is the only creator)", /api\.tasks\(\)\.then/.test(tutorSrc) && (tutorSrc.match(/api\.studyFreeSession\(/g) || []).length === 1);
+  // Reported live: Start resumed an old "forces" thread instead of starting blank, and never asked what
+  // subject. Start must require a picked subject and pass fresh:true (plus that subject) — a NEW lesson is
+  // always a BLANK session, never a resume of an old one; resuming an in-progress session is only the
+  // landing's explicit "Reprendre" click (resumeActiveSession).
+  check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc) && /if \(!selectedSubject( \|\| \w+)?\) return;/.test(tutorSrc));
 }
 
-section("Tutor Session — voice-first by default, and the board survives ending a session (source pins)");
+section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto-on), and the board survives ending a session (source pins)");
 {
   const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
-  // Direct request: "make chat really for oral usage" — the Tutor's whole premise is a spoken lesson
-  // (unlike a per-task chat, where voice is an opt-in extra), so it starts already listening.
-  check("Tutor Session starts in voice mode automatically", /startInVoiceMode/.test(tutorSrc));
+  // Direct request: "voice should not be auto on" — the earlier voice-first auto-start (mic on with the
+  // session) is REVERSED. Starting or resuming a session must never enable voice; the mic toggle in the
+  // chat panel is the student's explicit choice. Everything else voice (board-pane pill, barge-in,
+  // voice-primary layout) still activates the moment they turn it on themselves.
+  check("Tutor Session does NOT auto-enable voice (no startInVoiceMode prop, no wantVoice forcing)", !/startInVoiceMode=/.test(tutorSrc) && !/setWantVoice/.test(tutorSrc));
   const askOtto = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
-  check("startInVoiceMode is applied exactly once (a ref-gated effect, never fights a deliberate manual toggle-off)", /autoVoiceAppliedRef/.test(askOtto));
+  check("startInVoiceMode (where a caller still passes it) is applied exactly once (a ref-gated effect, never fights a deliberate manual toggle-off)", /autoVoiceAppliedRef/.test(askOtto));
   // Direct request: "make sure when end tutor session board is saved and users can see what was worked on" —
   // ending used to only save a FLATTENED TEXT preview (boardEntries: string[]) of the board, losing any
   // diagram/equation structure; the real board is now saved too and reopenable.
   check("ending a session saves the FULL board (diagrams/equations intact), not just flattened text", /board: task\.board \|\| \[\]/.test(tutorSrc));
   check("a past session's full board can be reopened (View board button + modal)", /setOpenBoardSession/.test(tutorSrc) && /<BoardArtifact task=\{\{ board: openBoardSession\.board \}/.test(tutorSrc));
+  // Voice stays off through start/resume — the student turns it on with the mic toggle themselves.
+  check("starting or resuming a session leaves voice OFF (explicit mic tap to enable)", !/setWantVoice\(true\)/.test(tutorSrc));
+  // The voice state pill lives on the BOARD pane header: in a voice-first session the student's eyes are
+  // on the board, so "am I being heard?" has to be answerable where they're actually looking.
+  check("voice state is reported up and shown on the board pane", /onVoiceStateChange/.test(tutorSrc) && /tutor-voice-pill/.test(tutorSrc));
+  check("voice mode shifts the layout board-primary", /voice-primary/.test(tutorSrc));
+  const tutorStyles = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("voice-primary grid actually exists in CSS (not a dead class)", /\.tutor-session\.voice-primary \{ grid-template-columns/.test(tutorStyles));
+  // Barge-in: talking over Otto cancels the TTS mid-sentence, like interrupting a human tutor. Threshold
+  // is 2+ words so speaker echo / a throat-clear doesn't cut him off.
+  const askOttoSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  const recogSrc = readFileSync(new URL("../client/voice/useSpeechRecognition.ts", import.meta.url), "utf8");
+  // Barge-in v2 (real interruption): the mic STAYS OPEN while Otto speaks and interim text streams in
+  // live — the old version aborted the recognizer during TTS, which made interruption structurally
+  // impossible (no audio reaches a dead mic). Echo from the speakers is classified textually.
+  check("mic stays open during speech when barge-in is on (pause-the-mic is gated off)", /if \(!voiceModeOn \|\| bargeIn\) return;/.test(askOttoSrc));
+  check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
+  check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
+  check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));
 }
 
 section("isPrivateOrReservedIp — SSRF guard for the student-supplied Pronote connect URL");
@@ -1605,6 +1876,13 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   // Milestones (Profile.milestones, extracted from journal entries) surfaced into chat so the tutor builds
   // on real per-topic progress instead of re-teaching it from scratch every session.
   check("chat context includes milestoneLine (per-topic progress from the journal)", /milestoneLine\(profile, task\.sourceSubject\)/.test(chatBody));
+  // Revoicing (O'Connor & Michaels): the student's idea is restated in their own words before building on
+  // it — heard, verified, credited. Social congruence + process praise (Lepper & Woolverton): earned,
+  // specific, move-naming praise; never default cheer.
+  check("tutor revoices the student's idea before building on it", /REVOICE THEIR IDEA BEFORE YOU BUILD ON IT/.test(chatBody));
+  check("tutor praises the specific thinking move (never generic encouragement)", /PRAISE THE MOVE, NOT THE PERSON/.test(chatBody));
+  check("board prompt teaches the worksheet rendering (trace lines, completion gap, credited insights)", /IT'S A WORKSHEET, AND THE BOARD SHOWS IT/.test(chatBody));
+  check("board prompt tells the tutor to write live (the drafting is part of the tutoring)", /THE BOARD WRITES LIVE/.test(chatBody));
 }
 // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
 // source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification
@@ -1716,6 +1994,63 @@ check("catches 'the diagram I drew'", CHAT_CLAIMS_DIAGRAM.test("Look at the diag
 check("catches 'I just sketched [a diagram]'", CHAT_CLAIMS_DIAGRAM.test("I just sketched a diagram to show where -3 sits."));
 check("catches FR 'le triangle que j'ai dessiné'", CHAT_CLAIMS_DIAGRAM.test("Regarde le triangle que j'ai dessiné pour toi."));
 check("does NOT flag ordinary prose mentioning a shape by name", !CHAT_CLAIMS_DIAGRAM.test("A triangle has three sides — can you name them?"));
+
+section("CHAT_ASSERTS_FACT — catches confident unique-fact assertions (verify-or-hedge trigger)");
+check("catches an EN author attribution", CHAT_ASSERTS_FACT.test("The author of L'Étranger is Albert Camus."));
+check("catches an FR auteur attribution", CHAT_ASSERTS_FACT.test("L'auteur de L'Étranger est Camus."));
+check("catches an EN invention with the inventor", CHAT_ASSERTS_FACT.test("The telephone was invented by Bell in 1876."));
+check("catches an FR invention", CHAT_ASSERTS_FACT.test("Le téléphone a été inventé par Bell."));
+check("catches an FR invention (accented participle, no JS boundary trap)", CHAT_ASSERTS_FACT.test("Le téléphone a été inventé par Bell.") && CHAT_ASSERTS_FACT.test("La pile a été inventée par Volta."));
+check("catches a dated EN discovery", CHAT_ASSERTS_FACT.test("In 1665 Newton discovered gravity, which is why..."));
+check("catches a dated FR discovery", CHAT_ASSERTS_FACT.test("En 1665 Newton a découvert la gravitation."));
+check("does NOT flag ordinary analysis prose", !CHAT_ASSERTS_FACT.test("So the author wants us to feel the tension here — what do you think?"));
+check("does NOT flag a method explanation with a year in it", !CHAT_ASSERTS_FACT.test("In 1665 the plague closed Cambridge — but for the exam, what matters is the method."));
+check("does NOT flag generic history chatter without a claim verb", !CHAT_ASSERTS_FACT.test("Le théâtre du 17e siècle, c'est tout un monde."));
+
+section("countWords + the chat length backstop (TALE budget, silent compression round)");
+check("countWords counts whitespace-delimited words", countWords("un deux trois") === 3 && countWords("  a  b ") === 2 && countWords("") === 0);
+{
+  const src = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  // Behavioral posture, pinned structurally: the truth pass lives in the NO-TOOL branch (the only shape
+  // a final draft takes), after the truncation retry, before finish() — not in the tool-calls path.
+  const noToolIdx = src.indexOf("if (!toolCalls.length) {");
+  const noToolEnd = src.indexOf("messages.push({ role: \"assistant\", content: textContent, tool_calls: toolCalls });");
+  const noToolBody = src.slice(noToolIdx, noToolEnd);
+  check("the truth pass lives inside the no-tool branch (verifies the draft that actually ships)", noToolIdx > 0 && /POST-REPLY TRUTH PASS/.test(noToolBody) && /findArithmeticClaims\(textContent\)/.test(noToolBody));
+  check("arith verification: gated, latched, corrective round before finish", /!arithCorrected && !lastRound/.test(noToolBody) && /arithCorrected = true;/.test(noToolBody) && /Independent recomputation of your draft/.test(noToolBody));
+  check("fact verification: verify-or-hedge, skipped when web_search already ran this turn", /!factCorrected && !lastRound && CHAT_ASSERTS_FACT\.test\(textContent\)/.test(noToolBody) && /web search\|Recherche web/.test(noToolBody));
+  check("length backstop: >120 words, once, non-voice only", /!lengthRetried && !lastRound && !opts\?\.voiceMode && countWords\(textContent\) > 120/.test(noToolBody));
+  check("the tool path has NO truth pass (final drafts never exit there)", (() => {
+    const toolIdx = src.indexOf("messages.push({ role: \"assistant\", content: textContent, tool_calls: toolCalls });");
+    const boardNudgeIdx = src.indexOf("if (!boardNudgeDone && !lastRound && shouldNudgeBoardWrite(");
+    const toolPath = src.slice(toolIdx, boardNudgeIdx);
+    return !/findArithmeticClaims\(textContent\)/.test(toolPath) && !/CHAT_ASSERTS_FACT\.test\(textContent\)/.test(toolPath);
+  })());
+  check("the prompt carries the fact taxonomy (computation/unique fact/analysis)", /NEVER WRONG — THE FACT TAXONOMY/.test(src) && /the calculator wins/.test(src));
+  check("the prompt carries the calibration rule (Kadavath)", /CALIBRATION: models are surprisingly good at knowing what they don't know/.test(src));
+  check("the prompt carries the TALE 45-word budget", /UNDER 45 WORDS/.test(src));
+  check("the prompt carries the growth-mindset error framing (Dweck)", /ERRORS ARE INFORMATION, NOT VERDICTS/.test(src) && /pas encore/.test(src));
+}
+
+section("Client double-check affordance — the same oracle, rendered as a learning signal (AskOttoPanel)");
+{
+  // The server's post-reply pass rewrites wrong arithmetic before it ships; a mismatch that STILL
+  // reaches the client means the verifier never ran (deadline hit, ceiling hit, or an older saved
+  // message). Phase 4 renders that residue visible — via the SAME server/arithmetic.ts evaluator
+  // (one oracle, two callers), imported into the client bundle. A quiet notice, never an error banner,
+  // and never auto-corrected: spotting the discrepancy IS the exercise.
+  const panelSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("AskOttoPanel imports the shared arithmetic oracle (same evaluator as the server verifier)", /import \{ findArithmeticClaims \} from "\.\.\/\.\.\/server\/arithmetic\.ts"/.test(panelSrc));
+  check("assistant messages get the double-check notice on an unverified mismatch", /arithmeticMismatches\(m\.text\)/.test(panelSrc) && /sm-ai-calc-check/.test(panelSrc) && /Double-check this with Otto/.test(panelSrc) && /role="note"/.test(panelSrc));
+  check("the notice shows the claim and the recomputed value, capped at the first + a count", /mismatches\[0\]\.raw/.test(panelSrc) && /mismatches\[0\]\.actual/.test(panelSrc) && /mismatches\.length - 1/.test(panelSrc));
+  check("it is a signal only — no auto-correction, no API call from the notice", (() => {
+    const idx = panelSrc.indexOf("sm-ai-calc-check");
+    const body = panelSrc.slice(panelSrc.lastIndexOf("{m.role === \"assistant\" && (() => {", idx), panelSrc.indexOf("})()}", idx) + 5);
+    return !/api\./.test(body) && !/onSend/.test(body);
+  })());
+  const cssSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the notice's styles exist (quiet amber, not an alarm-red banner)", /\.sm-ai-calc-check \{/.test(cssSrc) && /#d97706/.test(cssSrc));
+}
 
 section("Flashcards the student doesn't NEED to learn (card.notNeeded) — excluded, fed back, scoped");
 {
@@ -2734,6 +3069,41 @@ section("leadingArm — honest, deterministic 'what does the bandit currently be
   check("step 4's JSON shape allows a url on a step", /"url": "only if one of the links above fits"/.test(step4));
   check("step links are validated against the task's own links before anything else runs",
     src.indexOf("steps = restrictStepUrlsToLinks(steps, links)") < src.indexOf("steps = dropUnanchoredSteps"));
+}
+
+// ── Tutor Session: the Desmos tools place ────────────────────────────────────────────────────────
+section("Tutor Desmos tools — the student-usable place (contract + pins)");
+{
+  // Direct request: "make sure in the tutor you have a place for desmos extensions that user can use".
+  // The embed contract is pure data (client/tutor/desmosTools.ts) so it's tested directly, the same way
+  // echoGuard/speechErrors are; the panel and wiring are pinned by source, the way this file pins
+  // TutorSession behavior everywhere else.
+  const { DESMOS_TOOLS, desmosToolUrl, isDesmosEmbedUrl } = await import("../client/tutor/desmosTools.ts");
+  check("the four public Desmos calculators are the tool family", DESMOS_TOOLS.length === 4 && DESMOS_TOOLS.map((t) => t.id).join(",") === "graphing,scientific,geometry,fourfunction");
+  check("each tool carries a real desmos.com embed path and bilingual label", DESMOS_TOOLS.every((t) => /^https:\/\/www\.desmos\.com\//.test(t.path) && t.label.length === 2 && t.hint.length === 2));
+  check("desmosToolUrl resolves each id (and falls back to graphing)", desmosToolUrl("scientific") === "https://www.desmos.com/scientific" && desmosToolUrl("nope" || "graphing") === "https://www.desmos.com/calculator");
+  check("the embed allowlist accepts exactly the four calculator pages (any other URL is refused)", ["https://www.desmos.com/calculator", "https://desmos.com/geometry", "https://www.desmos.com/fourfunction/"].every(isDesmosEmbedUrl) && !["http://www.desmos.com/calculator", "https://evil.test/calculator", "https://www.desmos.com/calculator/abc123", "javascript:alert(1)"].some(isDesmosEmbedUrl));
+
+  const tutorSrc = readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8");
+  const desmosCompSrc = readFileSync(new URL("../client/tutor/TutorDesmos.tsx", import.meta.url), "utf8");
+  check("the board pane renders the Desmos panel (the tutor's one place for it)", /<TutorDesmos \/>/.test(tutorSrc) && tutorSrc.indexOf("<TutorDesmos />") < tutorSrc.indexOf("tutor-board-body"));
+  check("the panel embeds Desmos in a sandboxed iframe, never top-navigation", (/sandbox="([^"]*)"/.exec(desmosCompSrc) || [])[1] === "allow-scripts allow-same-origin allow-popups" && /allow="fullscreen"/.test(desmosCompSrc));
+  check("switching tools remounts the iframe via key (each calculator starts clean)", /key=\{toolId\}/.test(desmosCompSrc));
+  check("the panel is collapsed until the student opens it (manual, like the rest of the tutor)", /useState\(false\)/.test(desmosCompSrc) && /aria-expanded=\{open\}/.test(desmosCompSrc));
+  check("every tab comes from the shared tool family, not a hand-typed URL", /DESMOS_TOOLS\.map/.test(desmosCompSrc) && /desmosToolUrl\(toolId\)/.test(desmosCompSrc) && !/src="https:\/\/www\.desmos/.test(desmosCompSrc));
+  const stylesSrc2 = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the Desmos panel styles exist", /\.tutor-desmos-toggle/.test(stylesSrc2) && /\.tutor-desmos-frame/.test(stylesSrc2) && /\.tutor-desmos-tab\.on/.test(stylesSrc2));
+
+  // The tutor prompt must route students to the panel — otherwise the tool is a shelf decoration. Pinned
+  // in the BOARD block (the Desmos toggle sits directly above the board pane), where the guidance about
+  // the session's visual surfaces lives.
+  const claudeSrc6 = readFileSync(new URL("../server/claude.ts", import.meta.url), "utf8");
+  const desmosPrompt = claudeSrc6.slice(claudeSrc6.indexOf("THE DESMOS TOOLS ARE ONE CLICK AWAY"), claudeSrc6.indexOf("KEEP GETTING SMARTER ABOUT THEM"));
+  check("the tutor prompt routes students to the Desmos panel with a concrete task", /THE DESMOS TOOLS ARE ONE CLICK AWAY/.test(claudeSrc6) && /ouvre les outils Desmos/.test(desmosPrompt));
+  check("the prompt names the tool family the panel actually offers", /graphing, scientific, geometry, four-function/.test(desmosPrompt));
+  check("the prompt bans fake chat graphs — the student operates the real tool", /never pretend to graph in chat/.test(desmosPrompt));
+  const desmosArtifactSrc = readFileSync(new URL("../client/study/artifacts/DesmosArtifact.tsx", import.meta.url), "utf8");
+  check("the embed contract matches Study Mode's existing artifact (sandbox, no top-navigation)", /sandbox="allow-scripts allow-same-origin allow-popups"/.test(desmosArtifactSrc));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

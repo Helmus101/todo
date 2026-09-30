@@ -1,10 +1,12 @@
-import { useRef, useEffect, useContext, useCallback } from "react";
+import { useRef, useEffect, useState, useContext, useCallback } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
+import { createEchoFilter } from "../voice/echoGuard.ts";
+import { findArithmeticClaims } from "../../server/arithmetic.ts";
 import { InlineProblem } from "./InlineProblem.tsx";
 
 interface AskOttoPanelProps {
@@ -25,8 +27,41 @@ interface AskOttoPanelProps {
   /** Tutor Session only — a spoken lesson is the whole premise of that surface (unlike a normal per-task
    *  chat, which is text-first with voice as an opt-in extra), so it starts the session already listening
    *  instead of making the student find and tap the mic toggle themselves. Applied once, on mount, via the
-   *  SAME toggle a manual tap would use — never forces it back on if the student explicitly turns it off. */
+   *  SAME toggle a manual tap would use — never forces it back on if the student explicitly turns it off.
+   *  Requested, not guaranteed: browsers with no SpeechRecognition (Firefox) stay text-first — voiceModeOn
+   *  is never force-enabled where there's no microphone support at all. */
   startInVoiceMode?: boolean;
+  /** Tutor Session only — reports the voice loop's state upward ({@link TutorSession}) so the BOARD pane
+   *  (not just the chat's mic button) can show Listening…/Speaking…/Voice on. In a voice-first session the
+   *  student's eyes are on the board, not the chat input — the state indicator has to live where they look. */
+  onVoiceStateChange?: (state: { listening: boolean; speaking: boolean; voiceModeOn: boolean; interim: string }) => void;
+  /** Tutor Session only — barge-in: while Otto is speaking, an interim recognition transcript of at least
+   *  this many words cancels the speech immediately so the student can interrupt mid-sentence, exactly like
+   *  talking over a human tutor. Two words, not one: a single word ("okay", "yes") is too easy to
+   *  false-trigger from speaker echo or a throat-clear; two real words is intent. Kept local to Tutor
+   *  Session — the per-task chat in TaskCard.tsx keeps its pause-and-resume behavior. */
+  bargeIn?: boolean;
+}
+
+// The text currently being spoken aloud (the newest assistant reply) — the echo guard's reference: Otto
+// can only echo words he is saying right now, so anything he isn't saying is the student.
+function speakingNowText(task: WebTask): string {
+  const chat = task.chat || [];
+  return chat.length ? chat[chat.length - 1]?.text || "" : "";
+}
+
+// PHASE 4 of the tutor-truth work: an independent, client-side double-check of every arithmetic
+// equality Otto asserts, using the SAME deterministic evaluator the server verifies with
+// (server/arithmetic.ts — pure, no imports, so it bundles client-side unchanged; one oracle, two
+// callers, exactly the CRITIC/CoVe posture). The server's own post-reply pass already rewrites
+// wrong arithmetic before it ever ships — so a mismatch that STILL reaches the client means the
+// verifier never ran (deadline hit, ceiling hit, older saved message). This renders that residue
+// visible instead of silent: a small "double-check this" notice under the message, with the claim
+// and both values. Deliberately a LEARNING SIGNAL, not an error banner, and never auto-corrected:
+// spotting the discrepancy IS the exercise, and the student takes it to Otto. localStorage history
+// re-checks too — the notice appears on old sessions' messages where the old model had no verifier.
+function arithmeticMismatches(text: string): { raw: string; lhs: string; claimed: number | null; actual: number | null }[] {
+  return findArithmeticClaims(text).filter((c) => c.mismatch).map((c) => ({ raw: c.raw, lhs: c.lhs, claimed: c.right, actual: c.left }));
 }
 
 // Mirrors TaskCard.tsx's TaskChat exactly (same pending-echo/typing-dots/slow-hint/error-retry state
@@ -37,7 +72,7 @@ interface AskOttoPanelProps {
 // other drawers, so the title bar/close/drag/resize handles all come from ArtifactCanvas's generic wrapper.
 export function AskOttoPanel({
   task, currentStep, input, setInput, sending, error, pendingMsg, onSend,
-  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, startInVoiceMode,
+  onOpenNote, onOpenDeck, onOpenQuiz, emptyText, placeholder, startInVoiceMode, onVoiceStateChange, bargeIn,
 }: AskOttoPanelProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -51,8 +86,12 @@ export function AskOttoPanel({
   // Applied once — a ref (not state) so it can never re-fire and fight a student who deliberately turns
   // voice mode back off mid-session.
   const autoVoiceAppliedRef = useRef(false);
+  const recogSupportedRef = useRef(false);
   useEffect(() => {
-    if (startInVoiceMode && !voiceModeOn && !autoVoiceAppliedRef.current) {
+    // Only flip the pref when SpeechRecognition actually exists here — force-enabling voice mode on
+    // Firefox (no recognition support; VoiceControls hides itself) would leave the student in a state
+    // where Otto speaks but can never hear them, with no mic button to turn it off with.
+    if (startInVoiceMode && !voiceModeOn && !autoVoiceAppliedRef.current && recogSupportedRef.current) {
       autoVoiceAppliedRef.current = true;
       toggleVoiceMode();
     }
@@ -63,7 +102,56 @@ export function AskOttoPanel({
   // previous message is still in flight rather than firing a second send on top of it.
   const sendingRef = useRef(sending);
   sendingRef.current = sending;
-  const recog = useSpeechRecognition({ lang: speechLang, onResult: (text) => { if (!sendingRef.current) onSend(text, true); } });
+  // Barge-in refs — recognition's callbacks need the CURRENT speaking state and the text being spoken,
+  // and useSpeechRecognition's options object is captured at hook-setup time, so plain closures over
+  // synth.speaking / the last chat message would go stale.
+  const speakingRef = useRef(false);
+  speakingRef.current = synth.speaking;
+  // THE LOOP-KILLER (the recurring "Otto hears himself" bug). The old guard only checked echo WHILE
+  // synth.speaking was true — but recognition lag means Otto's echo routinely FINALIZES after the flag
+  // already flipped false, exactly when the check was skipped, so his own reply went out as a student
+  // message, Otto replied to it, the reply was spoken, re-echoed, re-sent… The stateful filter
+  // (createEchoFilter, client/voice/echoGuard.ts) classifies across the whole speech window PLUS a tail
+  // after it, and drops a verbatim repeat of the just-spoken reply regardless of timing.
+  const echoFilterRef = useRef(createEchoFilter());
+  const [micError, setMicError] = useState<[string, string] | null>(null);
+  const recog = useSpeechRecognition({
+    lang: speechLang,
+    onResult: (text) => {
+      if (sendingRef.current) return;
+      // Otto's own voice coming back (during speech, in the post-speech tail, or verbatim) is NEVER input.
+      if (echoFilterRef.current.isEcho(text)) return;
+      // Real student speech while Otto talks: interrupt him — cancel the TTS, the utterance still sends.
+      if (speakingRef.current && bargeIn) synth.cancel();
+      onSend(text, true);
+    },
+    // Live barge-in channel: interim text streams in while the student is still talking — cancel the TTS
+    // the instant real speech is detected. Echo-filtered so Otto doesn't cancel himself.
+    onInterim: (text) => {
+      if (!bargeIn || !text) return;
+      if (echoFilterRef.current.isEcho(text)) return;
+      if (speakingRef.current && text.trim().split(/\s+/).length >= 2) synth.cancel();
+    },
+    // Mic failures used to vanish silently (a blocked mic looked like "listening, heard nothing") — now
+    // they surface as a real, bilingual, student-presentable message.
+    onError: (msg) => setMicError(msg),
+  });
+  // Drive the echo filter's windows from the TTS transitions: speechStarted re-arms on every new
+  // utterance (with the text being spoken — the echo reference), speechEnded opens the post-speech tail.
+  const wasSpeakingEchoRef = useRef(false);
+  useEffect(() => {
+    if (synth.speaking && !wasSpeakingEchoRef.current) echoFilterRef.current.speechStarted(speakingNowText(task));
+    else if (!synth.speaking && wasSpeakingEchoRef.current) echoFilterRef.current.speechEnded();
+    wasSpeakingEchoRef.current = synth.speaking;
+  }, [synth.speaking, task]);
+  // Assigned only AFTER recog exists — the mount-time autoVoice effect above reads this ref (it must never
+  // touch recog directly: recog is declared below that effect, so a direct use would be a TDZ crash).
+  recogSupportedRef.current = recog.supported;
+  // Report voice-loop state upward (board-pane pill in Tutor Session) on every change. Fired from an
+  // effect, not inline in render, so a parent setState during this child's render never happens.
+  useEffect(() => {
+    onVoiceStateChange?.({ listening: recog.listening, speaking: synth.speaking, voiceModeOn, interim: recog.interimTranscript });
+  }, [recog.listening, synth.speaking, voiceModeOn, recog.interimTranscript, onVoiceStateChange]);
   // The problem currently active — the most recently created one (CREATE_PROBLEM appends to
   // task.problems in order, so the last entry is always the active/most-recent problem; Otto's own prompt
   // instructions keep working THIS one until it's actually solved before making a new one, so "most recent" 
@@ -72,21 +160,22 @@ export function AskOttoPanel({
   const activeProblem = task.problems?.length ? task.problems[task.problems.length - 1] : undefined;
   // Voice mode is ONE switch: on = always listening (no push-to-talk tap needed between turns) AND
   // auto-speaking replies. Turning it on starts listening immediately; turning it off stops everything.
+  // A fresh toggle-on also clears any stale mic error from a previous failed attempt.
   useEffect(() => {
-    if (voiceModeOn) recog.start();
+    if (voiceModeOn) { setMicError(null); recog.start(); }
     else { recog.abort(); synth.cancel(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceModeOn]);
-  // Pause listening while Otto is actually talking (avoids the mic picking up Otto's own voice from the
-  // speakers and treating it as the next thing to respond to), and resume the instant he's done — the
-  // whole point of "always on" is the student never has to tap anything between turns.
+  // Barge-in keeps the mic OPEN while Otto talks — the student's voice has to reach a live recognizer for
+  // an interruption to exist at all (the old pause-the-mic-during-TTS design made barge-in structurally
+  // impossible: abort() killed the recognizer, so nothing the student said while Otto spoke was ever
+  // heard). Echo from the speakers is handled by isLikelyEcho above, not by deafness. When barge-in is
+  // OFF (Study Mode / per-task chats), keep the old pause-and-resume behavior: safer against echo on
+  // devices without headphones, and there's nothing to interrupt anyway. The 400ms settle delay before
+  // reopening stays for the non-barge-in path (see TaskCard.tsx's identical effect for the full history).
   const wasSpeakingRef = useRef(false);
   useEffect(() => {
-    if (!voiceModeOn) return;
-    // abort() (not stop()) so no buffered audio from the moment TTS starts gets finalized into a result,
-    // and a short settle delay before restarting so speaker echo has time to die down before the mic
-    // reopens — without both, Otto's own voice was occasionally getting transcribed and re-sent as if the
-    // student had said it. See the identical fix in TaskCard.tsx's TaskChat for the full explanation.
+    if (!voiceModeOn || bargeIn) return;
     if (synth.speaking && !wasSpeakingRef.current) {
       recog.abort();
     } else if (!synth.speaking && wasSpeakingRef.current) {
@@ -96,7 +185,7 @@ export function AskOttoPanel({
     }
     wasSpeakingRef.current = synth.speaking;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [synth.speaking, voiceModeOn]);
+  }, [synth.speaking, voiceModeOn, bargeIn]);
   // Speak the reply once it arrives — tracked by chat length so a re-render (not a new message) never
   // re-triggers it, and so turning voice mode on mid-conversation only speaks FUTURE replies, not the
   // whole history at once.
@@ -163,6 +252,20 @@ export function AskOttoPanel({
             {m.role === "assistant" && m.guardrail ? (
               <span className="sm-ai-guardrail-tag">Otto guides, doesn't do it for you</span>
             ) : null}
+            {m.role === "assistant" && (() => {
+              const mismatches = arithmeticMismatches(m.text);
+              return mismatches.length ? (
+                <div className="sm-ai-calc-check" role="note">
+                  <span className="sm-ai-calc-check-icon" aria-hidden="true">⚠</span>
+                  <span>
+                    {L("Vérifie ce calcul avec Otto : ", "Double-check this with Otto: ")}
+                    <code>{mismatches[0].raw}</code>
+                    {(mismatches[0].actual != null && mismatches[0].claimed != null) ? ` (${mismatches[0].lhs} = ${mismatches[0].actual})` : ""}
+                    {mismatches.length > 1 ? L(` — et ${mismatches.length - 1} autre(s)`, ` — and ${mismatches.length - 1} more`) : ""}
+                  </span>
+                </div>
+              ) : null;
+            })()}
           </div>
         ))}
         {pendingMsg ? <div className="sm-ai-msg sm-ai-msg-user sm-ai-msg-pending">{pendingMsg}</div> : null}
@@ -185,6 +288,8 @@ export function AskOttoPanel({
           <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>Retry</button>
         </div>
       ) : null}
+      {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
+      {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
 
       <div className="sm-ai-input-row">
         <textarea

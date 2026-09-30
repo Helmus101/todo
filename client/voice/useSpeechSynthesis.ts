@@ -47,6 +47,14 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
   const queueRef = useRef<string[]>([]);
   const cancelledRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Barge-in generation counter: FreeTTS is an async fetch-then-play pipeline, and the old cancel() only
+  // paused an ALREADY-PLAYING audio element — a cancel() landing while the /api/tts fetch was still in
+  // flight (or before play() resolved) was silently ignored: the fetch resolved anyway, play() started,
+  // onplay flipped speaking back to true, and Otto kept talking AFTER being interrupted (plus the flag
+  // could stay true forever if play() settled late — the voice loop wedged waiting for speech that never
+  // ends). Each speak() bumps the generation; an async continuation checks it before speaking and before
+  // flipping state, so anything still resolving from a pre-cancel speak() becomes a no-op.
+  const generationRef = useRef(0);
 
   useEffect(() => {
     if (!supported) return;
@@ -105,22 +113,26 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     speakNext();
   }, [supported, speakNext]);
 
-  const speakViaFreeTTS = useCallback(async (text: string) => {
+  const speakViaFreeTTS = useCallback(async (text: string, myGeneration: number) => {
     try {
       const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
+      // The barge-in cancel() landed while this fetch was in flight — this utterance is dead, don't
+      // speak it and DON'T fall back to browser TTS (that would undo the interruption).
+      if (generationRef.current !== myGeneration) return;
       if (!response.ok) throw new Error("FreeTTS failed");
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       if (audioRef.current) URL.revokeObjectURL(audioRef.current.src);
       const audio = new Audio(url);
       audioRef.current = audio;
-      audio.onplay = () => setSpeaking(true);
-      audio.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); };
+      audio.onplay = () => { if (generationRef.current === myGeneration) setSpeaking(true); };
+      audio.onended = () => { if (generationRef.current === myGeneration) { setSpeaking(false); URL.revokeObjectURL(url); } };
       audio.onerror = () => {
+        if (generationRef.current !== myGeneration) return;
         setSpeaking(false);
         URL.revokeObjectURL(url);
         // Fallback to browser TTS on audio error
@@ -128,7 +140,9 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
       };
       await audio.play();
     } catch {
-      // FreeTTS failed or endpoint unavailable — fallback to browser TTS
+      // FreeTTS failed or endpoint unavailable — fallback to browser TTS (still generation-gated: a
+      // cancel() during the failed attempt must not resurrect speech through the fallback path).
+      if (generationRef.current !== myGeneration) return;
       useBrowserTTS(text);
     }
   }, [useBrowserTTS]);
@@ -138,13 +152,19 @@ export function useSpeechSynthesis(lang: string): UseSpeechSynthesis {
     const speakableText = toSpeakableText(text);
     if (!speakableText.trim()) return;
     cancelledRef.current = false;
+    // New utterance = new generation: invalidates any pre-cancel async continuation still in flight.
+    const myGeneration = ++generationRef.current;
     // Try FreeTTS first, fallback to browser TTS
-    void speakViaFreeTTS(speakableText);
+    void speakViaFreeTTS(speakableText, myGeneration);
   }, [supported, speakViaFreeTTS]);
 
   const cancel = useCallback(() => {
     if (!supported) return;
     cancelledRef.current = true;
+    // Bump the generation FIRST: every in-flight /api/tts fetch and pending play() from the current
+    // utterance becomes a no-op the moment it resolves, so an interruption mid-fetch actually stays
+    // interrupted instead of the speech starting over the student's head.
+    generationRef.current++;
     queueRef.current = [];
     window.speechSynthesis.cancel();
     if (audioRef.current) {
