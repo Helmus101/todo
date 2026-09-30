@@ -6821,7 +6821,15 @@ export async function chatAboutTask(
       // failed (after the retries above already had their chance). Same honest wording used everywhere
       // else a chat turn genuinely fails (server/index.ts's own 500 path, client/StudyMode.tsx's catch) —
       // consistent, and doesn't put words in the student's mouth about what's "giving them trouble".
-      result.reply = fr ? "Otto n'a pas pu répondre tout de suite — réessaie dans un instant." : "Otto couldn't reply just now — try again in a moment.";
+      // BUT: if a tool call earlier in THIS SAME turn already produced something real (a problem, a board
+      // write) before the final text-generation round came back empty — reproduced live: a CREATE_PROBLEM
+      // landed fine, then the follow-up completion synthesizing a reply around it came back empty, and the
+      // student saw a flat "Otto couldn't reply" with a new exercise having silently appeared with no
+      // acknowledgment at all — say so honestly instead of pretending nothing happened.
+      const madeSomething = result.problems.length > 0 || result.board.length > 0;
+      result.reply = madeSomething
+        ? (fr ? "Voilà un exercice — regarde le tableau." : "Here's an exercise — check the board.")
+        : (fr ? "Otto n'a pas pu répondre tout de suite — réessaie dans un instant." : "Otto couldn't reply just now — try again in a moment.");
     } else {
       result.reply = cleaned;
     }

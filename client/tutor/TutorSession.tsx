@@ -203,7 +203,15 @@ export function TutorSession({ userId }: { userId: string | null }) {
     if (!message || sending || !task) return;
     setInput(""); setSending(true); setError(null); setPendingMsg(message);
     try {
-      const response = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, undefined, true);
+      // canvasMode: true — the Tutor UI has no way to OPEN a note/flashcard-deck/quiz artifact (onOpenNote/
+      // onOpenDeck/onOpenQuiz are all no-ops below, since this screen is chat+board, not the task list's
+      // artifact viewer). Without this flag the full tool set was still offered server-side, so the model
+      // could (and did — reported live) create a whole flashcard deck here: a chip that does nothing when
+      // tapped, AND a much heavier generation that's far more likely to exhaust the reply's token budget and
+      // come back as a hard "Otto couldn't reply" with no message at all. canvasMode restricts the tutor to
+      // CREATE_PROBLEM (individual, inline, answerable right on the board) instead — the only artifact this
+      // screen actually knows how to show.
+      const response = await api.chat(task.id, message, task.chat || [], task.board || [], task.problems || [], undefined, undefined, voiceMode, true, true);
       const { task: updated, chatDelta, board, problems } = response;
       const chat = appendLocalChat(task.id, chatDelta, userId);
       const newBoard = appendLocalBoard(task.id, board, userId);
@@ -241,7 +249,12 @@ export function TutorSession({ userId }: { userId: string | null }) {
       }
       // Only show error if no content was returned
       if (!errorData?.board?.length && !errorData?.problems?.length) {
-        setError(e?.message || L("Otto n'a pas pu répondre — réessaie.", "Otto couldn't reply — try again."));
+        // A raw browser network error (e.g. the device slept mid-request — Chrome's "Failed to fetch"/
+        // ERR_NETWORK_IO_SUSPENDED, or a dropped connection — ERR_CONNECTION_RESET) isn't something a
+        // student should ever have to read verbatim; `e.message` for those is generic browser text, not a
+        // real server error. Only show the server's OWN message (it always sets `.status`, see api.ts's
+        // `j()`); anything without one is a network-layer failure, so use the friendly fallback instead.
+        setError(e?.status != null ? e.message : L("Otto n'a pas pu répondre — réessaie.", "Otto couldn't reply — try again."));
         setInput(message);
       }
     } finally {
