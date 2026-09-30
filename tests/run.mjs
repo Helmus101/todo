@@ -2022,6 +2022,26 @@ check("countWords counts whitespace-delimited words", countWords("un deux trois"
   check("the prompt carries the growth-mindset error framing (Dweck)", /ERRORS ARE INFORMATION, NOT VERDICTS/.test(src) && /pas encore/.test(src));
 }
 
+section("Client double-check affordance — the same oracle, rendered as a learning signal (AskOttoPanel)");
+{
+  // The server's post-reply pass rewrites wrong arithmetic before it ships; a mismatch that STILL
+  // reaches the client means the verifier never ran (deadline hit, ceiling hit, or an older saved
+  // message). Phase 4 renders that residue visible — via the SAME server/arithmetic.ts evaluator
+  // (one oracle, two callers), imported into the client bundle. A quiet notice, never an error banner,
+  // and never auto-corrected: spotting the discrepancy IS the exercise.
+  const panelSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("AskOttoPanel imports the shared arithmetic oracle (same evaluator as the server verifier)", /import \{ findArithmeticClaims \} from "\.\.\/\.\.\/server\/arithmetic\.ts"/.test(panelSrc));
+  check("assistant messages get the double-check notice on an unverified mismatch", /arithmeticMismatches\(m\.text\)/.test(panelSrc) && /sm-ai-calc-check/.test(panelSrc) && /Double-check this with Otto/.test(panelSrc) && /role="note"/.test(panelSrc));
+  check("the notice shows the claim and the recomputed value, capped at the first + a count", /mismatches\[0\]\.raw/.test(panelSrc) && /mismatches\[0\]\.actual/.test(panelSrc) && /mismatches\.length - 1/.test(panelSrc));
+  check("it is a signal only — no auto-correction, no API call from the notice", (() => {
+    const idx = panelSrc.indexOf("sm-ai-calc-check");
+    const body = panelSrc.slice(panelSrc.lastIndexOf("{m.role === \"assistant\" && (() => {", idx), panelSrc.indexOf("})()}", idx) + 5);
+    return !/api\./.test(body) && !/onSend/.test(body);
+  })());
+  const cssSrc = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
+  check("the notice's styles exist (quiet amber, not an alarm-red banner)", /\.sm-ai-calc-check \{/.test(cssSrc) && /#d97706/.test(cssSrc));
+}
+
 section("Flashcards the student doesn't NEED to learn (card.notNeeded) — excluded, fed back, scoped");
 {
   const deck = (cards) => ({ id: "d1", title: "Vocab", createdAt: "2026-09-01", cards });
