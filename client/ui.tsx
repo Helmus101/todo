@@ -12,6 +12,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { WebTask, TaskFlashcards, TaskQuiz, DailyPracticeProblem } from "../shared/types.ts";
 import { canonStatus, practiceAnswerMatches, LEITNER_BOX_LABEL } from "../shared/types.ts";
 import { api } from "./api.ts";
+import { savePracticeLocally } from "./localPractice.ts";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
@@ -1136,6 +1137,12 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
   const [answer, setAnswer] = useState(problem.attempt?.answer || "");
   const [result, setResult] = useState<{ correct: boolean } | null>(problem.attempt ? { correct: problem.attempt.correct } : null);
   const [checking, setChecking] = useState(false);
+  const cleanProblem = stripStrayMarkdown(problem.problem).trim();
+  const problemTitle = /^(practice problem|problème d'application)\s*[:\-]?\s*/i.test(cleanProblem)
+    ? cleanProblem.match(/^(practice problem|problème d'application)\s*[:\-]?/i)?.[0].trim()
+    : null;
+  const problemBody = problemTitle ? cleanProblem.slice(problemTitle.length).trim() : cleanProblem;
+  useEffect(() => { if (taskId) savePracticeLocally(taskId, problem); }, [taskId, problem]);
   const check = async () => {
     if (!answer.trim() || checking) return;
     setChecking(true);
@@ -1144,13 +1151,17 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
         const list = await api.submitPracticeAnswer(taskId, answer.trim());
         const fresh = list.find((t) => t.id === taskId);
         const correct = fresh?.practiceProblem?.attempt?.correct ?? practiceAnswerMatches(answer, problem.answer);
+        const saved = { ...problem, attempt: { answer: answer.trim(), correct, at: new Date().toISOString() } };
         setResult({ correct });
+        if (taskId) savePracticeLocally(taskId, saved);
         onAnswered?.(correct);
       } else {
         // No live owner (e.g. reviewing from the Flashcards tab's local backup) — check locally with the
         // exact same matching rule the server uses, so the verdict is identical either way, just unsynced.
         const correct = practiceAnswerMatches(answer, problem.answer);
+        const saved = { ...problem, attempt: { answer: answer.trim(), correct, at: new Date().toISOString() } };
         setResult({ correct });
+        if (taskId) savePracticeLocally(taskId, saved);
         onAnswered?.(correct);
       }
     } catch { /* best-effort — the student can just retry the check */ }
@@ -1158,7 +1169,8 @@ export function PracticeProblemCard({ problem, taskId, onAnswered }: { problem: 
   };
   return (
     <div className="practice-problem">
-      <div className="practice-problem-q">{formatMath(stripStrayMarkdown(problem.problem))}</div>
+      {problemTitle ? <h4 className="practice-problem-title">{problemTitle}</h4> : null}
+      <div className="practice-problem-q">{formatMath(problemBody)}</div>
       {problem.format ? <p className="practice-problem-format">{problem.format}</p> : null}
   <div className="practice-problem-row">
   <input
