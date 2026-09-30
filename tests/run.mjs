@@ -1224,6 +1224,27 @@ section("PageInfoHint — dashboard orientation caption");
 // server/jobs.ts aren't imported directly here (the Express app entrypoint is too heavy to import for a
 // pure-function test suite, same reason runTask's own wiring is verified via source-order pins), so this
 // greps the source directly, same pattern as the runTask wiring pins above.
+// Onboarding length contract (client/App.tsx): the flow must stay SHORT — six steps max, one screen per
+// idea — while still telling the student what Tasks/Journal/Error log/Tutor each DO. Pins guard both sides
+// of that contract: no flow bloat (step count, dead screens) and no missing coverage (each feature named).
+section("Onboarding — short but complete (source pins)");
+{
+  const src = readFileSync(new URL("../client/App.tsx", import.meta.url), "utf8");
+  const obStart = src.indexOf("function Onboarding(");
+  const ob = src.slice(obStart, src.indexOf("/** Dedicated login", obStart));
+  check("onboarding runs exactly 6 steps", /const OB_STEPS = 6;/.test(src));
+  check("one connect step hosts BOTH Pronote and Google tiles (no second connect screen)", (ob.match(/<PronoteTile /g) || []).length === 1 && (ob.match(/<GoogleTiles /g) || []).length === 1);
+  check("no leftover step bodies beyond OB_STEPS", !/step === 6 [\s\S]*step === 11/.test(ob));
+  check("the feature tour covers Tasks, Journal, Error log and Tutor in ONE screen", /ob-tour-row/.test(ob) && (ob.match(/ob-tour-row/g) || []).length === 5 && /Journal/.test(ob) && /Error log/.test(ob));
+  check("the tour line for the error log says what it feeds (targeted revision)", /target|cible/.test(ob));
+  check("the tutor line keeps the never-the-answer rule", /never the answer|jamais la r[ée]ponse/.test(ob));
+  check("language is picked on the track step, not its own screen", /saveLang\("fr"\)/.test(ob) && !/PreferencesFields profile=\{null\}/.test(ob));
+  check("year level is no longer asked at onboarding (Settings keeps it)", !/const \[yearLevel/.test(ob) && !/void saveYearLevel\(\)/.test(ob));
+  // The per-feature detail the old flow spent 4 screens on must live in the first-time hint system.
+  const uiSrc = readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8");
+  check("FirstTimeHint exists as the per-feature home for what onboarding no longer carries", /export function FirstTimeHint/.test(uiSrc));
+}
+
 section("betaFeatures gates all 7 bandit call sites + the AI theme route (source-order pins)");
 {
   const indexSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");

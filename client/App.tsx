@@ -2944,11 +2944,14 @@ function GoogleTiles({ onChanged, restricted = true }: { onChanged?: () => void;
  *  welcome + name → how it works → connect Pronote → preferences → done. Pronote's connect opens in a new
  *  tab; we re-check on focus so the tile flips to ✓ when the user comes back. Shown once after sign-up;
  *  finishing (or "Skip") clears the otto-onboard flag. */
-const OB_STEPS = 12;
-/** Otto Lycée v1: onboarding is now just name → what Otto does → connect Pronote (the ONE data source) →
- *  done. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone — every extra sign-in step is a
- *  dropout for a lycéen without a work Google account, and Pronote's connect flow (URL + identifiants,
- *  handled by PronoteTile) isn't OAuth at all, so it doesn't fit that step's "opens in a new tab" pattern. */
+const OB_STEPS = 6;
+/** Otto Lycée v2: onboarding is SIX short steps — name → track+language → what Otto does → connect
+ *  everything (Pronote + Google on ONE step) → one-screen feature tour → done. v1 ran 12 screens, most of
+ *  them full-page essays about one feature each (Study Mode, tutor, flashcards, automation); every extra
+ *  screen is dropout for a lycéen who just wants to see the app. The per-feature detail those screens
+ *  carried lives in each feature's own first-time hint instead (FirstTimeHint, client/ui.tsx), shown when
+ *  the student actually reaches the feature. The old 3-app OAuth picker (Gmail/Calendar/Drive) is gone —
+ *  Pronote's connect flow (URL + identifiants, handled by PronoteTile) isn't OAuth at all. */
 function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | null; onStatus: () => void; onDone: () => void }) {
   const L = useLang();
   // Every profile write below is deliberately non-blocking (a failed save shouldn't trap the student on
@@ -2991,15 +2994,19 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
     setTrackState(t);
     try { if (t) localStorage.setItem("otto-onboard-track", t); else localStorage.removeItem("otto-onboard-track"); } catch { /* best-effort */ }
   };
-  // Free text, not a dropdown — see Profile.yearLevel's doc comment: year/grade naming isn't standardized
-  // across the Bac/IB/"other" tracks this asks about, and forcing one system's labels onto another would
-  // just be wrong for whichever track didn't match. Saved on blur (no separate "confirm" step) since it's
-  // optional context, not a gate — skipping it just means Otto calibrates content less precisely.
-  const [yearLevel, setYearLevelState] = useState("");
-  const saveYearLevel = async () => {
-    const v = yearLevel.trim();
-    if (v) { try { await api.setProfilePreference("yearLevel", v); await onStatus(); } catch { notify(L("Non enregistré — tu peux le refaire dans Réglages.", "Didn't save — you can set it later in Settings."), "error"); } }
+  // Language pick lives on step 1 next to the track — two button rows, one save pattern. Same optimistic
+  // save + revert as PreferencesFields.saveLang (which onboarding used to render wholesale for this one
+  // choice, plus a duplicate track picker it didn't need).
+  const [lang, setLang] = useState<"fr" | "en">("fr");
+  const saveLang = async (v: "fr" | "en") => {
+    const prev = lang;
+    setLang(v);
+    try { await api.setProfilePreference("language", v); await onStatus(); } // onStatus flips the WHOLE app's LangContext live
+    catch { setLang(prev); notify(L("Ta langue n'a pas été enregistrée — réessaie.", "Your language didn't save — give it another try."), "error"); }
   };
+  // Year level is no longer asked in onboarding: it was one more field on day one for optional context,
+  // and the track pick already calibrates the AI vocabulary. It remains fully settable in Settings
+  // (PreferencesFields.saveYearLevel), which is the right home for an optional detail.
   const saveName = async () => {
     const n = name.trim();
     if (n) { try { await api.setProfile("name", n); await onStatus(); } catch { notify(L("Prénom non enregistré — tu peux le refaire dans Réglages.", "Name didn't save — you can set it later in Settings."), "error"); } }
@@ -3050,13 +3057,22 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
         {step === 1 && (
           <div className="onboard-step">
             <h2>{L("Ton parcours", "Your track")}</h2>
-            <p className="onboard-lead">{L("Ça change le vocabulaire qu'Otto utilise — modifiable à tout moment dans les Réglages.", "This changes the vocabulary Otto uses — changeable any time in Settings.")}</p>
+            <p className="onboard-lead">{L("Change le vocabulaire qu'Otto utilise.", "Changes the vocabulary Otto uses.")}</p>
             <div className="onboard-apps">
               <button type="button" className={`btn xs ob-track-btn ${track === "bac" ? "" : "ghost"}`} onClick={() => void saveTrack("bac")}>{L("Bac français (lycée)", "French Bac (lycée)")}</button>
-              <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>{L("IB", "IB")}</button>
+              <button type="button" className={`btn xs ob-track-btn ${track === "ib" ? "" : "ghost"}`} onClick={() => void saveTrack("ib")}>IB</button>
               <button type="button" className={`btn xs ob-track-btn ${track === "other" ? "" : "ghost"}`} onClick={() => void saveTrack("other")}>{L("Autre (collège, etc.)", "Other (middle school, etc.)")}</button>
             </div>
-            <p className="muted small">{L("Tu peux choisir plus tard depuis les Réglages.", "You can pick this later from Settings.")}</p>
+            <p className="onboard-lead" style={{ marginTop: 20 }}>{L("Ta langue", "Your language")}</p>
+            {/* Two buttons, not the full PreferencesFields block: track was ALREADY picked above on this
+                same step, and PreferencesFields would render its own (duplicate, unset-looking) track
+                picker plus fields onboarding never needed. Language saves server-side immediately — the
+                same api call Settings uses — and onStatus() makes the WHOLE onboarding (and app) flip
+                live, same wiring requirement the old PreferencesFields usage documented below. */}
+            <div className="onboard-apps">
+              <button type="button" className={`btn xs ${lang === "fr" ? "" : "ghost"}`} onClick={() => void saveLang("fr")}>Français</button>
+              <button type="button" className={`btn xs ${lang === "en" ? "" : "ghost"}`} onClick={() => void saveLang("en")}>English</button>
+            </div>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(0)}>{L("Retour", "Back")}</button>
               <button className="btn primary" onClick={() => setStep(2)}>{L("Continuer", "Continue")}</button>
@@ -3067,11 +3083,9 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
         {step === 2 && (
           <div className="onboard-step">
             <h2>{L("Comment Otto t'aide", "How Otto helps")}</h2>
-            <p className="onboard-lead">{pronoteIsPrimary
-              ? L("Chaque jour, Otto regarde ton Pronote et transforme tout en 3 choses simples pour aujourd'hui.", "Every day, Otto checks your Pronote and turns everything into 3 simple things for today.")
-              : L("Chaque jour, Otto regarde ton Gmail/Calendar (et tes échéances si tu les ajoutes toi-même) et transforme tout en 3 choses simples pour aujourd'hui.", "Every day, Otto checks your Gmail/Calendar (and any deadlines you log yourself) and turns everything into 3 simple things for today.")}</p>
+            <p className="onboard-lead">{L("Chaque matin, Otto transforme tes devoirs et échéances en un plan clair pour aujourd'hui.", "Every morning, Otto turns your homework and deadlines into a clear plan for today.")}</p>
             <div className="ob-states">
-              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Fait pour toi", "Done for you")}</b><span>{L("Fiches de révision, checklists, brouillons — jamais l'exercice lui-même.", "Study guides, checklists, drafts — never the exercise itself.")}</span></div></div>
+              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Fait pour toi", "Done for you")}</b><span>{L("Fiches, checklists, brouillons — jamais l'exercice lui-même.", "Study guides, checklists, drafts — never the exercise itself.")}</span></div></div>
               <div className="ob-state"><span className="ob-dot need" /><div><b>{L("À toi de jouer", "Your turn")}</b><span>{L("Le devoir ou le contrôle, avec un plan pas à pas.", "The assignment or test, with a step-by-step plan.")}</span></div></div>
               <div className="ob-state"><span className="ob-dot check" /><div><b>{L("Terminé", "Done")}</b><span>{L("Coché, plus besoin d'y penser.", "Checked off, no need to think about it again.")}</span></div></div>
             </div>
@@ -3086,15 +3100,18 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
           <div className="onboard-step">
             {/* Pronote is a French national-education-system tool — only worth leading with for a Bac/unset
                 track. An IB/other-track student's school very likely doesn't use it at all, so this step
-                reframes as optional/parallel rather than "the one thing Otto reads" for them. */}
-            <h2>{pronoteIsPrimary ? L("Connecte ton Pronote", "Connect your Pronote") : L("Connecte ton Pronote (si tu en as un)", "Connect your Pronote (if you have one)")}</h2>
+                reframes as optional/parallel rather than "the one thing Otto reads" for them. Pronote and
+                Google live on ONE step now — two separate connect screens was two more taps for zero
+                extra understanding, and both are skippable anyway. */}
+            <h2>{L("Connecte tes sources", "Connect your sources")}</h2>
             <p className="onboard-lead">{pronoteIsPrimary
-              ? L("C'est la seule chose qu'Otto lit pour préparer ton plan. Tes identifiants sont chiffrés et jamais revendus.", "This is the one thing Otto reads to prep your plan. Your credentials are encrypted and never resold.")
-              : L("La plupart des écoles IB n'utilisent pas Pronote — pas de souci. Connecte-le seulement si ton école le propose ; sinon, connecte Gmail/Calendar depuis les Réglages, ou ajoute tes examens/échéances toi-même.", "Most IB schools don't use Pronote — that's fine. Only connect it if your school offers it; otherwise, connect Gmail/Calendar from Settings, or log your own exams/deadlines by hand.")}</p>
+              ? L("Pronote suffit pour lancer Otto. Gmail et Calendar sont optionnels — Otto y repère devoirs et échéances. Tes identifiants sont chiffrés, jamais revendus.", "Pronote alone gets Otto going. Gmail and Calendar are optional — Otto spots homework and deadlines in them. Your credentials are encrypted, never resold.")
+              : L("La plupart des écoles IB n'utilisent pas Pronote — connecte-le seulement si ton école l'a. Sinon Gmail/Calendar, ou ajoute tes devoirs à la main.", "Most IB schools don't use Pronote — connect it only if your school has it. Otherwise Gmail/Calendar, or add your homework by hand.")}</p>
             <div className="onboard-apps">
               <PronoteTile status={status} onChanged={() => void checkPronote()} />
+              <GoogleTiles restricted={true} onChanged={() => void onStatus()} />
             </div>
-            <p className="muted small">{L("Tu peux te connecter plus tard depuis les Réglages.", "You can connect later from Settings.")}</p>
+            <p className="muted small">{L("Tout se connecte aussi plus tard, depuis les Réglages.", "You can connect any of these later from Settings.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(2)}>{L("Retour", "Back")}</button>
               <button className="btn primary big" onClick={() => setStep(4)}>{pronoteConnected ? L("Continuer — connecté ✓", "Continue — connected ✓") : L("Plus tard", "Later")}</button>
@@ -3102,129 +3119,30 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
           </div>
         )}
 
+        {/* One screen, one line per feature — the old flow spent FOUR separate screens (Study Mode,
+            tutor, flashcards/quiz/notes, daily automation) on this same content. Those screens were the
+            flow's whole length problem: everything a student actually needs on day one fits in one line
+            each here, and the per-feature detail lives where it belongs — in the feature's own
+            first-time hint (FirstTimeHint, client/ui.tsx), shown when the student actually reaches it. */}
         {step === 4 && (
           <div className="onboard-step">
-            <h2>{L("Connecte Gmail et Calendar", "Connect Gmail & Calendar")}</h2>
-            <p className="onboard-lead">{L("Otto peut lire tes mails pour trouver les devoirs et utiliser ton agenda pour les échéances. C'est optionnel — tu peux aussi tout ajouter à la main.", "Otto can read your emails to find homework and use your calendar for deadlines. This is optional — you can also add everything by hand.")}</p>
-            <div className="onboard-apps">
-              <GoogleTiles restricted={true} onChanged={() => void onStatus()} />
+            <h2>{L("Où trouver quoi", "Where to find things")}</h2>
+            <div className="ob-tour">
+              <div className="ob-tour-row"><b>{L("Tâches", "Tasks")}</b><span>{L("Ton plan du jour — Otto scanne Pronote/Gmail chaque matin et range tout par priorité. Coche, et c'est fait.", "Your plan for today — Otto scans Pronote/Gmail every morning and sorts it by priority. Tick it off, done.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Note en une ligne ce que tu as appris — Otto le transforme en fiches de révision.", "Log in one line what you learned — Otto turns it into flashcards.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Erreurs", "Error log")}</b><span>{L("Note chaque erreur précise (question, ta réponse, la bonne) — avant un contrôle, Otto cible tes révisions dessus.", "Log each precise mistake (question, your answer, the right one) — before a test, Otto targets your revision on them.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Tuteur", "Tutor")}</b><span>{L("Pose une question sur ton devoir : Otto explique et donne des indices, mais jamais la réponse.", "Ask a question about your work: Otto explains and gives hints, but never the answer.")}</span></div>
+              <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Connexions, langue, parcours — tout se change ici.", "Connections, language, track — everything changes here.")}</span></div>
             </div>
-            <p className="muted small">{L("Tu peux te connecter plus tard depuis les Réglages.", "You can connect later from Settings.")}</p>
+            <p className="muted small">{L("Mode Étude (le bouton Studier) ajoute minuteur, musique et notes quand tu te mets au travail.", "Study Mode (the Study button) adds a timer, music and notes when you sit down to work.")}</p>
             <div className="onboard-actions onboard-actions-split">
               <button className="btn ghost" onClick={() => setStep(3)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(5)}>{L("Plus tard", "Later")}</button>
+              <button className="btn primary big" onClick={() => setStep(5)}>{L("Suivant", "Next")}</button>
             </div>
           </div>
         )}
 
         {step === 5 && (
-          <div className="onboard-step">
-            <h2>{L("Ta langue", "Your language")}</h2>
-            <p className="onboard-lead">{L("Change l'interface et tout ce qu'Otto écrit — modifiable à tout moment dans les Réglages.", "Switches the interface and everything Otto writes — changeable any time in Settings.")}</p>
-            <div className="set-list onboard-prefs">
-              {/* onChanged MUST call onStatus — PreferencesFields.saveLang persists server-side, but
-                  status.language (which drives the whole app's LangContext) only updates when something
-                  calls loadStatus. Without this, a new signup's language pick in onboarding silently never
-                  applied to the actual UI — the dashboard kept rendering in the account default. */}
-              <PreferencesFields profile={null} onChanged={() => void onStatus()} />
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(4)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(6)}>{L("Suivant", "Next")}</button>
-            </div>
-          </div>
-        )}
-
-        {/* A short map of the sidebar — the app's biggest "confusing at first" complaint wasn't the concept
-            (step 2 already covers that), it was landing on the dashboard with 6 unexplained tabs and no
-            idea what each one is for. One line per tab, not a full feature tour — enough to remove the
-            "where do I even click" hesitation without turning onboarding into a chore. */}
-        {step === 6 && (
-          <div className="onboard-step">
-            <h2>{L("Où trouver quoi", "Where to find things")}</h2>
-            <p className="onboard-lead">{L("Un rapide topo de la barre latérale — tu peux toujours revenir ici plus tard.", "A quick map of the sidebar — you can always come back to this later.")}</p>
-            <div className="ob-tour">
-              <div className="ob-tour-row"><b>{L("Tâches", "Tasks")}</b><span>{L("Ton plan du jour, classé par priorité réelle (urgent + important d'abord).", "Your plan for today, ranked by real priority (urgent + important first).")}</span></div>
-              <div className="ob-tour-row"><b>{L("Journal", "Journal")}</b><span>{L("Note ce que tu as appris chaque jour — Otto en fait des fiches.", "Log what you learned each day — Otto turns it into flashcards.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Étudier", "Study")}</b><span>{L("Un espace de concentration : minuteur, musique, notes, et Otto pour t'aider en direct.", "A focus workspace: timer, music, notes, and Otto to help live.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Erreurs", "Error log")}</b><span>{L("Note tes erreurs précises pour cibler tes révisions avant un contrôle.", "Log your specific mistakes to target your revision before a test.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Réglages", "Settings")}</b><span>{L("Connexions (Pronote, Gmail…), langue, et tout ce qu'Otto sait sur toi.", "Connections (Pronote, Gmail…), language, and everything Otto knows about you.")}</span></div>
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(5)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(7)}>{L("Suivant", "Next")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 7 && (
-          <div className="onboard-step">
-            <h2>{L("Mode Étude", "Study Mode")}</h2>
-            <p className="onboard-lead">{L("Un espace de concentration avec tout ce qu'il faut pour travailler efficacement.", "A focus workspace with everything you need to work effectively.")}</p>
-            <div className="ob-tour">
-              <div className="ob-tour-row"><b>{L("Minuteur Pomodoro", "Pomodoro Timer")}</b><span>{L("Travail par sessions de 25 min avec pauses automatiques pour garder ton énergie.", "Work in 25-minute sessions with automatic breaks to maintain your energy.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Musique de fond", "Background Music")}</b><span>{L("Bruit blanc, sons de nature, ou ambiance lo-fi pour bloquer les distractions.", "White noise, nature sounds, or lo-fi ambience to block out distractions.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Notes & Brouillons", "Notes & Drafts")}</b><span>{L("Prends des notes, écris des brouillons, et garde tout au même endroit.", "Take notes, write drafts, and keep everything in one place.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Otto en direct", "Live Otto")}</b><span>{L("Pose des questions, demande des explications, et obtiens de l'aide instantanée.", "Ask questions, request explanations, and get instant help.")}</span></div>
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(6)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(8)}>{L("Suivant", "Next")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 8 && (
-          <div className="onboard-step">
-            <h2>{L("Otto t'aide à comprendre", "Otto helps you understand")}</h2>
-            <p className="onboard-lead">{L("Otto est un tuteur, pas un solutionnaire. Il t'explique, te guide, mais ne fait jamais le travail à ta place.", "Otto is a tutor, not a solution key. It explains, guides, but never does the work for you.")}</p>
-            <div className="ob-states">
-              <div className="ob-state"><span className="ob-dot need" /><div><b>{L("Pose une question", "Ask a question")}</b><span>{L("« Pourquoi cette formule ? » « Comment résoudre ce type de problème ? »", "\"Why this formula?\" \"How do I solve this type of problem?\"")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot need" /><div><b>{L("Demande une explication", "Request an explanation")}</b><span>{L("Otto t'explique le concept avec des exemples, sans te donner la réponse.", "Otto explains the concept with examples, without giving you the answer.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot need" /><div><b>{L("Demande un indice", "Ask for a hint")}</b><span>{L("Coincé ? Otto te donne un petit coup de pouce pour avancer.", "Stuck? Otto gives you a small nudge to move forward.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Tu comprends", "You understand")}</b><span>{L("La compréhension reste la tienne — Otto t'aide à y arriver.", "Understanding stays yours — Otto helps you get there.")}</span></div></div>
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(7)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(9)}>{L("Suivant", "Next")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 9 && (
-          <div className="onboard-step">
-            <h2>{L("Fiches, Quiz et Notes", "Flashcards, Quizzes & Notes")}</h2>
-            <p className="onboard-lead">{L("Otto crée automatiquement des supports de révision basés sur tes tâches et ton journal.", "Otto automatically creates study materials based on your tasks and journal.")}</p>
-            <div className="ob-tour">
-              <div className="ob-tour-row"><b>{L("Fiches de révision", "Flashcards")}</b><span>{L("Générées automatiquement pour les définitions, formules, et concepts clés.", "Automatically generated for definitions, formulas, and key concepts.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Quiz interactifs", "Interactive Quizzes")}</b><span>{L("Teste tes connaissances avec des questions générées à partir de ton travail.", "Test your knowledge with questions generated from your work.")}</span></div>
-              <div className="ob-tour-row"><b>{L("Notes synthétiques", "Synthetic Notes")}</b><span>{L("Résumés clairs et structurés pour réviser efficacement.", "Clear, structured summaries for effective revision.")}</span></div>
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(8)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(10)}>{L("Suivant", "Next")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 10 && (
-          <div className="onboard-step">
-            <h2>{L("Automatisation quotidienne", "Daily Automation")}</h2>
-            <p className="onboard-lead">{L("Otto travaille pour toi tous les jours — pas besoin de lui demander.", "Otto works for you every day — no need to ask.")}</p>
-            <div className="ob-states">
-              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Scan automatique", "Automatic Scan")}</b><span>{L("Otto vérifie Pronote/Gmail chaque jour pour trouver tes devoirs et échéances.", "Otto checks Pronote/Gmail every day to find your homework and deadlines.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Plan du jour", "Daily Plan")}</b><span>{L("Il transforme tout en 3 actions prioritaires pour aujourd'hui.", "It turns everything into 3 priority actions for today.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Création de supports", "Material Creation")}</b><span>{L("Fiches, quiz et notes générés automatiquement quand c'est utile.", "Flashcards, quizzes, and notes generated automatically when useful.")}</span></div></div>
-              <div className="ob-state"><span className="ob-dot done" /><div><b>{L("Personnalisation", "Personalization")}</b><span>{L("Plus tu l'utilises, plus Otto s'ajuste à ta façon de travailler.", "The more you use it, the more Otto adjusts to how you work.")}</span></div></div>
-            </div>
-            <div className="onboard-actions onboard-actions-split">
-              <button className="btn ghost" onClick={() => setStep(9)}>{L("Retour", "Back")}</button>
-              <button className="btn primary big" onClick={() => setStep(11)}>{L("Suivant", "Next")}</button>
-            </div>
-          </div>
-        )}
-
-        {step === 11 && (
           <div className="onboard-step onboard-done">
             <div className="onboard-done-mark"><Logo size={30} /></div>
             <h2>{L("C'est prêt", "You're all set")}{name.trim() ? `, ${name.trim().split(/\s+/)[0]}` : ""}</h2>
@@ -3233,8 +3151,6 @@ function Onboarding({ status, onStatus, onDone }: { status?: ConnectionStatus | 
               : pronoteIsPrimary
               ? L("Connecte ton Pronote quand tu veux depuis les Réglages, et Otto se met au travail.", "Connect your Pronote any time from Settings, and Otto gets to work.")
               : L("Connecte Gmail/Calendar ou ajoute tes examens depuis les Réglages, et Otto se met au travail.", "Connect Gmail/Calendar or add your exams from Settings, and Otto gets to work.")}</p>
-            <p className="muted small">{L("Otto regarde automatiquement, tous les jours — pas besoin de lui demander. Pour connecter d'autres comptes ou ajuster quoi que ce soit, retrouve tout dans les Réglages.", "Otto always looks automatically, every day — no need to ask. To connect more accounts or adjust anything, it's all in Settings.")}</p>
-            <p className="muted small">{L("Plus tu l'utilises, plus Otto s'ajuste à ta façon de travailler — durée des sessions, type d'aide, tout ça.", "The more you use it, the more Otto adjusts to how you actually work — session length, the kind of help it offers, all of it.")}</p>
             <div className="onboard-actions"><button className="btn primary big" onClick={onDone}>{L("Voir mes tâches", "See my tasks")}</button></div>
           </div>
         )}
