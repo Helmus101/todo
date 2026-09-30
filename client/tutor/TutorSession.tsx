@@ -49,12 +49,13 @@ export function TutorSession({ userId }: { userId: string | null }) {
   ];
   const [selectedSubject, setSelectedSubject] = useState("");
   const [startingSession, setStartingSession] = useState(false);
-  // What the mount peek found: a freestudy session still in progress (or null). Held SEPARATELY from
-  // `task` — the peek must never open the session, only let the landing offer it back.
+  // What the mount peek found: a freestudy session still in progress (or null).
   const [pendingActiveSession, setPendingActiveSession] = useState<WebTask | null>(null);
-  // The in-progress session as the landing should see it: null while it's actually open on screen (so the
-  // landing never offers to "resume" the session the student is already in, nor one they just ended).
-  const activeSession = pendingActiveSession && task && pendingActiveSession.id === task.id ? null : pendingActiveSession;
+  // True until the FIRST peek resolves — distinguishes "haven't checked yet" from "checked, nothing
+  // active", so the landing doesn't render a confident "no session" state for a beat before the real
+  // answer arrives (reported: detection doesn't feel instant / looks like it "doesn't recognize" a
+  // session that's actually there, right up until the fetch resolves a moment later).
+  const [checkingSession, setCheckingSession] = useState(true);
   // Voice is MANUAL here — the mic toggle in the chat panel is the student's choice, never forced on by
   // starting a session (reported: "voice should not be auto on"). The board-pane pill, barge-in and the
   // voice-primary layout below all still activate the moment the student turns voice on themselves.
@@ -80,8 +81,8 @@ export function TutorSession({ userId }: { userId: string | null }) {
         ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
       setPendingActiveSession(t || null);
-      // Either way we stay on the landing: "Reprendre" (resume) or Start (new) is what opens a session.
-    }).catch(() => setLoadError(true));
+    }).catch(() => setLoadError(true))
+      .finally(() => setCheckingSession(false));
   }, []);
 
   useEffect(() => {
@@ -95,6 +96,14 @@ export function TutorSession({ userId }: { userId: string | null }) {
   useEffect(() => {
     setPastSessions(getTutorSessions(userId));
   }, [userId]);
+
+  // Re-check for active session when subject changes
+  useEffect(() => {
+    if (selectedSubject) {
+      setCheckingSession(true);
+      peekForActiveSession();
+    }
+  }, [selectedSubject]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveAndClose = useCallback((task: WebTask, startedAt: string) => {
     const chat = task.chat || [];
@@ -161,10 +170,42 @@ export function TutorSession({ userId }: { userId: string | null }) {
       const chat = appendLocalChat(task.id, chatDelta, userId);
       const newBoard = appendLocalBoard(task.id, board, userId);
       const newProblems = appendLocalProblems(task.id, problems, userId);
-      setTask({ ...task, ...updated, chat, board: newBoard, problems: newProblems });
+      // Only update relevant fields, preserve context/steps/links from before
+      setTask({
+        ...task,
+        ...updated,
+        chat,
+        board: newBoard,
+        problems: newProblems,
+        // Don't overwrite context/steps/links with irrelevant data
+        context: task.context || "",
+        steps: task.steps || [],
+        links: task.links || [],
+      });
     } catch (e: any) {
-      setError(e?.message || L("Otto n'a pas pu répondre — réessaie.", "Otto couldn't reply — try again."));
-      setInput(message);
+      // If the error response contains board or problems, apply them before showing error
+      const errorData = e?.response?.data || e?.data;
+      if (errorData?.board || errorData?.problems) {
+        const chat = appendLocalChat(task.id, errorData.chatDelta || [], userId);
+        const newBoard = appendLocalBoard(task.id, errorData.board || [], userId);
+        const newProblems = appendLocalProblems(task.id, errorData.problems || [], userId);
+        setTask({
+          ...task,
+          ...errorData.task,
+          chat,
+          board: newBoard,
+          problems: newProblems,
+          // Preserve context/steps/links
+          context: task.context || "",
+          steps: task.steps || [],
+          links: task.links || [],
+        });
+      }
+      // Only show error if no content was returned
+      if (!errorData?.board?.length && !errorData?.problems?.length) {
+        setError(e?.message || L("Otto n'a pas pu répondre — réessaie.", "Otto couldn't reply — try again."));
+        setInput(message);
+      }
     } finally {
       setSending(false); setPendingMsg(null);
     }
@@ -191,36 +232,78 @@ export function TutorSession({ userId }: { userId: string | null }) {
   // landing. Opening /tutor by itself never puts them back into a session; the landing always comes
   // first, and what happens next is their choice.
   const resumeActiveSession = useCallback(() => {
-    if (!activeSession) return;
-    setTask(hydrateLocalThreads([activeSession], userId)[0]);
+    if (!pendingActiveSession) return;
+    // Load chat, board, problems from localStorage
+    let chat = pendingActiveSession.chat || [];
+    let board = pendingActiveSession.board || [];
+    let problems = pendingActiveSession.problems || [];
+    try {
+      const localChat = localStorage.getItem(`otto-chat-${pendingActiveSession.id}-${userId}`);
+      const localBoard = localStorage.getItem(`otto-board-${pendingActiveSession.id}-${userId}`);
+      const localProblems = localStorage.getItem(`otto-problems-${pendingActiveSession.id}-${userId}`);
+      if (localChat) chat = JSON.parse(localChat);
+      if (localBoard) board = JSON.parse(localBoard);
+      if (localProblems) problems = JSON.parse(localProblems);
+    } catch { /* ignore */ }
+    // Only load relevant fields from the task, ignore irrelevant ones
+    setTask({
+      ...pendingActiveSession,
+      chat,
+      board,
+      problems,
+      // Clear irrelevant context from previous sessions
+      context: "",
+      steps: [],
+      links: [],
+      flashcards: [],
+      quizzes: [],
+      artifacts: [],
+    });
     setSessionStart(new Date().toISOString());
-  }, [activeSession, userId]);
+  }, [pendingActiveSession, userId]);
 
   const startNewSession = useCallback(async () => {
-    if (!selectedSubject || startingSession) return; // Start only exists once a subject is picked
+    if (!selectedSubject || startingSession) return;
     setError(null);
     setStartingSession(true);
     try {
-      // Starting a NEW lesson while one is in progress supersedes it: saved to history (only if it had
-      // substance — same gate as ending; an orphan from a closed tab still has its chat/board locally, so
-      // date it from when it was opened here, falling back to the task's own creation time) and dismissed,
-      // so exactly ONE active freestudy session exists. Dismissing BEFORE the create matters: fresh:true
-      // below unconditionally mints a new task.
-      if (activeSession) {
-        saveAndClose(activeSession, sessionStart || activeSession.createdAt);
-        try { await api.dismiss(activeSession.id); } catch { /* best-effort */ }
+      // Dismiss any existing session before creating a new one
+      if (pendingActiveSession) {
+        saveAndClose(pendingActiveSession, sessionStart || pendingActiveSession.createdAt);
+        try { await api.dismiss(pendingActiveSession.id); } catch { /* best-effort */ }
         setPendingActiveSession(null);
       }
-      // The EXPLICIT create path — the only caller of /api/study/free in this component. The student asked
-      // for a NEW lesson on a specific subject: fresh:true (a blank session, never a resume of an old
-      // thread — the route's fresh mode also clears any leftover empty shell). Resuming an in-progress
-      // session is only ever the landing's explicit "Reprendre" click (resumeActiveSession).
-      // For a fresh session, use the task as-is from the server WITHOUT hydrating local cache to ensure
-      // a truly blank session (no old chat/board from localStorage).
+      // Create a fresh session for the selected subject. The server APPENDS the new task to the end of
+      // the list and returns the whole list — so the new task is always the LAST freestudy entry, not
+      // necessarily the first. Older sessions (ended, dismissed, kept only for history) commonly share
+      // the same subject label ("Math" comes up again and again), so a plain .find() from the front could
+      // grab a stale, already-ended session instead of the one just created — the source of "a supposedly
+      // empty new session shows old content." Search from the end, and require it not be dismissed/done.
       const list = await api.studyFreeSession(true, selectedSubject);
-      const t = Array.isArray(list) ? list.find((x) => x.source === "freestudy" && x.sourceSubject === selectedSubject) : undefined;
+      const t = Array.isArray(list)
+        ? [...list].reverse().find((x) => x.source === "freestudy" && x.sourceSubject === selectedSubject && x.status !== "dismissed" && x.status !== "done")
+        : undefined;
       if (t) {
-        setTask({ ...t, chat: [], board: [], problems: [] }); // Fresh session: empty chat, board, problems
+        // Clear ALL localStorage for the new task ID to ensure truly fresh session
+        try {
+          localStorage.removeItem(`otto-chat-${t.id}-${userId}`);
+          localStorage.removeItem(`otto-board-${t.id}-${userId}`);
+          localStorage.removeItem(`otto-problems-${t.id}-${userId}`);
+        } catch { /* ignore */ }
+        // Set task with completely empty arrays - no old content
+        setTask({
+          ...t,
+          chat: [],
+          board: [],
+          problems: [],
+          // Clear any residual fields
+          context: "",
+          steps: [],
+          links: [],
+          flashcards: [],
+          quizzes: [],
+          artifacts: [],
+        });
         setSessionStart(new Date().toISOString());
       }
       setPendingActiveSession(null);
@@ -229,7 +312,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
     } finally {
       setStartingSession(false);
     }
-  }, [selectedSubject, startingSession, activeSession, sessionStart, saveAndClose, userId, L]);
+  }, [selectedSubject, startingSession, pendingActiveSession, sessionStart, saveAndClose, userId, L]);
 
   if (loadError) {
     return (
@@ -249,6 +332,34 @@ export function TutorSession({ userId }: { userId: string | null }) {
           <h2>{L("Apprendre en réfléchissant", "Learn by thinking")}</h2>
           <p className="tutor-landing-sub">{L("Otto ne fait pas le travail à ta place. Il t'aide à essayer, à expliquer ton raisonnement et à transférer ce que tu apprends.", "Otto won't do the work for you. He helps you try, explain your reasoning, and transfer what you learn.")}</p>
 
+          {/* While the mount peek is still in flight, say so rather than silently looking like there's
+              nothing to resume — avoids the "doesn't recognize an active session" impression that's really
+              just the fetch not having landed yet. */}
+          {checkingSession && (
+            <div className="tutor-active-session-card tutor-active-session-checking" aria-live="polite">
+              <p className="tutor-active-session-text">{L("Vérification d'une séance en cours…", "Checking for a session in progress…")}</p>
+            </div>
+          )}
+
+          {/* If there's an active session, show resume option */}
+          {!checkingSession && pendingActiveSession && (
+            <div className="tutor-active-session-card">
+              <div className="tutor-active-session-header">
+                <span className="tutor-active-session-badge">{L("En cours", "In progress")}</span>
+                <span className="tutor-active-session-subject">{pendingActiveSession.sourceSubject || ""}</span>
+              </div>
+              <p className="tutor-active-session-text">
+                {L("Tu as une séance en cours. Veux-tu la reprendre ?", "You have a session in progress. Resume it?")}
+              </p>
+              <div className="tutor-active-session-actions">
+                <button className="btn primary tutor-resume-btn" onClick={resumeActiveSession}>
+                  {L("Reprendre", "Resume")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Always show subject selector so you can create a new session even when one is active */}
           <div className="tutor-subject-select">
             <label htmlFor="tutor-subject-select">{L("Sur quelle matière veux-tu travailler ?", "Which subject do you want to work on?")}</label>
             <select
@@ -264,41 +375,18 @@ export function TutorSession({ userId }: { userId: string | null }) {
             </select>
           </div>
 
-          {/* An in-progress session comes back ONLY through this explicit button — the landing is always
-              the first screen on /tutor, never a resumed session (reported: "tutor shouldn't auto open
-              session"). Resuming needs no subject; it reopens the session where it was left. */}
-          {activeSession && (
-            <div className="tutor-active-session-card">
-              <div className="tutor-active-session-header">
-                <span className="tutor-active-session-badge">{L("En cours", "In progress")}</span>
-                <span className="tutor-active-session-subject">{activeSession.sourceSubject || ""}</span>
-              </div>
-              <p className="tutor-active-session-text">
-                {L("Tu as une séance en cours. Veux-tu la reprendre ou en commencer une nouvelle ?", "You have a session in progress. Resume it or start a new one?")}
-              </p>
-              <div className="tutor-active-session-actions">
-                <button className="btn primary tutor-resume-btn" onClick={resumeActiveSession}>
-                  {L("Reprendre", "Resume")}
-                </button>
-                <button className="btn ghost tutor-new-btn" onClick={() => setSelectedSubject(activeSession.sourceSubject || "")}>
-                  {L("Nouvelle séance", "New session")}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Start appears only once a subject is picked — a session without a subject has no context for
-              the tutor and no label in history. When a session is already in progress it becomes the
-              secondary option: it supersedes the current session (saved if substantial, then dismissed). */}
-          {!activeSession && selectedSubject && (
+          {/* Start appears only once a subject is picked */}
+          {selectedSubject && (
             <button
               className="btn primary tutor-start-btn"
               onClick={() => void startNewSession()}
-              disabled={startingSession}
+              disabled={startingSession || checkingSession}
             >
               {startingSession
                 ? L("Démarrage…", "Starting…")
-                : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+                : checkingSession
+                  ? L("Vérification…", "Checking…")
+                  : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
             </button>
           )}
 
@@ -413,20 +501,28 @@ export function TutorSession({ userId }: { userId: string | null }) {
       <section className="tutor-board" aria-label={L("Tableau", "Board")}>
         <div className="tutor-pane-title">
           <span>{L("Le tableau", "Board")}</span>
-          {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
-              actually looking at, so Listening…/Speaking…/Voice on must be visible here (a pill in the
-              chat pane alone would sit unread next to an input nobody is typing in). */}
-          {voiceState.voiceModeOn ? (
-            <span className={`tutor-voice-pill${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} role="status">
+        </div>
+        {/* Voice state lives on the BOARD pane: in voice-first mode this is the pane the student is
+            actually looking at. A real orb, not a small pill — voice is meant to be the primary way of
+            using the tutor, so "are you hearing me / is Otto talking" gets legible, ambient feedback
+            instead of a status dot easy to miss while eyes are on a figure. */}
+        {voiceState.voiceModeOn ? (
+          <div className="tutor-voice-orb-bar">
+            <div className={`tutor-voice-orb${voiceState.speaking ? " speaking" : voiceState.listening ? " listening" : ""}`} aria-hidden="true">
+              <span className="tutor-voice-orb-ring" />
+              <span className="tutor-voice-orb-ring ring-2" />
+              <span className="tutor-voice-orb-core" />
+            </div>
+            <span className="tutor-voice-orb-label" role="status">
               {voiceState.speaking
                 ? L("Otto parle…", "Otto is speaking…")
                 : voiceState.listening
                   ? L("Je t'écoute…", "Listening…")
                   : L("Voix activée", "Voice on")}
-              {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
             </span>
-          ) : null}
-        </div>
+            {voiceState.listening && voiceState.interim ? <span className="tutor-voice-interim">{voiceState.interim}</span> : null}
+          </div>
+        ) : null}
         {/* The tutor's Desmos place — the tools the student can USE mid-lesson (graphing, scientific,
             geometry, four-function), embedded above the board so the figure tool sits with the lesson's
             visuals. Student-opened only, like every other manual surface in the tutor. */}

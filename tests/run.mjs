@@ -1643,7 +1643,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   check("starting or resuming a session leaves voice OFF (explicit mic tap to enable)", !/setWantVoice\(true\)/.test(tutorSrc));
   // The voice state pill lives on the BOARD pane header: in a voice-first session the student's eyes are
   // on the board, so "am I being heard?" has to be answerable where they're actually looking.
-  check("voice state is reported up and shown on the board pane", /onVoiceStateChange/.test(tutorSrc) && /tutor-voice-pill/.test(tutorSrc));
+  check("voice state is reported up and shown on the board pane", /onVoiceStateChange/.test(tutorSrc) && /tutor-voice-orb/.test(tutorSrc));
   check("voice mode shifts the layout board-primary", /voice-primary/.test(tutorSrc));
   const tutorStyles = readFileSync(new URL("../client/styles.css", import.meta.url), "utf8");
   check("voice-primary grid actually exists in CSS (not a dead class)", /\.tutor-session\.voice-primary \{ grid-template-columns/.test(tutorStyles));
