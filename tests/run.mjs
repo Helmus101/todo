@@ -1632,6 +1632,13 @@ section("/api/study/free — resumes an active freestudy session by default, onl
   // always a BLANK session, never a resume of an old one; resuming an in-progress session is only the
   // landing's explicit "Reprendre" click (resumeActiveSession).
   check("Start requires a subject and creates a BLANK fresh session (never resumes an old thread)", /api\.studyFreeSession\(true, selectedSubject\)/.test(tutorSrc) && /if \(!selectedSubject( \|\| \w+)?\) return;/.test(tutorSrc));
+  // Reported live twice: "Reprendre" silently loaded an EMPTY chat/board despite real prior conversation.
+  // Root cause both times was the same class of bug — guessing at raw localStorage keys
+  // (`otto-chat-${id}-${userId}` etc.) that client/localChatBoard.ts has never written (it keeps ONE
+  // combined map under `otto-local-chat-board:${userId}`, not a key per task) — so the guess always read as
+  // empty. getLocalThread is localChatBoard.ts's own real read API; resumeActiveSession must use it, and the
+  // old guessed-key pattern must never reappear anywhere in this file.
+  check("resumeActiveSession reads local chat/board/problems via getLocalThread (the real API), never guessed raw keys", /const local = getLocalThread\(pendingActiveSession\.id, userId\)/.test(tutorSrc) && !/otto-chat-\$\{/.test(tutorSrc) && !/otto-board-\$\{/.test(tutorSrc) && !/otto-problems-\$\{/.test(tutorSrc));
 }
 
 section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto-on), and the board survives ending a session (source pins)");

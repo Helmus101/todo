@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
-import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
+import { appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
 import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
@@ -62,11 +62,6 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
   const [startingSession, setStartingSession] = useState(false);
   // What the mount peek found: a freestudy session still in progress (or null).
   const [pendingActiveSession, setPendingActiveSession] = useState<WebTask | null>(null);
-  // True until the FIRST peek resolves — distinguishes "haven't checked yet" from "checked, nothing
-  // active", so the landing doesn't render a confident "no session" state for a beat before the real
-  // answer arrives (reported: detection doesn't feel instant / looks like it "doesn't recognize" a
-  // session that's actually there, right up until the fetch resolves a moment later).
-  const [checkingSession, setCheckingSession] = useState(true);
   // Voice is MANUAL here — the mic toggle in the chat panel is the student's choice, never forced on by
   // starting a session (reported: "voice should not be auto on"). The board-pane pill, barge-in and the
   // voice-primary layout below all still activate the moment the student turns voice on themselves.
@@ -94,33 +89,9 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
       const t = Array.isArray(list)
         ? list.find((x) => x.source === "freestudy" && x.status !== "dismissed" && x.status !== "done")
         : undefined;
-      // A freestudy task with ZERO chat/board content ANYWHERE, more than a few minutes old, isn't a real
-      // session to resume — it's a ghost: opened once (a subject tap, then the tab closed before a first
-      // message went out) or the leftover of a dismiss that failed silently and never reached the server.
-      // MUST check localStorage here, not `t.chat`/`t.board` — the server task object never carries chat/
-      // board at all (they live ONLY in this browser's localStorage overlay, see localChatBoard.ts).
-      // getLocalThread (localChatBoard.ts's own real API) is the only correct way to read it — a previous
-      // version of this check (and resumeActiveSession below, before this fix) guessed at raw keys like
-      // `otto-chat-${id}-${userId}`, which localChatBoard.ts has NEVER written (it keeps one combined map
-      // under `otto-local-chat-board:${userId}`, not a key per task) — so that guess always read as empty,
-      // making EVERY session, real or not, look like a ghost past 3 minutes old and get silently dismissed
-      // (the exact regression reported: "had an active session, doesn't show resume").
-      const hasLocalContent = (id: string): boolean => {
-        try {
-          const thread = getLocalThread(id, userId);
-          return thread.chat.length > 0 || thread.board.length > 0;
-        } catch { return true; } // can't tell — assume real rather than risk dismissing a live session
-      };
-      const isGhost = !!t && !hasLocalContent(t.id) && (Date.now() - (Date.parse(t.createdAt || "") || 0)) > 3 * 60_000;
-      if (isGhost) {
-        void api.dismiss(t!.id).catch(() => { /* best-effort; worst case it resurfaces once more next visit */ });
-        setPendingActiveSession(null);
-        return;
-      }
       setPendingActiveSession(t || null);
-    }).catch(() => setLoadError(true))
-      .finally(() => setCheckingSession(false));
-  }, [userId]);
+    }).catch(() => setLoadError(true));
+  }, []);
 
   useEffect(() => {
     if (mountFetchStartedRef.current) return;
@@ -137,7 +108,6 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
   // Re-check for active session when subject changes
   useEffect(() => {
     if (selectedSubject) {
-      setCheckingSession(true);
       peekForActiveSession();
     }
   }, [selectedSubject]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -290,8 +260,8 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
   const resumeActiveSession = useCallback(() => {
     if (!pendingActiveSession) return;
     // Load chat, board, problems from localStorage — via getLocalThread, localChatBoard.ts's real API.
-    // This used to guess at raw keys (`otto-chat-${id}-${userId}` etc.) that module has never written (it
-    // keeps ONE combined map under `otto-local-chat-board:${userId}`, not a key per task), so every resume
+    // This used to guess at raw per-task localStorage keys that module has never written (it keeps ONE
+    // combined map under a single per-user key instead, not one key per task), so every resume
     // silently loaded EMPTY chat/board/problems regardless of how much was actually said — the student hit
     // "Reprendre" and landed back on a blank session with all their prior conversation gone. Falls back to
     // whatever's on the task object itself only if the local thread is genuinely empty (e.g. a legacy/other-
@@ -340,13 +310,10 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
         ? [...list].reverse().find((x) => x.source === "freestudy" && x.sourceSubject === selectedSubject && x.status !== "dismissed" && x.status !== "done")
         : undefined;
       if (t) {
-        // Clear ALL localStorage for the new task ID to ensure truly fresh session
-        try {
-          localStorage.removeItem(`otto-chat-${t.id}-${userId}`);
-          localStorage.removeItem(`otto-board-${t.id}-${userId}`);
-          localStorage.removeItem(`otto-problems-${t.id}-${userId}`);
-        } catch { /* ignore */ }
-        // Set task with completely empty arrays - no old content
+        // No local-storage cleanup needed here: `t.id` is a fresh randomUUID minted by /api/study/free —
+        // it has never existed before, so localChatBoard.ts's combined map has no entry for it to clear.
+        // (This used to call localStorage.removeItem on guessed per-task keys that module has never
+        // written in the first place — dead code, removed.)
         setTask({
           ...t,
           chat: [],
@@ -399,17 +366,8 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
           <h2>{L("Apprendre en réfléchissant", "Learn by thinking")}</h2>
           <p className="tutor-landing-sub">{L("Otto ne fait pas le travail à ta place. Il t'aide à essayer, à expliquer ton raisonnement et à transférer ce que tu apprends.", "Otto won't do the work for you. He helps you try, explain your reasoning, and transfer what you learn.")}</p>
 
-          {/* While the mount peek is still in flight, say so rather than silently looking like there's
-              nothing to resume — avoids the "doesn't recognize an active session" impression that's really
-              just the fetch not having landed yet. */}
-          {checkingSession && (
-            <div className="tutor-active-session-card tutor-active-session-checking" aria-live="polite">
-              <p className="tutor-active-session-text">{L("Vérification d'une séance en cours…", "Checking for a session in progress…")}</p>
-            </div>
-          )}
-
           {/* If there's an active session, show resume option */}
-          {!checkingSession && pendingActiveSession && (
+          {pendingActiveSession && (
             <div className="tutor-active-session-card">
               <div className="tutor-active-session-header">
                 <span className="tutor-active-session-badge">{L("En cours", "In progress")}</span>
@@ -447,13 +405,11 @@ export function TutorSession({ userId, onExit }: { userId: string | null; onExit
             <button
               className="btn primary tutor-start-btn"
               onClick={() => void startNewSession()}
-              disabled={startingSession || checkingSession}
+              disabled={startingSession}
             >
               {startingSession
                 ? L("Démarrage…", "Starting…")
-                : checkingSession
-                  ? L("Vérification…", "Checking…")
-                  : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
+                : L("Commencer une séance de ", "Start a ") + selectedSubject + L("", " session")}
             </button>
           )}
 
