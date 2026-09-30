@@ -2627,20 +2627,6 @@ function SettingsPage({ status, tasks, onSignOut, onChanged, onTasksChanged, onS
         {showKnows && <div className="settings-reveal"><p className="settings-hint">{L("Otto remplit ça au fil du temps. Tu peux tout modifier.", "Otto fills this in over time. You can edit anything.")}</p><ProfileEditor /></div>}
       </section>
 
-      {(() => {
-        const guardrailCount = tasks.flatMap((t) => t.audit || []).filter((a) => a.kind === "guardrail").length;
-        return guardrailCount > 0 ? (
-          <section className="settings-sec reveal" style={{ ["--d" as any]: "0.15s" }}>
-            <p className="settings-hint guardrail-stat">
-              <span aria-hidden="true">✦</span> {L(
-                `Otto a refusé de faire ton travail à ta place ${guardrailCount} fois — et a fait un guide à la place.`,
-                `Otto has declined to do your graded work ${guardrailCount} times — and made a guide instead.`,
-              )}
-            </p>
-          </section>
-        ) : null;
-      })()}
-
       <section className="settings-sec reveal" style={{ ["--d" as any]: "0.18s" }}>
         <button className="sec-toggle" aria-expanded={showStudentModel} onClick={() => setShowStudentModel((v) => !v)}>
           <h3>{L("Comment Otto te voit", "How Otto sees you")}</h3>
