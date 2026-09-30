@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { api } from "../api.ts";
-import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProblems } from "../localChatBoard.ts";
+import { hydrateLocalThreads, appendLocalChat, appendLocalBoard, appendLocalProblems, getLocalThread } from "../localChatBoard.ts";
 import { useLang, TaskModal } from "../ui.tsx";
 import { AskOttoPanel } from "../study/AskOttoPanel.tsx";
 import { BoardArtifact } from "../study/artifacts/BoardArtifact.tsx";
@@ -95,17 +95,17 @@ export function TutorSession({ userId }: { userId: string | null }) {
       // session to resume — it's a ghost: opened once (a subject tap, then the tab closed before a first
       // message went out) or the leftover of a dismiss that failed silently and never reached the server.
       // MUST check localStorage here, not `t.chat`/`t.board` — the server task object never carries chat/
-      // board at all (they live ONLY in this browser's localStorage overlay, see localChatBoard.ts); reading
-      // them off `t` made EVERY session, real or not, look empty once it crossed 3 minutes old, and silently
-      // auto-dismissed genuinely-active sessions — the exact regression reported right after this shipped
-      // ("session in progress" stopped being detected at all). Dismiss a REAL ghost for real (not just hide
-      // it client-side) so it stops coming back on every future visit; a session with real content is never
-      // touched here regardless of age.
+      // board at all (they live ONLY in this browser's localStorage overlay, see localChatBoard.ts).
+      // getLocalThread (localChatBoard.ts's own real API) is the only correct way to read it — a previous
+      // version of this check (and resumeActiveSession below, before this fix) guessed at raw keys like
+      // `otto-chat-${id}-${userId}`, which localChatBoard.ts has NEVER written (it keeps one combined map
+      // under `otto-local-chat-board:${userId}`, not a key per task) — so that guess always read as empty,
+      // making EVERY session, real or not, look like a ghost past 3 minutes old and get silently dismissed
+      // (the exact regression reported: "had an active session, doesn't show resume").
       const hasLocalContent = (id: string): boolean => {
         try {
-          const chat = localStorage.getItem(`otto-chat-${id}-${userId}`);
-          const board = localStorage.getItem(`otto-board-${id}-${userId}`);
-          return !!(chat && chat !== "[]") || !!(board && board !== "[]");
+          const thread = getLocalThread(id, userId);
+          return thread.chat.length > 0 || thread.board.length > 0;
         } catch { return true; } // can't tell — assume real rather than risk dismissing a live session
       };
       const isGhost = !!t && !hasLocalContent(t.id) && (Date.now() - (Date.parse(t.createdAt || "") || 0)) > 3 * 60_000;
@@ -284,18 +284,17 @@ export function TutorSession({ userId }: { userId: string | null }) {
   // first, and what happens next is their choice.
   const resumeActiveSession = useCallback(() => {
     if (!pendingActiveSession) return;
-    // Load chat, board, problems from localStorage
-    let chat = pendingActiveSession.chat || [];
-    let board = pendingActiveSession.board || [];
-    let problems = pendingActiveSession.problems || [];
-    try {
-      const localChat = localStorage.getItem(`otto-chat-${pendingActiveSession.id}-${userId}`);
-      const localBoard = localStorage.getItem(`otto-board-${pendingActiveSession.id}-${userId}`);
-      const localProblems = localStorage.getItem(`otto-problems-${pendingActiveSession.id}-${userId}`);
-      if (localChat) chat = JSON.parse(localChat);
-      if (localBoard) board = JSON.parse(localBoard);
-      if (localProblems) problems = JSON.parse(localProblems);
-    } catch { /* ignore */ }
+    // Load chat, board, problems from localStorage — via getLocalThread, localChatBoard.ts's real API.
+    // This used to guess at raw keys (`otto-chat-${id}-${userId}` etc.) that module has never written (it
+    // keeps ONE combined map under `otto-local-chat-board:${userId}`, not a key per task), so every resume
+    // silently loaded EMPTY chat/board/problems regardless of how much was actually said — the student hit
+    // "Reprendre" and landed back on a blank session with all their prior conversation gone. Falls back to
+    // whatever's on the task object itself only if the local thread is genuinely empty (e.g. a legacy/other-
+    // device session with nothing local to overlay).
+    const local = getLocalThread(pendingActiveSession.id, userId);
+    const chat = local.chat.length ? local.chat : (pendingActiveSession.chat || []);
+    const board = local.board.length ? local.board : (pendingActiveSession.board || []);
+    const problems = local.problems.length ? local.problems : (pendingActiveSession.problems || []);
     // Only load relevant fields from the task, ignore irrelevant ones
     setTask({
       ...pendingActiveSession,
