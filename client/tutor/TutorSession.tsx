@@ -367,7 +367,7 @@ export function TutorSession({ userId }: { userId: string | null }) {
             </span>
           ) : null}
         </div>
-        <div className="tutor-board-body"><BoardArtifact task={task} /></div>
+        <div className="tutor-board-body"><BoardArtifact task={task} writing={sending} /></div>
       </section>
     </main>
   );

@@ -12,20 +12,67 @@ if (typeof window !== "undefined") { void import("katex/dist/katex.min.css"); }
 
 interface BoardArtifactProps {
   task: WebTask;
+  /** True while the tutor's reply is being generated — the board shows a live "Otto écrit…" indicator so
+   *  the document feels like it's being drafted in real time next to the conversation, not refreshed after
+   *  the fact (reported: board work should feel "smooth, mechanical" — the writing hand is always visible). */
+  writing?: boolean;
 }
 
 const KIND_LABEL: Record<string, [string, string]> = {
   focus: ["Objectif du jour", "Today's focus"],
   instruction: ["Consigne", "Instruction"],
   formula: ["Formule", "Formula"],
-  summary: ["Résumé", "Summary"],
+  summary: ["Ton raisonnement", "Your reasoning"],
   problem: ["Problème", "Problem"],
   insight: ["Déclic", "Insight"],
   definition: ["Définition", "Definition"],
   diagram: ["Figure", "Figure"],
 };
 
+// Quiet margin glyph per kind — a worksheet's annotations, not badges. Typographic on purpose (no icon
+// dependency here), muted, identical across languages.
+const KIND_GLYPH: Record<string, string> = {
+  focus: "◎",
+  instruction: "→",
+  formula: "∑",
+  summary: "⌇",
+  insight: "✦",
+  definition: "≡",
+  diagram: "◫",
+};
+
 const LABEL_SIZE: Record<string, number> = { sm: 12, md: 14, lg: 18 };
+
+/** The completion effect made visible: a worked line the tutor deliberately left unfinished ("= ?", a short
+ *  line ending in "?") renders with a highlighted "à toi" chip — the gap is an invitation, not an omission
+ *  (Sweller's completion effect: doing the last step yourself is where the learning happens; the prompt
+ *  already asks Otto to end worked lines this way, the board now SHOWS it). Only a line ENDING in a gap
+ *  marker qualifies, and short, so mid-sentence question marks never trigger it. */
+function isCompletionGap(text: string): boolean {
+  const t = text.trimEnd();
+  if (/[=→>:]\s*\?\s*$/.test(t)) return true;
+  const last = t.split("\n").pop() || "";
+  return /\?\s*$/.test(last) && last.trim().length <= 40;
+}
+
+/** kind:"summary" rendered as a REASONING TRACE — the record of HOW the student got there: dash lines in
+ *  the order they actually did it, wrong turns they corrected included. This is the board's centerpiece:
+ *  what accumulates on it should increasingly be the student's own thinking, not the tutor's explanation.
+ *  (ICAP: the visible artifact of a session is the student's constructions — the tutor's voice stays in chat.) */
+function ReasoningTrace({ text, en }: { text: string; en: boolean }) {
+  const lines = text.split("\n").map((l) => l.replace(/^\s*[-–—•]\s*/, "").trim()).filter(Boolean);
+  if (!lines.length) return null;
+  return (
+    <div className="sm-board-trace">
+      <div className="sm-board-trace-heading">{en ? "How you got there" : "Ton raisonnement"}</div>
+      <ol className="sm-board-trace-list">
+        {lines.map((l, i) => (
+          <li key={i} className={/\b(corrigé?|en fait|non pas|pas ça|oops|my bad)\b/i.test(l) ? "sm-board-trace-turn" : undefined}>{l}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
 
 /** Real typeset math (stacked fractions, exponents, roots) instead of formatMath's plain-text approximation
  *  (client/ui.tsx) — this is what makes "2/(x-1) + 3/(x+2)" actually show as a fraction, not a slash. KaTeX
@@ -91,6 +138,7 @@ function DiagramOpSVG({ op }: { op: DiagramOp }) {
  *  so answers survive the flow being re-sorted or the same problem re-rendering. */
 interface ProblemBlockProps {
   problem: TaskProblem;
+  sectionNumber: number;
   state: { picked: number | null; textAnswer: string; submitted: boolean };
   hintShown: boolean;
   isCorrect: boolean;
@@ -101,11 +149,13 @@ interface ProblemBlockProps {
   en: boolean;
 }
 
-function ProblemBlock({ problem, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en }: ProblemBlockProps) {
+function ProblemBlock({ problem, sectionNumber, state, hintShown, isCorrect, onShowHint, onPick, onTextAnswer, onSubmit, en }: ProblemBlockProps) {
   const problemIsMCQ = Array.isArray(problem.options) && problem.options.length >= 2;
   const answered = problemIsMCQ ? state.picked !== null : state.submitted;
   return (
-    <div className="sm-board-problem">
+    <div className="sm-board-problem sm-board-writein">
+      <span className="sm-board-section-num" aria-hidden="true">{String(sectionNumber).padStart(2, "0")}</span>
+      <div className="sm-board-entry-main">
       <div className="sm-board-problem-label">{en ? "Problem" : "Problème"}</div>
       <div className="sm-board-problem-q">{stripStrayMarkdown(problem.question)}</div>
       {problem.format && !answered ? <div className="sm-board-problem-format">{problem.format}</div> : null}
@@ -173,6 +223,7 @@ function ProblemBlock({ problem, state, hintShown, isCorrect, onShowHint, onPick
       {answered && problem.why ? (
         <div className="sm-inline-problem-why">{stripStrayMarkdown(problem.why)}</div>
       ) : null}
+      </div>
     </div>
   );
 }
@@ -182,7 +233,7 @@ function ProblemBlock({ problem, state, hintShown, isCorrect, onShowHint, onPick
  *  and practice problems. ONE DOCUMENT, ONE FLOW: entries and problems interleave in the order the session
  *  actually produced them (a problem sits between the formula it exercises and the insight answering it —
  *  the lesson's story, not a problem section pinned on top). kind:"focus" stays pinned above as the heading. */
-export function BoardArtifact({ task }: BoardArtifactProps) {
+export function BoardArtifact({ task, writing }: BoardArtifactProps) {
   const L = useLang();
   const endRef = useRef<HTMLDivElement>(null);
   const entries = task.board || [];
@@ -256,12 +307,24 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
     return (
       <div className="sm-board-body">
         {hint}
+        <div className="sm-board-header">
+          <span className="sm-board-header-date">
+            {new Date().toLocaleDateString(L("fr", "en") === "en" ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+          </span>
+          {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
+        </div>
         <div className="sm-board-empty">
           {L(
             "Le document de séance se construira ici — objectif du jour, définitions, formules, déclics, résumés — dès que ce sera utile.",
             "The session document will build here — today's focus, definitions, formulas, insights, summaries — whenever it's useful.",
           )}
         </div>
+        {writing ? (
+          <div className="sm-board-drafting" role="status" aria-live="polite">
+            <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
+            {L("fr", "en") === "en" ? "Otto is writing…" : "Otto écrit…"}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -272,24 +335,36 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
     <div className="sm-board-body">
       {hint}
 
+      {/* THE WORKSHEET HEADER — date + subject above the pinned goal, like a lesson page's heading block:
+          the board is a document you could print and keep, not a feed. The subject comes from the task's
+          sourceSubject (stamped at session start); date is today (the board is per-session). */}
+      <div className="sm-board-header">
+        <span className="sm-board-header-date">
+          {new Date().toLocaleDateString(en ? "en-US" : "fr-FR", { weekday: "long", day: "numeric", month: "long" })}
+        </span>
+        {task.sourceSubject ? <span className="sm-board-header-subject">{task.sourceSubject}</span> : null}
+      </div>
+
       {/* The pinned session goal (kind:"focus") — always the FIRST thing on the board, like the heading of
           a lesson page: the day's arc stays visible no matter how long the flow below grows. The latest
           focus wins if a session ever writes a second one. */}
       {latestFocus ? (
         <div className="sm-board-focus-pin">
-          <span className="sm-board-entry-kind">{L(...KIND_LABEL.focus)}</span>
+          <span className="sm-board-entry-kind"><span className="sm-board-glyph">{KIND_GLYPH.focus}</span>{L(...KIND_LABEL.focus)}</span>
           <div className="sm-board-focus-text">{renderChatText(latestFocus.text)}</div>
         </div>
       ) : null}
 
       {/* ONE FLOW — entries and problems interleaved by timestamp, in the order the session produced them.
           Problems are NOT a pinned section: a CREATE_PROBLEM sits right between the entry that set it up and
-          the insight that answered it. */}
-      {flowItems.map((item) =>
+          the insight that answered it. Every item gets a worksheet section number (01, 02, …) — the document
+          is being drafted, section by section, not fed in as cards. */}
+      {flowItems.map((item, idx) =>
         item.problem ? (
           <ProblemBlock
             key={item.key}
             problem={item.problem}
+            sectionNumber={idx + 1}
             state={getProblemState(item.problem.id)}
             hintShown={!!showHint[item.problem.id]}
             isCorrect={checkFreeResponse(item.problem.id)}
@@ -302,9 +377,14 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
         ) : (() => {
           const e = item.entry!;
           return (
-            <div key={item.key} className={`sm-board-entry sm-board-entry-${e.kind || "note"}`}>
+            <div key={item.key} className={`sm-board-entry sm-board-entry-${e.kind || "note"} sm-board-writein`}>
+              <span className="sm-board-section-num" aria-hidden="true">{String(idx + 1).padStart(2, "0")}</span>
+              <div className="sm-board-entry-main">
               {e.kind && KIND_LABEL[e.kind] ? (
-                <span className="sm-board-entry-kind">{L(...KIND_LABEL[e.kind])}</span>
+                <span className="sm-board-entry-kind">
+                  {KIND_GLYPH[e.kind] ? <span className="sm-board-glyph" aria-hidden="true">{KIND_GLYPH[e.kind]}</span> : null}
+                  {L(...KIND_LABEL[e.kind])}
+                </span>
               ) : null}
               {e.kind === "diagram" && e.diagram?.length ? (
                 <>
@@ -318,13 +398,32 @@ export function BoardArtifact({ task }: BoardArtifactProps) {
                     {e.diagram.map((op, i) => <DiagramOpSVG key={i} op={op} />)}
                   </svg>
                 </>
+              ) : e.kind === "summary" ? (
+                <ReasoningTrace text={e.text} en={en} />
               ) : (
-                <div className="sm-board-entry-text">{renderChatText(e.text)}</div>
+                <>
+                  <div className="sm-board-entry-text">{renderChatText(e.text)}</div>
+                  {isCompletionGap(e.text) ? (
+                    <span className="sm-board-todo-chip">{en ? "Your turn to finish" : "À toi de finir"}</span>
+                  ) : null}
+                </>
               )}
+              </div>
             </div>
           );
         })()
       )}
+
+      {/* The live drafting indicator — while the tutor's reply is being generated the document shows its
+          writing hand ("Otto écrit…"), so new entries arrive as the continuation of a visible act of
+          writing, not a swap of the page. Shown on the EMPTY board too (that's exactly when the session
+          needs to feel alive, not blank). */}
+      {writing ? (
+        <div className="sm-board-drafting" role="status" aria-live="polite">
+          <span className="sm-typing-dots" aria-hidden="true"><i /><i /><i /></span>
+          {en ? "Otto is writing…" : "Otto écrit…"}
+        </div>
+      ) : null}
 
       <div ref={endRef} />
     </div>

@@ -6367,6 +6367,34 @@ label.set-row.disabled { cursor: default; opacity: 0.5; }
 .sm-board-focus-pin .sm-board-entry-kind { color: var(--accent); }
 .sm-board-focus-text { margin-top: 2px; }
 
+/* THE BOARD AS A WORKSHEET — the board is a drafted lesson document, not a card feed. Header block (date +
+   subject), quiet numbered sections in the margin, glyphs instead of badges, write-in animation for newly
+   drafted entries, and a live "Otto écrit…" indicator while the tutor's reply is being generated. */
+.sm-board-header { display: flex; align-items: baseline; gap: 10px; margin: 2px 4px 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.sm-board-header-date { font-size: 12px; color: var(--ink-2); text-transform: capitalize; }
+.sm-board-header-subject { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .04em; text-transform: uppercase; }
+.sm-board-entry, .sm-board-problem { position: relative; }
+.sm-board-section-num { position: absolute; left: -26px; top: 4px; font-size: 11px; font-weight: 600; color: var(--ink-3, var(--ink-2)); opacity: .55; font-variant-numeric: tabular-nums; user-select: none; }
+@media (max-width: 720px) { .sm-board-section-num { display: none; } }
+.sm-board-entry-main { min-width: 0; }
+.sm-board-glyph { margin-right: 5px; opacity: .7; font-size: .9em; }
+@keyframes sm-board-writein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.sm-board-writein { animation: sm-board-writein .35s var(--ease-out, ease-out); }
+@media (prefers-reduced-motion: reduce) { .sm-board-writein { animation: none; } }
+.sm-board-todo-chip { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 3px 10px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700; letter-spacing: .02em; }
+.sm-board-todo-chip::before { content: "✎"; font-size: 11px; }
+/* Reasoning trace (kind:"summary") — the record of HOW the student got there, as a numbered-ish dash list
+   with corrected wrong-turns visually marked. The board's centerpiece: what accumulates is the student's
+   own thinking, not the tutor's explanation. */
+.sm-board-trace { border-left: 2px solid var(--accent); padding-left: 10px; margin: 2px 0; }
+.sm-board-trace-heading { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+.sm-board-trace-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.sm-board-trace-list li { position: relative; padding-left: 14px; font-size: .93em; line-height: 1.45; }
+.sm-board-trace-list li::before { content: "—"; position: absolute; left: 0; color: var(--ink-2); }
+.sm-board-trace-list li.sm-board-trace-turn::after { content: "⟲"; margin-left: 5px; color: var(--ink-2); font-size: .85em; }
+/* Live drafting indicator — the writing hand. */
+.sm-board-drafting { display: flex; align-items: center; gap: 8px; margin: 10px 4px; padding: 8px 12px; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--ink-2); font-size: 13px; font-style: italic; }
+
 /* Tutor landing (no active session): calm, evidence-informed entry point. */
 .tutor-landing { display: flex; align-items: center; justify-content: center; padding: 32px 20px; }
 .tutor-landing-inner { max-width: 680px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 18px; }

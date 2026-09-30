@@ -1,11 +1,11 @@
-import { useRef, useEffect, useContext, useCallback } from "react";
+import { useRef, useEffect, useState, useContext, useCallback } from "react";
 import type { WebTask } from "../../shared/types.ts";
 import { renderChatText, useThinkingWord, useLang, LangContext, CondensedUserMessage, FirstTimeHint } from "../ui.tsx";
 import { useSpeechRecognition } from "../voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "../voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "../voice/useVoiceModePref.ts";
 import { VoiceControls } from "../voice/VoiceControls.tsx";
-import { isLikelyEcho } from "../voice/echoGuard.ts";
+import { createEchoFilter } from "../voice/echoGuard.ts";
 import { InlineProblem } from "./InlineProblem.tsx";
 
 interface AskOttoPanelProps {
@@ -92,31 +92,43 @@ export function AskOttoPanel({
   // synth.speaking / the last chat message would go stale.
   const speakingRef = useRef(false);
   speakingRef.current = synth.speaking;
-  const spokenRef = useRef("");
-  spokenRef.current = speakingNowText(task);
+  // THE LOOP-KILLER (the recurring "Otto hears himself" bug). The old guard only checked echo WHILE
+  // synth.speaking was true — but recognition lag means Otto's echo routinely FINALIZES after the flag
+  // already flipped false, exactly when the check was skipped, so his own reply went out as a student
+  // message, Otto replied to it, the reply was spoken, re-echoed, re-sent… The stateful filter
+  // (createEchoFilter, client/voice/echoGuard.ts) classifies across the whole speech window PLUS a tail
+  // after it, and drops a verbatim repeat of the just-spoken reply regardless of timing.
+  const echoFilterRef = useRef(createEchoFilter());
+  const [micError, setMicError] = useState<[string, string] | null>(null);
   const recog = useSpeechRecognition({
     lang: speechLang,
     onResult: (text) => {
       if (sendingRef.current) return;
-      if (speakingRef.current) {
-        // While Otto is speaking, a FINAL result is only student speech if it isn't his own voice coming
-        // back through the speakers (echo discrimination — see echoGuard.ts). Real student speech ALSO
-        // cancels the TTS: talking over the tutor stops the tutor, and the utterance still sends.
-        if (isLikelyEcho(spokenRef.current, text)) return;
-        if (bargeIn) synth.cancel();
-      }
+      // Otto's own voice coming back (during speech, in the post-speech tail, or verbatim) is NEVER input.
+      if (echoFilterRef.current.isEcho(text)) return;
+      // Real student speech while Otto talks: interrupt him — cancel the TTS, the utterance still sends.
+      if (speakingRef.current && bargeIn) synth.cancel();
       onSend(text, true);
     },
-    // Barge-in channel: interim text streams in WHILE the student is still talking — cancel the TTS the
-    // instant real speech is detected instead of waiting for the browser's end-of-utterance pause. The
-    // echo guard keeps Otto's own voice (heard through the speakers while the mic is open) from
-    // triggering the cancel on itself.
+    // Live barge-in channel: interim text streams in while the student is still talking — cancel the TTS
+    // the instant real speech is detected. Echo-filtered so Otto doesn't cancel himself.
     onInterim: (text) => {
-      if (!bargeIn || !speakingRef.current || !text) return;
-      if (isLikelyEcho(spokenRef.current, text)) return;
-      if (text.trim().split(/\s+/).length >= 2) synth.cancel();
+      if (!bargeIn || !text) return;
+      if (echoFilterRef.current.isEcho(text)) return;
+      if (speakingRef.current && text.trim().split(/\s+/).length >= 2) synth.cancel();
     },
+    // Mic failures used to vanish silently (a blocked mic looked like "listening, heard nothing") — now
+    // they surface as a real, bilingual, student-presentable message.
+    onError: (msg) => setMicError(msg),
   });
+  // Drive the echo filter's windows from the TTS transitions: speechStarted re-arms on every new
+  // utterance (with the text being spoken — the echo reference), speechEnded opens the post-speech tail.
+  const wasSpeakingEchoRef = useRef(false);
+  useEffect(() => {
+    if (synth.speaking && !wasSpeakingEchoRef.current) echoFilterRef.current.speechStarted(speakingNowText(task));
+    else if (!synth.speaking && wasSpeakingEchoRef.current) echoFilterRef.current.speechEnded();
+    wasSpeakingEchoRef.current = synth.speaking;
+  }, [synth.speaking, task]);
   // Assigned only AFTER recog exists — the mount-time autoVoice effect above reads this ref (it must never
   // touch recog directly: recog is declared below that effect, so a direct use would be a TDZ crash).
   recogSupportedRef.current = recog.supported;
@@ -133,8 +145,9 @@ export function AskOttoPanel({
   const activeProblem = task.problems?.length ? task.problems[task.problems.length - 1] : undefined;
   // Voice mode is ONE switch: on = always listening (no push-to-talk tap needed between turns) AND
   // auto-speaking replies. Turning it on starts listening immediately; turning it off stops everything.
+  // A fresh toggle-on also clears any stale mic error from a previous failed attempt.
   useEffect(() => {
-    if (voiceModeOn) recog.start();
+    if (voiceModeOn) { setMicError(null); recog.start(); }
     else { recog.abort(); synth.cancel(); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceModeOn]);
@@ -246,6 +259,8 @@ export function AskOttoPanel({
           <button type="button" className="sm-btn sm-btn-ghost sm-btn-sm" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>Retry</button>
         </div>
       ) : null}
+      {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
+      {micError ? <div className="sm-ai-error" role="alert">{L(micError[0], micError[1])}</div> : null}
 
       <div className="sm-ai-input-row">
         <textarea

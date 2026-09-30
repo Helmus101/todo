@@ -16,6 +16,7 @@ import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { VoiceControls } from "./voice/VoiceControls.tsx";
+import { createEchoFilter } from "./voice/echoGuard.ts";
 import { useFirstTime } from "./useFirstTime.ts";
 
 // App-wide UI language (default French; toggled in Settings, sourced from the account's ConnectionStatus/
@@ -645,6 +646,9 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
   const synth = useSpeechSynthesis(speechLang);
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  // Echo filter + its TTS-transition driver — declared BEFORE the recog hook that closes over them.
+  const echoFilterRef = useRef(createEchoFilter());
+  const wasSpeakingEchoRef = useRef(false);
   const send = (override?: string) => {
     const message = (override ?? input).trim();
     if (!message || busy || !taskId) return;
@@ -662,7 +666,22 @@ function StudyHelpPanel({ taskId, card }: { taskId?: string; card: StudyHelpCard
   };
   const recog = useSpeechRecognition({
     lang: speechLang,
-    onResult: (text) => { if (!busyRef.current) send(text); },
+    // Echo filter (same as every voice surface): this panel SPEAKS its replies with the mic open and had
+    // NO echo protection — Otto's own hint read aloud could come back through the mic and be sent as the
+    // next question, looping. Final results are classified across the speech window plus a post-speech
+    // tail (recognition lag); a verbatim repeat of the just-spoken hint is dropped regardless of timing.
+    onResult: (text) => {
+      if (echoFilterRef.current.isEcho(text) || busyRef.current) return;
+      send(text);
+    },
+  });
+  // Drive the echo filter's windows from the TTS transitions (same as AskOttoPanel/TaskCard). No dep
+  // array: this panel's spoken text is the last history entry, which changes with sends — re-checking on
+  // every render is harmless (the filter only acts on false→true/true→false transitions).
+  useEffect(() => {
+    if (synth.speaking && !wasSpeakingEchoRef.current) echoFilterRef.current.speechStarted(history.length ? history[history.length - 1]?.text || "" : "");
+    else if (!synth.speaking && wasSpeakingEchoRef.current) echoFilterRef.current.speechEnded();
+    wasSpeakingEchoRef.current = synth.speaking;
   });
   useEffect(() => {
     if (voiceModeOn) recog.start();

@@ -2,7 +2,8 @@
 import { readFileSync } from "node:fs";
 import { dedupeTasks, foldGenerated, applyProfileUpdate, mergeTaskLists, mergeProfileStates, applyQualityBar, extractArtifacts, unionArtifacts, pruneHandled, forcedDueToday, forceWeekCoverage, estimateWhen, extractDateFromText, applyDeadlineUrgency, weakCardFronts, autoRunBudgetLeft, recordAutoRuns, needsAutoBreakdown, nothingToPrepare, notNeededFronts, inAppContextFor } from "../server/tasks.ts";
 import { parseGenerated, finalize, reconcileArtifactClaims, trackLine, learningStyleLine, isBigIbProject, makeNote, makeDeck, makeQuiz, makePracticeProblem, looksLikeStem, assignmentBlock, dueLine, CHAT_DOES_WORK, CHAT_STATES_ANSWER, DOES_STUDENT_WORK, CHAT_CLAIMS_BOARD, CHAT_CLAIMS_DIAGRAM, PLAN_ONLY_OVERRIDE, sanitizeStepExtras, sanitizeSteps, dropTrivialSteps, isTrivialStep, bestMatchingStep, dropForeignEntitySteps, dropSiblingBleedSteps, dropSiblingBleedTitles, dropProcessComplaintSteps, anchorStepsToTask, revealsAnswer, makeBoardEntry, isDuplicateBoardEntry, shouldNudgeBoardWrite, makeDiagramEntry, ensureArtifactUseSteps, notNeededLine, weakCardLine, dodLooksLikeCoordinationOutcome, dropRedundantArtifactSteps, reattachStepExtras, dropUnanchoredSteps, restrictStepUrlsToLinks, dropForeignEntityLinks, milestoneLine } from "../server/claude.ts";
-import { isLikelyEcho, normalizeForEcho } from "../client/voice/echoGuard.ts";
+import { isLikelyEcho, createEchoFilter, normalizeForEcho } from "../client/voice/echoGuard.ts";
+import { speechErrorMessage } from "../client/voice/speechErrors.ts";
 import { replanMilestones } from "../server/milestones.ts";
 import { isWriteGatedAction, isGatedAction, ACTION_POLICIES, scopeTools, isArtifactShared } from "../server/integrations.ts";
 import { isNoise, filterCandidates, calendarToItems, dedupeByThread, pronoteToItems, pronoteTestsToItems, hasAssignmentText, mergePronoteHomeworkAndTests } from "../server/discover.ts";
@@ -1298,6 +1299,15 @@ section("Board renders each entry ONCE (the duplicated render block is gone) + p
   // Dual coding / document structure: kind:"focus" is the lesson's heading — pinned at the top as a
   // header strip, excluded from the flowing entries, latest wins if a session ever writes a second one.
   check("kind:\"focus\" renders as a pinned header, not inline in the flow", /sm-board-focus-pin/.test(boardSrc) && /e\.kind !== "focus"/.test(boardSrc));
+  // The board as a drafted WORKSHEET (research: gradual release + completion effect + ICAP — the visible
+  // artifact of a session is the student's own thinking, laid out like a lesson page, written in live).
+  check("board has a worksheet header (date + subject)", /sm-board-header/.test(boardSrc) && /sm-board-header-subject/.test(boardSrc));
+  check("board entries carry worksheet section numbers", /sm-board-section-num/.test(boardSrc));
+  check("kind:\"summary\" renders as a reasoning trace (how the student got there)", /ReasoningTrace/.test(boardSrc) && /sm-board-trace/.test(boardSrc));
+  check("a deliberately unfinished worked line gets an 'à toi de finir' completion chip (completion effect, visible)", /isCompletionGap/.test(boardSrc) && /sm-board-todo-chip/.test(boardSrc));
+  check("new entries write themselves in (drafted, not swapped)", /sm-board-writein/.test(boardSrc));
+  check("the board shows a live 'Otto écrit…' drafting indicator while the tutor composes", /writing\?/.test(boardSrc) && /sm-board-drafting/.test(boardSrc));
+  check("TutorSession wires the drafting indicator to the chat's sending state", /writing=\{sending\}/.test(readFileSync(new URL("../client/tutor/TutorSession.tsx", import.meta.url), "utf8")));
   check("the latest focus wins when more than one exists", /latestFocus/.test(boardSrc));
   // Direct request: problems should sit IN the board's flow (between the entries around them), not pinned
   // at the top — the board is one document telling the lesson's story in the order it happened.
@@ -1366,9 +1376,53 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   check("normalizeForEcho keeps French accents but drops punctuation", normalizeForEcho("Oui — c'est ça !") === "oui c est ça");
   check("empty spoken text or empty heard text is never echo", !isLikelyEcho("", "hello there") && !isLikelyEcho(spoken, "  "));
 
+  // The stateful filter — the recurring-loop fix. The pure matcher alone couldn't close the loop because
+  // the echo's final result lands AFTER synth.speaking flips false (recognition pipeline lag).
+  const reply = "So the whole fraction is now sin²θ over sinθ·cosθ. What does that cancel down to?";
+  const f = createEchoFilter();
+  f.speechStarted(reply);
+  check("during speech, Otto's own words are dropped", f.isEcho("what does that cancel down to"));
+  check("during speech, the student's own words are NOT dropped", !f.isEcho("but why does the identity apply here"));
+  f.speechEnded();
+  check("AFTER the speech flag flips false (recognition lag), the echo is STILL dropped within the tail", f.isEcho("what does that cancel down to"));
+  check("outside the tail window, the same text would be allowed (the window is bounded)", new Promise((done) => setTimeout(() => done(!f.isEcho("what does that cancel down to")), 2100)));
+  const f2 = createEchoFilter();
+  f2.speechStarted(reply);
+  f2.speechEnded();
+  check("a VERBATIM repeat of the just-spoken reply is dropped with NO time bound (the loop-killer)", f2.isEcho(reply));
+  const f3 = createEchoFilter();
+  check("with no speech at all, nothing is classified as echo", !f3.isEcho("anything at all"));
+  f3.speechStarted(reply);
+  f3.speechEnded();
+  f3.speechStarted("a different reply entirely — re-armed");
+  check("speechStarted re-arms the filter to the NEW reply (back-to-back utterances)", !f3.isEcho("what does that cancel down to") && f3.isEcho("a different reply entirely"));
+
+  // Real error messages — the raw Web Speech codes used to vanish silently.
+  const [frDenied, enDenied] = speechErrorMessage("not-allowed");
+  const [frNoMic] = speechErrorMessage("audio-capture");
+  const [frNet, enNet] = speechErrorMessage("network");
+  const [frFallback, enFallback] = speechErrorMessage("some-future-code");
+  check("permission-denied and no-mic get distinct bilingual student messages", frDenied.includes("autorise") && enDenied.includes("allow mic") && frNoMic.includes("Aucun micro"));
+  check("network and unknown codes get messages too (never empty, never a raw code)", frNet.length > 10 && enNet.length > 10 && frFallback.length > 10 && enFallback.length > 10);
+
   const taskCardSrc = readFileSync(new URL("../client/TaskCard.tsx", import.meta.url), "utf8");
   // The per-task chat got the same treatment: interruptible everywhere, not just in Tutor Session.
-  check("TaskChat is interruptible too (echo-guarded barge-in, mic never paused during TTS)", /isLikelyEcho\(spokenRef\.current, text\)/.test(taskCardSrc) && !/wasSpeakingRef/.test(taskCardSrc));
+  check("TaskChat is interruptible too (stateful echo filter, mic never paused during TTS)", /echoFilterRef\.current\.isEcho\(text\)/.test(taskCardSrc) && !/wasSpeakingRef/.test(taskCardSrc));
+
+  // THE RECURRING LOOP FIX — the old guard checked echo only WHILE synth.speaking was true, but
+  // recognition lag means Otto's echo often FINALIZES after that flag flipped false: the check was
+  // skipped exactly when the echo arrived, his own reply went out as a student message, Otto replied
+  // to it, it was spoken, re-echoed… createEchoFilter closes both holes: a post-speech TAIL window
+  // (recognition lag) and a timing-independent verbatim-repeat kill (the loop's own signature).
+  check("all three voice surfaces run the stateful echo filter", [readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8"), taskCardSrc, readFileSync(new URL("../client/ui.tsx", import.meta.url), "utf8")].filter((s) => /echoFilterRef\.current\.isEcho\(text\)/.test(s)).length === 3);
+  check("the filter is driven by TTS transitions (speechStarted/speechEnded) on the chat surfaces", /speechStarted\(/.test(taskCardSrc) && /speechEnded\(\)/.test(taskCardSrc));
+  check("mic failures surface as a real bilingual message (no longer silent)", /onError: \(msg\) => setMicError\(msg\)/.test(taskCardSrc) && /micError \? </.test(taskCardSrc) && /micError \? </.test(readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8")));
+
+  const speechErrorsSrc = readFileSync(new URL("../client/voice/speechErrors.ts", import.meta.url), "utf8");
+  const recogHookSrc = readFileSync(new URL("../client/voice/useSpeechRecognition.ts", import.meta.url), "utf8");
+  check("the hook maps real error codes to student-presentable messages", /onErrorRef\.current\?\.\(speechErrorMessage\(e\.error\)\)/.test(recogHookSrc));
+  check("no-speech/aborted never surface (normal always-on events, not failures)", /e\.error === "no-speech" \|\| e\.error === "aborted"\) return;/.test(recogHookSrc));
+  check("the error mapper covers permission, no-mic, network, language, and a fallback", ["not-allowed", "audio-capture", "network", "language-not-supported"].every((c) => speechErrorsSrc.includes(`case "${c}"`)) && /default:/.test(speechErrorsSrc));
 }
 
 section("Tutor Session — sessions never auto-start, and past boards read at a glance (source pins)");
@@ -1554,7 +1608,7 @@ section("Tutor Session — voice is MANUAL (mic is the student's tap, never auto
   // live — the old version aborted the recognizer during TTS, which made interruption structurally
   // impossible (no audio reaches a dead mic). Echo from the speakers is classified textually.
   check("mic stays open during speech when barge-in is on (pause-the-mic is gated off)", /if \(!voiceModeOn \|\| bargeIn\) return;/.test(askOttoSrc));
-  check("live interim text cancels the TTS mid-sentence (≥2 words, echo-guarded)", /onInterim: \(text\) =>/.test(askOttoSrc) && /isLikelyEcho\(spokenRef\.current, text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
+  check("live interim text cancels the TTS mid-sentence (≥2 words, echo-filtered)", /onInterim: \(text\) =>/.test(askOttoSrc) && /echoFilterRef\.current\.isEcho\(text\)/.test(askOttoSrc) && /text\.trim\(\)\.split\(\/\\s\+\/\)\.length >= 2\) synth\.cancel\(\)/.test(askOttoSrc));
   check("the recognition hook exposes the live interim channel", /onInterim\?: \(text: string\) => void;/.test(recogSrc) && /onInterimRef\.current\?\.\(interim\.trim\(\)\)/.test(recogSrc));
   check("voice auto-start is guarded on SpeechRecognition support (Firefox stays text-first)", /recogSupportedRef\.current/.test(askOttoSrc));
 }
@@ -1765,6 +1819,13 @@ section("Tutor prompt (chatAboutTask) carries the 'why don't they know' diagnosi
   // Milestones (Profile.milestones, extracted from journal entries) surfaced into chat so the tutor builds
   // on real per-topic progress instead of re-teaching it from scratch every session.
   check("chat context includes milestoneLine (per-topic progress from the journal)", /milestoneLine\(profile, task\.sourceSubject\)/.test(chatBody));
+  // Revoicing (O'Connor & Michaels): the student's idea is restated in their own words before building on
+  // it — heard, verified, credited. Social congruence + process praise (Lepper & Woolverton): earned,
+  // specific, move-naming praise; never default cheer.
+  check("tutor revoices the student's idea before building on it", /REVOICE THEIR IDEA BEFORE YOU BUILD ON IT/.test(chatBody));
+  check("tutor praises the specific thinking move (never generic encouragement)", /PRAISE THE MOVE, NOT THE PERSON/.test(chatBody));
+  check("board prompt teaches the worksheet rendering (trace lines, completion gap, credited insights)", /IT'S A WORKSHEET, AND THE BOARD SHOWS IT/.test(chatBody));
+  check("board prompt tells the tutor to write live (the drafting is part of the tutoring)", /THE BOARD WRITES LIVE/.test(chatBody));
 }
 // Reported live: an automatable step ("Gather 15-20 activities with location, cost, duration, booking
 // source") executing via runStep (server/tasks.ts) judged grounding/artifact-creation/DoD-verification

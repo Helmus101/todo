@@ -20,7 +20,7 @@ import {
   withInlineLinks, stripStrayMarkdown, renderNoteBody, renderChatText, CondensedUserMessage, FlashcardDeck, QuizPlayer, TaskModal, useNotify, useThinkingWord,
 } from "./ui.tsx";
 import { useSpeechRecognition } from "./voice/useSpeechRecognition.ts";
-import { isLikelyEcho } from "./voice/echoGuard.ts";
+import { createEchoFilter } from "./voice/echoGuard.ts";
 import { useSpeechSynthesis } from "./voice/useSpeechSynthesis.ts";
 import { useVoiceModePref } from "./voice/useVoiceModePref.ts";
 import { BoardArtifact } from "./study/artifacts/BoardArtifact.tsx";
@@ -1280,29 +1280,37 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
   const sendingRef = useRef(sending);
   sendingRef.current = sending;
   // Barge-in (same design as AskOttoPanel's — see that file): the mic stays OPEN while Otto speaks, so
-  // the student can talk over him. Echo from the speakers is classified by isLikelyEcho (Otto can only
-  // echo words he is currently saying), not by deafness; onResult/onInterim need the CURRENT speaking
-  // state and spoken text, hence the refs.
+  // the student can talk over him. The stateful echo filter classifies his own voice coming back through
+  // the speakers across the speech window PLUS a post-speech tail (recognition lag means his echo often
+  // finalizes after synth.speaking flips false — a speaking-flag-only guard skipped exactly that), and
+  // drops a verbatim repeat of the just-spoken reply regardless of timing. That verbatim path is what
+  // produced the reported recurring loop: Otto hears himself, replies, re-quotes himself, re-hears…
   const speakingRef = useRef(false);
   speakingRef.current = synth.speaking;
-  const spokenRef = useRef("");
-  spokenRef.current = task.chat?.length ? task.chat[task.chat.length - 1]?.text || "" : "";
+  const echoFilterRef = useRef(createEchoFilter());
+  const [micError, setMicError] = useState<[string, string] | null>(null);
   const recog = useSpeechRecognition({
     lang: speechLang,
     onResult: (text) => {
       if (sendingRef.current) return;
-      if (speakingRef.current) {
-        if (isLikelyEcho(spokenRef.current, text)) return;
-        synth.cancel(); // the student talked over Otto — stop the speech; the utterance still sends
-      }
+      if (echoFilterRef.current.isEcho(text)) return;
+      if (speakingRef.current) synth.cancel(); // the student talked over Otto — stop the speech; the utterance still sends
       onSend(text, true);
     },
     onInterim: (text) => {
-      if (!speakingRef.current || !text) return;
-      if (isLikelyEcho(spokenRef.current, text)) return;
-      if (text.trim().split(/\s+/).length >= 2) synth.cancel();
+      if (!text || echoFilterRef.current.isEcho(text)) return;
+      if (speakingRef.current && text.trim().split(/\s+/).length >= 2) synth.cancel();
     },
+    onError: (msg) => setMicError(msg),
   });
+  // Drive the echo filter's windows from the TTS transitions (see AskOttoPanel's identical effect).
+  const wasSpeakingEchoRef = useRef(false);
+  useEffect(() => {
+    const spoken = task.chat?.length ? task.chat[task.chat.length - 1]?.text || "" : "";
+    if (synth.speaking && !wasSpeakingEchoRef.current) echoFilterRef.current.speechStarted(spoken);
+    else if (!synth.speaking && wasSpeakingEchoRef.current) echoFilterRef.current.speechEnded();
+    wasSpeakingEchoRef.current = synth.speaking;
+  }, [synth.speaking, task]);
   useEffect(() => {
     if (voiceModeOn) recog.start();
     else { recog.abort(); synth.cancel(); }
@@ -1395,6 +1403,8 @@ function TaskChat({ task, input, setInput, sending, error, pendingMsg, onSend, i
           <button type="button" className="btn xs ghost" onClick={() => onSend(undefined, voiceModeOn)} disabled={sending}>{L("Réessayer", "Retry")}</button>
         </div>
       ) : null}
+      {/* Real mic failure surfacing (permission denied, no mic, network) — previously silent. */}
+      {micError ? <div className="rewrite-error" role="alert">{L(micError[0], micError[1])}</div> : null}
       <div className="chat-row">
         <textarea
           ref={inputRef}

@@ -27,7 +27,7 @@ export function normalizeForEcho(s: string): string {
  *  real echoes. An ordered-subsequence match over 3+ words is still overwhelmingly echo: a student's own
  *  novel sentence almost never has ALL of its words inside what Otto is saying right now, in order — and
  *  the final word has to be present too, so a question that starts with common words ("is that…") only
- *  classifies as echo once its LAST word also sits in the spoken reply. */
+ *  classifies as echo once its LAST word also sits in the spoken reply. (Unit-tested in tests/run.mjs.) */
 function isOrderedSubsequence(spokenNorm: string, heardNorm: string): boolean {
   const sWords = spokenNorm.split(" ");
   let i = 0;
@@ -58,4 +58,55 @@ export function isLikelyEcho(spoken: string, heard: string): boolean {
   // lands mid-word and the transcription starts partway into a sentence.
   if (s.includes(h) || h.includes(s.slice(0, Math.min(s.length, h.length)))) return true;
   return hWords >= 3 && isOrderedSubsequence(s, h);
+}
+
+export interface EchoFilter {
+  /** Call when TTS starts, with the reply text being synthesized. Re-call on a new utterance while the
+   *  synth flag stayed true (a second reply queued back-to-back) — it re-arms the window. */
+  speechStarted(text: string): void;
+  /** Call when TTS stops — the echo TAIL window starts here. */
+  speechEnded(): void;
+  /** Classify recognition text (final or interim): true → DROP (Otto's own voice coming back). */
+  isEcho(heard: string): boolean;
+}
+
+/** The stateful half of echo defense. isLikelyEcho is pure text comparison, but the LOOP the recognizer
+ *  produces needs time-awareness, and this is where the old guard's holes were:
+ *  1. RECOGNITION PIPELINE LAG — a final result for Otto's echo often lands AFTER synth.speaking has
+ *     already flipped false (the recognizer finalizes on its own pause schedule, not ours), so a guard
+ *     keyed on the speaking flag alone skips the check exactly when the echo arrives. The filter keeps a
+ *     tail window (speechEnded timestamp + ECHO_TAIL_MS) during which anything matching the just-spoken
+ *     reply is still classified as echo.
+ *  2. THE RECURRING LOOP ITSELF — even one leaked echo gets SENT as a student message; Otto then replies
+ *     to it (often re-quoting the same math), which is spoken, re-echoed, re-sent… Insurance: the reply
+ *     text being spoken right now is remembered, and a heard utterance EQUAL to it is dropped regardless
+ *     of timing — a student repeating Otto's full reply verbatim into the mic, word for word, doesn't
+ *     happen; his own voice coming back late does.
+ *  Plain factory (not a hook) so it's trivially unit-testable and usable from any surface. One instance
+ *  per mounted voice surface (AskOttoPanel, TaskCard's TaskChat, StudyHelpPanel) — driven by that
+ *  surface's synth.speaking transitions. */
+export function createEchoFilter(tailMs = 2000): EchoFilter {
+  let spokenText = "";
+  let speaking = false;
+  let speechEndedAt = 0;
+  return {
+    speechStarted(text) {
+      spokenText = text || "";
+      speaking = true;
+      speechEndedAt = 0;
+    },
+    speechEnded() {
+      speaking = false;
+      speechEndedAt = Date.now();
+    },
+    isEcho(heard) {
+      if (!spokenText) return false;
+      // Insurance #2: verbatim repeat of the reply currently/just spoken — no time bound. This is the
+      // loop-killer: even if every other window misses, the echo's content IS the reply.
+      if (normalizeForEcho(heard) && normalizeForEcho(heard) === normalizeForEcho(spokenText)) return true;
+      const inWindow = speaking || (speechEndedAt > 0 && Date.now() - speechEndedAt < tailMs);
+      if (!inWindow) return false;
+      return isLikelyEcho(spokenText, heard);
+    },
+  };
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { speechErrorMessage } from "./speechErrors.ts";
 
 // The Web Speech API's SpeechRecognition isn't in TS's default DOM lib (it's still non-standard,
 // webkit-prefixed in most browsers) — declare just the surface this hook actually uses rather than pulling
@@ -35,6 +36,11 @@ export interface UseSpeechRecognitionOptions {
    *  still being spoken, so a caller watching THIS can cancel TTS the instant real student speech is
    *  detected. Purely advisory — not firing it changes nothing else. */
   onInterim?: (text: string) => void;
+  /** Fires with a bilingual [fr, en] message whenever recognition genuinely fails (mic permission denied,
+   *  no microphone, network down, unsupported language) — the hook itself only surfaces the RAW codes and
+   *  they used to vanish silently, leaving a mic pill that lights up and hears nothing. `no-speech` and
+   *  `aborted` never fire this: they're normal events in always-on mode, not failures. */
+  onError?: (message: [string, string]) => void;
 }
 
 export interface UseSpeechRecognition {
@@ -54,7 +60,7 @@ export interface UseSpeechRecognition {
 /** Always-on speech-to-text via the browser's free, built-in Web Speech API — no server round trip, no paid
  *  STT vendor. Feature-detects: `supported` is false on browsers with no SpeechRecognition (Firefox, most
  *  notably) so callers can hide voice UI entirely rather than show a mic button that silently does nothing. */
-export function useSpeechRecognition({ lang, onResult, onInterim }: UseSpeechRecognitionOptions): UseSpeechRecognition {
+export function useSpeechRecognition({ lang, onResult, onInterim, onError }: UseSpeechRecognitionOptions): UseSpeechRecognition {
   const Ctor = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : undefined;
   const supported = !!Ctor;
   const [listening, setListening] = useState(false);
@@ -64,6 +70,8 @@ export function useSpeechRecognition({ lang, onResult, onInterim }: UseSpeechRec
   onResultRef.current = onResult;
   const onInterimRef = useRef(onInterim);
   onInterimRef.current = onInterim;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
   // Set true for the duration of an intended listening session (from start() to stop()/abort()) — onend
   // checks this to decide "the browser dropped the session on its own, restart it" vs "the user/app actually
   // wanted this to stop." Without this distinction, mic-always-on mode would silently go dead the moment
@@ -98,12 +106,17 @@ export function useSpeechRecognition({ lang, onResult, onInterim }: UseSpeechRec
     rec.onerror = (e) => {
       // "no-speech" fires constantly in always-on mode (every silent gap) — not a real error, just Chrome's
       // way of saying "nothing detected in this stretch." Let onend's restart logic handle it; don't tear
-      // down listening state over it. A genuinely fatal error (e.g. "not-allowed" — mic permission denied)
-      // DOES stop listening for real, since restarting would just fail again forever.
-      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      // down listening state over it. "aborted" is our own stop()/abort() — likewise normal.
+      if (e.error === "no-speech" || e.error === "aborted") return;
+      // A genuinely fatal error (mic permission denied, no microphone plugged in) DOES stop listening for
+      // real — restarting would just fail again forever. Everything real ALSO reports a student-presentable
+      // bilingual message now: these used to be swallowed whole, so a blocked mic looked identical to
+      // "listening, heard nothing" and the student had no way to know what was wrong.
+      if (e.error === "not-allowed" || e.error === "service-not-allowed" || e.error === "audio-capture") {
         keepAliveRef.current = false;
         setListening(false);
       }
+      onErrorRef.current?.(speechErrorMessage(e.error));
     };
     rec.onend = () => {
       // STALE-INSTANCE GUARD: onend fires ASYNCHRONOUSLY (per spec), so it can land well after this exact
