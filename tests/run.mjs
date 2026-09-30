@@ -1479,6 +1479,24 @@ section("isLikelyEcho — textual echo discrimination for real barge-in (client/
   // The per-task chat got the same treatment: interruptible everywhere, not just in Tutor Session.
   check("TaskChat is interruptible too (stateful echo filter, mic never paused during TTS)", /echoFilterRef\.current\.isEcho\(text\)/.test(taskCardSrc) && !/wasSpeakingRef/.test(taskCardSrc));
 
+  // French voice pipeline (server/index.ts /api/tts): verified live against FreeTTS — /api/speech is DEAD
+  // (404; moved to /api/v1/tts, x-api-key auth, JSON {audio_url} 2-step flow, locale-shaped voice names,
+  // "brian" now fails validation). The old route hard-spoke "brian": an ENGLISH voice reading French
+  // tutor replies. Pin the whole language-correct contract so it can't regress silently.
+  const serverSrc = readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+  const ttsStart = serverSrc.indexOf("const TTS_VOICE_BY_LANG");
+  const ttsBody = serverSrc.slice(ttsStart, serverSrc.indexOf("// ── Static (production)"));
+  check("TTS route uses the CURRENT FreeTTS v1 endpoint (old /api/speech is dead)", /freetts\.org\/api\/v1\/tts/.test(ttsBody) && !/freetts\.org\/api\/speech/.test(serverSrc));
+  check("TTS authenticates via x-api-key (Bearer no longer accepted)", /"x-api-key": key/.test(ttsBody));
+  check("TTS speaks a real FRENCH voice for French accounts, English for English", /TTS_VOICE_BY_LANG/.test(ttsBody) && /fr-FR-DeniseNeural/.test(ttsBody) && /en-US-AriaNeural/.test(ttsBody));
+  check("TTS voice falls back to a multilingual/fr-FR GA voice if the primary is retired", /fr-FR-VivienneMultilingualNeural/.test(ttsBody) && /fr-FR-EloiseNeural/.test(ttsBody));
+  check("TTS follows the 2-step flow (synthesis JSON → audio_url fetch → mp3 stream)", /audio_url/.test(ttsBody) && /audio\/mpeg/.test(ttsBody));
+  check("TTS only ever fetches the vendor's own returned audio_url (no client-supplied URL)", /meta\.audio_url \? \{ ok: true, audioUrl: meta\.audio_url \}/.test(ttsBody) && !/req\.body\.audio_url/.test(ttsBody));
+  check("TTS stays fail-open so the client's language-correct browser-TTS fallback still engages", /Échec de la génération vocale/.test(ttsBody) && /status !== 400 && r\.status !== 422/.test(ttsBody));
+  // Client STT/TTS language wiring: every voice surface must pass fr-FR when the app is French.
+  const panelSrc = readFileSync(new URL("../client/study/AskOttoPanel.tsx", import.meta.url), "utf8");
+  check("the tutor voice panel binds BOTH STT and TTS to the app language (fr-FR in French)", /speechLang = en \? "en-US" : "fr-FR"/.test(panelSrc) && /useSpeechSynthesis\(speechLang\)/.test(panelSrc) && /lang: speechLang/.test(panelSrc));
+
   // THE RECURRING LOOP FIX — the old guard checked echo only WHILE synth.speaking was true, but
   // recognition lag means Otto's echo often FINALIZES after that flag flipped false: the check was
   // skipped exactly when the echo arrived, his own reply went out as a student message, Otto replied
