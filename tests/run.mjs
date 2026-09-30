@@ -1863,6 +1863,13 @@ section("Granularity ladder — taskNeedsStepList gate + size-tiered brief promp
   const noteWriter = src.slice(src.indexOf("Create a short in-app reference note"), src.indexOf('{"title": "note title"'));
   check("the note writer sizes briefs to the task (60-120 words for a small task, no troubleshooting table)", /SIZE IT TO THE TASK/.test(noteWriter) && /60-120 words/.test(noteWriter) && /NO troubleshooting table/.test(noteWriter));
   check("the note writer allows a longer, tabular brief only for genuinely multi-leg tasks", /multi-leg task/.test(noteWriter) && /rows that each carry a real, necessary specific/.test(noteWriter));
+  // Brief-compression pass (runTask, after makeNote): brief length must be ADAPTED TO THE TASK, not fixed —
+  // small task + bloated body → one rewrite that keeps the specifics; the pass is bounded and fail-open.
+  const noteBlock = runTaskBody.slice(runTaskBody.indexOf("const note = makeNote(noteOut)"), runTaskBody.indexOf("// ── DoD verification"));
+  check("an over-long brief on a small task triggers a rewrite pass, not a silent chop", /taskNeedsStepList\(\{ title: task\.title, why: task\.why, goal: definitionOfDone, taskType: task\.taskType \}\)/.test(noteBlock) && /BRIEF_COMPRESS_WORDS/.test(noteBlock) && /countWords\(note\.note\.body\)/.test(noteBlock));
+  check("the rewrite keeps real specifics and only fires when the body is genuinely bloated", /keep every real specific/.test(noteBlock) && /Only return the original unchanged if cutting anything would lose a real specific/.test(noteBlock));
+  check("brief compression is fail-open — a failed rewrite ships the original unchanged", /countWords\(body\) < wc/.test(noteBlock) && /keeping the original/.test(noteBlock));
+  check("longer briefs on genuinely content-heavy tasks are never chopped — no hard body cap", !/body\.slice\(0, [0-9]{3,}\)\s*;/.test(noteBlock));
 }
 
 // ── Link relevance: a web_search's results are candidates, not facts about the task ──────────────
